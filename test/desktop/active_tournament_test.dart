@@ -5,7 +5,10 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
+import 'package:chessever/widgets/persistent_tab_state.dart';
 
 void main() {
   testWidgets(
@@ -150,12 +153,79 @@ void main() {
       TabKind.tournaments,
     );
   });
+
+  testWidgets(
+    'retained tournament tab restores its event context on A to B to A',
+    (tester) async {
+      final tabs = DesktopTabsNotifier();
+      final tabA =
+          tabs.navigateActive(TabKind.tournamentDetail, title: 'Event A')!;
+      final tabB = tabs.open(
+        TabKind.tournamentDetail,
+        title: 'Event B',
+        reuseExisting: false,
+        focus: false,
+      );
+      final eventA = _event(id: 'event-a', title: 'Event A');
+      final eventB = _event(id: 'event-b', title: 'Event B');
+      late WidgetRef ref;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            desktopTabsProvider.overrideWith((ref) => tabs),
+            tournamentByTabIdProvider.overrideWith(
+              (ref) => {tabA: eventA, tabB: eventB},
+            ),
+          ],
+          child: MaterialApp(
+            home: Consumer(
+              builder: (context, widgetRef, _) {
+                ref = widgetRef;
+                final state = widgetRef.watch(desktopTabsProvider);
+                final activeIndex = state.tabs.indexWhere(
+                  (tab) => tab.id == state.activeId,
+                );
+                return PersistentIndexedStack(
+                  index: activeIndex,
+                  children: [
+                    TournamentDetailContextOwner(tabId: tabA),
+                    TournamentDetailContextOwner(tabId: tabB),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(ref.read(selectedBroadcastModelProvider)?.id, 'event-a');
+
+      tabs.activate(tabB);
+      await tester.pump();
+      await tester.pump();
+      expect(ref.read(selectedBroadcastModelProvider)?.id, 'event-b');
+
+      tabs.activate(tabA);
+      await tester.pump();
+      await tester.pump();
+      expect(ref.read(selectedBroadcastModelProvider)?.id, 'event-a');
+
+      await tester.pump();
+      expect(
+        ref.read(selectedBroadcastModelProvider)?.id,
+        'event-a',
+        reason: 'the retained inactive B owner must not write context back',
+      );
+    },
+  );
 }
 
-GroupEventCardModel _event() {
+GroupEventCardModel _event({String id = 'event-1', String? title}) {
   return GroupEventCardModel(
-    id: 'event-1',
-    title: '12th Serbian Cup',
+    id: id,
+    title: title ?? '12th Serbian Cup',
     dates: 'May 21 - 24, 2026',
     maxAvgElo: 2351,
     timeUntilStart: 'Ongoing',

@@ -32,13 +32,26 @@ Future<List<Games>> loadInitialTournamentGames({
   required Future<List<Games>> Function() fetchFreshGames,
   bool useCache = true,
   Duration timeout = kTournamentGamesRequestTimeout,
+  int suspectPageSize = 1000,
 }) async {
+  assert(suspectPageSize > 0);
+  var cachedGames = const <Games>[];
   if (useCache) {
-    final cachedGames = await readCachedGames();
-    if (cachedGames.isNotEmpty) return cachedGames;
+    cachedGames = await readCachedGames();
+    final endsOnPageBoundary =
+        cachedGames.isNotEmpty && cachedGames.length % suspectPageSize == 0;
+    if (!endsOnPageBoundary && cachedGames.isNotEmpty) return cachedGames;
   }
 
-  return fetchFreshGames().timeout(timeout);
+  try {
+    return await fetchFreshGames().timeout(timeout);
+  } catch (_) {
+    // A cache written before complete paging was introduced can contain exactly
+    // one PostgREST page. Try to heal it, but retain offline availability when
+    // that refresh cannot complete.
+    if (cachedGames.isNotEmpty) return cachedGames;
+    rethrow;
+  }
 }
 
 void setLiveGameCardsPaused(

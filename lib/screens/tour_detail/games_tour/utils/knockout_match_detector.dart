@@ -14,11 +14,15 @@ class KnockoutMatchDetector {
 
     if (!formatString.toLowerCase().contains('match')) return false;
 
+    final identities = _ParticipantIdentityRegistry(games);
     // Count unique players
     final players = <String>{};
     for (final game in games) {
-      players.add(game.whitePlayer.name);
-      players.add(game.blackPlayer.name);
+      final whiteId = identities.idFor(game.whitePlayer);
+      final blackId = identities.idFor(game.blackPlayer);
+      if (whiteId == null || blackId == null) continue;
+      players.add(whiteId);
+      players.add(blackId);
       if (players.length > 2) return false; // early exit
     }
 
@@ -55,8 +59,14 @@ class KnockoutMatchDetector {
 
     // Check for repeated player matchups
     final matchups = <String, int>{};
+    final identities = _ParticipantIdentityRegistry(games);
     for (final game in games) {
-      final key = _getMatchupKey(game.whitePlayer.name, game.blackPlayer.name);
+      final key = _getMatchupKey(
+        game.whitePlayer,
+        game.blackPlayer,
+        identities,
+      );
+      if (key == null) continue;
       matchups[key] = (matchups[key] ?? 0) + 1;
     }
 
@@ -74,6 +84,26 @@ class KnockoutMatchDetector {
     return matchupRatio > 0.5;
   }
 
+  /// Whether a tournament already proven to be knockout can safely render
+  /// these games as player-pair match sections.
+  ///
+  /// Unlike [isKnockoutMatchFormat], this deliberately does not require
+  /// `game-N` or `tiebreak` round slugs. Current feeds can publish a whole
+  /// playoff stage under one generic round. The caller must supply the trusted
+  /// tournament-format decision; this method only verifies that every game has
+  /// two resolvable participant identities so no board disappears while
+  /// grouping.
+  static bool canGroupConfirmedKnockout(List<GamesTourModel> games) {
+    if (games.isEmpty) return false;
+    final matches = groupByMatches(games);
+    if (matches.isEmpty) return false;
+    final groupedGameCount = matches.values.fold<int>(
+      0,
+      (count, matchGames) => count + matchGames.length,
+    );
+    return groupedGameCount == games.length;
+  }
+
   /// Groups games by matches (same player pairs) within the SAME round
   /// This ensures matches from different rounds (e.g., Round 1 vs Round 2) are separate
   /// Returns a map of match key -> list of games in that match
@@ -81,9 +111,15 @@ class KnockoutMatchDetector {
     List<GamesTourModel> games,
   ) {
     final matches = <String, List<GamesTourModel>>{};
+    final identities = _ParticipantIdentityRegistry(games);
 
     for (final game in games) {
-      final key = _getMatchupKey(game.whitePlayer.name, game.blackPlayer.name);
+      final key = _getMatchupKey(
+        game.whitePlayer,
+        game.blackPlayer,
+        identities,
+      );
+      if (key == null) continue;
       matches.putIfAbsent(key, () => []).add(game);
     }
 
@@ -105,9 +141,15 @@ class KnockoutMatchDetector {
     List<GamesTourModel> allGames,
   ) {
     final matches = <String, List<GamesTourModel>>{};
+    final identities = _ParticipantIdentityRegistry(allGames);
 
     for (final game in allGames) {
-      final key = _getMatchupKey(game.whitePlayer.name, game.blackPlayer.name);
+      final key = _getMatchupKey(
+        game.whitePlayer,
+        game.blackPlayer,
+        identities,
+      );
+      if (key == null) continue;
       matches.putIfAbsent(key, () => []).add(game);
     }
 
@@ -191,9 +233,6 @@ class KnockoutMatchDetector {
     }
 
     final firstGame = matchGames.first;
-    final player1 = firstGame.whitePlayer.name;
-    final player2 = firstGame.blackPlayer.name;
-
     // Calculate match score
     final score = _calculateMatchScore(matchGames);
 
@@ -202,8 +241,8 @@ class KnockoutMatchDetector {
 
     return MatchHeaderModel(
       matchKey: matchKey,
-      player1: player1,
-      player2: player2,
+      player1Card: firstGame.whitePlayer,
+      player2Card: firstGame.blackPlayer,
       player1Score: score.player1Score,
       player2Score: score.player2Score,
       games: matchGames,
@@ -280,9 +319,15 @@ class KnockoutMatchDetector {
 
   // Private helper methods
 
-  static String _getMatchupKey(String player1, String player2) {
-    // Normalize player names and create a consistent key
-    final sorted = [player1.trim(), player2.trim()]..sort();
+  static String? _getMatchupKey(
+    PlayerCard player1,
+    PlayerCard player2,
+    _ParticipantIdentityRegistry identities,
+  ) {
+    final player1Id = identities.idFor(player1);
+    final player2Id = identities.idFor(player2);
+    if (player1Id == null || player2Id == null) return null;
+    final sorted = [player1Id, player2Id]..sort();
     return '${sorted[0]}|${sorted[1]}';
   }
 
@@ -353,12 +398,13 @@ class KnockoutMatchDetector {
 
     if (games.isEmpty) return (player1Score: 0.0, player2Score: 0.0);
 
-    // Use first game to determine which player is player1 and player2
-    final player1Name = games.first.whitePlayer.name;
+    // Use first game to determine which player is player1 and player2.
+    final identities = _ParticipantIdentityRegistry(games);
+    final player1Id = identities.idFor(games.first.whitePlayer);
 
     for (final game in games) {
       final status = game.effectiveGameStatus;
-      final isPlayer1White = game.whitePlayer.name == player1Name;
+      final isPlayer1White = identities.idFor(game.whitePlayer) == player1Id;
 
       switch (status) {
         case GameStatus.whiteWins:
@@ -417,6 +463,66 @@ class KnockoutMatchDetector {
   }
 }
 
+class _ParticipantIdentityRegistry {
+  _ParticipantIdentityRegistry(Iterable<GamesTourModel> games) {
+    final fideIdsByName = <String, Set<int>>{};
+    for (final game in games) {
+      for (final player in [game.whitePlayer, game.blackPlayer]) {
+        final name = _normalizedPlayerName(player.name);
+        final fideId = player.fideId;
+        if (name.isEmpty || fideId == null || fideId <= 0) continue;
+        fideIdsByName.putIfAbsent(name, () => <int>{}).add(fideId);
+      }
+    }
+    for (final entry in fideIdsByName.entries) {
+      if (entry.value.length == 1) {
+        _fideIdByName[entry.key] = entry.value.single;
+      }
+    }
+  }
+
+  final Map<String, int> _fideIdByName = <String, int>{};
+
+  String? idFor(PlayerCard player) {
+    final name = _normalizedPlayerName(player.name);
+    if (_isPlaceholderPlayerName(name)) return null;
+    final fideId =
+        (player.fideId != null && player.fideId! > 0)
+            ? player.fideId
+            : _fideIdByName[name];
+    return fideId == null ? 'name:$name' : 'fide:$fideId';
+  }
+}
+
+bool _isPlaceholderPlayerName(String name) {
+  final normalized =
+      name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9?]+'), ' ').trim();
+  return normalized.isEmpty ||
+      normalized == '?' ||
+      normalized == 'tbd' ||
+      normalized == 'tba' ||
+      normalized == 'unknown' ||
+      normalized == 'unknown player' ||
+      normalized == 'to be determined' ||
+      normalized.startsWith('winner of ') ||
+      normalized.startsWith('loser of ');
+}
+
+String _normalizedPlayerName(String name) =>
+    name
+        .trim()
+        .replaceFirst(
+          RegExp(
+            r'^(?:(?:GM|IM|FM|CM|WGM|WIM|WFM|WCM|NM|WNM)\.?\s+)+',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .toLowerCase()
+        .replaceAll('’', "'")
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
 /// Information parsed from a round slug for sorting
 class _RoundSlugInfo {
   final int typePriority;
@@ -430,11 +536,14 @@ class _RoundSlugInfo {
   });
 }
 
+/// Semantic treatment for a player's current aggregate match result.
+enum MatchPlayerResultTone { neutral, leading, trailing }
+
 /// Model representing a match header with player information and score
 class MatchHeaderModel {
   final String matchKey;
-  final String player1;
-  final String player2;
+  final PlayerCard player1Card;
+  final PlayerCard player2Card;
   final double player1Score;
   final double player2Score;
   final List<GamesTourModel> games;
@@ -443,8 +552,8 @@ class MatchHeaderModel {
 
   const MatchHeaderModel({
     required this.matchKey,
-    required this.player1,
-    required this.player2,
+    required this.player1Card,
+    required this.player2Card,
     required this.player1Score,
     required this.player2Score,
     required this.games,
@@ -452,9 +561,90 @@ class MatchHeaderModel {
     required this.isComplete,
   });
 
+  String get player1 => player1Card.name;
+
+  String get player2 => player2Card.name;
+
+  DateTime? get startsAt {
+    DateTime? earliestPairingStart;
+    DateTime? earliestRoundStart;
+    for (final game in games) {
+      final pairingStart = _pairingStartsAt(game);
+      if (pairingStart != null &&
+          (earliestPairingStart == null ||
+              pairingStart.isBefore(earliestPairingStart))) {
+        earliestPairingStart = pairingStart;
+      }
+      final roundStart = game.roundStartsAt;
+      if (roundStart != null &&
+          (earliestRoundStart == null ||
+              roundStart.isBefore(earliestRoundStart))) {
+        earliestRoundStart = roundStart;
+      }
+    }
+    return earliestPairingStart ?? earliestRoundStart;
+  }
+
+  static DateTime? _pairingStartsAt(GamesTourModel game) {
+    final date = game.dateStart;
+    final rawTime = game.timeStart?.trim();
+    if (date == null || rawTime == null || rawTime.isEmpty) return null;
+
+    final datePart =
+        '${date.year.toString().padLeft(4, '0')}-'
+        '${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
+    final parsed = DateTime.tryParse('${datePart}T$rawTime');
+    if (parsed == null) return null;
+    final hasExplicitZone =
+        rawTime.endsWith('Z') ||
+        RegExp(r'[+-]\d{2}(?::?\d{2})?$').hasMatch(rawTime);
+    if (hasExplicitZone) return parsed.toUtc();
+    return DateTime.utc(
+      date.year,
+      date.month,
+      date.day,
+      parsed.hour,
+      parsed.minute,
+      parsed.second,
+      parsed.millisecond,
+      parsed.microsecond,
+    );
+  }
+
+  bool get hasReportedScore =>
+      games.any((game) => game.effectiveGameStatus.isFinished);
+
+  String get player1ScoreLabel => _formatScore(player1Score);
+
+  String get player2ScoreLabel => _formatScore(player2Score);
+
+  MatchPlayerResultTone get player1ResultTone =>
+      _resultTone(score: player1Score, opponentScore: player2Score);
+
+  MatchPlayerResultTone get player2ResultTone =>
+      _resultTone(score: player2Score, opponentScore: player1Score);
+
+  MatchPlayerResultTone _resultTone({
+    required double score,
+    required double opponentScore,
+  }) {
+    if (!hasReportedScore || score == opponentScore) {
+      return MatchPlayerResultTone.neutral;
+    }
+    return score > opponentScore
+        ? MatchPlayerResultTone.leading
+        : MatchPlayerResultTone.trailing;
+  }
+
+  static String _formatScore(double score) =>
+      score == score.truncateToDouble()
+          ? score.toInt().toString()
+          : score.toStringAsFixed(1);
+
   String get matchTitle => '$player1 vs $player2';
 
-  String get scoreDisplay => '$player1Score - $player2Score';
+  String get scoreDisplay => '$player1ScoreLabel - $player2ScoreLabel';
 
   String get fullTitle => '$roundName: $matchTitle';
 }

@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:collection/collection.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
+import 'package:chessever/screens/tour_detail/bracket/utils/knockout_stage_parser.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
@@ -12,6 +13,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_sc
 import 'package:chessever/screens/tour_detail/games_tour/providers/match_expansion_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_expansion_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_ordering.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_stage_round_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/games_tour_content_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
@@ -352,6 +354,14 @@ class _GamesAppBarNotifier
     final matchKeys = <String>[];
     final gamesData = ref.read(gamesTourScreenProvider).valueOrNull;
     final allGames = gamesData?.gamesTourModels ?? [];
+    final roundModels = state.valueOrNull?.gamesAppBarModels ?? const [];
+    final knownTourIds =
+        ref
+            .read(tourDetailScreenProvider)
+            .valueOrNull
+            ?.tours
+            .map((tour) => tour.tour.id) ??
+        const <String>[];
 
     for (final roundId in targetRoundIds) {
       if (!_isKnockoutRound(roundId)) {
@@ -360,11 +370,19 @@ class _GamesAppBarNotifier
 
       List<GamesTourModel> roundGames;
       if (roundId.startsWith('$kKnockoutStagePrefix-')) {
-        final stageTourId = roundId.replaceFirst('$kKnockoutStagePrefix-', '');
-        final stageKnockoutState = ref.read(
-          knockoutTournamentStateProvider(stageTourId),
+        final round =
+            roundModels.where((model) => model.id == roundId).firstOrNull;
+        if (round == null || tourId == null) continue;
+        roundGames = itemsForTournamentDisplayRound<GamesTourModel>(
+          round: round,
+          selectedTourId: tourId!,
+          knownTourIds: knownTourIds,
+          selectedTourItems: allGames,
+          sourceRoundIdOf: (game) => game.roundId,
+          siblingTourItems: _readTourGameModels,
         );
-        roundGames = stageKnockoutState.allGames;
+      } else if (roundId.toLowerCase().startsWith('knockout-round-')) {
+        roundGames = allGames;
       } else {
         roundGames = allGames.where((g) => g.roundId == roundId).toList();
       }
@@ -630,15 +648,26 @@ class _GamesAppBarNotifier
 
         // Special handling for knockout stage-based rounds
         if (round.id.startsWith('$kKnockoutStagePrefix-')) {
-          // For stage-based rounds, get games from knockoutTournamentStateProvider
-          final stageTourId = round.id.replaceFirst(
-            '$kKnockoutStagePrefix-',
-            '',
+          final selectedTourId = tourId;
+          if (selectedTourId == null) return -1;
+          final selectedItems =
+              ref.read(gamesTourScreenProvider).valueOrNull?.gamesTourModels ??
+              const <GamesTourModel>[];
+          final knownTourIds =
+              ref
+                  .read(tourDetailScreenProvider)
+                  .valueOrNull
+                  ?.tours
+                  .map((tour) => tour.tour.id) ??
+              const <String>[];
+          roundGames = itemsForTournamentDisplayRound<GamesTourModel>(
+            round: round,
+            selectedTourId: selectedTourId,
+            knownTourIds: knownTourIds,
+            selectedTourItems: selectedItems,
+            sourceRoundIdOf: (game) => game.roundId,
+            siblingTourItems: _readTourGameModels,
           );
-          final stageKnockoutState = ref.read(
-            knockoutTournamentStateProvider(stageTourId),
-          );
-          roundGames = stageKnockoutState.allGames;
         } else {
           // Regular rounds: match by round ID
           roundGames =
@@ -898,20 +927,28 @@ class _GamesAppBarNotifier
             continue;
           }
 
-          // Check if this tour is knockout format
-          final stageKnockoutState = ref.read(
-            knockoutTournamentStateProvider(tour.id),
+          final lowerFormat = (tour.info.format ?? '').toLowerCase();
+          final detectedTeamEvent = resolveTeamEventClassification(
+            teamTable: tour.info.teamTable,
+            formatSaysTeam: lowerFormat.contains('team'),
+            formatSaysPlayer: lowerFormat.contains('player'),
+            allPlayersHaveTeam:
+                tour.players.isNotEmpty &&
+                tour.players.every((player) => player.team != null),
           );
 
-          if (!stageKnockoutState.isKnockout) {
-            print('    ❌ Not knockout format, skipping');
+          if (!shouldIncludeNamedKnockoutStageTour(
+            tour,
+            detectedTeamEvent: detectedTeamEvent,
+          )) {
+            print('    ❌ Explicit team/non-knockout stage, skipping');
             continue;
           }
 
           // Show ALL stages in dropdown, regardless of games (like 'about' tab does)
           final tourStatus = tourModel.roundStatus;
           print(
-            '    ✓ Has ${stageRoundModels.length} rounds, ${stageKnockoutState.allGames.length} games, status: $tourStatus',
+            '    ✓ Has ${stageRoundModels.length} rounds, status: $tourStatus',
           );
 
           // Determine aggregated status for this stage
@@ -944,9 +981,7 @@ class _GamesAppBarNotifier
                   ? tour.name.split('|').last.trim()
                   : tour.name;
 
-          print(
-            '    ✅ Created stage: "$stageName" (status: $stageStatus, games: ${stageKnockoutState.allGames.length})',
-          );
+          print('    ✅ Created stage: "$stageName" (status: $stageStatus)');
 
           final stageId = '$kKnockoutStagePrefix-${tour.id}';
 
@@ -1202,80 +1237,30 @@ class _GamesAppBarNotifier
             : false;
 
     if (isKnockout) {
-      // For knockout tournaments, check if we have multiple stages
-      final tourDetail = ref.read(tourDetailScreenProvider).valueOrNull;
-      final allTours = tourDetail?.tours ?? [];
-      final currentTour =
-          allTours.where((t) => t.tour.id == tourId).firstOrNull?.tour;
-      final groupBroadcastId = currentTour?.groupBroadcastId;
-
-      if (groupBroadcastId != null && groupBroadcastId.isNotEmpty) {
-        final groupTours =
-            allTours
-                .where((t) => t.tour.groupBroadcastId == groupBroadcastId)
-                .toList();
-
-        if (groupTours.length > 1) {
-          // Multiple stages - count games per stage (tour)
-          final counts = <String, int>{};
-
-          for (final tourModel in groupTours) {
-            final tour = tourModel.tour;
-            final stageKnockoutState = ref.read(
-              knockoutTournamentStateProvider(tour.id),
-            );
-
-            if (!stageKnockoutState.isKnockout) continue;
-
-            final stageId = '$kKnockoutStagePrefix-${tour.id}';
-            counts[stageId] = stageKnockoutState.allGames.length;
-          }
-
-          return counts;
-        }
-      }
-
-      // Round-slug derived multi-stage knockout:
-      // stage IDs look like "knockout-stage-{tourId}-{stageName}".
       final models =
           state.valueOrNull?.gamesAppBarModels ?? const <GamesAppBarModel>[];
-      final roundSlugStageIds =
-          tourId == null
-              ? const <String>{}
-              : models
-                  .where(
-                    (m) => m.id.startsWith('$kKnockoutStagePrefix-${tourId!}-'),
-                  )
-                  .map((m) => m.id)
-                  .toSet();
-
-      if (roundSlugStageIds.isNotEmpty && tourId != null) {
-        final counts = <String, int>{for (final id in roundSlugStageIds) id: 0};
-        final games =
-            ref.read(gamesTourScreenProvider).valueOrNull?.gamesTourModels ??
-            const <GamesTourModel>[];
-
-        for (final game in games) {
-          final gameSlug = (game.roundSlug ?? '').trim().toLowerCase();
-          if (gameSlug.isEmpty) continue;
-          final stagePart = (gameSlug.contains('--')
-                  ? gameSlug.split('--').first
-                  : gameSlug)
-              .replaceAll(' ', '-');
-          final stageId = '$kKnockoutStagePrefix-$tourId-$stagePart';
-          if (counts.containsKey(stageId)) {
-            counts.update(stageId, (value) => value + 1);
-          }
-        }
-
-        return counts;
-      }
-
-      // Single-stage knockout - all games belong to the aggregated stage
       final games =
           ref.read(gamesTourScreenProvider).valueOrNull?.gamesTourModels ??
           const <GamesTourModel>[];
-      return {'$kKnockoutStagePrefix-${tourId ?? 'stage'}': games.length};
+      final knownTourIds =
+          ref
+              .read(tourDetailScreenProvider)
+              .valueOrNull
+              ?.tours
+              .map((tour) => tour.tour.id) ??
+          const <String>[];
+      return <String, int>{
+        for (final model in models)
+          model.id:
+              itemsForTournamentDisplayRound<GamesTourModel>(
+                round: model,
+                selectedTourId: tourId!,
+                knownTourIds: knownTourIds,
+                selectedTourItems: games,
+                sourceRoundIdOf: (game) => game.roundId,
+                siblingTourItems: _readTourGameModels,
+              ).length,
+      };
     } else {
       // Regular tournaments - count by actual round ID
       final rawGames =
@@ -1301,6 +1286,39 @@ class _GamesAppBarNotifier
   }
 
   Map<String, bool> _buildRoundCompletion(List<GamesAppBarModel> models) {
+    final isKnockout =
+        tourId != null
+            ? ref.read(knockoutTournamentStateProvider(tourId!)).isKnockout
+            : false;
+
+    if (isKnockout && tourId != null) {
+      final games =
+          ref.read(gamesTourScreenProvider).valueOrNull?.gamesTourModels ??
+          const <GamesTourModel>[];
+      final knownTourIds =
+          ref
+              .read(tourDetailScreenProvider)
+              .valueOrNull
+              ?.tours
+              .map((tour) => tour.tour.id) ??
+          const <String>[];
+      return <String, bool>{
+        for (final model in models)
+          model.id: () {
+            final roundGames = itemsForTournamentDisplayRound<GamesTourModel>(
+              round: model,
+              selectedTourId: tourId!,
+              knownTourIds: knownTourIds,
+              selectedTourItems: games,
+              sourceRoundIdOf: (game) => game.roundId,
+              siblingTourItems: _readTourGameModels,
+            );
+            return roundGames.isNotEmpty &&
+                roundGames.every((game) => game.gameStatus.isFinished);
+          }(),
+      };
+    }
+
     final rawGames =
         tourId == null
             ? null
@@ -1335,6 +1353,21 @@ class _GamesAppBarNotifier
           return roundGames.every((game) => game.gameStatus.isFinished);
         }(),
     };
+  }
+
+  List<GamesTourModel> _readTourGameModels(String sourceTourId) {
+    final rawGames =
+        ref.read(gamesTourProvider(sourceTourId)).valueOrNull ??
+        const <Games>[];
+    final models = <GamesTourModel>[];
+    for (final game in rawGames) {
+      try {
+        models.add(GamesTourModel.fromGame(game));
+      } catch (_) {
+        // Keep malformed source rows from breaking sibling-stage presentation.
+      }
+    }
+    return models;
   }
 
   bool _hasGames(String roundId, Map<String, int> counts) =>
@@ -1646,6 +1679,22 @@ class _GamesAppBarNotifier
     _shouldStreamListener?.close();
     super.dispose();
   }
+}
+
+@visibleForTesting
+bool shouldIncludeNamedKnockoutStageTour(
+  Tour tour, {
+  required bool detectedTeamEvent,
+}) {
+  final format = tour.info.format;
+  final lowerFormat = (format ?? '').toLowerCase();
+  if (detectedTeamEvent ||
+      lowerFormat.contains('team') ||
+      formatRulesOutKnockout(format)) {
+    return false;
+  }
+  return formatSupportsKnockout(format) ||
+      parseKnockoutTourStageDescriptor(tour.name).stage != null;
 }
 
 /// Reconciles a newly fetched round page with rounds already published by this

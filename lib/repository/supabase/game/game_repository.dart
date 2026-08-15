@@ -242,6 +242,42 @@ int gameStructuredAverageRating(Games game) {
 bool gameHasAuthoritativeMove(Games game) =>
     game.lastMove?.trim().isNotEmpty ?? false;
 
+/// Reads a complete deterministic result through PostgREST-sized keyset pages.
+///
+/// A full page cannot prove that it was the final page, so exact multiples
+/// intentionally issue one empty terminator request. Explicit paginated callers
+/// of [GameRepository.getGamesByTourId] bypass this helper and retain their
+/// existing single-page contract. [idOf] must return the immutable unique key
+/// used by the server-side `ORDER BY` and continuation predicate.
+@visibleForTesting
+Future<List<T>> loadAllTournamentGamePages<T>({
+  required Future<List<T>> Function(int limit, String? afterId) fetchPage,
+  required String Function(T value) idOf,
+  int pageSize = 1000,
+}) async {
+  assert(pageSize > 0);
+  final values = <T>[];
+  final seenIds = <String>{};
+  final seenCursors = <String>{};
+  String? afterId;
+  while (true) {
+    final page = await fetchPage(pageSize, afterId);
+    if (page.isEmpty) return values;
+
+    final nextCursor = idOf(page.last);
+    if (nextCursor.isEmpty ||
+        nextCursor == afterId ||
+        !seenCursors.add(nextCursor)) {
+      throw StateError('Tournament game page cursor did not advance');
+    }
+    for (final value in page) {
+      if (seenIds.add(idOf(value))) values.add(value);
+    }
+    if (page.length < pageSize) return values;
+    afterId = nextCursor;
+  }
+}
+
 class GameRepository extends BaseRepository {
   final Map<String, _CurrentSmartEventScopeCache> _currentSmartEventScopeCache =
       <String, _CurrentSmartEventScopeCache>{};
@@ -278,28 +314,38 @@ class GameRepository extends BaseRepository {
     int offset = 0,
   }) async {
     return handleApiCall(() async {
-      var query = supabase
-          .from('games')
-          // Tournament cards render from FEN/player/status metadata. Loading
-          // every full PGN here makes large and live events wait on a much
-          // larger payload; the selected game is hydrated on demand before
-          // the board tab opens.
-          .select(_gameSummarySelectColumns)
-          .eq('tour_id', tourId)
-          .order('id', ascending: true);
-
-      if (limit != null) {
-        query = query.range(offset, offset + limit - 1);
+      Future<List<Games>> fetchPage(
+        int pageLimit, {
+        int pageOffset = 0,
+        String? afterId,
+      }) async {
+        var query = supabase
+            .from('games')
+            // Tournament cards render from FEN/player/status metadata. Loading
+            // every full PGN here makes large and live events wait on a much
+            // larger payload; the selected game is hydrated on demand before
+            // the board tab opens.
+            .select(_gameSummarySelectColumns)
+            .eq('tour_id', tourId);
+        if (afterId != null) query = query.gt('id', afterId);
+        final response = await query
+            .order('id', ascending: true)
+            .range(pageOffset, pageOffset + pageLimit - 1);
+        final jsonList =
+            (response as List).map((item) => json.encode(item)).toList();
+        return compute(_decodeGamesInIsolate, jsonList);
       }
 
-      final response = await query;
-
-      final jsonList =
-          (response as List).map((item) => json.encode(item)).toList();
-
-      final games = await compute(_decodeGamesInIsolate, jsonList);
-
-      return games;
+      if (limit != null) return fetchPage(limit, pageOffset: offset);
+      var isFirstPage = true;
+      return loadAllTournamentGamePages<Games>(
+        fetchPage: (pageLimit, afterId) {
+          final pageOffset = isFirstPage ? offset : 0;
+          isFirstPage = false;
+          return fetchPage(pageLimit, pageOffset: pageOffset, afterId: afterId);
+        },
+        idOf: (game) => game.id,
+      );
     });
   }
 
