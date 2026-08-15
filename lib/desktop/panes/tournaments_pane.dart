@@ -13,6 +13,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/global_search_query.dart';
+import 'package:chessever/desktop/state/tournament_live_first.dart';
 import 'package:chessever/desktop/utils/event_game_card_keyboard_navigation.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
 import 'package:chessever/desktop/utils/tournament_event_grid_layout.dart';
@@ -33,6 +34,7 @@ import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
+import 'package:chessever/desktop/widgets/tournament_live_first_toggle.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show LiveDesktopGameCard, openTournamentGameTab;
 import 'package:chessever/providers/for_you_games_logic.dart';
@@ -95,6 +97,19 @@ String _smartCollectionTitle(PremiumGamesType type) {
   };
 }
 
+final _desktopOrderedForYouEventsProvider = Provider.autoDispose<ForYouState>((
+  ref,
+) {
+  final state = ref.watch(forYouEventsProvider);
+  final liveFirst = ref.watch(tournamentLiveFirstProvider);
+  return ForYouState(
+    events: orderTournamentEventsForDisplay(state.events, liveFirst: liveFirst),
+    isLoading: state.isLoading,
+    hasMore: state.hasMore,
+    error: state.error,
+  );
+});
+
 /// Desktop tournaments pane.
 ///
 /// Wraps the same `groupEventScreenProvider` the mobile screen drives. The
@@ -122,6 +137,7 @@ class TournamentsPane extends HookConsumerWidget {
             ? forYouFilterState
             : currentPastFilterState;
     final activeFilterCount = _activeEventFilterCount(selectedFilterState);
+    final liveFirst = ref.watch(tournamentLiveFirstProvider);
     final globalSearchQuery = ref.watch(desktopGlobalSearchQueryProvider);
     // Stable per-tournament-id GlobalKeys so we can `Scrollable.ensureVisible`
     // the highlighted row when the user navigates with the arrow keys.
@@ -230,8 +246,12 @@ class TournamentsPane extends HookConsumerWidget {
                     onPressed: openFilters,
                   ),
                   const Spacer(),
-                  if (selectedCategory == ge.GroupEventCategory.forYou)
+                  if (shouldShowTournamentLiveFirst(selectedCategory))
+                    const TournamentLiveFirstToggle(),
+                  if (selectedCategory == ge.GroupEventCategory.forYou) ...[
+                    const SizedBox(width: 8),
                     const GameViewModeToggle(),
+                  ],
                 ],
               ),
             ],
@@ -265,32 +285,42 @@ class TournamentsPane extends HookConsumerWidget {
                     },
                   )
                   : asyncTournaments.when(
-                    data:
-                        (tournaments) => _TournamentEventGridKeyboardHost(
-                          focusNode: listFocusNode,
-                          tournaments: tournaments,
+                    data: (tournaments) {
+                      final displayTournaments =
+                          orderTournamentEventsForDisplay(
+                            tournaments,
+                            liveFirst:
+                                shouldShowTournamentLiveFirst(
+                                  selectedCategory,
+                                ) &&
+                                liveFirst,
+                          );
+                      return _TournamentEventGridKeyboardHost(
+                        focusNode: listFocusNode,
+                        tournaments: displayTournaments,
+                        selectedId: selectedTournamentId.value,
+                        onSelectedIdChanged: (id) {
+                          selectedTournamentId.value = id;
+                        },
+                        onActivate: openTournament,
+                        tileKeys: tileKeys.value,
+                        child: _TournamentBrowser(
+                          tournaments: displayTournaments,
+                          storageKey: PageStorageKey<String>(
+                            'desktop_tournament_rows_${tabId}_${selectedCategory.name}',
+                          ),
                           selectedId: selectedTournamentId.value,
-                          onSelectedIdChanged: (id) {
+                          onSelect: (id) {
                             selectedTournamentId.value = id;
+                            listFocusNode.requestFocus();
                           },
                           onActivate: openTournament,
+                          loadingId: loadingId.value,
                           tileKeys: tileKeys.value,
-                          child: _TournamentBrowser(
-                            tournaments: tournaments,
-                            storageKey: PageStorageKey<String>(
-                              'desktop_tournament_rows_${tabId}_${selectedCategory.name}',
-                            ),
-                            selectedId: selectedTournamentId.value,
-                            onSelect: (id) {
-                              selectedTournamentId.value = id;
-                              listFocusNode.requestFocus();
-                            },
-                            onActivate: openTournament,
-                            loadingId: loadingId.value,
-                            tileKeys: tileKeys.value,
-                            scrollController: listScrollController,
-                          ),
+                          scrollController: listScrollController,
                         ),
+                      );
+                    },
                     loading: () => const _LoadingState(),
                     error:
                         (e, _) => _ErrorState(
@@ -2588,7 +2618,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   List<String> _gameIdsForEventId(String eventId) {
-    final events = ref.read(forYouEventsProvider).events;
+    final events = ref.read(_desktopOrderedForYouEventsProvider).events;
     for (final event in events) {
       if (event.id == eventId) return _gameIdsFor(event);
     }
@@ -2612,7 +2642,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       }
     });
     if (!visible) {
-      _syncSelectionWithEvents(ref.read(forYouEventsProvider).events);
+      _syncSelectionWithEvents(
+        ref.read(_desktopOrderedForYouEventsProvider).events,
+      );
       _persistNavigationBookmark();
     }
   }
@@ -2765,7 +2797,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     // from the highlighted event or board.
     if (event is KeyRepeatEvent) return true;
     if (event is! KeyDownEvent) return false;
-    final events = ref.read(forYouEventsProvider).events;
+    final events = ref.read(_desktopOrderedForYouEventsProvider).events;
     final result = _handleKeyboard(event, events);
     if (result == KeyEventResult.handled) return true;
     // A selection host must never fall back to raw pixel scrolling. That can
@@ -3090,10 +3122,10 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     // the build phase. Without this, calling `_syncSelectionWithEvents`
     // inside `build()` would assert if any downstream codepath ever
     // triggered `setState`.
-    ref.listen<ForYouState>(forYouEventsProvider, (prev, next) {
+    ref.listen<ForYouState>(_desktopOrderedForYouEventsProvider, (prev, next) {
       _syncSelectionWithEvents(next.events);
     });
-    final state = ref.watch(forYouEventsProvider);
+    final state = ref.watch(_desktopOrderedForYouEventsProvider);
     final viewMode = ref.watch(gamesListViewModeProvider);
     final streamingEnabled = ref.watch(
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),
