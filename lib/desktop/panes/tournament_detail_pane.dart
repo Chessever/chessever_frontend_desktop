@@ -176,6 +176,17 @@ class TournamentDetailPane extends HookConsumerWidget {
                                         TournamentDetailSegment.games
                                     ? const TournamentGamesCountLabel()
                                     : null,
+                            trailing:
+                                effectiveSegment ==
+                                        TournamentDetailSegment.games
+                                    ? TournamentGamesHeaderControls(
+                                      tabId: tabId,
+                                      showKnockoutPresentation:
+                                          layout ==
+                                          TournamentDetailLayout
+                                              .individualKnockout,
+                                    )
+                                    : null,
                             onSelect:
                                 (next) =>
                                     ref
@@ -549,6 +560,7 @@ class _SegmentBar extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     this.info,
+    this.trailing,
   });
 
   final List<TournamentDetailSegment> segments;
@@ -559,6 +571,7 @@ class _SegmentBar extends StatelessWidget {
   /// Use for things like a game count that should sit near the active tab
   /// rather than ride along with the right-edge controllers.
   final Widget? info;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -571,25 +584,54 @@ class _SegmentBar extends StatelessWidget {
         color: kBackgroundColor,
         border: Border(bottom: BorderSide(color: kDividerColor)),
       ),
-      child: Row(
-        children: [
-          const SizedBox(width: 16),
-          for (final s in segments)
-            _SegmentTab(
-              label: s.label,
-              selected: s == selected,
-              onTap: () => onSelect(s),
-            ),
-          if (info != null) ...[
-            const SizedBox(width: 16),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 200),
-              child: info!,
-            ),
+      child: TournamentSegmentBarLayout(
+        navigation: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final s in segments)
+              _SegmentTab(
+                label: s.label,
+                selected: s == selected,
+                onTap: () => onSelect(s),
+              ),
           ],
-          const Spacer(),
-        ],
+        ),
+        info: info,
+        trailing: trailing,
       ),
+    );
+  }
+}
+
+@visibleForTesting
+class TournamentSegmentBarLayout extends StatelessWidget {
+  const TournamentSegmentBarLayout({
+    super.key,
+    required this.navigation,
+    this.info,
+    this.trailing,
+  });
+
+  final Widget navigation;
+  final Widget? info;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const SizedBox(width: 16),
+        navigation,
+        if (info != null) ...[
+          const SizedBox(width: 16),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 200),
+            child: info!,
+          ),
+        ],
+        const Spacer(),
+        if (trailing != null) ...[trailing!, const SizedBox(width: 24)],
+      ],
     );
   }
 }

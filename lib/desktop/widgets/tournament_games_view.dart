@@ -630,19 +630,6 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         else ...[
           searchField(padding: const EdgeInsets.fromLTRB(24, 12, 24, 4)),
           const SizedBox(height: 4),
-          _TournamentGamesToolbar(
-            knockoutPresentation:
-                grouped.isKnockoutTournament ? knockoutPresentation : null,
-            onKnockoutPresentationChanged:
-                (next) =>
-                    ref
-                        .read(
-                          tournamentKnockoutGamesPresentationByTabIdProvider(
-                            widget.tabId,
-                          ).notifier,
-                        )
-                        .state = next,
-          ),
           if (grouped.filteredRounds.isEmpty &&
               grouped.matchFormatHeader == null)
             Expanded(
@@ -832,47 +819,15 @@ class _NoSearchResults extends StatelessWidget {
 
 enum _TournamentGamesQuickFilter { all, live }
 
-@visibleForTesting
-class TournamentGamesToolbarLayout extends StatelessWidget {
-  const TournamentGamesToolbarLayout({
+class TournamentGamesHeaderControls extends ConsumerWidget {
+  const TournamentGamesHeaderControls({
     super.key,
-    required this.quickFilter,
-    required this.viewMode,
-    this.knockoutPresentation,
+    required this.tabId,
+    required this.showKnockoutPresentation,
   });
 
-  final Widget quickFilter;
-  final Widget? knockoutPresentation;
-  final Widget viewMode;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-      child: Row(
-        children: [
-          quickFilter,
-          if (knockoutPresentation case final knockoutPresentation?) ...[
-            const SizedBox(width: 10),
-            knockoutPresentation,
-          ],
-          const Spacer(),
-          viewMode,
-        ],
-      ),
-    );
-  }
-}
-
-class _TournamentGamesToolbar extends ConsumerWidget {
-  const _TournamentGamesToolbar({
-    required this.knockoutPresentation,
-    required this.onKnockoutPresentationChanged,
-  });
-
-  final DesktopKnockoutGamesPresentation? knockoutPresentation;
-  final ValueChanged<DesktopKnockoutGamesPresentation>
-  onKnockoutPresentationChanged;
+  final String tabId;
+  final bool showKnockoutPresentation;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -883,56 +838,76 @@ class _TournamentGamesToolbar extends ConsumerWidget {
         displayMode == GameDisplayMode.hideFinishedGames
             ? _TournamentGamesQuickFilter.live
             : _TournamentGamesQuickFilter.all;
+    final knockoutPresentation =
+        showKnockoutPresentation
+            ? ref.watch(
+              tournamentKnockoutGamesPresentationByTabIdProvider(tabId),
+            )
+            : null;
 
-    return TournamentGamesToolbarLayout(
-      quickFilter: DesktopSegmentedTabs<_TournamentGamesQuickFilter>(
-        tabs: const [
-          DesktopSegmentedTab(
-            value: _TournamentGamesQuickFilter.all,
-            label: 'All',
-            icon: Icons.format_list_bulleted_rounded,
-          ),
-          DesktopSegmentedTab(
-            value: _TournamentGamesQuickFilter.live,
-            label: 'Live',
-            icon: Icons.radio_button_checked_rounded,
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DesktopSegmentedTabs<_TournamentGamesQuickFilter>(
+          tabs: const [
+            DesktopSegmentedTab(
+              value: _TournamentGamesQuickFilter.all,
+              label: 'All',
+              icon: Icons.format_list_bulleted_rounded,
+            ),
+            DesktopSegmentedTab(
+              value: _TournamentGamesQuickFilter.live,
+              label: 'Live',
+              icon: Icons.radio_button_checked_rounded,
+            ),
+          ],
+          selected: selectedQuickFilter,
+          onChanged: (next) {
+            if (next == selectedQuickFilter) return;
+            switch (next) {
+              case _TournamentGamesQuickFilter.all:
+                unawaited(
+                  ref.read(gamesTourScreenProvider.notifier).showAllGames(),
+                );
+              case _TournamentGamesQuickFilter.live:
+                unawaited(
+                  ref
+                      .read(gamesTourScreenProvider.notifier)
+                      .hideFinishedGames(),
+                );
+            }
+          },
+        ),
+        if (knockoutPresentation != null) ...[
+          const SizedBox(width: 10),
+          DesktopSegmentedTabs<DesktopKnockoutGamesPresentation>(
+            tabs: const [
+              DesktopSegmentedTab(
+                value: DesktopKnockoutGamesPresentation.matchSeries,
+                label: 'Match series',
+                icon: Icons.account_tree_outlined,
+              ),
+              DesktopSegmentedTab(
+                value: DesktopKnockoutGamesPresentation.allBoards,
+                label: 'All boards',
+                icon: Icons.grid_view_outlined,
+              ),
+            ],
+            selected: knockoutPresentation,
+            onChanged:
+                (next) =>
+                    ref
+                        .read(
+                          tournamentKnockoutGamesPresentationByTabIdProvider(
+                            tabId,
+                          ).notifier,
+                        )
+                        .state = next,
           ),
         ],
-        selected: selectedQuickFilter,
-        onChanged: (next) {
-          if (next == selectedQuickFilter) return;
-          switch (next) {
-            case _TournamentGamesQuickFilter.all:
-              unawaited(
-                ref.read(gamesTourScreenProvider.notifier).showAllGames(),
-              );
-            case _TournamentGamesQuickFilter.live:
-              unawaited(
-                ref.read(gamesTourScreenProvider.notifier).hideFinishedGames(),
-              );
-          }
-        },
-      ),
-      knockoutPresentation:
-          knockoutPresentation == null
-              ? null
-              : DesktopSegmentedTabs<DesktopKnockoutGamesPresentation>(
-                tabs: const [
-                  DesktopSegmentedTab(
-                    value: DesktopKnockoutGamesPresentation.matchSeries,
-                    label: 'Match series',
-                    icon: Icons.account_tree_outlined,
-                  ),
-                  DesktopSegmentedTab(
-                    value: DesktopKnockoutGamesPresentation.allBoards,
-                    label: 'All boards',
-                    icon: Icons.grid_view_outlined,
-                  ),
-                ],
-                selected: knockoutPresentation!,
-                onChanged: onKnockoutPresentationChanged,
-              ),
-      viewMode: const GameViewModeToggle(),
+        const SizedBox(width: 10),
+        const GameViewModeToggle(),
+      ],
     );
   }
 }

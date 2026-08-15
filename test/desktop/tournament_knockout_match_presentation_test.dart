@@ -1,4 +1,5 @@
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
@@ -228,24 +229,35 @@ void main() {
       expect(header.startsAt, DateTime.utc(2026, 8, 15, 11, 40));
     });
 
-    testWidgets('keeps filters and knockout presentation on one toolbar row', (
+    testWidgets('keeps all game controls in the event segment bar', (
       tester,
     ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1600, 900);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
             body: SizedBox(
-              width: 900,
-              child: TournamentGamesToolbarLayout(
-                quickFilter: Row(
+              width: 1400,
+              child: TournamentSegmentBarLayout(
+                navigation: Row(
                   mainAxisSize: MainAxisSize.min,
-                  children: [Text('All'), Text('Live')],
+                  children: [Text('About'), Text('Games'), Text('Bracket')],
                 ),
-                knockoutPresentation: Row(
+                info: Text('27 games'),
+                trailing: Row(
                   mainAxisSize: MainAxisSize.min,
-                  children: [Text('Match series'), Text('All boards')],
+                  children: [
+                    Text('All'),
+                    Text('Live'),
+                    Text('Match series'),
+                    Text('All boards'),
+                    Icon(Icons.grid_view_rounded),
+                  ],
                 ),
-                viewMode: Icon(Icons.grid_view_rounded),
               ),
             ),
           ),
@@ -253,11 +265,14 @@ void main() {
       );
 
       expect(find.text('VIEW'), findsNothing);
+      final games = tester.getRect(find.text('Games'));
       final all = tester.getRect(find.text('All'));
       final matchSeries = tester.getRect(find.text('Match series'));
       final viewMode = tester.getRect(find.byIcon(Icons.grid_view_rounded));
+      expect(games.right, lessThan(all.left));
       expect(all.left, lessThan(matchSeries.left));
       expect(matchSeries.right, lessThan(viewMode.left));
+      expect(games.center.dy, closeTo(all.center.dy, 0.5));
       expect(all.center.dy, closeTo(matchSeries.center.dy, 0.5));
       expect(matchSeries.center.dy, closeTo(viewMode.center.dy, 0.5));
     });
