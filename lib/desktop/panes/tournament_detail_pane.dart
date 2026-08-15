@@ -176,11 +176,6 @@ class TournamentDetailPane extends HookConsumerWidget {
                                         TournamentDetailSegment.games
                                     ? const TournamentGamesCountLabel()
                                     : null,
-                            trailing:
-                                effectiveSegment ==
-                                        TournamentDetailSegment.games
-                                    ? const TournamentGamesHeaderControls()
-                                    : null,
                             onSelect:
                                 (next) =>
                                     ref
@@ -554,7 +549,6 @@ class _SegmentBar extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     this.info,
-    this.trailing,
   });
 
   final List<TournamentDetailSegment> segments;
@@ -565,7 +559,6 @@ class _SegmentBar extends StatelessWidget {
   /// Use for things like a game count that should sit near the active tab
   /// rather than ride along with the right-edge controllers.
   final Widget? info;
-  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -589,17 +582,12 @@ class _SegmentBar extends StatelessWidget {
             ),
           if (info != null) ...[
             const SizedBox(width: 16),
-            // Constrain info to its intrinsic width so the Spacer below
-            // can claim 100% of the remaining row, anchoring trailing to
-            // the far right. A `Flexible` here splits remaining width
-            // 50/50 with the Spacer and parks trailing near the middle.
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 200),
               child: info!,
             ),
           ],
           const Spacer(),
-          if (trailing != null) ...[trailing!, const SizedBox(width: 24)],
         ],
       ),
     );

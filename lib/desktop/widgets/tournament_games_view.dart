@@ -630,19 +630,19 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         else ...[
           searchField(padding: const EdgeInsets.fromLTRB(24, 12, 24, 4)),
           const SizedBox(height: 4),
-          if (grouped.isKnockoutTournament)
-            _KnockoutPresentationSwitcher(
-              selected: knockoutPresentation,
-              onChanged:
-                  (next) =>
-                      ref
-                          .read(
-                            tournamentKnockoutGamesPresentationByTabIdProvider(
-                              widget.tabId,
-                            ).notifier,
-                          )
-                          .state = next,
-            ),
+          _TournamentGamesToolbar(
+            knockoutPresentation:
+                grouped.isKnockoutTournament ? knockoutPresentation : null,
+            onKnockoutPresentationChanged:
+                (next) =>
+                    ref
+                        .read(
+                          tournamentKnockoutGamesPresentationByTabIdProvider(
+                            widget.tabId,
+                          ).notifier,
+                        )
+                        .state = next,
+          ),
           if (grouped.filteredRounds.isEmpty &&
               grouped.matchFormatHeader == null)
             Expanded(
@@ -832,14 +832,18 @@ class _NoSearchResults extends StatelessWidget {
 
 enum _TournamentGamesQuickFilter { all, live }
 
-class _KnockoutPresentationSwitcher extends StatelessWidget {
-  const _KnockoutPresentationSwitcher({
-    required this.selected,
-    required this.onChanged,
+@visibleForTesting
+class TournamentGamesToolbarLayout extends StatelessWidget {
+  const TournamentGamesToolbarLayout({
+    super.key,
+    required this.quickFilter,
+    required this.viewMode,
+    this.knockoutPresentation,
   });
 
-  final DesktopKnockoutGamesPresentation selected;
-  final ValueChanged<DesktopKnockoutGamesPresentation> onChanged;
+  final Widget quickFilter;
+  final Widget? knockoutPresentation;
+  final Widget viewMode;
 
   @override
   Widget build(BuildContext context) {
@@ -847,34 +851,88 @@ class _KnockoutPresentationSwitcher extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
       child: Row(
         children: [
-          const Text(
-            'VIEW',
-            style: TextStyle(
-              color: kWhiteColor70,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.55,
-            ),
-          ),
-          const SizedBox(width: 10),
-          DesktopSegmentedTabs<DesktopKnockoutGamesPresentation>(
-            tabs: const [
-              DesktopSegmentedTab(
-                value: DesktopKnockoutGamesPresentation.matchSeries,
-                label: 'Match series',
-                icon: Icons.account_tree_outlined,
-              ),
-              DesktopSegmentedTab(
-                value: DesktopKnockoutGamesPresentation.allBoards,
-                label: 'All boards',
-                icon: Icons.grid_view_outlined,
-              ),
-            ],
-            selected: selected,
-            onChanged: onChanged,
-          ),
+          quickFilter,
+          if (knockoutPresentation case final knockoutPresentation?) ...[
+            const SizedBox(width: 10),
+            knockoutPresentation,
+          ],
+          const Spacer(),
+          viewMode,
         ],
       ),
+    );
+  }
+}
+
+class _TournamentGamesToolbar extends ConsumerWidget {
+  const _TournamentGamesToolbar({
+    required this.knockoutPresentation,
+    required this.onKnockoutPresentationChanged,
+  });
+
+  final DesktopKnockoutGamesPresentation? knockoutPresentation;
+  final ValueChanged<DesktopKnockoutGamesPresentation>
+  onKnockoutPresentationChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final displayMode =
+        ref.watch(gamesTourScreenProvider).valueOrNull?.gameDisplayMode ??
+        GameDisplayMode.all;
+    final selectedQuickFilter =
+        displayMode == GameDisplayMode.hideFinishedGames
+            ? _TournamentGamesQuickFilter.live
+            : _TournamentGamesQuickFilter.all;
+
+    return TournamentGamesToolbarLayout(
+      quickFilter: DesktopSegmentedTabs<_TournamentGamesQuickFilter>(
+        tabs: const [
+          DesktopSegmentedTab(
+            value: _TournamentGamesQuickFilter.all,
+            label: 'All',
+            icon: Icons.format_list_bulleted_rounded,
+          ),
+          DesktopSegmentedTab(
+            value: _TournamentGamesQuickFilter.live,
+            label: 'Live',
+            icon: Icons.radio_button_checked_rounded,
+          ),
+        ],
+        selected: selectedQuickFilter,
+        onChanged: (next) {
+          if (next == selectedQuickFilter) return;
+          switch (next) {
+            case _TournamentGamesQuickFilter.all:
+              unawaited(
+                ref.read(gamesTourScreenProvider.notifier).showAllGames(),
+              );
+            case _TournamentGamesQuickFilter.live:
+              unawaited(
+                ref.read(gamesTourScreenProvider.notifier).hideFinishedGames(),
+              );
+          }
+        },
+      ),
+      knockoutPresentation:
+          knockoutPresentation == null
+              ? null
+              : DesktopSegmentedTabs<DesktopKnockoutGamesPresentation>(
+                tabs: const [
+                  DesktopSegmentedTab(
+                    value: DesktopKnockoutGamesPresentation.matchSeries,
+                    label: 'Match series',
+                    icon: Icons.account_tree_outlined,
+                  ),
+                  DesktopSegmentedTab(
+                    value: DesktopKnockoutGamesPresentation.allBoards,
+                    label: 'All boards',
+                    icon: Icons.grid_view_outlined,
+                  ),
+                ],
+                selected: knockoutPresentation!,
+                onChanged: onKnockoutPresentationChanged,
+              ),
+      viewMode: const GameViewModeToggle(),
     );
   }
 }
@@ -926,62 +984,6 @@ class TournamentGamesCountLabel extends ConsumerWidget {
         fontSize: 12,
         fontWeight: FontWeight.w600,
       ),
-    );
-  }
-}
-
-/// Right-aligned controllers for the Games segment: All/Live quick filter
-/// + grid/list/compact view toggle. Count moved to
-/// [TournamentGamesCountLabel] so this strip hugs the right edge of the
-/// segment bar with no leading text padding it off-axis.
-class TournamentGamesHeaderControls extends ConsumerWidget {
-  const TournamentGamesHeaderControls({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final displayMode =
-        ref.watch(gamesTourScreenProvider).valueOrNull?.gameDisplayMode ??
-        GameDisplayMode.all;
-    final selected =
-        displayMode == GameDisplayMode.hideFinishedGames
-            ? _TournamentGamesQuickFilter.live
-            : _TournamentGamesQuickFilter.all;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        DesktopSegmentedTabs<_TournamentGamesQuickFilter>(
-          tabs: const [
-            DesktopSegmentedTab(
-              value: _TournamentGamesQuickFilter.all,
-              label: 'All',
-              icon: Icons.format_list_bulleted_rounded,
-            ),
-            DesktopSegmentedTab(
-              value: _TournamentGamesQuickFilter.live,
-              label: 'Live',
-              icon: Icons.radio_button_checked_rounded,
-            ),
-          ],
-          selected: selected,
-          onChanged: (next) {
-            if (next == selected) return;
-            switch (next) {
-              case _TournamentGamesQuickFilter.all:
-                unawaited(
-                  ref.read(gamesTourScreenProvider.notifier).showAllGames(),
-                );
-              case _TournamentGamesQuickFilter.live:
-                unawaited(
-                  ref
-                      .read(gamesTourScreenProvider.notifier)
-                      .hideFinishedGames(),
-                );
-            }
-          },
-        ),
-        const SizedBox(width: 10),
-        const GameViewModeToggle(),
-      ],
     );
   }
 }

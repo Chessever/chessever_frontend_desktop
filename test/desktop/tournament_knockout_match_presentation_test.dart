@@ -228,6 +228,40 @@ void main() {
       expect(header.startsAt, DateTime.utc(2026, 8, 15, 11, 40));
     });
 
+    testWidgets('keeps filters and knockout presentation on one toolbar row', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 900,
+              child: TournamentGamesToolbarLayout(
+                quickFilter: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [Text('All'), Text('Live')],
+                ),
+                knockoutPresentation: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [Text('Match series'), Text('All boards')],
+                ),
+                viewMode: Icon(Icons.grid_view_rounded),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('VIEW'), findsNothing);
+      final all = tester.getRect(find.text('All'));
+      final matchSeries = tester.getRect(find.text('Match series'));
+      final viewMode = tester.getRect(find.byIcon(Icons.grid_view_rounded));
+      expect(all.left, lessThan(matchSeries.left));
+      expect(matchSeries.right, lessThan(viewMode.left));
+      expect(all.center.dy, closeTo(matchSeries.center.dy, 0.5));
+      expect(matchSeries.center.dy, closeTo(viewMode.center.dy, 0.5));
+    });
+
     testWidgets(
       'keeps identity colors and places decisive scores toward the center',
       (tester) async {
