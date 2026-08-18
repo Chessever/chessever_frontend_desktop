@@ -4930,7 +4930,6 @@ class _EventRoundTable extends StatelessWidget {
         id: 'matchup',
         label: 'GAME',
         flex: 1,
-        minWidth: 210,
         cellBuilder:
             (_, game) => _EventGameMatchupCell(
               game: game,
@@ -4952,9 +4951,10 @@ class _EventRoundTable extends StatelessWidget {
             // can't own internal vertical scrolling. `useFixedRowAlignment` flips
             // the body to a single [Table] (no inner ListView) — column widths
             // align *across* rows too, which is what the user expects within a
-            // round.
+            // round. The player identity is the flexible region at narrow rail
+            // widths, so it must shrink before the fixed result/clock trailing
+            // column can be pushed outside the viewport.
             useFixedRowAlignment: true,
-            minTableWidth: 280,
             scrollController: verticalController,
             horizontalScrollController: horizontalController,
             showHeader: false,
@@ -5539,60 +5539,70 @@ class _PlayerCell extends StatelessWidget {
     final titleText = title.trim();
     final ratingText = rating > 0 ? rating.toString() : '';
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        BackfilledFederationFlag(
-          federation: federation,
-          fideId: fideId,
-          width: 16,
-          height: 11,
-          borderRadius: BorderRadius.circular(2),
-        ),
-        const SizedBox(width: 4),
-        if (titleText.isNotEmpty) ...[
-          Text(
-            titleText,
-            maxLines: 1,
-            overflow: TextOverflow.fade,
-            softWrap: false,
-            style: const TextStyle(
-              color: kPrimaryColor,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.2,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Elo is secondary metadata. At compact rail widths, drop it before
+        // taking characters away from the player's name; the clock/result is
+        // reserved independently by _EventGamePlayerLine.
+        final showRating =
+            ratingText.isNotEmpty &&
+            (!constraints.maxWidth.isFinite || constraints.maxWidth >= 160);
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            BackfilledFederationFlag(
+              federation: federation,
+              fideId: fideId,
+              width: 16,
+              height: 11,
+              borderRadius: BorderRadius.circular(2),
             ),
-          ),
-          const SizedBox(width: 3),
-        ],
-        Flexible(
-          child: Text(
-            playerName,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: selected ? kWhiteColor : kWhiteColor70,
-              fontSize: 12.5,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+            const SizedBox(width: 4),
+            if (titleText.isNotEmpty) ...[
+              Text(
+                titleText,
+                maxLines: 1,
+                overflow: TextOverflow.fade,
+                softWrap: false,
+                style: const TextStyle(
+                  color: kPrimaryColor,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.2,
+                ),
+              ),
+              const SizedBox(width: 3),
+            ],
+            Flexible(
+              child: Text(
+                playerName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected ? kWhiteColor : kWhiteColor70,
+                  fontSize: 12.5,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
             ),
-          ),
-        ),
-        if (ratingText.isNotEmpty) ...[
-          const SizedBox(width: 4),
-          Text(
-            ratingText,
-            maxLines: 1,
-            overflow: TextOverflow.fade,
-            softWrap: false,
-            style: const TextStyle(
-              color: kLightGreyColor,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              fontFeatures: [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      ],
+            if (showRating) ...[
+              const SizedBox(width: 4),
+              Text(
+                ratingText,
+                maxLines: 1,
+                overflow: TextOverflow.fade,
+                softWrap: false,
+                style: const TextStyle(
+                  color: kLightGreyColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }

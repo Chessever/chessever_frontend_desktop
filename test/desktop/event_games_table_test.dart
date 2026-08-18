@@ -556,6 +556,48 @@ void main() {
     );
   });
 
+  testWidgets(
+    'narrow event rail keeps result visible and shrinks player name',
+    (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          BoardTabGameArgs(
+            gameId: 'narrow-result-game',
+            pgn: '1. e4 e5 1-0',
+            label: 'Narrow result game',
+            whiteName: 'Very Long White Player Name',
+            blackName: 'Very Long Black Player Name',
+            tournamentTitle: 'Event',
+            eventGames: [
+              _summary(
+                id: 'narrow-result-game',
+                roundLabel: 'Round 1',
+                whitePlayer: 'Very Long White Player Name',
+                blackPlayer: 'Very Long Black Player Name',
+                whiteRating: 2875,
+                blackRating: 2764,
+                status: GameStatus.whiteWins,
+              ),
+            ],
+            gameListSelectedId: 'narrow-result-game',
+          ),
+          railWidth: 220,
+        ),
+      );
+      await tester.pump();
+
+      final trailing = find.byKey(
+        const Key('event-game-narrow-result-game-white-trailing'),
+      );
+      expect(find.text('1'), findsOneWidget);
+      expect(find.text('Very Long White Player Name'), findsOneWidget);
+      expect(find.text('2875'), findsNothing);
+      expect(find.text('2764'), findsNothing);
+      expect(tester.getSize(trailing).width, 64);
+      expect(tester.getTopRight(trailing).dx, lessThanOrEqualTo(220));
+    },
+  );
+
   testWidgets('event rail title has no decorative primary bar', (tester) async {
     await tester.pumpWidget(
       _wrap(
@@ -2693,6 +2735,7 @@ Widget _wrap(
   BoardTabGameArgs args, {
   TournamentGamesState? legacy,
   List<Override> overrides = const [],
+  double railWidth = EventGamesTable.width,
 }) {
   return ProviderScope(
     overrides: [
@@ -2720,11 +2763,11 @@ Widget _wrap(
       ),
       dateTimeProvider.overrideWith((ref) => Stream.value(DateTime.now())),
     ],
-    child: const MaterialApp(
+    child: MaterialApp(
       home: Scaffold(
         body: SizedBox(
-          width: EventGamesTable.width,
-          child: EventGamesTable(tabId: 'tournaments-default'),
+          width: railWidth,
+          child: const EventGamesTable(tabId: 'tournaments-default'),
         ),
       ),
     ),
