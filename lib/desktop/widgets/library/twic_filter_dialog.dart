@@ -7,7 +7,37 @@ import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/screens/library/widgets/library_gamebase_filter_dialog.dart'
     show GamebaseFilter;
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/widgets/game_filter/eco_filter_dropdown.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
+
+/// Builds the TWIC filter the desktop dialog applies (and Reset dirties against).
+///
+/// Kept as a top-level helper so tests can prove ECO / Online survive apply.
+@visibleForTesting
+GamebaseFilter buildTwicFilterDraft(
+  GamebaseFilter initial, {
+  GameResultFilter? result,
+  GameColorFilter? color,
+  GameTimeControlFilter? timeControl,
+  GameOnlineFilter? isOnline,
+  GameEcoFilter? eco,
+  int? minYear,
+  int? maxYear,
+  int? minRating,
+  int? maxRating,
+}) {
+  return initial.copyWith(
+    result: result,
+    color: color,
+    timeControl: timeControl,
+    isOnline: isOnline,
+    eco: eco,
+    minYear: minYear,
+    maxYear: maxYear,
+    minRating: minRating,
+    maxRating: maxRating,
+  );
+}
 
 /// Forui-styled filter dialog for the desktop TWIC database.
 ///
@@ -53,6 +83,8 @@ class _TwicFilterDialogState extends State<_TwicFilterDialog> {
   late GameResultFilter _result;
   late GameColorFilter _color;
   late GameTimeControlFilter _timeControl;
+  late GameOnlineFilter _isOnline;
+  late GameEcoFilter _eco;
   late RangeValues _yearRange;
   late RangeValues _ratingRange;
 
@@ -64,6 +96,8 @@ class _TwicFilterDialogState extends State<_TwicFilterDialog> {
     _result = widget.initial.result;
     _color = widget.initial.color;
     _timeControl = widget.initial.timeControl;
+    _isOnline = widget.initial.isOnline;
+    _eco = widget.initial.eco;
     _yearRange = RangeValues(
       widget.initial.minYear.toDouble(),
       widget.initial.maxYear.toDouble(),
@@ -86,10 +120,13 @@ class _TwicFilterDialogState extends State<_TwicFilterDialog> {
   }
 
   GamebaseFilter _build() {
-    return widget.initial.copyWith(
+    return buildTwicFilterDraft(
+      widget.initial,
       result: _result,
       color: _color,
       timeControl: _timeControl,
+      isOnline: _isOnline,
+      eco: _eco,
       minYear: _yearRange.start.round(),
       maxYear: _yearRange.end.round(),
       minRating: _ratingRange.start.round(),
@@ -102,6 +139,8 @@ class _TwicFilterDialogState extends State<_TwicFilterDialog> {
       _result = GameResultFilter.all;
       _color = GameColorFilter.all;
       _timeControl = GameTimeControlFilter.all;
+      _isOnline = GameOnlineFilter.all;
+      _eco = GameEcoFilter.all;
       _yearRange = RangeValues(
         GameFilter.defaultMinYear.toDouble(),
         _maxYear.toDouble(),
@@ -129,7 +168,7 @@ class _TwicFilterDialogState extends State<_TwicFilterDialog> {
           child: Center(
             child: Container(
               width: 460,
-              constraints: const BoxConstraints(maxHeight: 620),
+              constraints: const BoxConstraints(maxHeight: 720),
               decoration: BoxDecoration(
                 color: kBlack2Color,
                 borderRadius: BorderRadius.circular(10),
@@ -176,6 +215,21 @@ class _TwicFilterDialogState extends State<_TwicFilterDialog> {
                             selected: _timeControl,
                             labelOf: (v) => v.displayText,
                             onChanged: (v) => setState(() => _timeControl = v),
+                          ),
+                          const SizedBox(height: 18),
+                          _SegmentSection<GameOnlineFilter>(
+                            label: 'Format',
+                            options: GameOnlineFilter.values,
+                            selected: _isOnline,
+                            labelOf: (v) => v.displayText,
+                            onChanged: (v) => setState(() => _isOnline = v),
+                          ),
+                          const SizedBox(height: 18),
+                          const _SectionLabel('Opening'),
+                          const SizedBox(height: 8),
+                          EcoFilterDropdown(
+                            value: _eco,
+                            onChanged: (v) => setState(() => _eco = v),
                           ),
                           const SizedBox(height: 18),
                           _RangeSection(
