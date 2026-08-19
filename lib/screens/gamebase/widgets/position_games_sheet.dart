@@ -84,23 +84,14 @@ class _PositionGamesSheetState extends ConsumerState<PositionGamesSheet> {
   }
 
   GamebasePositionGamesQuery _buildQuery(int pageNumber) {
-    final timeControlFilter =
-        widget.filters.timeControls.isNotEmpty
-            ? widget.filters.timeControls.first
-            : null;
-    final playerIdFilter =
-        widget.filters.playerIds.isNotEmpty
-            ? widget.filters.playerIds.first
-            : null;
-
     return GamebasePositionGamesQuery(
       fen: widget.fen,
       moves: widget.moves,
       uci: widget.uci,
-      timeControl: timeControlFilter,
-      playerId: playerIdFilter,
-      color: widget.filters.playerColor?.name,
-      result: widget.filters.gameResult?.apiValue,
+      timeControl: widget.filters.requestTimeControl,
+      playerId: widget.filters.requestPlayerId,
+      color: widget.filters.requestColor,
+      result: widget.filters.requestResult,
       isOnline: widget.filters.isOnline,
       minRating: widget.filters.minRating,
       maxRating: widget.filters.maxRating,

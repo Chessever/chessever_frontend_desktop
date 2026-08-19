@@ -153,6 +153,9 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   bool _pendingFavoritePlayerOrderHydration = false;
   bool _isRefreshingVisibleTopGameSnapshots = false;
   final Set<String> _handledFinishedTopGameRefreshes = <String>{};
+  // In-flight `hydrateEvents` ids, so repeated live-first recomputes cannot
+  // stack duplicate fetches for the same event.
+  final Set<String> _hydratingEventIds = <String>{};
 
   ForYouNotifier(this.ref) : super(const ForYouState(isLoading: true)) {
     _setupListeners();
@@ -375,6 +378,62 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
 
   void _logErrorToSentry(dynamic error, StackTrace stackTrace) {
     unawaited(ref.read(errorLoggerProvider).logError(error, stackTrace));
+  }
+
+  /// Loads events the paged feed has not fetched yet, by id.
+  ///
+  /// For You pages 20 events at a time ordered by rating, so an event the user
+  /// needs to see — a live one, when Desktop's "Live first" is on — can sit far
+  /// below the loaded window. Display-time reordering cannot promote a card
+  /// that was never fetched, so pull those events in through the same pipeline
+  /// a page uses (card models + top-game snapshots) and append them; the
+  /// display order decides where they land.
+  Future<void> hydrateEvents(Iterable<String> eventIds) async {
+    final requested = eventIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (requested.isEmpty) return;
+
+    final loadedIds = state.events.map((event) => event.id).toSet();
+    final missing = requested
+        .difference(loadedIds)
+        .difference(_hydratingEventIds);
+    if (missing.isEmpty) return;
+
+    _hydratingEventIds.addAll(missing);
+    try {
+      final liveIds = await _getLiveIdsSnapshot();
+      final broadcasts = await ref
+          .read(groupBroadcastRepositoryProvider)
+          .getGroupBroadcastsByIdsOrNames(missing.toList(growable: false));
+      if (!mounted || broadcasts.isEmpty) return;
+
+      final models =
+          broadcasts
+              .map((b) => GroupEventCardModel.fromGroupBroadcast(b, liveIds))
+              .toList(growable: false);
+
+      await _prefetchTopGameSnapshots(models, replace: false);
+      if (!mounted) return;
+
+      final presentIds = state.events.map((event) => event.id).toSet();
+      final additions =
+          models
+              .where((model) => !presentIds.contains(model.id))
+              .toList(growable: false);
+      if (additions.isEmpty) return;
+
+      debugPrint('[ForYou] Hydrated ${additions.length} off-page event(s)');
+      state = state.copyWith(
+        events: [...state.events, ..._sortPageOnceForSession(additions)],
+      );
+    } catch (e, stack) {
+      debugPrint('[ForYou] Event hydration failed: $e');
+      _logErrorToSentry(e, stack);
+    } finally {
+      _hydratingEventIds.removeAll(missing);
+    }
   }
 
   Future<List<String>> _getLiveIdsSnapshot() async {

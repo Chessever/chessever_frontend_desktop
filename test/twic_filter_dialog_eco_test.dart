@@ -51,4 +51,15 @@ void main() {
     expect(applied.isOnline, GameOnlineFilter.online);
     expect(applied.result, GameResultFilter.whiteWins);
   });
+
+  test('Reset stays enabled for an already-applied ECO filter', () {
+    final defaults = GamebaseFilter();
+    final applied = GamebaseFilter(eco: GameEcoFilter.forCode('A49'));
+    final reopened = buildTwicFilterDraft(applied);
+
+    expect(reopened, applied);
+    expect(twicFilterCanReset(defaults), isFalse);
+    expect(twicFilterCanReset(applied), isTrue);
+    expect(twicFilterCanReset(reopened), isTrue);
+  });
 }

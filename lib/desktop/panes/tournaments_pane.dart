@@ -102,8 +102,13 @@ final _desktopOrderedForYouEventsProvider = Provider.autoDispose<ForYouState>((
 ) {
   final state = ref.watch(forYouEventsProvider);
   final liveFirst = ref.watch(tournamentLiveFirstProvider);
+  final liveGameEventIds = ref.watch(tournamentLiveGameEventIdsProvider);
   return ForYouState(
-    events: orderTournamentEventsForDisplay(state.events, liveFirst: liveFirst),
+    events: orderTournamentEventsForDisplay(
+      state.events,
+      liveFirst: liveFirst,
+      liveGameEventIds: liveGameEventIds,
+    ),
     isLoading: state.isLoading,
     hasMore: state.hasMore,
     error: state.error,
@@ -138,6 +143,11 @@ class TournamentsPane extends HookConsumerWidget {
             : currentPastFilterState;
     final activeFilterCount = _activeEventFilterCount(selectedFilterState);
     final liveFirst = ref.watch(tournamentLiveFirstProvider);
+    final liveGameEventIds = ref.watch(tournamentLiveGameEventIdsProvider);
+    // Pulls live events the For You feed has not paged in yet into the feed
+    // ahead of any tap, so toggling Live first is a pure in-memory reorder
+    // instead of waiting on two round trips.
+    ref.watch(tournamentLiveEventPrefetchProvider);
     final globalSearchQuery = ref.watch(desktopGlobalSearchQueryProvider);
     // Stable per-tournament-id GlobalKeys so we can `Scrollable.ensureVisible`
     // the highlighted row when the user navigates with the arrow keys.
@@ -294,6 +304,7 @@ class TournamentsPane extends HookConsumerWidget {
                                   selectedCategory,
                                 ) &&
                                 liveFirst,
+                            liveGameEventIds: liveGameEventIds,
                           );
                       return _TournamentEventGridKeyboardHost(
                         focusNode: listFocusNode,
@@ -1761,8 +1772,7 @@ class _TournamentEventGridKeyboardHostState
   bool _handleGlobalKeyboard(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
     final key = event.logicalKey;
-    final isRelevant =
-        _isGridNavigationKey(key) || _isActivationKey(key);
+    final isRelevant = _isGridNavigationKey(key) || _isActivationKey(key);
     // Inactive tabs stay mounted under TickerMode(false). Must not steal
     // arrow/Page/Home/End from the active pane (For You activeId /
     // PaneKeyboardScroll TickerMode contract).
@@ -1810,9 +1820,7 @@ class _TournamentEventGridKeyboardHostState
       return KeyEventResult.ignored;
     }
 
-    final tournamentIds = [
-      for (final tournament in tournaments) tournament.id,
-    ];
+    final tournamentIds = [for (final tournament in tournaments) tournament.id];
     final base = resolveTournamentEventGridSelectionIndex(
       ids: tournamentIds,
       selectedId: widget.selectedId,
@@ -1839,8 +1847,7 @@ class _TournamentEventGridKeyboardHostState
       return KeyEventResult.handled;
     }
 
-    final paneWidth =
-        context.size?.width ?? MediaQuery.sizeOf(context).width;
+    final paneWidth = context.size?.width ?? MediaQuery.sizeOf(context).width;
     final columns = calculateTournamentEventGridColumns(paneWidth);
     final intent = switch (key) {
       LogicalKeyboardKey.arrowRight =>

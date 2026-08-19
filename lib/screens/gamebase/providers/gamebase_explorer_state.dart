@@ -151,6 +151,19 @@ class GamebaseFilters with GamebaseFiltersMappable {
   bool get hasCustomSort =>
       sortBy != GamebaseSortField.date ||
       sortDirection != GamebaseSortDirection.desc;
+
+  /// Time control sent on explorer aggregates/games requests.
+  TimeControl? get requestTimeControl =>
+      timeControls.isNotEmpty ? timeControls.first : null;
+
+  /// First selected player id, if any.
+  String? get requestPlayerId => playerIds.isNotEmpty ? playerIds.first : null;
+
+  /// API color (`white` / `black`) or null for both sides.
+  String? get requestColor => playerColor?.name;
+
+  /// API result (`W` / `B` / `D`) or null for all results.
+  String? get requestResult => gameResult?.apiValue;
 }
 
 /// State for the Gamebase explorer screen.

@@ -202,7 +202,24 @@ class _StrictLiveGroupBroadcastResolver {
     required List<String> liveRoundIds,
   }) async {
     if (liveRoundIds.isEmpty) {
-      return const <String>[];
+      // The For You Live filter uses settings.live_group_broadcast_ids
+      // directly. Keep that list when live_round_ids is empty so Live first
+      // and the Current-tab Live filter see the same events.
+      return List<String>.unmodifiable(
+        fallbackConfiguredLiveGroupBroadcastIds(configuredLiveEntries),
+      );
+    }
+
+    try {
+      final rpcIds = await gameRepository.getStrictLiveGroupBroadcastIds(
+        liveRoundIds: liveRoundIds,
+        staleAfterSeconds: liveIndicatorStaleAfter.inSeconds,
+      );
+      return List<String>.unmodifiable(rpcIds);
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[StrictLiveEvents] live-id RPC failed; using client sweep: $error\n$stackTrace',
+      );
     }
 
     final liveRounds = await roundRepository.getRoundsByIds(liveRoundIds);
@@ -253,6 +270,16 @@ class _StrictLiveGroupBroadcastResolver {
       latestMoveTimesByRoundId: latestMoveTimesByRoundId,
     );
   }
+}
+
+@visibleForTesting
+List<String> fallbackConfiguredLiveGroupBroadcastIds(
+  Iterable<String> configuredLiveEntries,
+) {
+  return configuredLiveEntries
+      .map((id) => id.trim())
+      .where((id) => id.isNotEmpty)
+      .toList(growable: false);
 }
 
 @visibleForTesting

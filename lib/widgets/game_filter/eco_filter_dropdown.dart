@@ -241,39 +241,42 @@ class _EcoFilterDropdownState extends State<EcoFilterDropdown>
           bottom: BorderSide(color: kDividerColor.withValues(alpha: 0.5)),
         ),
       ),
-      child: TextField(
-        controller: _searchController,
-        focusNode: _searchFocusNode,
-        onChanged: (value) => setState(() => _searchQuery = value),
-        style: AppTypography.textSmMedium.copyWith(color: kWhiteColor),
-        decoration: InputDecoration(
-          hintText: 'Search',
-          hintStyle: AppTypography.textSmRegular.copyWith(
-            color: kSecondaryTextColor.withValues(alpha: 0.6),
+      child: Material(
+        type: MaterialType.transparency,
+        child: TextField(
+          controller: _searchController,
+          focusNode: _searchFocusNode,
+          onChanged: (value) => setState(() => _searchQuery = value),
+          style: AppTypography.textSmMedium.copyWith(color: kWhiteColor),
+          decoration: InputDecoration(
+            hintText: 'Search',
+            hintStyle: AppTypography.textSmRegular.copyWith(
+              color: kSecondaryTextColor.withValues(alpha: 0.6),
+            ),
+            prefixIcon: Icon(
+              Icons.search_rounded,
+              size: 18.ic,
+              color: kSecondaryTextColor,
+            ),
+            prefixIconConstraints: BoxConstraints(minWidth: 36.w),
+            suffixIcon:
+                _searchQuery.isNotEmpty
+                    ? GestureDetector(
+                      onTap: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: 16.ic,
+                        color: kSecondaryTextColor,
+                      ),
+                    )
+                    : null,
+            border: InputBorder.none,
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(vertical: 8.h),
           ),
-          prefixIcon: Icon(
-            Icons.search_rounded,
-            size: 18.ic,
-            color: kSecondaryTextColor,
-          ),
-          prefixIconConstraints: BoxConstraints(minWidth: 36.w),
-          suffixIcon:
-              _searchQuery.isNotEmpty
-                  ? GestureDetector(
-                    onTap: () {
-                      _searchController.clear();
-                      setState(() => _searchQuery = '');
-                    },
-                    child: Icon(
-                      Icons.close_rounded,
-                      size: 16.ic,
-                      color: kSecondaryTextColor,
-                    ),
-                  )
-                  : null,
-          border: InputBorder.none,
-          isDense: true,
-          contentPadding: EdgeInsets.symmetric(vertical: 8.h),
         ),
       ),
     );

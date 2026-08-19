@@ -10,7 +10,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/game_filter/eco_filter_dropdown.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 
-/// Builds the TWIC filter the desktop dialog applies (and Reset dirties against).
+/// Builds the TWIC filter the desktop dialog applies.
 ///
 /// Kept as a top-level helper so tests can prove ECO / Online survive apply.
 @visibleForTesting
@@ -38,6 +38,11 @@ GamebaseFilter buildTwicFilterDraft(
     maxRating: maxRating,
   );
 }
+
+/// Reset is enabled whenever the draft has any non-default filter — including
+/// an ECO/opening that was already applied before the dialog reopened.
+@visibleForTesting
+bool twicFilterCanReset(GamebaseFilter draft) => draft.hasActiveFilters;
 
 /// Forui-styled filter dialog for the desktop TWIC database.
 ///
@@ -114,10 +119,7 @@ class _TwicFilterDialogState extends State<_TwicFilterDialog> {
     );
   }
 
-  bool get _isDirty {
-    final next = _build();
-    return next != widget.initial;
-  }
+  bool get _canReset => twicFilterCanReset(_build());
 
   GamebaseFilter _build() {
     return buildTwicFilterDraft(
@@ -166,101 +168,106 @@ class _TwicFilterDialogState extends State<_TwicFilterDialog> {
         child: Focus(
           autofocus: true,
           child: Center(
-            child: Container(
-              width: 460,
-              constraints: const BoxConstraints(maxHeight: 720),
-              decoration: BoxDecoration(
-                color: kBlack2Color,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: kDividerColor),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.35),
-                    blurRadius: 32,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _header(),
-                  const FDivider(),
-                  Flexible(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _SegmentSection<GameResultFilter>(
-                            label: 'Result',
-                            options: GameResultFilter.values,
-                            selected: _result,
-                            labelOf: (v) => v.displayText,
-                            onChanged: (v) => setState(() => _result = v),
-                          ),
-                          const SizedBox(height: 18),
-                          _SegmentSection<GameColorFilter>(
-                            label: 'Player color',
-                            options: GameColorFilter.values,
-                            selected: _color,
-                            labelOf: (v) => v.displayText,
-                            onChanged: (v) => setState(() => _color = v),
-                          ),
-                          const SizedBox(height: 18),
-                          _SegmentSection<GameTimeControlFilter>(
-                            label: 'Time control',
-                            options: GameTimeControlFilter.values,
-                            selected: _timeControl,
-                            labelOf: (v) => v.displayText,
-                            onChanged: (v) => setState(() => _timeControl = v),
-                          ),
-                          const SizedBox(height: 18),
-                          _SegmentSection<GameOnlineFilter>(
-                            label: 'Format',
-                            options: GameOnlineFilter.values,
-                            selected: _isOnline,
-                            labelOf: (v) => v.displayText,
-                            onChanged: (v) => setState(() => _isOnline = v),
-                          ),
-                          const SizedBox(height: 18),
-                          const _SectionLabel('Opening'),
-                          const SizedBox(height: 8),
-                          EcoFilterDropdown(
-                            value: _eco,
-                            onChanged: (v) => setState(() => _eco = v),
-                          ),
-                          const SizedBox(height: 18),
-                          _RangeSection(
-                            label: 'Year',
-                            min: GameFilter.absoluteMinYear.toDouble(),
-                            max: _maxYear.toDouble(),
-                            divisions: _maxYear - GameFilter.absoluteMinYear,
-                            values: _yearRange,
-                            formatter: (v) => v.round().toString(),
-                            onChanged: (v) => setState(() => _yearRange = v),
-                          ),
-                          const SizedBox(height: 18),
-                          _RangeSection(
-                            label: 'Rating',
-                            min: GameFilter.defaultMinRating.toDouble(),
-                            max: GameFilter.absoluteMaxRating.toDouble(),
-                            divisions:
-                                (GameFilter.absoluteMaxRating -
-                                    GameFilter.defaultMinRating) ~/
-                                50,
-                            values: _ratingRange,
-                            formatter: (v) => v.round().toString(),
-                            onChanged: (v) => setState(() => _ratingRange = v),
-                          ),
-                        ],
+            child: Material(
+              type: MaterialType.transparency,
+              child: Container(
+                width: 460,
+                constraints: const BoxConstraints(maxHeight: 720),
+                decoration: BoxDecoration(
+                  color: kBlack2Color,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: kDividerColor),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      blurRadius: 32,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _header(),
+                    const FDivider(),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _SegmentSection<GameResultFilter>(
+                              label: 'Result',
+                              options: GameResultFilter.values,
+                              selected: _result,
+                              labelOf: (v) => v.displayText,
+                              onChanged: (v) => setState(() => _result = v),
+                            ),
+                            const SizedBox(height: 18),
+                            _SegmentSection<GameColorFilter>(
+                              label: 'Player color',
+                              options: GameColorFilter.values,
+                              selected: _color,
+                              labelOf: (v) => v.displayText,
+                              onChanged: (v) => setState(() => _color = v),
+                            ),
+                            const SizedBox(height: 18),
+                            _SegmentSection<GameTimeControlFilter>(
+                              label: 'Time control',
+                              options: GameTimeControlFilter.values,
+                              selected: _timeControl,
+                              labelOf: (v) => v.displayText,
+                              onChanged:
+                                  (v) => setState(() => _timeControl = v),
+                            ),
+                            const SizedBox(height: 18),
+                            _SegmentSection<GameOnlineFilter>(
+                              label: 'Format',
+                              options: GameOnlineFilter.values,
+                              selected: _isOnline,
+                              labelOf: (v) => v.displayText,
+                              onChanged: (v) => setState(() => _isOnline = v),
+                            ),
+                            const SizedBox(height: 18),
+                            const _SectionLabel('Opening'),
+                            const SizedBox(height: 8),
+                            EcoFilterDropdown(
+                              value: _eco,
+                              onChanged: (v) => setState(() => _eco = v),
+                            ),
+                            const SizedBox(height: 18),
+                            _RangeSection(
+                              label: 'Year',
+                              min: GameFilter.absoluteMinYear.toDouble(),
+                              max: _maxYear.toDouble(),
+                              divisions: _maxYear - GameFilter.absoluteMinYear,
+                              values: _yearRange,
+                              formatter: (v) => v.round().toString(),
+                              onChanged: (v) => setState(() => _yearRange = v),
+                            ),
+                            const SizedBox(height: 18),
+                            _RangeSection(
+                              label: 'Rating',
+                              min: GameFilter.defaultMinRating.toDouble(),
+                              max: GameFilter.absoluteMaxRating.toDouble(),
+                              divisions:
+                                  (GameFilter.absoluteMaxRating -
+                                      GameFilter.defaultMinRating) ~/
+                                  50,
+                              values: _ratingRange,
+                              formatter: (v) => v.round().toString(),
+                              onChanged:
+                                  (v) => setState(() => _ratingRange = v),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  const FDivider(),
-                  _footer(),
-                ],
+                    const FDivider(),
+                    _footer(),
+                  ],
+                ),
               ),
             ),
           ),
@@ -305,7 +312,7 @@ class _TwicFilterDialogState extends State<_TwicFilterDialog> {
           DesktopDialogButton(
             label: 'Reset',
             tone: DesktopDialogButtonTone.ghost,
-            onPress: _isDirty ? _reset : null,
+            onPress: _canReset ? _reset : null,
           ),
           const Spacer(),
           DesktopDialogButton(

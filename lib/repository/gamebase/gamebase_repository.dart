@@ -516,6 +516,173 @@ DateTime? _readDate(Object? value) {
   return raw == null ? null : DateTime.tryParse(raw);
 }
 
+/// Shared Opening Explorer filter slice.
+///
+/// Sibling keys are AND-combined by `/api/game-position/*`. Nulls are omitted
+/// so a missing axis does not appear in the request.
+@visibleForTesting
+Map<String, dynamic> buildGamebaseExplorerFilterFields({
+  TimeControl? timeControl,
+  String? playerId,
+  int? minRating,
+  int? maxRating,
+  String? color,
+  String? result,
+  int? yearFrom,
+  int? yearTo,
+  bool? isOnline,
+  bool trimPlayerId = false,
+}) {
+  final resolvedPlayerId = trimPlayerId ? playerId?.trim() : playerId;
+  return <String, dynamic>{
+    if (resolvedPlayerId != null && resolvedPlayerId.isNotEmpty)
+      'playerId': resolvedPlayerId,
+    if (timeControl != null) 'timeControl': timeControl.name.toUpperCase(),
+    if (minRating != null) 'minRating': minRating,
+    if (maxRating != null) 'maxRating': maxRating,
+    if (color != null) 'color': color,
+    if (result != null) 'result': result,
+    if (yearFrom != null) 'yearFrom': yearFrom,
+    if (yearTo != null) 'yearTo': yearTo,
+    if (isOnline != null) 'isOnline': isOnline,
+  };
+}
+
+/// POST `/api/game-position/aggregates/query` body after FEN/move normalize.
+@visibleForTesting
+Map<String, dynamic> buildMoveAggregatesQueryBody({
+  required String fen,
+  List<String> moves = const [],
+  String? playerId,
+  TimeControl? timeControl,
+  int? minRating,
+  int? maxRating,
+  String? color,
+  String? result,
+  int? yearFrom,
+  int? yearTo,
+  bool? isOnline,
+}) {
+  return <String, dynamic>{
+    'fen': fen,
+    'moves': moves,
+    ...buildGamebaseExplorerFilterFields(
+      timeControl: timeControl,
+      playerId: playerId,
+      minRating: minRating,
+      maxRating: maxRating,
+      color: color,
+      result: result,
+      yearFrom: yearFrom,
+      yearTo: yearTo,
+      isOnline: isOnline,
+    ),
+  };
+}
+
+List<Map<String, String>>? _positionGamesOrderBy(
+  GamebaseSortField? sortBy,
+  GamebaseSortDirection? sortDirection,
+) {
+  if (sortBy == null) return null;
+  return [
+    {
+      'field': sortBy.name,
+      'direction': sortDirection == GamebaseSortDirection.asc ? 'asc' : 'desc',
+    },
+  ];
+}
+
+/// POST `/api/game-position/games/query` body after FEN/move normalize.
+@visibleForTesting
+Map<String, dynamic> buildPositionGamesQueryBody({
+  required String fen,
+  List<String> moves = const [],
+  String? uci,
+  TimeControl? timeControl,
+  String? playerId,
+  String? color,
+  String? result,
+  int? minRating,
+  int? maxRating,
+  int? yearFrom,
+  int? yearTo,
+  GamebaseSortField? sortBy,
+  GamebaseSortDirection? sortDirection,
+  bool? isOnline,
+  int pageNumber = 0,
+  int pageSize = 20,
+  int notationPlies = 0,
+}) {
+  final orderBy = _positionGamesOrderBy(sortBy, sortDirection);
+  return <String, dynamic>{
+    'fen': fen,
+    'moves': moves,
+    'pageNumber': pageNumber,
+    'pageSize': pageSize,
+    if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
+    ...buildGamebaseExplorerFilterFields(
+      timeControl: timeControl,
+      playerId: playerId,
+      minRating: minRating,
+      maxRating: maxRating,
+      color: color,
+      result: result,
+      yearFrom: yearFrom,
+      yearTo: yearTo,
+      isOnline: isOnline,
+      trimPlayerId: true,
+    ),
+    if (orderBy != null) 'orderBy': orderBy,
+    if (sortBy != null) 'sortBy': sortBy.name,
+    if (sortDirection != null) 'sortDirection': sortDirection.name,
+    if (notationPlies > 0) 'notationPlies': notationPlies,
+  };
+}
+
+/// GET `/api/game-position/games` query parameters after FEN normalize.
+@visibleForTesting
+Map<String, dynamic> buildPositionGamesQueryParameters({
+  required String fen,
+  String? uci,
+  TimeControl? timeControl,
+  String? playerId,
+  String? color,
+  String? result,
+  int? minRating,
+  int? maxRating,
+  int? yearFrom,
+  int? yearTo,
+  GamebaseSortField? sortBy,
+  GamebaseSortDirection? sortDirection,
+  bool? isOnline,
+  int pageNumber = 0,
+  int pageSize = 20,
+  int notationPlies = 0,
+}) {
+  return <String, dynamic>{
+    'fen': fen,
+    'pageNumber': pageNumber,
+    'pageSize': pageSize,
+    if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
+    ...buildGamebaseExplorerFilterFields(
+      timeControl: timeControl,
+      playerId: playerId,
+      minRating: minRating,
+      maxRating: maxRating,
+      color: color,
+      result: result,
+      yearFrom: yearFrom,
+      yearTo: yearTo,
+      isOnline: isOnline,
+      trimPlayerId: true,
+    ),
+    if (sortBy != null) 'sortBy': sortBy.name,
+    if (sortDirection != null) 'sortDirection': sortDirection.name,
+    if (notationPlies > 0) 'notationPlies': notationPlies,
+  };
+}
+
 class GamebaseRepository {
   final Dio _dio;
   final String _baseUrl;
@@ -700,19 +867,19 @@ class GamebaseRepository {
         );
       }
 
-      final body = <String, dynamic>{
-        'fen': normalizedFen,
-        'moves': normalizedMoves,
-        if (playerId != null && playerId.isNotEmpty) 'playerId': playerId,
-        if (timeControl != null) 'timeControl': timeControl.name.toUpperCase(),
-        if (minRating != null) 'minRating': minRating,
-        if (maxRating != null) 'maxRating': maxRating,
-        if (color != null) 'color': color,
-        if (result != null) 'result': result,
-        if (yearFrom != null) 'yearFrom': yearFrom,
-        if (yearTo != null) 'yearTo': yearTo,
-        if (isOnline != null) 'isOnline': isOnline,
-      };
+      final body = buildMoveAggregatesQueryBody(
+        fen: normalizedFen,
+        moves: normalizedMoves,
+        playerId: playerId,
+        timeControl: timeControl,
+        minRating: minRating,
+        maxRating: maxRating,
+        color: color,
+        result: result,
+        yearFrom: yearFrom,
+        yearTo: yearTo,
+        isOnline: isOnline,
+      );
 
       if (kDebugMode) {
         debugPrint('[GamebaseRepository] getMoveAggregates:');
@@ -1726,71 +1893,51 @@ class GamebaseRepository {
         );
       }
 
-      final orderBy =
-          sortBy != null
-              ? [
-                {
-                  'field': sortBy.name,
-                  'direction':
-                      sortDirection == GamebaseSortDirection.asc
-                          ? 'asc'
-                          : 'desc',
-                },
-              ]
-              : null;
-
       final response =
           normalizedMoves.isNotEmpty
               ? await _dio.post(
                 '$_baseUrl/api/game-position/games/query',
-                data: {
-                  'fen': normalizedFen,
-                  'moves': normalizedMoves,
-                  'pageNumber': pageNumber,
-                  'pageSize': pageSize,
-                  if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
-                  if (playerId != null && playerId.trim().isNotEmpty)
-                    'playerId': playerId.trim(),
-                  if (timeControl != null)
-                    'timeControl': timeControl.name.toUpperCase(),
-                  if (minRating != null) 'minRating': minRating,
-                  if (maxRating != null) 'maxRating': maxRating,
-                  if (color != null) 'color': color,
-                  if (result != null) 'result': result,
-                  if (yearFrom != null) 'yearFrom': yearFrom,
-                  if (yearTo != null) 'yearTo': yearTo,
-                  if (isOnline != null) 'isOnline': isOnline,
-                  if (orderBy != null) 'orderBy': orderBy,
-                  if (sortBy != null) 'sortBy': sortBy.name,
-                  if (sortDirection != null)
-                    'sortDirection': sortDirection.name,
-                  if (notationPlies > 0) 'notationPlies': notationPlies,
-                },
+                data: buildPositionGamesQueryBody(
+                  fen: normalizedFen,
+                  moves: normalizedMoves,
+                  uci: uci,
+                  timeControl: timeControl,
+                  playerId: playerId,
+                  color: color,
+                  result: result,
+                  minRating: minRating,
+                  maxRating: maxRating,
+                  yearFrom: yearFrom,
+                  yearTo: yearTo,
+                  sortBy: sortBy,
+                  sortDirection: sortDirection,
+                  isOnline: isOnline,
+                  pageNumber: pageNumber,
+                  pageSize: pageSize,
+                  notationPlies: notationPlies,
+                ),
                 options: _requestOptions(),
               )
               : await _dio.get(
                 '$_baseUrl/api/game-position/games',
-                queryParameters: {
-                  'fen': normalizedFen,
-                  'pageNumber': pageNumber,
-                  'pageSize': pageSize,
-                  if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
-                  if (playerId != null && playerId.trim().isNotEmpty)
-                    'playerId': playerId.trim(),
-                  if (timeControl != null)
-                    'timeControl': timeControl.name.toUpperCase(),
-                  if (minRating != null) 'minRating': minRating,
-                  if (maxRating != null) 'maxRating': maxRating,
-                  if (color != null) 'color': color,
-                  if (result != null) 'result': result,
-                  if (yearFrom != null) 'yearFrom': yearFrom,
-                  if (yearTo != null) 'yearTo': yearTo,
-                  if (isOnline != null) 'isOnline': isOnline,
-                  if (sortBy != null) 'sortBy': sortBy.name,
-                  if (sortDirection != null)
-                    'sortDirection': sortDirection.name,
-                  if (notationPlies > 0) 'notationPlies': notationPlies,
-                },
+                queryParameters: buildPositionGamesQueryParameters(
+                  fen: normalizedFen,
+                  uci: uci,
+                  timeControl: timeControl,
+                  playerId: playerId,
+                  color: color,
+                  result: result,
+                  minRating: minRating,
+                  maxRating: maxRating,
+                  yearFrom: yearFrom,
+                  yearTo: yearTo,
+                  sortBy: sortBy,
+                  sortDirection: sortDirection,
+                  isOnline: isOnline,
+                  pageNumber: pageNumber,
+                  pageSize: pageSize,
+                  notationPlies: notationPlies,
+                ),
                 options: _requestOptions(),
               );
 

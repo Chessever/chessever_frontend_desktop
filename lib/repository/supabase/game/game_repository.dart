@@ -43,6 +43,21 @@ int? _parseRpcInt(Object? value) {
   return null;
 }
 
+@visibleForTesting
+List<String> parseStrictLiveGroupBroadcastIds(Object? response) {
+  if (response is! List) return const <String>[];
+
+  final ids = <String>{};
+  for (final row in response) {
+    if (row is! Map) continue;
+    final id = row['group_broadcast_id'];
+    if (id is String && id.isNotEmpty) {
+      ids.add(id);
+    }
+  }
+  return ids.toList(growable: false);
+}
+
 DateTime? _tryParseRepositoryDateTime(Object? value) {
   if (value is DateTime) return value;
   if (value is String && value.trim().isNotEmpty) {
@@ -2159,6 +2174,129 @@ class GameRepository extends BaseRepository {
       }
 
       return latestByRoundId;
+    });
+  }
+
+  /// Compact RPC used by mobile: map `settings.live_round_ids` to event IDs
+  /// that still have fresh board activity inside [staleAfterSeconds].
+  Future<List<String>> getStrictLiveGroupBroadcastIds({
+    required List<String> liveRoundIds,
+    int staleAfterSeconds = 7200,
+  }) async {
+    if (liveRoundIds.isEmpty) return const <String>[];
+
+    return handleApiCall(() async {
+      final response = await supabase.rpc(
+        'get_strict_live_group_broadcast_ids',
+        params: {
+          'p_live_round_ids': liveRoundIds,
+          'p_stale_after_seconds': staleAfterSeconds,
+        },
+      );
+
+      return parseStrictLiveGroupBroadcastIds(response);
+    });
+  }
+
+  /// Events that currently have an unfinished game with a recent move.
+  ///
+  /// Matches the Live collection / Live filter: status `*` / `ongoing` /
+  /// `live`, a real last move, and `last_move_time` inside
+  /// [staleAfterSeconds] (8 hours, same window as smart Live games).
+  /// When [eventIds] is given, tours for those events are resolved first so
+  /// homepage rows are not lost in an unscoped 2k-row slice of `games`.
+  Future<List<String>> getGroupBroadcastIdsWithLiveGames({
+    List<String>? eventIds,
+    int staleAfterSeconds = 28800,
+  }) async {
+    return handleApiCall(() async {
+      final cutoff =
+          DateTime.now()
+              .toUtc()
+              .subtract(Duration(seconds: staleAfterSeconds))
+              .toIso8601String();
+      final requestedEventIds = eventIds?.where((id) => id.isNotEmpty).toSet();
+      final tourToEvent = <String, String>{};
+
+      if (requestedEventIds != null && requestedEventIds.isNotEmpty) {
+        for (final chunk in _chunks(
+          requestedEventIds.toList(growable: false),
+          40,
+        )) {
+          final tours = await supabase
+              .from('tours')
+              .select('id, group_broadcast_id')
+              .inFilter('group_broadcast_id', chunk);
+          for (final row in tours as List) {
+            final tourId = row['id'] as String?;
+            final eventId = row['group_broadcast_id'] as String?;
+            if (tourId == null || tourId.isEmpty) continue;
+            if (eventId == null || eventId.isEmpty) continue;
+            tourToEvent[tourId] = eventId;
+          }
+        }
+        if (tourToEvent.isEmpty) return const <String>[];
+      }
+
+      final liveTourIds = <String>{};
+      Future<void> collectLiveTourIds({List<String>? tourIdChunk}) async {
+        var query = supabase
+            .from('games')
+            .select('tour_id, last_move')
+            .inFilter('status', const ['*', 'ongoing', 'live'])
+            .gte('last_move_time', cutoff)
+            .not('last_move_time', 'is', null)
+            .not('tour_id', 'is', null)
+            .not('last_move', 'is', null)
+            .neq('last_move', '');
+        if (tourIdChunk != null) {
+          query = query.inFilter('tour_id', tourIdChunk);
+        }
+        final response = await query
+            .order('last_move_time', ascending: false, nullsFirst: false)
+            .limit(tourIdChunk == null ? 2000 : 4000);
+        for (final row in response as List) {
+          final tourId = row['tour_id'] as String?;
+          final lastMove = row['last_move'] as String?;
+          if (tourId == null || tourId.isEmpty) continue;
+          if (lastMove == null || lastMove.trim().isEmpty) continue;
+          liveTourIds.add(tourId);
+        }
+      }
+
+      if (tourToEvent.isEmpty) {
+        await collectLiveTourIds();
+      } else {
+        for (final chunk in _chunks(
+          tourToEvent.keys.toList(growable: false),
+          40,
+        )) {
+          await collectLiveTourIds(tourIdChunk: chunk);
+        }
+      }
+      if (liveTourIds.isEmpty) return const <String>[];
+
+      if (tourToEvent.isNotEmpty) {
+        return liveTourIds
+            .map((tourId) => tourToEvent[tourId])
+            .whereType<String>()
+            .toSet()
+            .toList(growable: false);
+      }
+
+      final broadcastIds = <String>{};
+      for (final chunk in _chunks(liveTourIds.toList(growable: false), 40)) {
+        final tours = await supabase
+            .from('tours')
+            .select('group_broadcast_id')
+            .inFilter('id', chunk);
+        for (final row in tours as List) {
+          final id = row['group_broadcast_id'] as String?;
+          if (id == null || id.isEmpty) continue;
+          broadcastIds.add(id);
+        }
+      }
+      return broadcastIds.toList(growable: false);
     });
   }
 

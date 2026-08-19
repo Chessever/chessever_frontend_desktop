@@ -156,24 +156,16 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
     final existing = _inFlightAggregateRequests[cacheKey];
     if (existing != null) return existing;
 
-    final timeControlFilter =
-        filters.timeControls.isNotEmpty ? filters.timeControls.first : null;
-    final playerIdFilter =
-        filters.playerIds.isNotEmpty ? filters.playerIds.first : null;
-
-    final colorFilter = filters.playerColor?.name;
-    final resultFilter = filters.gameResult?.apiValue;
-
     final future = () async {
       final response = await repository.getMoveAggregates(
         fen: fen,
         moves: exploredMoves,
-        timeControl: timeControlFilter,
+        timeControl: filters.requestTimeControl,
         minRating: filters.minRating,
         maxRating: filters.maxRating,
-        playerId: playerIdFilter,
-        color: colorFilter,
-        result: resultFilter,
+        playerId: filters.requestPlayerId,
+        color: filters.requestColor,
+        result: filters.requestResult,
         yearFrom: filters.yearFrom,
         yearTo: filters.yearTo,
         isOnline: filters.isOnline,

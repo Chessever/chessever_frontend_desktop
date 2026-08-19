@@ -145,6 +145,22 @@ class _FakeGameRepository implements GameRepository {
   }
 
   @override
+  Future<List<String>> getStrictLiveGroupBroadcastIds({
+    required List<String> liveRoundIds,
+    int staleAfterSeconds = 7200,
+  }) async {
+    throw StateError('use the client-sweep fallback in this fake');
+  }
+
+  @override
+  Future<List<String>> getGroupBroadcastIdsWithLiveGames({
+    List<String>? eventIds,
+    int staleAfterSeconds = 7200,
+  }) async {
+    return const <String>[];
+  }
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => null;
 }
 
@@ -230,6 +246,18 @@ Future<void> _pumpUntil(
 }
 
 void main() {
+  test('empty live-round settings still keep configured live event IDs', () {
+    expect(
+      fallbackConfiguredLiveGroupBroadcastIds(const [
+        'event-a',
+        '',
+        '  event-b  ',
+      ]),
+      ['event-a', 'event-b'],
+    );
+    expect(fallbackConfiguredLiveGroupBroadcastIds(const []), isEmpty);
+  });
+
   group('liveGroupBroadcastIdsProvider', () {
     test(
       'emits a fallback immediately before settings snapshots arrive',

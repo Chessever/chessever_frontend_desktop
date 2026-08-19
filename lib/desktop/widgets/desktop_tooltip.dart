@@ -31,6 +31,14 @@ class DesktopTooltip extends StatelessWidget {
       data: FThemes.zinc.dark,
       child: FTooltip(
         hoverEnterDuration: hoverEnterDuration,
+        // Desktop chrome is mouse-driven, and FTooltip's long-press support
+        // wraps the child in an ancestor `GestureDetector(onLongPressStart:)`.
+        // That recognizer shares the gesture arena with the button's own tap
+        // recognizer and wins outright once the press passes
+        // `kLongPressTimeout` (500ms), so a slow click on any tooltipped
+        // control is swallowed and the button looks dead. Hover already covers
+        // the desktop affordance, so drop the long-press path entirely.
+        longPress: false,
         tipBuilder: (_, _) => Text(message),
         child: child,
       ),

@@ -208,6 +208,20 @@ void main() {
       );
     });
 
+    test('macOS debug/profile ad-hoc sign without a development profile', () {
+      // flutter run -d macos cannot create a Mac Team profile
+      // (no -allowProvisioningUpdates). Restricted entitlements plus
+      // Apple Development signing for com.chessever.desktop.development
+      // is what blocked local debug builds.
+      final project =
+          File('macos/Runner.xcodeproj/project.pbxproj').readAsStringSync();
+      final debugEntitlements =
+          File('macos/Runner/DebugProfile.entitlements').readAsStringSync();
+      expect(project, isNot(contains('Apple Development')));
+      expect(project, contains('CODE_SIGN_IDENTITY = "-";'));
+      expect(debugEntitlements, isNot(contains('applesignin')));
+    });
+
     test('Windows publish script uploads desktop_updater archive directory', () {
       final script =
           File('scripts/codemagic_publish_windows.ps1').readAsStringSync();
