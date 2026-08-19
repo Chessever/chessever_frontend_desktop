@@ -39,7 +39,7 @@ class DesktopUpdaterService {
     return _downloadPageUrl;
   }
 
-  static const Duration _checkInterval = Duration(hours: 1);
+  static const Duration _checkInterval = Duration(minutes: 5);
 
   static const List<Duration> _retrySchedule = <Duration>[
     Duration(seconds: 60),
