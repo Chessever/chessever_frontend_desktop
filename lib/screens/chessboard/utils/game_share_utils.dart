@@ -20,6 +20,9 @@ final _uuidPattern = RegExp(
   caseSensitive: false,
 );
 final _lichessShortIdPattern = RegExp(r'^[A-Za-z0-9]{8}$');
+final _namespacedCanonicalIdPattern = RegExp(
+  r'^[A-Za-z0-9][A-Za-z0-9._-]*:[^\s/?#]+$',
+);
 
 class GameShareSnapshot {
   final String positionFen;
@@ -68,7 +71,8 @@ String? _trimmedValidFen(String? fen) {
 bool _isResolvableSharedGameId(String id) {
   final trimmed = id.trim();
   return _uuidPattern.hasMatch(trimmed) ||
-      _lichessShortIdPattern.hasMatch(trimmed);
+      _lichessShortIdPattern.hasMatch(trimmed) ||
+      _namespacedCanonicalIdPattern.hasMatch(trimmed);
 }
 
 bool isGamebaseBackedSource(GameSource source) {
@@ -100,7 +104,8 @@ String? buildGameShareUrl({
     return null;
   }
 
-  final uri = Uri.parse('https://chessever.com/games/$linkableId');
+  final encodedId = Uri.encodeComponent(linkableId);
+  final uri = Uri.parse('https://chessever.com/games/$encodedId');
   final queryParams = <String, String>{};
   if (_hasText(game.tourSlug)) queryParams['tour'] = game.tourSlug!;
   if (_hasText(game.roundSlug)) queryParams['round'] = game.roundSlug!;

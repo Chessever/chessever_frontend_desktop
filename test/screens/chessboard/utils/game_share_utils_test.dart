@@ -79,26 +79,51 @@ SavedAnalysisData _savedAnalysisData({String? sourceGameId}) {
 
 void main() {
   group('buildGameShareUrl', () {
+    test('returns an encoded deep link for namespaced canonical games', () {
+      final url = buildGameShareUrl(
+        game: _game(gameId: 'chess.com:14987654321'),
+      );
+
+      expect(
+        url,
+        'https://chessever.com/games/chess.com%3A14987654321?tour=tour-slug&round=A00',
+      );
+    });
+
+    test('preserves multi-part canonical IDs as one encoded path segment', () {
+      final url = buildGameShareUrl(
+        game: _game(gameId: 'chess-results:event:round:board-7'),
+      );
+
+      expect(
+        url,
+        'https://chessever.com/games/chess-results%3Aevent%3Around%3Aboard-7?tour=tour-slug&round=A00',
+      );
+    });
+
     test('returns a deep link for canonical Supabase games', () {
       final url = buildGameShareUrl(game: _game());
 
-      expect(url, 'https://chessever.com/games/$_canonicalGameId');
+      expect(
+        url,
+        'https://chessever.com/games/$_canonicalGameId?tour=tour-slug&round=A00',
+      );
     });
 
-    test(
-      'returns a deep link for saved analyses with canonical source IDs',
-      () {
-        final url = buildGameShareUrl(
-          game: _game(
-            gameId: 'saved_analysis_1',
-            source: GameSource.savedAnalysis,
-          ),
-          savedAnalysisData: _savedAnalysisData(sourceGameId: _canonicalGameId),
-        );
+    test('returns a deep link for saved analyses with canonical source IDs', () {
+      final url = buildGameShareUrl(
+        game: _game(
+          gameId: 'saved_analysis_1',
+          source: GameSource.savedAnalysis,
+        ),
+        savedAnalysisData: _savedAnalysisData(sourceGameId: _canonicalGameId),
+      );
 
-        expect(url, 'https://chessever.com/games/$_canonicalGameId');
-      },
-    );
+      expect(
+        url,
+        'https://chessever.com/games/$_canonicalGameId?tour=tour-slug&round=A00',
+      );
+    });
 
     test(
       'returns null for non-canonical sources and unresolved saved analyses',

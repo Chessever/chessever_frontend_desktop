@@ -77,9 +77,8 @@ class TournamentDetailPane extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tournament = ref.watch(tournamentForTabProvider(tabId));
     final segment = ref.watch(tournamentDetailSegmentByTabIdProvider(tabId));
-    final selectedBroadcastId = ref.watch(
-      selectedBroadcastModelProvider.select((value) => value?.id),
-    );
+    final selectedBroadcast = ref.watch(selectedBroadcastModelProvider);
+    final selectedBroadcastId = selectedBroadcast?.id;
     final detailState = ref.watch(tourDetailScreenProvider);
     final gamesHeaderCollapsed = useState(false);
     final bodyFocusNode = useFocusNode(debugLabel: 'tournament-detail-body');
@@ -167,6 +166,12 @@ class TournamentDetailPane extends HookConsumerWidget {
                           _DetailHeader(
                             title: tournament.title,
                             dates: tournament.dates,
+                            writerLabel:
+                                ownsSelectedContext
+                                    ? ref.watch(
+                                      selectedBroadcastWriterAttributionProvider,
+                                    )
+                                    : 'Powered by Lichess',
                           ),
                           _SegmentBar(
                             segments: visibleSegments,
@@ -500,9 +505,14 @@ ScrollableState? _findFirstScrollable(BuildContext? root) {
 }
 
 class _DetailHeader extends StatelessWidget {
-  const _DetailHeader({required this.title, required this.dates});
+  const _DetailHeader({
+    required this.title,
+    required this.dates,
+    required this.writerLabel,
+  });
   final String title;
   final String dates;
+  final String writerLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -529,6 +539,15 @@ class _DetailHeader extends StatelessWidget {
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  writerLabel,
+                  style: TextStyle(
+                    color: kLightGreyColor.withValues(alpha: 0.82),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
                 if (dates.isNotEmpty) ...[
                   const SizedBox(height: 4),

@@ -8,6 +8,10 @@ import 'package:chessever/desktop/services/desktop_share_actions.dart'
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart'
+    show
+        selectedBroadcastModelProvider,
+        selectedBroadcastWriterAttributionProvider;
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/location_service_provider.dart';
 
@@ -105,6 +109,7 @@ class EventInfoBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final rows = <_HeaderRow>[];
+    final selectedBroadcast = ref.watch(selectedBroadcastModelProvider);
 
     void addIfPresent(String label, String key) {
       final value = headers[key]?.trim() ?? '';
@@ -149,6 +154,14 @@ class EventInfoBody extends ConsumerWidget {
     final event = eventInfoDisplayEvent(headers);
     if (event != null) {
       rows.add(_HeaderRow(label: 'Event', value: event));
+    }
+    if (selectedBroadcast != null) {
+      rows.add(
+        _HeaderRow(
+          label: 'Source',
+          value: ref.watch(selectedBroadcastWriterAttributionProvider),
+        ),
+      );
     }
     addLinkIfPresent('Event link', chessEverEventUrlPgnTag);
     addLinkIfPresent('Game link', chessEverGameUrlPgnTag);

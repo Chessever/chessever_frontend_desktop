@@ -21,6 +21,9 @@ final _uuidPattern = RegExp(
   caseSensitive: false,
 );
 final _lichessShortIdPattern = RegExp(r'^[A-Za-z0-9]{8}$');
+final _namespacedCanonicalIdPattern = RegExp(
+  r'^[A-Za-z0-9][A-Za-z0-9._-]*:[^\s/?#]+$',
+);
 
 /// Portable PGN tags for ChessEver's canonical public routes. Keeping them in
 /// the PGN lets a copied or saved broadcast game retain links back to the app
@@ -55,7 +58,8 @@ String? buildDesktopGameShareUrl({
   final id = (gameId ?? game?.gameId)?.trim();
   if (id == null || !_isResolvableSharedGameId(id)) return null;
 
-  final uri = Uri.parse('https://chessever.com/games/$id');
+  final encodedId = Uri.encodeComponent(id);
+  final uri = Uri.parse('https://chessever.com/games/$encodedId');
   final queryParams = <String, String>{};
   final tour = (tourSlug ?? game?.tourSlug)?.trim();
   final round = (roundSlug ?? game?.roundSlug)?.trim();
@@ -397,7 +401,8 @@ void _toast(BuildContext context, String message, {bool error = false}) {
 bool _isResolvableSharedGameId(String id) {
   final trimmed = id.trim();
   return _uuidPattern.hasMatch(trimmed) ||
-      _lichessShortIdPattern.hasMatch(trimmed);
+      _lichessShortIdPattern.hasMatch(trimmed) ||
+      _namespacedCanonicalIdPattern.hasMatch(trimmed);
 }
 
 String _slugify(String input) {
