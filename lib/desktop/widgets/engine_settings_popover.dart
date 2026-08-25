@@ -13,7 +13,9 @@ import 'package:chessever/theme/app_theme.dart';
 /// CLAUDE.md §3, but render text with our own theme tokens so the popover
 /// blends with the surrounding desktop pane.
 class EngineSettingsPopover extends ConsumerStatefulWidget {
-  const EngineSettingsPopover({super.key});
+  const EngineSettingsPopover({super.key, this.dimension});
+
+  final double? dimension;
 
   @override
   ConsumerState<EngineSettingsPopover> createState() =>
@@ -32,19 +34,29 @@ class _EngineSettingsPopoverState extends ConsumerState<EngineSettingsPopover>
 
   @override
   Widget build(BuildContext context) {
+    final button = FButton.icon(
+      style: FButtonStyle.ghost(
+        (style) => style.copyWith(
+          iconContentStyle:
+              (content) => content.copyWith(padding: EdgeInsets.zero),
+        ),
+      ),
+      onPress: _controller.toggle,
+      child: const Icon(
+        Icons.settings_outlined,
+        color: kWhiteColor70,
+        size: 18,
+      ),
+    );
     return FTheme(
       data: FThemes.zinc.dark,
       child: FPopover(
         controller: _controller,
         popoverBuilder: (context, _) => _PopoverBody(),
-        child: FButton.icon(
-          onPress: _controller.toggle,
-          child: const Icon(
-            Icons.settings_outlined,
-            color: kWhiteColor70,
-            size: 18,
-          ),
-        ),
+        child:
+            widget.dimension == null
+                ? button
+                : SizedBox.square(dimension: widget.dimension!, child: button),
       ),
     );
   }

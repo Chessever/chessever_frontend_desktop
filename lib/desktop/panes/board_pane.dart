@@ -139,17 +139,6 @@ import 'package:chessever/widgets/player_initials_avatar.dart';
 @visibleForTesting
 const List<double> boardPaneContextInitialWeights = <double>[0.22, 0.53, 0.25];
 
-/// A brief dwell prevents PiP from appearing as chrome on games the user only
-/// opened accidentally or is quickly stepping past.
-@visibleForTesting
-const Duration desktopPictureInPictureWatchThreshold = Duration(seconds: 30);
-
-@visibleForTesting
-bool isDesktopPictureInPictureEligible({
-  required bool isLiveGame,
-  required bool watchedLongEnough,
-}) => isLiveGame && watchedLongEnough;
-
 /// Applies a recognized broadcast status to PGN metadata.
 ///
 /// Missing or future server status values are intentionally ignored. A
@@ -2160,27 +2149,6 @@ class _BoardPaneContent extends HookConsumerWidget {
     final isLiveGame =
         chessGame.value.metadata[ChessGame.metadataIsLiveKey] == true;
     final isLiveAtTip = isLiveGame && isAtMainlineTip;
-    final liveGameWatchGeneration = useRef(0);
-    final eligibleLiveGameWatchGeneration = useState<int?>(null);
-    useEffect(() {
-      final generation = ++liveGameWatchGeneration.value;
-      if (pictureInPictureMode || !isLiveGame || !isForegroundSurface) {
-        return null;
-      }
-      final timer = Timer(desktopPictureInPictureWatchThreshold, () {
-        if (context.mounted && liveGameWatchGeneration.value == generation) {
-          eligibleLiveGameWatchGeneration.value = generation;
-        }
-      });
-      return timer.cancel;
-    }, [activeGameId, isLiveGame, isForegroundSurface, pictureInPictureMode]);
-    final pictureInPictureEligible = isDesktopPictureInPictureEligible(
-      isLiveGame: isLiveGame,
-      watchedLongEnough:
-          isForegroundSurface &&
-          eligibleLiveGameWatchGeneration.value ==
-              liveGameWatchGeneration.value,
-    );
     useEffect(() {
       if (isAtMainlineTip && hasUnseenMoves.value) {
         Future.microtask(() {
@@ -3497,9 +3465,9 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     Future<void> openPictureInPictureAction() async {
       if (pictureInPictureMode) return;
-      if (!pictureInPictureEligible) {
+      if (!isLiveGame) {
         showToast(
-          'Keep this live game open for 30 seconds before using picture in picture.',
+          'Picture in picture is available only for live games.',
           error: true,
         );
         return;
@@ -4556,13 +4524,10 @@ class _BoardPaneContent extends HookConsumerWidget {
                 ref.read(boardFocusModeProvider.notifier).state =
                     !boardFocusMode,
         onOpenPictureInPicture:
-            pictureInPictureMode ||
-                    boardArgs == null ||
-                    !pictureInPictureEligible
+            pictureInPictureMode || boardArgs == null || !isLiveGame
                 ? null
                 : () => unawaited(openPictureInPictureAction()),
-        showPictureInPictureAction:
-            !pictureInPictureMode && pictureInPictureEligible,
+        showPictureInPictureAction: !pictureInPictureMode && isLiveGame,
         onCopyPgn: copyPgnAction,
         onCopyFen: copyFenAction,
         onSavePgn: savePgnAction,
@@ -4599,10 +4564,6 @@ class _BoardPaneContent extends HookConsumerWidget {
                           startPlayAgainFromBoardHeaders(ref, pgnHeaders.value)
                       : null,
               onPlayFromHere: openPlayFromHereDialog,
-              onPictureInPicture:
-                  boardArgs == null || !pictureInPictureEligible
-                      ? null
-                      : () => unawaited(openPictureInPictureAction()),
             );
 
     final boardSplitIndex = showGameRail ? 1 : 0;
@@ -4991,6 +4952,10 @@ class _BoardPaneContent extends HookConsumerWidget {
                         isForegroundTab: isForegroundSurface,
                         autoAnalysisAllowed:
                             allowGameAnalysis && isForegroundSurface,
+                        onPictureInPicture:
+                            boardArgs == null || !isLiveGame
+                                ? null
+                                : () => unawaited(openPictureInPictureAction()),
                       ),
                     ),
                   ),
@@ -7254,7 +7219,6 @@ class _RightRailBoardActions extends StatelessWidget {
     required this.onSaveGame,
     required this.canSaveGame,
     required this.saveShortcutLabel,
-    required this.onPictureInPicture,
     this.onPlayAgain,
   });
 
@@ -7264,7 +7228,6 @@ class _RightRailBoardActions extends StatelessWidget {
   final VoidCallback onSaveGame;
   final bool canSaveGame;
   final String? saveShortcutLabel;
-  final VoidCallback? onPictureInPicture;
   final VoidCallback? onPlayAgain;
 
   @override
@@ -7278,14 +7241,6 @@ class _RightRailBoardActions extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (onPictureInPicture != null) ...[
-            _RailIconAction(
-              tooltip: 'Open picture in picture',
-              icon: Icons.picture_in_picture_alt_rounded,
-              onPress: onPictureInPicture,
-            ),
-            const SizedBox(width: 4),
-          ],
           _RailIconAction(
             tooltip: saveTooltip,
             icon: FIcons.bookmarkPlus,

@@ -62,6 +62,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.isForegroundTab = true,
     this.autoAnalysisAllowed = true,
     this.reportController,
+    this.onPictureInPicture,
   });
 
   final String fen;
@@ -96,6 +97,10 @@ class EnginePanel extends ConsumerStatefulWidget {
   final bool isForegroundTab;
 
   final bool autoAnalysisAllowed;
+
+  /// Opens the current live game in a compact always-on-top board window.
+  /// Null for non-live games, which removes the header action entirely.
+  final VoidCallback? onPictureInPicture;
 
   /// Test seam for driving report lifecycle transitions without spawning a
   /// real Stockfish process. The controller must remain stable for this
@@ -383,7 +388,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           const SizedBox(width: 6),
           _EngineQuickToggle(enabled: engineOn),
           const SizedBox(width: 4),
-          const EngineSettingsPopover(),
+          if (widget.onPictureInPicture != null) ...[
+            _EnginePictureInPictureButton(onPress: widget.onPictureInPicture!),
+            const SizedBox(width: 4),
+          ],
+          const EngineSettingsPopover(dimension: 28),
         ],
       ),
     );
@@ -1298,9 +1307,6 @@ class _GameReportClassificationIcon extends StatelessWidget {
   }
 }
 
-String _classificationIconAsset(GameMoveClassification classification) =>
-    classificationIconAsset(classification);
-
 Color _classificationColor(GameMoveClassification classification) =>
     classificationColor(classification);
 
@@ -1676,8 +1682,10 @@ class _DepthChip extends StatelessWidget {
     final visible = depth.clamp(0, 99).toInt();
     final label = visible > 0 ? 'd$visible' : '…';
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      margin: const EdgeInsets.only(bottom: 4),
+      height: 28,
+      constraints: const BoxConstraints(minWidth: 28),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
       decoration: BoxDecoration(
         color: kBlack3Color,
         borderRadius: BorderRadius.circular(4),
@@ -1691,6 +1699,39 @@ class _DepthChip extends StatelessWidget {
           fontWeight: FontWeight.w700,
           letterSpacing: 0.4,
           fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+  }
+}
+
+class _EnginePictureInPictureButton extends StatelessWidget {
+  const _EnginePictureInPictureButton({required this.onPress});
+
+  final VoidCallback onPress;
+
+  @override
+  Widget build(BuildContext context) {
+    return DesktopTooltip(
+      message: 'Open picture in picture',
+      child: FTheme(
+        data: FThemes.zinc.dark,
+        child: SizedBox.square(
+          dimension: 28,
+          child: FButton.icon(
+            style: FButtonStyle.ghost(
+              (style) => style.copyWith(
+                iconContentStyle:
+                    (content) => content.copyWith(padding: EdgeInsets.zero),
+              ),
+            ),
+            onPress: onPress,
+            child: const Icon(
+              Icons.picture_in_picture_alt_rounded,
+              color: kWhiteColor70,
+              size: 16,
+            ),
+          ),
         ),
       ),
     );
