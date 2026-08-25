@@ -37,6 +37,15 @@ void main() {
     test(
       'mounted notifier replaces an arbitrary partial cache with fresh games',
       () async {
+        final cachedGames = <Games>[
+          _game('cached-board-a'),
+          _game('cached-board-b'),
+        ];
+        final refreshedGames = <Games>[
+          _game('current-board-a'),
+          _game('current-board-b'),
+          _game('current-board-c'),
+        ];
         final freshGames = Completer<List<Games>>();
         final cachedPublished = Completer<void>();
         final freshPublished = Completer<void>();
@@ -47,10 +56,7 @@ void main() {
             gamesLocalStorage.overrideWith((ref) {
               storage = _StaleCacheGamesLocalStorage(
                 ref,
-                cachedGames: List<Games>.generate(
-                  72,
-                  (index) => _game('cached-$index'),
-                ),
+                cachedGames: cachedGames,
                 freshGames: freshGames,
               );
               return storage;
@@ -61,11 +67,11 @@ void main() {
           _,
           next,
         ) {
-          final count = next.valueOrNull?.length;
-          if (count == 72 && !cachedPublished.isCompleted) {
+          final games = next.valueOrNull;
+          if (identical(games, cachedGames) && !cachedPublished.isCompleted) {
             cachedPublished.complete();
           }
-          if (count == 630 && !freshPublished.isCompleted) {
+          if (identical(games, refreshedGames) && !freshPublished.isCompleted) {
             freshPublished.complete();
           }
         }, fireImmediately: true);
@@ -77,14 +83,12 @@ void main() {
         await cachedPublished.future.timeout(const Duration(seconds: 2));
 
         expect(storage.freshFetches, 1);
-        freshGames.complete(
-          List<Games>.generate(630, (index) => _game('fresh-$index')),
-        );
+        freshGames.complete(refreshedGames);
         await freshPublished.future.timeout(const Duration(seconds: 2));
 
         expect(
           container.read(gamesTourProvider('tour')).valueOrNull,
-          hasLength(630),
+          same(refreshedGames),
         );
       },
     );

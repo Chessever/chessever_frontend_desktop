@@ -189,10 +189,11 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
 
         // Cached rows keep the first paint fast, but a non-empty cache is not
         // proof that a live tournament snapshot is complete. Refresh this same
-        // mounted notifier immediately so an arbitrary partial cache (for
-        // example, 72 of 630 games) cannot remain visible indefinitely when
-        // desktop polling registration is delayed or briefly inactive.
-        if (loadedFromCache) {
+        // mounted primary notifier immediately so an arbitrary partial cache
+        // cannot remain visible indefinitely when desktop polling registration
+        // is delayed or briefly inactive. Sibling stages retain their staggered
+        // safety refresh to avoid a burst of simultaneous requests.
+        if (loadedFromCache && _isPrimaryTour) {
           unawaited(_checkForNewGames(ignoreActivity: true));
         }
 

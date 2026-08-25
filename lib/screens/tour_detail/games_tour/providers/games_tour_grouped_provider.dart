@@ -57,11 +57,14 @@ bool isGamesModelReadyForDisplay({
   required bool isSearchMode,
   required int providerGameCount,
   required int modelGameCount,
+  required int providerGamesFingerprint,
+  required int modelGamesFingerprint,
 }) {
   return isSearchMode ||
       displayMode != GameDisplayMode.all ||
       providerGameCount == 0 ||
-      modelGameCount == providerGameCount;
+      (modelGameCount == providerGameCount &&
+          modelGamesFingerprint == providerGamesFingerprint);
 }
 
 /// Whether a game with [gameStatus] belongs in [displayMode].
@@ -125,8 +128,13 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
       screenModelAsync.valueOrNull?.gameDisplayMode ?? GameDisplayMode.all;
 
   final gamesAsync = ref.watch(gamesTourProvider(tourId ?? ''));
-  final providerGameCount = gamesAsync.valueOrNull?.length ?? 0;
+  final providerGames = gamesAsync.valueOrNull ?? const <Games>[];
+  final providerGameCount = providerGames.length;
   final modelGameCount = screenModel?.sourceGameCount ?? 0;
+  final providerGamesFingerprint = tournamentGamesSourceFingerprint(
+    providerGames,
+  );
+  final modelGamesFingerprint = screenModel?.sourceGamesFingerprint ?? 0;
 
   if (gamesAsync.hasError) {
     return GroupedGamesData(
@@ -160,6 +168,8 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     isSearchMode: isSearchMode,
     providerGameCount: providerGameCount,
     modelGameCount: modelGameCount,
+    providerGamesFingerprint: providerGamesFingerprint,
+    modelGamesFingerprint: modelGamesFingerprint,
   )) {
     return GroupedGamesData(
       filteredRounds: [],

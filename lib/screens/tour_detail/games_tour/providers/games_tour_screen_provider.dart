@@ -442,6 +442,7 @@ class GamesTourScreenProvider
         GamesScreenModel(
           gamesTourModels: models,
           sourceGameCount: allGames.length,
+          sourceGamesFingerprint: tournamentGamesSourceFingerprint(allGames),
           // Show pins even in search mode for correct icon state.
           pinnedGamedIs: pinnedIds,
           isSearchMode: isSearchMode,
@@ -581,6 +582,7 @@ class GamesTourScreenProvider
               0,
           processedInputGameCount: finishedGames.length,
         ),
+        sourceGamesFingerprint: tournamentGamesSourceFingerprint(finishedGames),
         pinnedGamedIs: pinnedIds,
         isSearchMode: false,
         gameDisplayMode: GameDisplayMode.showfinishedGame,
@@ -614,6 +616,9 @@ class GamesTourScreenProvider
               0,
           processedInputGameCount: unfinishedGames.length,
         ),
+        sourceGamesFingerprint: tournamentGamesSourceFingerprint(
+          unfinishedGames,
+        ),
         pinnedGamedIs: pinnedIds,
         isSearchMode: false,
         gameDisplayMode: GameDisplayMode.hideFinishedGames,
@@ -626,9 +631,10 @@ class GamesTourScreenProvider
     _recomputeEpoch.invalidate();
 
     final pinnedIds = ref.read(gamesPinprovider(aboutTourModel!.id)).allPins;
-    final primaryProviderGameCount =
-        ref.read(gamesTourProvider(aboutTourModel!.id)).valueOrNull?.length ??
-        0;
+    final primaryProviderGames =
+        ref.read(gamesTourProvider(aboutTourModel!.id)).valueOrNull ??
+        const <Games>[];
+    final primaryProviderGameCount = primaryProviderGames.length;
     final allGames = _collectGamesAcrossVisibleStages();
     final sortedGames = _sortGamesForFilters(allGames, pinnedIds);
     final models = _mapGamesToModels(sortedGames);
@@ -643,6 +649,9 @@ class GamesTourScreenProvider
           displayMode: GameDisplayMode.all,
           primaryProviderGameCount: primaryProviderGameCount,
           processedInputGameCount: allGames.length,
+        ),
+        sourceGamesFingerprint: tournamentGamesSourceFingerprint(
+          primaryProviderGames,
         ),
         pinnedGamedIs: pinnedIds,
         isSearchMode: false,
@@ -784,20 +793,20 @@ class GamesTourScreenProvider
     }
     final generation = _recomputeEpoch.begin();
 
-    final pinnedIds = ref.read(gamesPinprovider(aboutTourModel!.id)).allPins;
-    final allGames = _collectGamesAcrossVisibleStages();
-    final games = await compute(
-      _searchGamesWorker,
-      _GamesSearchArgs(games: allGames, query: trimmed),
-    );
-    if (!mounted || !_recomputeEpoch.isCurrent(generation)) return;
-    final models = _mapGamesToModels(games);
+    try {
+      final pinnedIds = ref.read(gamesPinprovider(aboutTourModel!.id)).allPins;
+      final allGames = _collectGamesAcrossVisibleStages();
+      final games = await compute(
+        _searchGamesWorker,
+        _GamesSearchArgs(games: allGames, query: trimmed),
+      );
+      if (!mounted || !_recomputeEpoch.isCurrent(generation)) return;
+      final models = _mapGamesToModels(games);
 
-    debugPrint(
-      '🔍 Search refreshed: Found ${models.length} games for query "$trimmed"',
-    );
+      debugPrint(
+        '🔍 Search refreshed: Found ${models.length} games for query "$trimmed"',
+      );
 
-    if (mounted) {
       state = AsyncValue.data(
         GamesScreenModel(
           gamesTourModels: models,
@@ -808,22 +817,22 @@ class GamesTourScreenProvider
               state.valueOrNull?.gameDisplayMode ?? GameDisplayMode.all,
         ),
       );
+    } catch (error, stackTrace) {
+      if (mounted && _recomputeEpoch.isCurrent(generation)) {
+        state = AsyncValue.error(error, stackTrace);
+      }
     }
   }
 
   Future<void> searchGamesEnhanced(String query) async {
     if (aboutTourModel == null) return;
 
-    try {
-      if (query.isEmpty) {
-        clearSearch();
-        return;
-      }
-
-      await _applySearchQuery(query);
-    } catch (e, st) {
-      if (mounted) state = AsyncValue.error(e, st);
+    if (query.isEmpty) {
+      clearSearch();
+      return;
     }
+
+    await _applySearchQuery(query);
   }
 
   Future<void> refreshGames() async {

@@ -4,6 +4,38 @@ import 'package:dartchess/dartchess.dart';
 
 enum GameDisplayMode { all, hideFinishedGames, showfinishedGame }
 
+/// Identifies the ordering-relevant raw tournament snapshot that produced a
+/// screen model. Live rounds can replace or reassign boards without changing
+/// the total number of games, so a count alone cannot prove that the rendered
+/// model belongs to the current provider value.
+int tournamentGamesSourceFingerprint(Iterable<Games> games) {
+  return Object.hashAllUnordered(
+    games.map(
+      (game) => Object.hash(
+        game.id,
+        game.roundId,
+        game.roundSlug,
+        game.boardNr,
+        GameStatus.fromString(game.status),
+      ),
+    ),
+  );
+}
+
+int tournamentGameModelsSourceFingerprint(Iterable<GamesTourModel> games) {
+  return Object.hashAllUnordered(
+    games.map(
+      (game) => Object.hash(
+        game.gameId,
+        game.roundId,
+        game.roundSlug,
+        game.boardNr,
+        game.gameStatus,
+      ),
+    ),
+  );
+}
+
 enum GameSource {
   supabase,
   gamebase,
@@ -22,7 +54,11 @@ class GamesScreenModel {
     this.isSearchMode = false,
     this.searchQuery,
     int? sourceGameCount,
-  }) : sourceGameCount = sourceGameCount ?? gamesTourModels.length;
+    int? sourceGamesFingerprint,
+  }) : sourceGameCount = sourceGameCount ?? gamesTourModels.length,
+       sourceGamesFingerprint =
+           sourceGamesFingerprint ??
+           tournamentGameModelsSourceFingerprint(gamesTourModels);
 
   final List<GamesTourModel> gamesTourModels;
   final List<String> pinnedGamedIs;
@@ -30,14 +66,16 @@ class GamesScreenModel {
   final String? searchQuery;
   final GameDisplayMode gameDisplayMode;
   final int sourceGameCount;
+  final int sourceGamesFingerprint;
 
   GamesScreenModel copyWith({
     List<GamesTourModel>? gamesTourModels,
     List<String>? pinnedGamedIs,
     bool? isSearchMode,
     String? searchQuery,
-    final GameDisplayMode? gameDisplayMode,
+    GameDisplayMode? gameDisplayMode,
     int? sourceGameCount,
+    int? sourceGamesFingerprint,
   }) {
     return GamesScreenModel(
       gamesTourModels: gamesTourModels ?? this.gamesTourModels,
@@ -46,6 +84,8 @@ class GamesScreenModel {
       searchQuery: searchQuery ?? this.searchQuery,
       gameDisplayMode: gameDisplayMode ?? this.gameDisplayMode,
       sourceGameCount: sourceGameCount ?? this.sourceGameCount,
+      sourceGamesFingerprint:
+          sourceGamesFingerprint ?? this.sourceGamesFingerprint,
     );
   }
 
@@ -55,12 +95,17 @@ class GamesScreenModel {
     return other is GamesScreenModel &&
         other.gamesTourModels == gamesTourModels &&
         other.pinnedGamedIs == pinnedGamedIs &&
-        other.sourceGameCount == sourceGameCount;
+        other.sourceGameCount == sourceGameCount &&
+        other.sourceGamesFingerprint == sourceGamesFingerprint;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(gamesTourModels, pinnedGamedIs, sourceGameCount);
+  int get hashCode => Object.hash(
+    gamesTourModels,
+    pinnedGamedIs,
+    sourceGameCount,
+    sourceGamesFingerprint,
+  );
 }
 
 class GamesTourModel {
