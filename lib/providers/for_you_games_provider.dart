@@ -234,8 +234,10 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   Future<void> refresh() async {
     _offset = 0;
     state = state.copyWith(isLoading: true, error: null);
-    ref.read(forYouTopGamesSnapshotCacheProvider.notifier).state =
-        const <String, ForYouEventGamesSnapshot>{};
+    // Keep the last resolved snapshots mounted while the replacement page is
+    // loading. Clearing this cache first leaves every retained off-page live
+    // event with no snapshot, and a missing cache entry is represented by an
+    // indefinite loading skeleton in the desktop For You feed.
     await _fetchPage(isInitial: true);
     if (mounted) {
       bumpForYouEventsRefreshSignal(ref);
@@ -316,12 +318,19 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
               .map((b) => GroupEventCardModel.fromGroupBroadcast(b, liveIds))
               .toList();
 
-      await _prefetchTopGameSnapshots(models, replace: isInitial);
+      // Initial/stale refreshes merge the new page into the warm cache first.
+      // Once the final event list is known below, stale entries are pruned in
+      // the same synchronous turn that publishes that list. This prevents a
+      // retained live event from observing a cache-cleared intermediate state.
+      await _prefetchTopGameSnapshots(models, replace: false);
 
       if (!mounted) return;
 
       // Update state
       if (isInitial) {
+        await _ensureTopGameSnapshotsForEvents(_retainedLiveEvents(liveIds));
+        if (!mounted) return;
+
         final hasGenuinelyNewEvent =
             _sessionEventOrder.isNotEmpty &&
             models.any((event) => !_sessionEventOrder.containsKey(event.id));
@@ -335,6 +344,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         }
         var nextEvents = _sortPageOnceForSession(models);
         nextEvents = _retainHydratedLiveEvents(nextEvents, liveIds);
+        _pruneTopGameSnapshotsToEvents(nextEvents);
         state = ForYouState(
           events: nextEvents,
           isLoading: false,
@@ -375,10 +385,8 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   /// sit far below the loaded window, or not be in the ranking yet. Appending
   /// at the end of the frozen session order hid that card until restart.
   Future<void> hydrateEvents(Iterable<String> eventIds) async {
-    final requested = eventIds
-        .map((id) => id.trim())
-        .where((id) => id.isNotEmpty)
-        .toSet();
+    final requested =
+        eventIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
 
     final liveIds = <String>{
       ...await _getLiveIdsSnapshot(),
@@ -399,15 +407,12 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
             .getGroupBroadcastsByIdsOrNames(missing.toList(growable: false));
         if (!mounted) return;
         if (broadcasts.isNotEmpty) {
-          additions =
-              broadcasts
-                  .map(
-                    (broadcast) => GroupEventCardModel.fromGroupBroadcast(
-                      broadcast,
-                      liveIds,
-                    ),
-                  )
-                  .toList(growable: false);
+          additions = broadcasts
+              .map(
+                (broadcast) =>
+                    GroupEventCardModel.fromGroupBroadcast(broadcast, liveIds),
+              )
+              .toList(growable: false);
           await _prefetchTopGameSnapshots(additions, replace: false);
           if (!mounted) return;
         }
@@ -420,6 +425,12 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     }
 
     if (!mounted) return;
+    await _ensureTopGameSnapshotsForEvents([
+      for (final event in state.events)
+        if (requested.contains(event.id)) event,
+    ]);
+    if (!mounted) return;
+
     final next = mergeAndPromoteLiveEvents(
       current: state.events,
       additions: additions,
@@ -438,26 +449,52 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     List<GroupEventCardModel> pageEvents,
     List<String> liveIds,
   ) {
-    if (state.events.isEmpty) return pageEvents;
-
-    final retained = <GroupEventCardModel>[
-      for (final event in state.events)
-        if (event.tourEventCategory == TourEventCategory.live ||
-            liveIds.contains(event.id))
-          event,
-    ];
+    final retained = _retainedLiveEvents(liveIds);
     if (retained.isEmpty) return pageEvents;
 
     final next = mergeAndPromoteLiveEvents(
       current: pageEvents,
       additions: retained,
-      liveIds: <String>{
-        ...liveIds,
-        for (final event in retained) event.id,
-      },
+      liveIds: <String>{...liveIds, for (final event in retained) event.id},
     );
     _replaceSessionEventOrder(next);
     return next;
+  }
+
+  List<GroupEventCardModel> _retainedLiveEvents(List<String> liveIds) {
+    if (state.events.isEmpty) return const <GroupEventCardModel>[];
+    return <GroupEventCardModel>[
+      for (final event in state.events)
+        if (event.tourEventCategory == TourEventCategory.live ||
+            liveIds.contains(event.id))
+          event,
+    ];
+  }
+
+  Future<void> _ensureTopGameSnapshotsForEvents(
+    Iterable<GroupEventCardModel> events,
+  ) async {
+    final cache = ref.read(forYouTopGamesSnapshotCacheProvider);
+    final missing = <GroupEventCardModel>[
+      for (final event in events)
+        if (event.id.isNotEmpty && !cache.containsKey(event.id)) event,
+    ];
+    if (missing.isEmpty) return;
+    await _prefetchTopGameSnapshots(missing, replace: false);
+  }
+
+  void _pruneTopGameSnapshotsToEvents(Iterable<GroupEventCardModel> events) {
+    final visibleIds = <String>{
+      for (final event in events)
+        if (event.id.isNotEmpty) event.id,
+    };
+    final notifier = ref.read(forYouTopGamesSnapshotCacheProvider.notifier);
+    final current = notifier.state;
+    if (current.keys.every(visibleIds.contains)) return;
+    notifier.state = <String, ForYouEventGamesSnapshot>{
+      for (final entry in current.entries)
+        if (visibleIds.contains(entry.key)) entry.key: entry.value,
+    };
   }
 
   Future<List<String>> _getLiveIdsSnapshot() async {

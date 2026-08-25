@@ -414,7 +414,7 @@ void main() {
   });
 
   test(
-    'refresh keeps a hydrated live event that is still off the first page',
+    'refresh keeps an off-page live event and its resolved games snapshot',
     () async {
       final titledTuesday = _broadcast(
         id: 'titled-tuesday',
@@ -469,6 +469,18 @@ void main() {
       expect(
         container.read(forYouEventsProvider).events.map((event) => event.id),
         <String>['titled-tuesday', 'starred-open', 'club-open'],
+      );
+      expect(
+        container.read(forYouEventSnapshotProvider('titled-tuesday')).isLoading,
+        isFalse,
+        reason:
+            'a retained event without a cache entry renders skeletons forever',
+      );
+      expect(
+        container
+            .read(forYouTopGamesSnapshotCacheProvider)
+            .containsKey('titled-tuesday'),
+        isTrue,
       );
     },
   );
