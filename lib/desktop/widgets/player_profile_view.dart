@@ -32,6 +32,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
+import 'package:chessever/desktop/widgets/memorial_player_about_view.dart';
 import 'package:chessever/desktop/widgets/list_keyboard_scroll.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
@@ -69,6 +70,17 @@ import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+
+@visibleForTesting
+List<PlayerProfileSection> playerProfileSectionsFor({
+  required bool isMemorial,
+}) =>
+    isMemorial
+        ? const <PlayerProfileSection>[
+          PlayerProfileSection.about,
+          PlayerProfileSection.games,
+        ]
+        : PlayerProfileSection.values;
 
 /// Desktop-native player profile pane.
 ///
@@ -358,11 +370,17 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     );
 
     final gamesState = ref.watch(playerProfileGamesKeyProvider(activeKey));
-    final currentTab = ref.watch(
+    final selectedTab = ref.watch(
       playerProfileSectionByTabIdProvider.select(
         (sections) => sections[widget.tabId] ?? PlayerProfileSection.about,
       ),
     );
+    final isMemorial =
+        widget.args.memorialSourceIdentity?.trim().isNotEmpty == true;
+    final currentTab =
+        isMemorial && selectedTab == PlayerProfileSection.events
+            ? PlayerProfileSection.about
+            : selectedTab;
     final hasActiveFilter = gamesState.hasActiveFilters;
     final isTwicLoading =
         _dataSource == PlayerProfileDataSource.twic && gamesState.isLoading;
@@ -449,6 +467,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
               dataSource: _dataSource,
               gamebasePlayerId: _gamebasePlayerId,
               ratings: ratings,
+              memorialSourceIdentity: widget.args.memorialSourceIdentity,
               currentTimeControl: gamesState.filter.timeControl,
               onSelectTimeControl: (timeControl) {
                 final next =
@@ -1831,6 +1850,7 @@ class _RightPane extends StatelessWidget {
     required this.dataSource,
     required this.gamebasePlayerId,
     required this.ratings,
+    required this.memorialSourceIdentity,
     required this.currentTimeControl,
     required this.onSelectTimeControl,
   });
@@ -1848,11 +1868,15 @@ class _RightPane extends StatelessWidget {
   final PlayerProfileDataSource dataSource;
   final String? gamebasePlayerId;
   final _ProfileRatings ratings;
+  final String? memorialSourceIdentity;
   final GameTimeControlFilter currentTimeControl;
   final ValueChanged<GameTimeControlFilter> onSelectTimeControl;
 
   @override
   Widget build(BuildContext context) {
+    final memorialIdentity = memorialSourceIdentity?.trim();
+    final isMemorial = memorialIdentity?.isNotEmpty == true;
+    final sections = playerProfileSectionsFor(isMemorial: isMemorial);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1862,6 +1886,7 @@ class _RightPane extends StatelessWidget {
           gameCount: filteredGameCount,
           gameCountLoading: isGameCountLoading,
           hasActiveFilter: hasActiveFilter,
+          sections: sections,
         ),
         _IndicatorBar(
           hasActiveFilter: hasActiveFilter,
@@ -1869,18 +1894,24 @@ class _RightPane extends StatelessWidget {
         ),
         Expanded(
           child: PersistentIndexedStack(
-            index: PlayerProfileSection.values.indexOf(currentTab),
+            index: sections.indexOf(currentTab),
             sizing: StackFit.expand,
             children: [
-              _AboutBody(
-                activeKey: activeKey,
-                fideId: fideId,
-                playerName: playerName,
-                ratings: ratings,
-                currentTimeControl: currentTimeControl,
-                onSelectTimeControl: onSelectTimeControl,
-                onShowEvents: () => onSelectTab(PlayerProfileSection.events),
-              ),
+              if (isMemorial)
+                MemorialPlayerAboutView(
+                  sourceIdentity: memorialIdentity!,
+                  playerName: playerName,
+                )
+              else
+                _AboutBody(
+                  activeKey: activeKey,
+                  fideId: fideId,
+                  playerName: playerName,
+                  ratings: ratings,
+                  currentTimeControl: currentTimeControl,
+                  onSelectTimeControl: onSelectTimeControl,
+                  onShowEvents: () => onSelectTab(PlayerProfileSection.events),
+                ),
               _GamesBody(
                 tabId: tabId,
                 activeKey: activeKey,
@@ -1888,12 +1919,13 @@ class _RightPane extends StatelessWidget {
                 dataSource: dataSource,
                 isActive: currentTab == PlayerProfileSection.games,
               ),
-              _EventsBody(
-                activeKey: activeKey,
-                fideId: fideId,
-                dataSource: dataSource,
-                isActive: currentTab == PlayerProfileSection.events,
-              ),
+              if (!isMemorial)
+                _EventsBody(
+                  activeKey: activeKey,
+                  fideId: fideId,
+                  dataSource: dataSource,
+                  isActive: currentTab == PlayerProfileSection.events,
+                ),
             ],
           ),
         ),
@@ -1909,12 +1941,14 @@ class _TabStrip extends StatelessWidget {
     required this.gameCount,
     required this.gameCountLoading,
     required this.hasActiveFilter,
+    required this.sections,
   });
   final PlayerProfileSection current;
   final ValueChanged<PlayerProfileSection> onSelect;
   final int gameCount;
   final bool gameCountLoading;
   final bool hasActiveFilter;
+  final List<PlayerProfileSection> sections;
 
   @override
   Widget build(BuildContext context) {
@@ -1925,7 +1959,7 @@ class _TabStrip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
-          for (final t in PlayerProfileSection.values)
+          for (final t in sections)
             _TabUnderlineItem(
               label: t.label,
               badge:

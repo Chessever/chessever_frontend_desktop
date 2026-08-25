@@ -108,6 +108,20 @@ void main() {
       decoded.args?.databaseGamesContinuation?.kind,
       BoardTabGamesContinuationKind.twicDatabase,
     );
+    expect(decoded.pictureInPicture, isFalse);
+  });
+
+  test('picture-in-picture payload round-trips its compact window mode', () {
+    final decoded = DesktopBoardWindowPayload.decode(
+      DesktopBoardWindowPayload.fromArgs(
+        _args(gameId: 'live-game'),
+        pictureInPicture: true,
+      ).encode(),
+    );
+
+    expect(decoded.kind, TabKind.board);
+    expect(decoded.args?.gameId, 'live-game');
+    expect(decoded.pictureInPicture, isTrue);
   });
 
   test('board window payload preserves Smart GM Source continuation', () {
@@ -167,6 +181,36 @@ void main() {
 
     expect(captured.args?.gameId, 'game-1');
     expect(container.read(desktopTabsProvider).tabs.length, before);
+  });
+
+  test('opening picture in picture keeps the main board tab open', () async {
+    late DesktopBoardWindowPayload captured;
+    final container = ProviderContainer(
+      overrides: [
+        desktopBoardWindowServiceProvider.overrideWithValue(
+          DesktopBoardWindowService(
+            createWindow: (payload) async => captured = payload,
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final tabId = openBoardGameTabFromContainer(
+      container,
+      _args(gameId: 'live-game'),
+      reuseExisting: false,
+    );
+
+    await container
+        .read(desktopBoardWindowServiceProvider)
+        .openPictureInPictureWindow(_args(gameId: 'live-game'));
+
+    expect(captured.pictureInPicture, isTrue);
+    expect(captured.args?.gameId, 'live-game');
+    expect(
+      container.read(desktopTabsProvider).tabs.any((tab) => tab.id == tabId),
+      isTrue,
+    );
   });
 
   test(

@@ -224,7 +224,7 @@ class PlayerOpeningTreeIndex {
     PlayerOpeningTreeFilterCriteria filters =
         const PlayerOpeningTreeFilterCriteria(),
   }) {
-    if (localMovesByFen.isNotEmpty) {
+    if (localMovesByFen.isNotEmpty || filters.hasOpponentIdentityFilters) {
       final key = _fenKey(fen);
       if (!filters.hasFilters) {
         return _valueForFenKey(localMovesByFen, key) ?? const <MoveAggregate>[];
@@ -673,6 +673,9 @@ class PlayerOpeningTreeFilterCriteria {
     this.playerIds = const <String>[],
     this.playerFideIds = const <String>[],
     this.playerNames = const <String>[],
+    this.opponentIds = const <String>[],
+    this.opponentFideIds = const <String>[],
+    this.opponentNames = const <String>[],
     this.timeControl,
     this.minRating,
     this.maxRating,
@@ -687,6 +690,9 @@ class PlayerOpeningTreeFilterCriteria {
   final List<String> playerIds;
   final List<String> playerFideIds;
   final List<String> playerNames;
+  final List<String> opponentIds;
+  final List<String> opponentFideIds;
+  final List<String> opponentNames;
   final TimeControl? timeControl;
   final int? minRating;
   final int? maxRating;
@@ -701,6 +707,9 @@ class PlayerOpeningTreeFilterCriteria {
       playerIds.any((value) => value.trim().isNotEmpty) ||
       playerFideIds.any((value) => value.trim().isNotEmpty) ||
       playerNames.any((value) => value.trim().isNotEmpty) ||
+      opponentIds.any((value) => value.trim().isNotEmpty) ||
+      opponentFideIds.any((value) => value.trim().isNotEmpty) ||
+      opponentNames.any((value) => value.trim().isNotEmpty) ||
       timeControl != null ||
       minRating != null ||
       maxRating != null ||
@@ -720,6 +729,20 @@ class PlayerOpeningTreeFilterCriteria {
       if (actualPlayerColor == null) return false;
       if ((wantedColor == 'white' || wantedColor == 'black') &&
           actualPlayerColor != wantedColor) {
+        return false;
+      }
+    }
+
+    if (hasOpponentIdentityFilters) {
+      if (actualPlayerColor == null) return false;
+      final opponentColor = actualPlayerColor == 'white' ? 'black' : 'white';
+      if (!_sideMatchesIdentity(
+        row,
+        opponentColor,
+        ids: opponentIds,
+        fideIds: opponentFideIds,
+        names: opponentNames,
+      )) {
         return false;
       }
     }
@@ -760,6 +783,12 @@ class PlayerOpeningTreeFilterCriteria {
         playerIds.any((value) => value.trim().isNotEmpty) ||
         playerFideIds.any((value) => value.trim().isNotEmpty) ||
         playerNames.any((value) => value.trim().isNotEmpty);
+  }
+
+  bool get hasOpponentIdentityFilters {
+    return opponentIds.any((value) => value.trim().isNotEmpty) ||
+        opponentFideIds.any((value) => value.trim().isNotEmpty) ||
+        opponentNames.any((value) => value.trim().isNotEmpty);
   }
 }
 
@@ -1666,6 +1695,28 @@ String? _playerColorForCriteria(
   }
 
   return null;
+}
+
+bool _sideMatchesIdentity(
+  Map<String, dynamic> row,
+  String side, {
+  required List<String> ids,
+  required List<String> fideIds,
+  required List<String> names,
+}) {
+  final normalizedSide = side == 'black' ? 'black' : 'white';
+  final playerId =
+      row['${normalizedSide}PlayerId']?.toString().trim().toLowerCase();
+  if (playerId != null && _normalizedFilterValues(ids).contains(playerId)) {
+    return true;
+  }
+  final fideId =
+      row['${normalizedSide}FideId']?.toString().trim().toLowerCase();
+  if (fideId != null && _normalizedFilterValues(fideIds).contains(fideId)) {
+    return true;
+  }
+  final name = _normalizePlayerName(row[normalizedSide]?.toString());
+  return name != null && _normalizedPlayerNames(names).contains(name);
 }
 
 Set<String> _normalizedFilterValues(Iterable<Object?> values) {

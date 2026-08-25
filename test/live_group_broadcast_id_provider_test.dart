@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
@@ -368,6 +369,25 @@ void main() {
           broadcast.id,
         ]);
         expect(emittedIds.last, [broadcast.id]);
+      },
+    );
+
+    test(
+      'periodic live-id refresh re-fetches settings instead of stale ids',
+      () {
+        final source =
+            File(
+              'lib/screens/group_event/providers/live_group_broadcast_id_provider.dart',
+            ).readAsStringSync();
+        expect(source, contains("refreshSettingsSnapshot('periodic refresh')"));
+        expect(
+          source,
+          isNot(
+            contains(
+              'Timer.periodic(_liveIndicatorRefreshInterval, (_) {\n    unawaited(emitResolvedIds());',
+            ),
+          ),
+        );
       },
     );
 

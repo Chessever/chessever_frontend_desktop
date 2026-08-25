@@ -42,6 +42,7 @@ import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/editable_aware_shortcut_activator.dart';
 import 'package:chessever/desktop/widgets/pane_keyboard_scroll.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_board_shortcuts.dart';
@@ -532,7 +533,17 @@ class DesktopShell extends HookConsumerWidget {
               // shortcuts: cross-platform board chords (prev/next game, …)
               // must fire for both Cmd and Ctrl on every desktop host.
               for (final activator in chord.toAllPlatformActivators()) {
-                shellShortcuts[activator] = _BoardShortcutIntent(action);
+                if (isReservedDesktopGlobalSearchShortcut(activator)) {
+                  continue;
+                }
+                // Board bindings intentionally override matching shell
+                // bindings outside editors. Remove the raw activator so the
+                // guarded replacement is also the only candidate while a
+                // text field owns focus.
+                shellShortcuts.remove(activator);
+                shellShortcuts[EditableAwareShortcutActivator(
+                  activator,
+                )] = _BoardShortcutIntent(action);
               }
             }
           }
@@ -569,7 +580,10 @@ class DesktopShell extends HookConsumerWidget {
           },
           child: FocusableActionDetector(
             autofocus: true,
-            shortcuts: shellShortcuts,
+            shortcuts: editableAwareShortcuts(
+              shellShortcuts,
+              allowedWhileEditing: isReservedDesktopGlobalSearchShortcut,
+            ),
             actions: <Type, Action<Intent>>{
               SwitchPaneIntent: CallbackAction<SwitchPaneIntent>(
                 onInvoke: (intent) {
@@ -1057,19 +1071,15 @@ bool shouldHandleDesktopBackspaceNavigation({
   required FocusNode? primaryFocus,
 }) {
   if (!canGoBack) return false;
-  final context = primaryFocus?.context;
-  if (context == null) return true;
-  if (context.widget is EditableText) return false;
+  return !focusIsEditingText(primaryFocus);
+}
 
-  var insideEditableText = false;
-  context.visitAncestorElements((element) {
-    if (element.widget is EditableText) {
-      insideEditableText = true;
-      return false;
-    }
-    return true;
-  });
-  return !insideEditableText;
+@visibleForTesting
+bool isReservedDesktopGlobalSearchShortcut(ShortcutActivator activator) {
+  return activator ==
+          const SingleActivator(LogicalKeyboardKey.keyF, meta: true) ||
+      activator ==
+          const SingleActivator(LogicalKeyboardKey.keyF, control: true);
 }
 
 class _ToggleSidebarIntent extends Intent {

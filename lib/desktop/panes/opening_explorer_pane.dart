@@ -13,6 +13,7 @@ import 'package:chessever/desktop/state/opening_explorer_seed.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
+import 'package:chessever/desktop/widgets/editable_aware_shortcut_activator.dart';
 import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -398,7 +399,7 @@ class OpeningExplorerPane extends HookConsumerWidget {
     };
 
     return Shortcuts(
-      shortcuts: shortcuts,
+      shortcuts: editableAwareShortcuts(shortcuts),
       child: Actions(
         actions: actions,
         child: Focus(

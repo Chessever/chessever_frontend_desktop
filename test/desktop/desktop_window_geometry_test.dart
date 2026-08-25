@@ -4,6 +4,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:chessever/desktop/services/desktop_window_geometry.dart';
 
 void main() {
+  group('pictureInPictureRectForVisibleBounds', () {
+    test('anchors the compact window inside the bottom-right safe area', () {
+      final rect = pictureInPictureRectForVisibleBounds(
+        size: const Size(520, 650),
+        visibleBounds: const Rect.fromLTWH(100, 40, 1920, 1040),
+      );
+
+      expect(rect, const Rect.fromLTWH(1488, 418, 520, 650));
+    });
+
+    test('fits a compact window inside a smaller visible work area', () {
+      final rect = pictureInPictureRectForVisibleBounds(
+        size: const Size(520, 650),
+        visibleBounds: const Rect.fromLTWH(0, 0, 480, 600),
+      );
+
+      expect(rect, const Rect.fromLTWH(12, 12, 456, 576));
+    });
+  });
+
   group('fitWindowSizeToVisibleBounds', () {
     test('keeps the preferred size when the display can fit it', () {
       final size = fitWindowSizeToVisibleBounds(

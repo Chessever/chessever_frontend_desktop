@@ -26,8 +26,6 @@ import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/utils/player_build_tree_filters.dart';
 import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
-import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart'
-    show GamebaseFilters;
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
@@ -4167,20 +4165,18 @@ void _openLocalTree(
   // BoardExplorerScope → gamebase filter seam used by Players tree actions
   // (NotationOpeningPanel applies scope.playerColor on open).
   final color = preparationSide.targetPlayerColor;
-  if (color != null) {
-    ref
-        .read(boardExplorerScopeByTabIdProvider.notifier)
-        .update(
-          (scopes) => <String, BoardExplorerScope>{
-            ...scopes,
-            tabId: BoardExplorerScope(
-              player: _workspaceGamebasePlayer(player),
-              playerAliases: _workspaceGamebasePlayerAliases(player),
-              initialFilters: GamebaseFilters(playerColor: color),
-            ),
-          },
-        );
-  }
+  ref
+      .read(boardExplorerScopeByTabIdProvider.notifier)
+      .update(
+        (scopes) => <String, BoardExplorerScope>{
+          ...scopes,
+          tabId: buildPlayerTreeExplorerScope(
+            player: _workspaceGamebasePlayer(player),
+            playerAliases: _workspaceGamebasePlayerAliases(player),
+            playerColor: color,
+          ),
+        },
+      );
   ref.read(rightRailActivePageProvider(tabId).notifier).state = 1;
   try {
     unawaited(

@@ -1,5 +1,6 @@
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/player_opening_tree_filter_adapter.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
@@ -1415,8 +1416,8 @@ final gamebaseExplorerProvider = StateNotifierProvider.autoDispose<
 >((ref) => GamebaseExplorerNotifier(ref));
 
 String? _localTreePlayerId(GamebaseFilters filters) {
-  if (filters.playerIds.length != 1) return null;
-  final playerId = filters.playerIds.first.trim();
+  final playerId = filters.requestPlayerId?.trim();
+  if (playerId == null) return null;
   return playerId.isEmpty ? null : playerId;
 }
 
@@ -1424,26 +1425,9 @@ PlayerOpeningTreeFilterCriteria _localTreeCriteria(
   GamebaseFilters filters,
   String playerId,
 ) {
-  return PlayerOpeningTreeFilterCriteria(
-    playerId: playerId,
-    playerIds: <String>[playerId, ...filters.playerIds],
-    playerFideIds: <String>[
-      for (final player in filters.selectedPlayers)
-        if (player.fideId.trim().isNotEmpty) player.fideId.trim(),
-    ],
-    playerNames: <String>[
-      for (final player in filters.selectedPlayers)
-        if (player.name.trim().isNotEmpty) player.name.trim(),
-    ],
-    timeControl:
-        filters.timeControls.isNotEmpty ? filters.timeControls.first : null,
-    minRating: filters.minRating,
-    maxRating: filters.maxRating,
-    color: filters.playerColor?.name,
-    result: filters.gameResult?.apiValue,
-    isOnline: filters.isOnline,
-    yearFrom: filters.yearFrom,
-    yearTo: filters.yearTo,
+  return playerOpeningTreeCriteriaFromFilters(
+    filters,
+    subjectPlayerId: playerId,
   );
 }
 

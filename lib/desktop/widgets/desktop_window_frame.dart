@@ -20,9 +20,14 @@ bool get _usesCustomWindowControls => Platform.isWindows || Platform.isLinux;
 /// macOS intentionally renders no Flutter caption buttons here. Its native
 /// traffic lights remain visible over the Flutter-painted title-bar surface.
 class DesktopWindowFrame extends StatefulWidget {
-  const DesktopWindowFrame({super.key, required this.child});
+  const DesktopWindowFrame({
+    super.key,
+    required this.child,
+    this.allowMaximize = true,
+  });
 
   final Widget child;
+  final bool allowMaximize;
 
   @override
   State<DesktopWindowFrame> createState() => _DesktopWindowFrameState();
@@ -85,6 +90,10 @@ class _DesktopWindowFrameState extends State<DesktopWindowFrame>
 
   @override
   Widget build(BuildContext context) {
+    final controlsWidth =
+        widget.allowMaximize
+            ? kDesktopWindowControlsWidth
+            : kDesktopWindowControlsWidth * 2 / 3;
     return VirtualWindowFrame(
       child: Stack(
         fit: StackFit.expand,
@@ -94,7 +103,7 @@ class _DesktopWindowFrameState extends State<DesktopWindowFrame>
             Positioned(
               top: 0,
               right: 0,
-              width: kDesktopWindowControlsWidth,
+              width: controlsWidth,
               height: kDesktopChromeBarHeight,
               // Isolate the caption strip's raster from the heavy shell
               // repainting behind it so a partial repaint of the pane can never
@@ -102,6 +111,7 @@ class _DesktopWindowFrameState extends State<DesktopWindowFrame>
               child: RepaintBoundary(
                 child: _DesktopWindowControls(
                   isMaximized: _isMaximized,
+                  allowMaximize: widget.allowMaximize,
                   onMinimize: () => _runWindowAction(windowManager.minimize),
                   onToggleMaximized: _toggleMaximized,
                   onClose: () => _runWindowAction(windowManager.close),
@@ -132,12 +142,22 @@ class _DesktopWindowFrameState extends State<DesktopWindowFrame>
 /// A quiet title-bar row for desktop routes that do not render the persistent
 /// shell, such as sign-in, subscription gating, and detached board windows.
 class DesktopStandaloneWindowChrome extends StatelessWidget {
-  const DesktopStandaloneWindowChrome({super.key, required this.child});
+  const DesktopStandaloneWindowChrome({
+    super.key,
+    required this.child,
+    this.pictureInPictureTitle,
+  });
 
   final Widget child;
+  final String? pictureInPictureTitle;
 
   @override
   Widget build(BuildContext context) {
+    final allowMaximize = pictureInPictureTitle == null;
+    final controlsWidth =
+        allowMaximize
+            ? kDesktopWindowControlsWidth
+            : kDesktopWindowControlsWidth * 2 / 3;
     return ColoredBox(
       color: kBackgroundColor,
       child: Column(
@@ -154,11 +174,19 @@ class DesktopStandaloneWindowChrome extends StatelessWidget {
               child: Row(
                 children: [
                   if (Platform.isMacOS) const SizedBox(width: 78),
-                  const Expanded(
-                    child: DragToMoveArea(child: SizedBox.expand()),
+                  Expanded(
+                    child: DragToMoveArea(
+                      child:
+                          pictureInPictureTitle == null
+                              ? const SizedBox.expand()
+                              : _PictureInPictureTitle(
+                                title: pictureInPictureTitle!,
+                              ),
+                    ),
                   ),
-                  if (_usesCustomWindowControls)
-                    const SizedBox(width: kDesktopWindowControlsWidth),
+                  if (Platform.isMacOS && pictureInPictureTitle != null)
+                    const SizedBox(width: 78),
+                  if (_usesCustomWindowControls) SizedBox(width: controlsWidth),
                 ],
               ),
             ),
@@ -170,15 +198,57 @@ class DesktopStandaloneWindowChrome extends StatelessWidget {
   }
 }
 
+class _PictureInPictureTitle extends StatelessWidget {
+  const _PictureInPictureTitle({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Picture in picture, always on top: $title',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.picture_in_picture_alt_rounded,
+              size: 14,
+              color: kWhiteColor70,
+            ),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _DesktopWindowControls extends StatelessWidget {
   const _DesktopWindowControls({
     required this.isMaximized,
+    required this.allowMaximize,
     required this.onMinimize,
     required this.onToggleMaximized,
     required this.onClose,
   });
 
   final bool isMaximized;
+  final bool allowMaximize;
   final VoidCallback onMinimize;
   final VoidCallback onToggleMaximized;
   final VoidCallback onClose;
@@ -194,15 +264,16 @@ class _DesktopWindowControls extends StatelessWidget {
             icon: const DesktopCaptionGlyph(DesktopCaptionGlyphType.minimize),
             onTap: onMinimize,
           ),
-          _DesktopCaptionButton(
-            semanticLabel: isMaximized ? 'Restore window' : 'Maximize window',
-            icon: DesktopCaptionGlyph(
-              isMaximized
-                  ? DesktopCaptionGlyphType.restore
-                  : DesktopCaptionGlyphType.maximize,
+          if (allowMaximize)
+            _DesktopCaptionButton(
+              semanticLabel: isMaximized ? 'Restore window' : 'Maximize window',
+              icon: DesktopCaptionGlyph(
+                isMaximized
+                    ? DesktopCaptionGlyphType.restore
+                    : DesktopCaptionGlyphType.maximize,
+              ),
+              onTap: onToggleMaximized,
             ),
-            onTap: onToggleMaximized,
-          ),
           _DesktopCaptionButton(
             semanticLabel: 'Close window',
             icon: const DesktopCaptionGlyph(DesktopCaptionGlyphType.close),

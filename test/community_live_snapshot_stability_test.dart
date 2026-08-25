@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chessever/providers/favorite_events_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/for_you_games_provider.dart';
@@ -7,6 +9,7 @@ import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
+import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/group_event/providers/live_group_broadcast_id_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
@@ -43,10 +46,12 @@ class _EmptyFavoritePlayersNotifier extends FavoritePlayersNotifierNew {
 }
 
 class _SequencedBroadcastRepository implements GroupBroadcastRepository {
-  _SequencedBroadcastRepository(this.snapshots);
+  _SequencedBroadcastRepository(this.snapshots, {this.catalog = const []});
 
   final List<List<GroupBroadcast>> snapshots;
+  final List<GroupBroadcast> catalog;
   int calls = 0;
+  final List<List<String>> byIdRequests = <List<String>>[];
 
   @override
   Future<List<GroupBroadcast>> getForYouGroupBroadcasts({
@@ -60,6 +65,20 @@ class _SequencedBroadcastRepository implements GroupBroadcastRepository {
     final index = calls.clamp(0, snapshots.length - 1);
     calls += 1;
     return snapshots[index];
+  }
+
+  @override
+  Future<List<GroupBroadcast>> getGroupBroadcastsByIdsOrNames(
+    List<String> identifiers,
+  ) async {
+    byIdRequests.add(List<String>.from(identifiers));
+    final wanted = identifiers.map((id) => id.trim()).toSet();
+    return catalog
+        .where(
+          (broadcast) =>
+              wanted.contains(broadcast.id) || wanted.contains(broadcast.name),
+        )
+        .toList(growable: false);
   }
 
   @override
@@ -249,6 +268,210 @@ void main() {
       <String>['new-starred-event', 'regular-a', 'regular-b'],
     );
   });
+
+  test(
+    'a newly live event is appended and promoted without swapping siblings',
+    () async {
+      final titledTuesday = _broadcast(
+        id: 'titled-tuesday',
+        name: 'Titled Tuesday',
+        maxAvgElo: 2650,
+      );
+      final liveUpdates = StreamController<List<String>>.broadcast();
+      addTearDown(liveUpdates.close);
+      final broadcasts = _SequencedBroadcastRepository(
+        <List<GroupBroadcast>>[
+          <GroupBroadcast>[
+            _broadcast(
+              id: 'starred-open',
+              name: 'Starred Open',
+              maxAvgElo: 2750,
+            ),
+            _broadcast(id: 'club-open', name: 'Club Open', maxAvgElo: 2400),
+          ],
+        ],
+        catalog: <GroupBroadcast>[titledTuesday],
+      );
+      final container = ProviderContainer(
+        overrides: [
+          groupBroadcastRepositoryProvider.overrideWithValue(broadcasts),
+          gameRepositoryProvider.overrideWithValue(_EmptyGameRepository()),
+          favoriteEventsProvider.overrideWith(_EmptyFavoriteEventsNotifier.new),
+          favoritePlayersProviderNew.overrideWith(
+            _EmptyFavoritePlayersNotifier.new,
+          ),
+          liveGroupBroadcastIdsProvider.overrideWith((ref) async* {
+            yield const <String>[];
+            yield* liveUpdates.stream;
+          }),
+          liveRoundsIdProvider.overrideWith(
+            (ref) => const Stream<List<String>>.empty(),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final subscription = container.listen<ForYouState>(
+        forYouEventsProvider,
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+
+      await _waitFor(
+        () =>
+            broadcasts.calls >= 1 &&
+            container.read(forYouEventsProvider).events.length == 2,
+      );
+      expect(
+        container.read(forYouEventsProvider).events.map((event) => event.id),
+        <String>['starred-open', 'club-open'],
+      );
+
+      liveUpdates.add(const <String>['titled-tuesday']);
+
+      await _waitFor(
+        () =>
+            container.read(forYouEventsProvider).events.length == 3 &&
+            container.read(forYouEventsProvider).events.first.id ==
+                'titled-tuesday',
+      );
+      expect(
+        container.read(forYouEventsProvider).events.map((event) => event.id),
+        <String>['titled-tuesday', 'starred-open', 'club-open'],
+      );
+      expect(
+        container.read(forYouEventsProvider).events.first.tourEventCategory,
+        TourEventCategory.live,
+      );
+    },
+  );
+
+  test('an already-loaded event is promoted when it goes live', () async {
+    final titledTuesday = _broadcast(
+      id: 'titled-tuesday',
+      name: 'Titled Tuesday',
+      maxAvgElo: 2400,
+    );
+    final liveUpdates = StreamController<List<String>>.broadcast();
+    addTearDown(liveUpdates.close);
+    final broadcasts = _SequencedBroadcastRepository(
+      <List<GroupBroadcast>>[
+        <GroupBroadcast>[
+          _broadcast(id: 'starred-open', name: 'Starred Open', maxAvgElo: 2750),
+          titledTuesday,
+        ],
+      ],
+      catalog: <GroupBroadcast>[titledTuesday],
+    );
+    final container = ProviderContainer(
+      overrides: [
+        groupBroadcastRepositoryProvider.overrideWithValue(broadcasts),
+        gameRepositoryProvider.overrideWithValue(_EmptyGameRepository()),
+        favoriteEventsProvider.overrideWith(_EmptyFavoriteEventsNotifier.new),
+        favoritePlayersProviderNew.overrideWith(
+          _EmptyFavoritePlayersNotifier.new,
+        ),
+        liveGroupBroadcastIdsProvider.overrideWith((ref) async* {
+          yield const <String>[];
+          yield* liveUpdates.stream;
+        }),
+        liveRoundsIdProvider.overrideWith(
+          (ref) => const Stream<List<String>>.empty(),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final subscription = container.listen<ForYouState>(
+      forYouEventsProvider,
+      (_, __) {},
+      fireImmediately: true,
+    );
+    addTearDown(subscription.close);
+
+    await _waitFor(
+      () => container.read(forYouEventsProvider).events.length == 2,
+    );
+    expect(
+      container.read(forYouEventsProvider).events.map((event) => event.id),
+      <String>['starred-open', 'titled-tuesday'],
+    );
+
+    liveUpdates.add(const <String>['titled-tuesday']);
+
+    await _waitFor(
+      () =>
+          container.read(forYouEventsProvider).events.first.id ==
+          'titled-tuesday',
+    );
+    expect(
+      container.read(forYouEventsProvider).events.map((event) => event.id),
+      <String>['titled-tuesday', 'starred-open'],
+    );
+    expect(
+      container.read(forYouEventsProvider).events.first.tourEventCategory,
+      TourEventCategory.live,
+    );
+  });
+
+  test(
+    'refresh keeps a hydrated live event that is still off the first page',
+    () async {
+      final titledTuesday = _broadcast(
+        id: 'titled-tuesday',
+        name: 'Titled Tuesday',
+        maxAvgElo: 2650,
+      );
+      final page = <GroupBroadcast>[
+        _broadcast(id: 'starred-open', name: 'Starred Open', maxAvgElo: 2750),
+        _broadcast(id: 'club-open', name: 'Club Open', maxAvgElo: 2400),
+      ];
+      final liveUpdates = StreamController<List<String>>.broadcast();
+      addTearDown(liveUpdates.close);
+      final broadcasts = _SequencedBroadcastRepository(
+        <List<GroupBroadcast>>[page, page],
+        catalog: <GroupBroadcast>[titledTuesday],
+      );
+      final container = ProviderContainer(
+        overrides: [
+          groupBroadcastRepositoryProvider.overrideWithValue(broadcasts),
+          gameRepositoryProvider.overrideWithValue(_EmptyGameRepository()),
+          favoriteEventsProvider.overrideWith(_EmptyFavoriteEventsNotifier.new),
+          favoritePlayersProviderNew.overrideWith(
+            _EmptyFavoritePlayersNotifier.new,
+          ),
+          liveGroupBroadcastIdsProvider.overrideWith((ref) async* {
+            yield const <String>[];
+            yield* liveUpdates.stream;
+          }),
+          liveRoundsIdProvider.overrideWith(
+            (ref) => const Stream<List<String>>.empty(),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final subscription = container.listen<ForYouState>(
+        forYouEventsProvider,
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+
+      await _waitFor(
+        () => container.read(forYouEventsProvider).events.length == 2,
+      );
+      liveUpdates.add(const <String>['titled-tuesday']);
+      await _waitFor(
+        () => container.read(forYouEventsProvider).events.length == 3,
+      );
+
+      await container.read(forYouEventsProvider.notifier).refresh();
+
+      expect(
+        container.read(forYouEventsProvider).events.map((event) => event.id),
+        <String>['titled-tuesday', 'starred-open', 'club-open'],
+      );
+    },
+  );
 
   test('round reconciliation updates fields without dropping siblings', () {
     final startsAt = DateTime.utc(2026, 7, 14, 18);

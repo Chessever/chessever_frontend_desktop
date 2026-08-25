@@ -97,6 +97,107 @@ void main() {
 
     expect(toggled, isTrue);
   });
+
+  testWidgets('board menu opens picture in picture when a game is available', (
+    tester,
+  ) async {
+    var opened = false;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          keyboardShortcutsProvider.overrideWith(
+            _TestKeyboardShortcutsNotifier.new,
+          ),
+        ],
+        child: MaterialApp(
+          home: Consumer(
+            builder:
+                (context, ref, _) => TextButton(
+                  onPressed: () {
+                    unawaited(
+                      showBoardContextMenu(
+                        ref,
+                        context,
+                        position: const Offset(16, 16),
+                        onShareGame: () {},
+                        onFlipBoard: () {},
+                        onToggleBoardFocus: () {},
+                        onOpenPictureInPicture: () => opened = true,
+                        showPictureInPictureAction: true,
+                        onCopyPgn: () {},
+                        onCopyFen: () {},
+                        onSavePgn: () {},
+                        onSaveGameToLibrary: () {},
+                        onOpenBoardSettings: () {},
+                        onOpenPositionSetup: () {},
+                        canCopyOrSavePgn: true,
+                        boardFocusMode: false,
+                      ),
+                    );
+                  },
+                  child: const Text('Open menu'),
+                ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open menu'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    await tester.tap(find.text('Open picture in picture'));
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(opened, isTrue);
+  });
+
+  testWidgets('board menu hides picture in picture for non-live games', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          keyboardShortcutsProvider.overrideWith(
+            _TestKeyboardShortcutsNotifier.new,
+          ),
+        ],
+        child: MaterialApp(
+          home: Consumer(
+            builder:
+                (context, ref, _) => TextButton(
+                  onPressed: () {
+                    unawaited(
+                      showBoardContextMenu(
+                        ref,
+                        context,
+                        position: const Offset(16, 16),
+                        onShareGame: () {},
+                        onFlipBoard: () {},
+                        onToggleBoardFocus: () {},
+                        onCopyPgn: () {},
+                        onCopyFen: () {},
+                        onSavePgn: () {},
+                        onSaveGameToLibrary: () {},
+                        onOpenBoardSettings: () {},
+                        onOpenPositionSetup: () {},
+                        canCopyOrSavePgn: true,
+                        boardFocusMode: false,
+                      ),
+                    );
+                  },
+                  child: const Text('Open menu'),
+                ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open menu'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Open picture in picture'), findsNothing);
+  });
 }
 
 class _TestKeyboardShortcutsNotifier extends KeyboardShortcutsNotifier {

@@ -1,6 +1,7 @@
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/repository/favorites/models/favorite_player.dart';
 import 'package:chessever/repository/gamebase/memorial_player.dart';
+import 'package:chessever/repository/gamebase/memorial_player_about.dart';
 import 'package:chessever/repository/gamebase/memorial_player_local_search.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -138,5 +139,34 @@ void main() {
         expect(results.single.player.hasGames, isTrue);
       },
     );
+  });
+
+  group('Bundled Memorial overview', () {
+    test('loads authored biography for a no-FIDE identity', () async {
+      final overview = await loadBundledMemorialPlayerOverview(
+        'memorial:memorial-e03cdf6af47b368c',
+      );
+
+      expect(overview, isNotNull);
+      expect(overview!.player.name, 'Tal, Mikhail');
+      expect(overview.player.birthDate, '1936-11-09');
+      expect(overview.player.deathDate, '1992-06-28');
+      expect(
+        overview.about?.summary.join(' '),
+        contains('World Chess Champion'),
+      );
+      expect(overview.about?.achievements, isNotEmpty);
+    });
+
+    test('loads authored biography for a numeric identity', () async {
+      final overview = await loadBundledMemorialPlayerOverview('2000016');
+
+      expect(overview, isNotNull);
+      expect(overview!.player.name, 'Fischer, Robert James');
+      expect(
+        overview.about?.summary.join(' '),
+        contains('eleventh World Chess Champion'),
+      );
+    });
   });
 }

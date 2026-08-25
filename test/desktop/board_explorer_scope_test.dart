@@ -116,6 +116,36 @@ void main() {
     ]);
   });
 
+  test('both-color player trees still install a fixed player scope', () {
+    final scope = buildPlayerTreeExplorerScope(player: _player);
+    final filters = scope.initialScopedFilters;
+
+    expect(filters.playerIds, <String>[_player.id]);
+    expect(filters.selectedPlayers, <GamebasePlayer>[_player]);
+    expect(filters.playerColor, isNull);
+  });
+
+  test('scope enforcement preserves an optional opponent', () {
+    const opponent = GamebasePlayer(
+      id: 'carlsen-id',
+      fideId: '1503014',
+      name: 'Carlsen, Magnus',
+      gender: PlayerGender.male,
+      fed: 'NOR',
+    );
+    const scope = BoardExplorerScope(player: _player);
+
+    final filters = scope.enforce(
+      const GamebaseFilters(
+        playerIds: <String>['gulliyev-id', 'carlsen-id'],
+        selectedPlayers: <GamebasePlayer>[_player, opponent],
+      ),
+    );
+
+    expect(filters.playerIds, <String>[_player.id, opponent.id]);
+    expect(filters.selectedPlayers, <GamebasePlayer>[_player, opponent]);
+  });
+
   test('normal board explorer clears scope applied by another tab', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);

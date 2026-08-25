@@ -9545,8 +9545,30 @@ void _appendLocalPlayerIdentityFilter(
   final clauses = <String>[];
 
   for (final side in sides) {
-    final clause = _localSidePlayerIdentityClause(side, filters, parameters);
-    if (clause != null) clauses.add(clause);
+    final sideParameters = <Object?>[];
+    final playerClause = _localSidePlayerIdentityClause(
+      side,
+      filters,
+      sideParameters,
+    );
+    if (playerClause == null) continue;
+    if (!filters.hasOpponentIdentityFilters) {
+      clauses.add(playerClause);
+      parameters.addAll(sideParameters);
+      continue;
+    }
+
+    final opponentSide = side == 'white' ? 'black' : 'white';
+    final opponentClause = _localSideIdentityClause(
+      opponentSide,
+      ids: filters.opponentIds,
+      fideIds: filters.opponentFideIds,
+      names: filters.opponentNames,
+      parameters: sideParameters,
+    );
+    if (opponentClause == null) continue;
+    clauses.add('(($playerClause) AND ($opponentClause))');
+    parameters.addAll(sideParameters);
   }
 
   if (clauses.isEmpty) {
@@ -9600,18 +9622,34 @@ String? _localSidePlayerIdentityClause(
   PlayerOpeningTreeFilterCriteria filters,
   List<Object?> parameters,
 ) {
-  final rawIds = _normalizedFilterValues(<Object?>[
-    filters.playerId,
-    ...filters.playerIds,
-  ]);
+  return _localSideIdentityClause(
+    side,
+    ids: <Object?>[filters.playerId, ...filters.playerIds],
+    fideIds: filters.playerFideIds,
+    names: filters.playerNames,
+    parameters: parameters,
+    inferNumericIdsAsFideIds: true,
+  );
+}
+
+String? _localSideIdentityClause(
+  String side, {
+  required Iterable<Object?> ids,
+  required Iterable<Object?> fideIds,
+  required Iterable<Object?> names,
+  required List<Object?> parameters,
+  bool inferNumericIdsAsFideIds = false,
+}) {
+  final rawIds = _normalizedFilterValues(<Object?>[...ids]);
   final localNumericIds =
       rawIds.where((id) => int.tryParse(id) != null).toSet();
-  final fideIds = <String>{
-    ..._normalizedFilterValues(filters.playerFideIds),
+  final normalizedFideIds = <String>{
+    ..._normalizedFilterValues(fideIds),
     // Imported files sometimes expose FIDE ids as the only player id.
-    ...rawIds.where((id) => int.tryParse(id) != null),
+    if (inferNumericIdsAsFideIds)
+      ...rawIds.where((id) => int.tryParse(id) != null),
   };
-  final names = _normalizedPlayerNames(filters.playerNames);
+  final normalizedNames = _normalizedPlayerNames(names);
 
   final columnPrefix = side == 'white' ? 'white' : 'black';
   final jsonPrefix = side == 'white' ? 'White' : 'Black';
@@ -9622,19 +9660,19 @@ String? _localSidePlayerIdentityClause(
     );
     parameters.addAll(localNumericIds);
   }
-  if (fideIds.isNotEmpty) {
+  if (normalizedFideIds.isNotEmpty) {
     clauses.add(
       "LOWER(TRIM(COALESCE(json_extract(g.headers_json, '\$.${jsonPrefix}FideId'), ''))) "
-      'IN (${_sqlPlaceholders(fideIds.length)})',
+      'IN (${_sqlPlaceholders(normalizedFideIds.length)})',
     );
-    parameters.addAll(fideIds);
+    parameters.addAll(normalizedFideIds);
   }
-  if (names.isNotEmpty) {
+  if (normalizedNames.isNotEmpty) {
     clauses.add(
       "LOWER(TRIM(COALESCE(json_extract(g.headers_json, '\$.$jsonPrefix'), ''))) "
-      'IN (${_sqlPlaceholders(names.length)})',
+      'IN (${_sqlPlaceholders(normalizedNames.length)})',
     );
-    parameters.addAll(names);
+    parameters.addAll(normalizedNames);
   }
   if (clauses.isEmpty) return null;
   return '(${clauses.join(' OR ')})';

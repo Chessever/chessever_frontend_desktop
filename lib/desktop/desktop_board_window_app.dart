@@ -34,7 +34,10 @@ class DesktopBoardWindowApp extends ConsumerWidget {
         return FTheme(
           data: FThemes.zinc.dark,
           child: FToaster(
-            child: DesktopWindowFrame(child: child ?? const SizedBox.shrink()),
+            child: DesktopWindowFrame(
+              allowMaximize: !payload.pictureInPicture,
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         );
       },
@@ -54,6 +57,7 @@ class _BoardWindowHome extends StatelessWidget {
     return Scaffold(
       backgroundColor: kBackgroundColor,
       body: DesktopStandaloneWindowChrome(
+        pictureInPictureTitle: payload.pictureInPicture ? payload.title : null,
         child: SafeArea(
           top: false,
           child: resolveDesktopTabContent(

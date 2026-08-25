@@ -22,6 +22,7 @@ class DesktopBoardWindowPayload {
     this.subtitle,
     this.args,
     this.metadata = const <String, Object?>{},
+    this.pictureInPicture = false,
   });
 
   final String title;
@@ -29,12 +30,17 @@ class DesktopBoardWindowPayload {
   final String? subtitle;
   final BoardTabGameArgs? args;
   final Map<String, Object?> metadata;
+  final bool pictureInPicture;
 
-  factory DesktopBoardWindowPayload.fromArgs(BoardTabGameArgs args) {
+  factory DesktopBoardWindowPayload.fromArgs(
+    BoardTabGameArgs args, {
+    bool pictureInPicture = false,
+  }) {
     return DesktopBoardWindowPayload(
       title: args.label,
       kind: TabKind.board,
       args: args,
+      pictureInPicture: pictureInPicture,
     );
   }
 
@@ -71,6 +77,7 @@ class DesktopBoardWindowPayload {
           metadataJson is Map
               ? metadataJson.cast<String, Object?>()
               : const <String, Object?>{},
+      pictureInPicture: json['pictureInPicture'] == true,
     );
   }
 
@@ -97,6 +104,7 @@ class DesktopBoardWindowPayload {
     'subtitle': subtitle,
     if (args != null) 'args': _argsToJson(args!),
     if (metadata.isNotEmpty) 'metadata': metadata,
+    if (pictureInPicture) 'pictureInPicture': true,
   };
 
   String encode() => jsonEncode(toJson());

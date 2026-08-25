@@ -7,6 +7,7 @@ import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
 import 'package:chessever/screens/group_event/providers/interfaces/igroup_event_screen_controller.dart';
+import 'package:chessever/screens/group_event/providers/live_event_feed.dart';
 import 'package:chessever/screens/group_event/providers/live_group_broadcast_id_provider.dart';
 import 'package:chessever/screens/group_event/providers/sorting_all_event_provider.dart';
 import 'package:chessever/screens/group_event/widget/filter_popup/filter_popup_provider.dart';
@@ -192,7 +193,7 @@ class _GroupEventScreenController
                 .read(liveBroadcastIdsProvider)
                 .every((id) => liveIds.contains(id))) {
           ref.read(liveBroadcastIdsProvider.notifier).state = liveIds;
-          _updateLiveStatusInExistingModels();
+          unawaited(_applyLiveIds(liveIds));
         }
       });
     });
@@ -245,6 +246,66 @@ class _GroupEventScreenController
     } catch (_) {
       return const <String>[];
     }
+  }
+
+  Future<List<GroupBroadcast>> _appendMissingLiveBroadcasts(
+    List<GroupBroadcast> tours,
+    List<String> liveIds,
+  ) async {
+    if (tourEventCategory == GroupEventCategory.past) return tours;
+
+    final missing = missingLiveEventIds(
+      knownIds: tours.map((broadcast) => broadcast.id),
+      liveIds: liveIds,
+    );
+    if (missing.isEmpty) return tours;
+
+    try {
+      final fetched = await ref
+          .read(groupBroadcastRepositoryProvider)
+          .getGroupBroadcastsByIdsOrNames(missing.toList(growable: false));
+      return appendUnknownBroadcasts(current: tours, incoming: fetched);
+    } catch (error, stackTrace) {
+      debugPrint('Live event append failed: $error\n$stackTrace');
+      return tours;
+    }
+  }
+
+  Future<void> _applyLiveIds(List<String> liveIds) async {
+    if (tourEventCategory == GroupEventCategory.past) {
+      _updateLiveStatusInExistingModels();
+      return;
+    }
+
+    _groupBroadcastList = await _appendMissingLiveBroadcasts(
+      _groupBroadcastList,
+      liveIds,
+    );
+    if (!mounted) return;
+
+    final currentModels = state.valueOrNull;
+    if (_groupBroadcastList.isEmpty) return;
+
+    var toDisplay = _groupBroadcastList;
+    if (_isFilterActive) {
+      toDisplay = _applyClientFilter(toDisplay, liveIds: liveIds);
+    }
+
+    final additions =
+        toDisplay
+            .map(
+              (broadcast) =>
+                  GroupEventCardModel.fromGroupBroadcast(broadcast, liveIds),
+            )
+            .toList();
+    final next = mergeAndPromoteLiveEvents(
+      current: currentModels ?? const <GroupEventCardModel>[],
+      additions: additions,
+      liveIds: liveIds,
+    );
+    if (liveEventFeedUnchanged(currentModels ?? const [], next)) return;
+
+    state = AsyncValue.data(next);
   }
 
   // Update live status without rebuilding the entire state
@@ -304,14 +365,16 @@ class _GroupEventScreenController
                 .read(groupBroadcastLocalStorage(tourEventCategory))
                 .fetchGroupBroadcasts();
       }
+
+      final strictLiveIds = liveIds ?? await _getLiveIdsSnapshot();
+      tour = await _appendMissingLiveBroadcasts(tour, strictLiveIds);
+
       if (tour.isEmpty) {
         state = AsyncValue.data(<GroupEventCardModel>[]);
         return;
       }
 
       _groupBroadcastList = tour;
-
-      final strictLiveIds = liveIds ?? await _getLiveIdsSnapshot();
 
       // Apply client-side filter if active
       if (inputBroadcast == null && _isFilterActive) {
@@ -419,13 +482,17 @@ class _GroupEventScreenController
               .read(groupBroadcastLocalStorage(tourEventCategory))
               .refresh();
 
-      _groupBroadcastList = refreshed;
       final strictLiveIds = await _getLiveIdsSnapshot();
+      final merged = await _appendMissingLiveBroadcasts(
+        refreshed,
+        strictLiveIds,
+      );
+      _groupBroadcastList = merged;
 
       // Apply client-side filter if active
-      var toDisplay = refreshed;
+      var toDisplay = merged;
       if (_isFilterActive) {
-        toDisplay = _applyClientFilter(refreshed, liveIds: strictLiveIds);
+        toDisplay = _applyClientFilter(merged, liveIds: strictLiveIds);
       }
 
       final tourEventCardModel =
@@ -568,11 +635,16 @@ class _GroupEventScreenController
     state = const AsyncValue.loading();
 
     try {
-      final groupBroadcast =
+      var groupBroadcast =
           await ref
               .read(groupBroadcastLocalStorage(tourEventCategory))
               .getGroupBroadcasts();
       final strictLiveIds = await _getLiveIdsSnapshot();
+      groupBroadcast = await _appendMissingLiveBroadcasts(
+        groupBroadcast,
+        strictLiveIds,
+      );
+      _groupBroadcastList = groupBroadcast;
 
       final filteredTournaments =
           groupBroadcast

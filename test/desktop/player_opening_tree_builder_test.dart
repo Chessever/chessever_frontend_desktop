@@ -35,6 +35,80 @@ void main() {
     expect(blitz.matches(<String, dynamic>{'timeControl': 'rapid'}), isFalse);
   });
 
+  test('opponent filter matches only the studied player head-to-head', () {
+    const filters = PlayerOpeningTreeFilterCriteria(
+      playerNames: <String>['Rosen, Eric'],
+      opponentNames: <String>['Carlsen, Magnus'],
+    );
+
+    expect(
+      filters.matches(<String, dynamic>{
+        'white': 'Rosen, Eric',
+        'black': 'Carlsen, Magnus',
+      }),
+      isTrue,
+    );
+    expect(
+      filters.matches(<String, dynamic>{
+        'white': 'Carlsen, Magnus',
+        'black': 'Rosen, Eric',
+      }),
+      isTrue,
+    );
+    expect(
+      filters.matches(<String, dynamic>{
+        'white': 'Rosen, Eric',
+        'black': 'Nakamura, Hikaru',
+      }),
+      isFalse,
+    );
+  });
+
+  test('opponent AND-combines with every opening-tree filter axis', () {
+    const filters = PlayerOpeningTreeFilterCriteria(
+      playerNames: <String>['Rosen, Eric'],
+      opponentNames: <String>['Carlsen, Magnus'],
+      timeControl: TimeControl.rapid,
+      minRating: 2500,
+      maxRating: 2700,
+      color: 'white',
+      result: 'W',
+      isOnline: true,
+      yearFrom: 2024,
+      yearTo: 2025,
+    );
+    final matching = <String, dynamic>{
+      'white': 'Rosen, Eric',
+      'black': 'Carlsen, Magnus',
+      'whiteElo': 2600,
+      'blackElo': 2800,
+      'timeControl': 'rapid',
+      'result': '1-0',
+      'isOnline': true,
+      'date': '2025-03-18',
+    };
+
+    expect(filters.matches(matching), isTrue);
+
+    for (final mismatch in <Map<String, dynamic>>[
+      <String, dynamic>{...matching, 'black': 'Nakamura, Hikaru'},
+      <String, dynamic>{...matching, 'timeControl': 'blitz'},
+      <String, dynamic>{...matching, 'whiteElo': 2400},
+      <String, dynamic>{...matching, 'whiteElo': 2800},
+      <String, dynamic>{
+        ...matching,
+        'white': 'Carlsen, Magnus',
+        'black': 'Rosen, Eric',
+      },
+      <String, dynamic>{...matching, 'result': '0-1'},
+      <String, dynamic>{...matching, 'isOnline': false},
+      <String, dynamic>{...matching, 'date': '2023-03-18'},
+      <String, dynamic>{...matching, 'date': '2026-03-18'},
+    ]) {
+      expect(filters.matches(mismatch), isFalse, reason: mismatch.toString());
+    }
+  });
+
   test('maps backend tree snapshot moves by FEN key', () {
     final index = PlayerOpeningTreeIndex.fromSnapshot(
       PlayerOpeningTreeSnapshot.fromJson(_snapshotJson()),

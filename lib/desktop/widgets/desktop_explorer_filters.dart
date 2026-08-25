@@ -48,7 +48,12 @@ class DesktopExplorerFilters extends ConsumerWidget {
       });
     }
     final notifier = ref.read(gamebaseExplorerProvider.notifier);
-    final hasActiveSettings = _hasActiveFilterSettings(filters, scopedPlayer);
+    final hasActiveSettings =
+        explorerActiveFilterCount(filters, scopedPlayer) > 0;
+    final opponent =
+        scopedPlayer == null
+            ? null
+            : buildTreeOpponentFilter(filters, scopedPlayer!);
     return FTheme(
       data: FThemes.zinc.dark,
       child: ColoredBox(
@@ -62,6 +67,7 @@ class DesktopExplorerFilters extends ConsumerWidget {
                   () => _clearExplorerFilters(
                     notifier: notifier,
                     scopedPlayer: scopedPlayer,
+                    filters: filters,
                   ),
             ),
             const FDivider(),
@@ -78,22 +84,20 @@ class DesktopExplorerFilters extends ConsumerWidget {
                       selected: filters.timeControls,
                       onToggle: notifier.toggleTimeControl,
                     ),
-                    if (!isBuildTreeScope) ...[
-                      const SizedBox(height: 10),
-                      const _SectionLabel('Level'),
-                      const SizedBox(height: 5),
-                      _TitleChips(
-                        selectedMinRating: filters.minRating,
-                        onToggle: notifier.toggleTitle,
-                      ),
-                      const SizedBox(height: 10),
-                      const _SectionLabel('Result'),
-                      const SizedBox(height: 5),
-                      _ResultChips(
-                        selected: filters.gameResult,
-                        onToggle: notifier.toggleGameResult,
-                      ),
-                    ],
+                    const SizedBox(height: 10),
+                    const _SectionLabel('Level'),
+                    const SizedBox(height: 5),
+                    _TitleChips(
+                      selectedMinRating: filters.minRating,
+                      onToggle: notifier.toggleTitle,
+                    ),
+                    const SizedBox(height: 10),
+                    const _SectionLabel('Result'),
+                    const SizedBox(height: 5),
+                    _ResultChips(
+                      selected: filters.gameResult,
+                      onToggle: notifier.toggleGameResult,
+                    ),
                     const SizedBox(height: 10),
                     const _SectionLabel('Format'),
                     const SizedBox(height: 5),
@@ -110,24 +114,22 @@ class DesktopExplorerFilters extends ConsumerWidget {
                         onToggle: notifier.togglePlayerColor,
                       ),
                     ],
-                    if (!isBuildTreeScope) ...[
-                      const SizedBox(height: 10),
-                      const _SectionLabel('Rating range'),
-                      const SizedBox(height: 5),
-                      _RatingRange(
-                        minRating: filters.minRating,
-                        maxRating: filters.maxRating,
-                        onChanged: notifier.setRatingRange,
-                      ),
-                      const SizedBox(height: 10),
-                      const _SectionLabel('Year range'),
-                      const SizedBox(height: 5),
-                      _YearRange(
-                        yearFrom: filters.yearFrom,
-                        yearTo: filters.yearTo,
-                        onChanged: notifier.setYearRange,
-                      ),
-                    ],
+                    const SizedBox(height: 10),
+                    const _SectionLabel('Rating range'),
+                    const SizedBox(height: 5),
+                    _RatingRange(
+                      minRating: filters.minRating,
+                      maxRating: filters.maxRating,
+                      onChanged: notifier.setRatingRange,
+                    ),
+                    const SizedBox(height: 10),
+                    const _SectionLabel('Year range'),
+                    const SizedBox(height: 5),
+                    _YearRange(
+                      yearFrom: filters.yearFrom,
+                      yearTo: filters.yearTo,
+                      onChanged: notifier.setYearRange,
+                    ),
                     const SizedBox(height: 10),
                     const _SectionLabel('Player'),
                     const SizedBox(height: 5),
@@ -142,6 +144,34 @@ class DesktopExplorerFilters extends ConsumerWidget {
                         onAdd: notifier.addPlayerFilter,
                         onRemove: notifier.removePlayerFilter,
                       ),
+                    if (scopedPlayer != null) ...[
+                      const SizedBox(height: 10),
+                      const _SectionLabel('Opponent'),
+                      const SizedBox(height: 5),
+                      _PlayerFilterField(
+                        selected: opponent,
+                        hintText: 'Search opponents (min 2 chars)',
+                        excludedPlayerIds: <String>{
+                          for (final player in filters.selectedPlayers)
+                            if (player.id != opponent?.id) player.id,
+                        },
+                        onAdd:
+                            (player) => notifier.updateFilters(
+                              setBuildTreeOpponentFilter(
+                                filters,
+                                scopedPlayer!,
+                                player,
+                              ),
+                            ),
+                        onRemove:
+                            (_) => notifier.updateFilters(
+                              clearBuildTreeOpponentFilter(
+                                filters,
+                                scopedPlayer!,
+                              ),
+                            ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -153,45 +183,17 @@ class DesktopExplorerFilters extends ConsumerWidget {
   }
 }
 
-bool _matchesScopedPlayer(GamebaseFilters filters, GamebasePlayer player) {
-  return filters.playerIds.length == 1 &&
-      filters.playerIds.first == player.id &&
-      filters.selectedPlayers.length == 1 &&
-      filters.selectedPlayers.first.id == player.id;
-}
-
-bool _hasActiveFilterSettings(
-  GamebaseFilters filters,
-  GamebasePlayer? scopedPlayer,
-) {
-  final hasScopedPlayer =
-      scopedPlayer != null && _matchesScopedPlayer(filters, scopedPlayer);
-  return filters.timeControls.isNotEmpty ||
-      filters.minRating != null ||
-      filters.maxRating != null ||
-      filters.playerColor != null ||
-      filters.gameResult != null ||
-      filters.isOnline != null ||
-      filters.yearFrom != null ||
-      filters.yearTo != null ||
-      (scopedPlayer == null ? filters.playerIds.isNotEmpty : !hasScopedPlayer);
-}
-
 void _clearExplorerFilters({
   required GamebaseExplorerNotifier notifier,
   required GamebasePlayer? scopedPlayer,
+  required GamebaseFilters filters,
 }) {
   if (scopedPlayer == null) {
     notifier.clearFilters();
     return;
   }
 
-  notifier.updateFilters(
-    GamebaseFilters(
-      playerIds: <String>[scopedPlayer.id],
-      selectedPlayers: <GamebasePlayer>[scopedPlayer],
-    ),
-  );
+  notifier.updateFilters(clearBuildTreeExplorerFilters(filters, scopedPlayer));
 }
 
 class _Header extends StatelessWidget {
@@ -639,11 +641,15 @@ class _PlayerFilterField extends HookConsumerWidget {
     required this.selected,
     required this.onAdd,
     required this.onRemove,
+    this.hintText = 'Search players (min 2 chars)',
+    this.excludedPlayerIds = const <String>{},
   });
 
   final GamebasePlayer? selected;
   final void Function(GamebasePlayer) onAdd;
   final void Function(String id) onRemove;
+  final String hintText;
+  final Set<String> excludedPlayerIds;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -678,7 +684,7 @@ class _PlayerFilterField extends HookConsumerWidget {
         DesktopSearchField(
           controller: controller,
           focusNode: focusNode,
-          hintText: 'Search players (min 2 chars)',
+          hintText: hintText,
           trailing:
               isDebouncing
                   ? const SizedBox(
@@ -727,7 +733,13 @@ class _PlayerFilterField extends HookConsumerWidget {
                       )
                       : results.when(
                         data: (players) {
-                          if (players.isEmpty) {
+                          final available = players
+                              .where(
+                                (player) =>
+                                    !excludedPlayerIds.contains(player.id),
+                              )
+                              .toList(growable: false);
+                          if (available.isEmpty) {
                             return const _PlayerSearchStatus(
                               message: 'No players found',
                             );
@@ -736,14 +748,14 @@ class _PlayerFilterField extends HookConsumerWidget {
                             shrinkWrap: true,
                             padding: const EdgeInsets.symmetric(vertical: 4),
                             physics: const DesktopScrollPhysics(),
-                            itemCount: players.length,
+                            itemCount: available.length,
                             separatorBuilder:
                                 (_, __) => const Divider(
                                   color: kDividerColor,
                                   height: 1,
                                 ),
                             itemBuilder: (context, i) {
-                              final p = players[i];
+                              final p = available[i];
                               return _PlayerSearchHit(
                                 player: p,
                                 onTap: () {

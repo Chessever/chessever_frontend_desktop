@@ -3078,6 +3078,34 @@ void main() {
       expect(rapidGames.data.single['event'], 'Rapid Local');
       expect(rapidGames.data.single['white'], 'Carlsen, Magnus');
 
+      const versusNakamura = PlayerOpeningTreeFilterCriteria(
+        playerFideIds: <String>['1503014'],
+        playerNames: <String>['Carlsen, Magnus'],
+        opponentFideIds: <String>['2016192'],
+        opponentNames: <String>['Nakamura, Hikaru'],
+      );
+      final headToHeadMoves = await repo.localMoveAggregatesForFen(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        filters: versusNakamura,
+      );
+      expect(headToHeadMoves.map((move) => move.uci), ['e2e4']);
+      expect(headToHeadMoves.single.total, 1);
+
+      final headToHeadGames = await repo.localPositionGamesResponse(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        uci: 'e2e4',
+        filters: versusNakamura,
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(headToHeadGames, isNotNull);
+      expect(headToHeadGames!.metadata.totalCount, 1);
+      expect(headToHeadGames.data.single['event'], 'Rapid Local');
+
       // Imported online speed categories stay independently filterable.
       await db.execute('''
         UPDATE local_chess_games

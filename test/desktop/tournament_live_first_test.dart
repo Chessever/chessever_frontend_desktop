@@ -83,7 +83,7 @@ void main() {
         File('lib/providers/for_you_games_provider.dart').readAsStringSync();
 
     expect(stateSource, contains('tournamentLiveEventPrefetchProvider'));
-    expect(stateSource, contains('hydrateEvents(missing)'));
+    expect(stateSource, contains('hydrateEvents(liveIds)'));
     expect(
       paneSource,
       contains('ref.watch(tournamentLiveEventPrefetchProvider)'),
@@ -99,7 +99,10 @@ void main() {
     expect(forYouSource, contains('Future<void> hydrateEvents('));
     // Hydrated cards must come in through the feed's own pipeline, otherwise
     // the promoted row renders without its board previews.
-    expect(forYouSource, contains('_prefetchTopGameSnapshots(models, replace: false)'));
+    expect(
+      forYouSource,
+      contains('_prefetchTopGameSnapshots(additions, replace: false)'),
+    );
     expect(forYouSource, contains('_hydratingEventIds'));
   });
 

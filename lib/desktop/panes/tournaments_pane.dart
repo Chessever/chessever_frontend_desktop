@@ -260,7 +260,7 @@ class TournamentsPane extends HookConsumerWidget {
                     const TournamentLiveFirstToggle(),
                   if (selectedCategory == ge.GroupEventCategory.forYou) ...[
                     const SizedBox(width: 8),
-                    const GameViewModeToggle(),
+                    const GameViewModeToggle(buttonSize: 38),
                   ],
                 ],
               ),

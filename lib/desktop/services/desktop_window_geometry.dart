@@ -5,6 +5,20 @@ import 'package:screen_retriever/screen_retriever.dart';
 
 const EdgeInsets desktopWindowSafePadding = EdgeInsets.all(24);
 
+Rect pictureInPictureRectForVisibleBounds({
+  required Size size,
+  required Rect visibleBounds,
+  EdgeInsets padding = desktopWindowSafePadding,
+}) {
+  final safeBounds = _safeBounds(visibleBounds, padding);
+  return Rect.fromLTWH(
+    math.max(safeBounds.left, safeBounds.right - size.width),
+    math.max(safeBounds.top, safeBounds.bottom - size.height),
+    math.min(size.width, safeBounds.width),
+    math.min(size.height, safeBounds.height),
+  );
+}
+
 Rect visibleBoundsForDisplay(Display display) {
   final position = display.visiblePosition ?? Offset.zero;
   final size = display.visibleSize ?? display.size;

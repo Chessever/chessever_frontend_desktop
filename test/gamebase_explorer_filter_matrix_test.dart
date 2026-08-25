@@ -22,6 +22,7 @@ const _startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const _deepMoves = <String>['e2e4'];
 
 const _filterKeys = <String>{
+  'playerId',
   'timeControl',
   'minRating',
   'maxRating',
@@ -44,6 +45,7 @@ class _AxisValue {
     this.isOnline,
     this.result,
     this.color,
+    this.playerId,
   });
 
   final String axis;
@@ -56,6 +58,7 @@ class _AxisValue {
   final bool? isOnline;
   final GamebaseGameResult? result;
   final GamebasePlayerColor? color;
+  final String? playerId;
 
   GamebaseFilters apply(GamebaseFilters filters) {
     return filters.copyWith(
@@ -70,6 +73,7 @@ class _AxisValue {
       isOnline: isOnline ?? filters.isOnline,
       gameResult: result ?? filters.gameResult,
       playerColor: color ?? filters.playerColor,
+      playerIds: playerId != null ? <String>[playerId!] : filters.playerIds,
     );
   }
 
@@ -83,6 +87,7 @@ class _AxisValue {
       if (isOnline != null) 'isOnline': isOnline,
       if (result != null) 'result': result!.apiValue,
       if (color != null) 'color': color!.name,
+      if (playerId != null) 'playerId': playerId,
     };
   }
 }
@@ -185,6 +190,14 @@ const _colorValues = <_AxisValue>[
   ),
 ];
 
+const _playerValues = <_AxisValue>[
+  _AxisValue(
+    axis: 'playerId',
+    label: 'playerId=bluebaum',
+    playerId: 'bluebaum',
+  ),
+];
+
 const _allAxes = <List<_AxisValue>>[
   _timeControlValues,
   _ratingValues,
@@ -192,6 +205,7 @@ const _allAxes = <List<_AxisValue>>[
   _isOnlineValues,
   _resultValues,
   _colorValues,
+  _playerValues,
 ];
 
 _Case _caseFrom(String kind, List<_AxisValue> values) {
@@ -338,9 +352,9 @@ void main() {
   final cases = _generateExplorerFilterMatrix();
 
   test('explorer matrix enumerates every axis and every pair', () {
-    expect(cases.where((c) => c.kind == 'single').length, 14);
-    expect(cases.where((c) => c.kind == 'pair').length, 76);
-    expect(cases.length, 90);
+    expect(cases.where((c) => c.kind == 'single').length, 15);
+    expect(cases.where((c) => c.kind == 'pair').length, 90);
+    expect(cases.length, 105);
     expect(_allAxes.map((axis) => axis.first.axis).toList(), [
       'timeControl',
       'rating',
@@ -348,6 +362,7 @@ void main() {
       'isOnline',
       'result',
       'color',
+      'playerId',
     ]);
   });
 
@@ -364,8 +379,9 @@ void main() {
     }
   });
 
-  test('all six axes AND-combine on aggregates and position games', () {
+  test('all seven axes AND-combine on aggregates and position games', () {
     const filters = GamebaseFilters(
+      playerIds: <String>['bluebaum'],
       timeControls: [TimeControl.classical],
       minRating: 2400,
       maxRating: 2800,
@@ -376,6 +392,7 @@ void main() {
       playerColor: GamebasePlayerColor.white,
     );
     final expected = <String, dynamic>{
+      'playerId': 'bluebaum',
       'timeControl': 'CLASSICAL',
       'minRating': 2400,
       'maxRating': 2800,

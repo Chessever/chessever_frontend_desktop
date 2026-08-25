@@ -2108,6 +2108,7 @@ Future<void> navigateActiveEventGame(
   WidgetRef ref, {
   required BuildContext context,
   required int delta,
+  bool liveOnly = false,
 }) async {
   if (delta == 0) return;
 
@@ -2131,6 +2132,7 @@ Future<void> navigateActiveEventGame(
       context: context,
       delta: delta,
       activeTabId: activeTabId,
+      liveOnly: liveOnly,
     );
   } finally {
     if (!turn.isCompleted) turn.complete();
@@ -2145,6 +2147,7 @@ Future<void> _navigateActiveEventGameNow(
   required BuildContext context,
   required int delta,
   required String activeTabId,
+  required bool liveOnly,
 }) async {
   var activeArgs = _readNavigationBoardArgs(ref, activeTabId);
   var legacy = activeArgs == null ? ref.read(tournamentGamesProvider) : null;
@@ -2204,7 +2207,12 @@ Future<void> _navigateActiveEventGameNow(
     activeArgs,
     roundCatalog: navigationRoundCatalog,
   );
-  var orderedGames = navigation.orderedGames;
+  var orderedGames =
+      liveOnly
+          ? navigation.orderedGames
+              .where((game) => game.status == GameStatus.ongoing)
+              .toList(growable: false)
+          : navigation.orderedGames;
   var groupsForOrdering = navigation.groups;
   if (orderedGames.isEmpty) return;
 
@@ -2246,7 +2254,12 @@ Future<void> _navigateActiveEventGameNow(
         activeArgs,
         roundCatalog: navigationRoundCatalog,
       );
-      orderedGames = navigation.orderedGames;
+      orderedGames =
+          liveOnly
+              ? navigation.orderedGames
+                  .where((game) => game.status == GameStatus.ongoing)
+                  .toList(growable: false)
+              : navigation.orderedGames;
       groupsForOrdering = navigation.groups;
       currentIdx = _navigationSelectedIndex(resolved, orderedGames);
       nextIdx = _navigationNextIndex(

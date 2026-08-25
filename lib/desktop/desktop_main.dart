@@ -26,6 +26,7 @@ import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
 import 'package:chessever/desktop/services/desktop_file_open_service.dart';
+import 'package:chessever/desktop/services/desktop_picture_in_picture_channel.dart';
 import 'package:chessever/desktop/services/desktop_shutdown_coordinator.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
@@ -36,6 +37,7 @@ import 'package:chessever/desktop/services/window_state_persistence.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
+import 'package:chessever/desktop/state/board_picture_in_picture_mode.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -368,6 +370,29 @@ Future<void> _desktopBoot({
     // web and RevenueCat mobile state). Replaces the stub-true override.
     overrides: [desktopSubscriptionOverride],
   );
+  try {
+    await registerPictureInPictureMainWindowHandler(
+      onRestoreBoard: (encodedBoardPayload) async {
+        final payload = DesktopBoardWindowPayload.decode(encodedBoardPayload);
+        final args = payload.args;
+        if (payload.kind != TabKind.board || args == null) return;
+        openBoardGameTabFromContainer(
+          container,
+          args,
+          reuseExisting: true,
+          focus: true,
+        );
+      },
+    );
+    print('[desktop] picture-in-picture return channel ready');
+  } catch (e, stack) {
+    print('[desktop] ⚠️ picture-in-picture return channel failed');
+    ErrorReporter.report(
+      e,
+      stackTrace: stack,
+      tag: 'desktop.pip_return_channel',
+    );
+  }
   await _preloadChessgroundPieceImages(
     container,
     tag: 'desktop.chessground_preload',
@@ -479,7 +504,7 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
     tag: 'desktop.board_window.firebase_init',
   );
   initializeDesktopDatabaseFactory();
-  await DesktopWindow.initialize();
+  await DesktopWindow.initialize(pictureInPicture: payload.pictureInPicture);
   try {
     await windowManager.setTitle(payload.title);
   } catch (_) {}
@@ -505,6 +530,8 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
   );
 
   final container = ProviderContainer(overrides: [desktopSubscriptionOverride]);
+  container.read(boardPictureInPictureModeProvider.notifier).state =
+      payload.pictureInPicture;
   await _preloadChessgroundPieceImages(
     container,
     tag: 'desktop.board_window.chessground_preload',

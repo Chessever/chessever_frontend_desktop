@@ -639,9 +639,7 @@ class _DesktopPositionGamesTableState
     final playerId =
         scopedPlayerId != null && scopedPlayerId.isNotEmpty
             ? scopedPlayerId
-            : filters.playerIds.length == 1
-            ? filters.playerIds.first.trim()
-            : '';
+            : filters.requestPlayerId?.trim() ?? '';
     if (playerId.isEmpty) {
       _logPlayerTreeWait('no player id available for Build Tree wait gate');
       return null;
@@ -649,8 +647,7 @@ class _DesktopPositionGamesTableState
 
     final treeState = ref.read(playerOpeningTreeProvider(playerId));
     _schedulePlayerTreeStart(playerId);
-    if (filters.playerIds.length != 1 ||
-        filters.playerIds.first.trim() != playerId) {
+    if (filters.requestPlayerId?.trim() != playerId) {
       _logPlayerTreeWait(
         'waiting for scoped filters player=$playerId '
         'filterPlayerIds=${filters.playerIds}',
@@ -1330,8 +1327,7 @@ class _DesktopPositionGamesTableState
     final filters = ref.watch(
       gamebaseExplorerProvider.select((s) => s.filters),
     );
-    final playerId =
-        filters.playerIds.length == 1 ? filters.playerIds.first.trim() : null;
+    final playerId = filters.requestPlayerId?.trim();
     if (widget.localOpeningTreeIndex == null &&
         playerId != null &&
         playerId.isNotEmpty) {

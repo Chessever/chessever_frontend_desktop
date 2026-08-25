@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/player_opening_tree_filter_adapter.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
@@ -68,6 +69,9 @@ class _LocalOpeningTreeMoveQuery {
         listEquals(other.filters.playerIds, filters.playerIds) &&
         listEquals(other.filters.playerFideIds, filters.playerFideIds) &&
         listEquals(other.filters.playerNames, filters.playerNames) &&
+        listEquals(other.filters.opponentIds, filters.opponentIds) &&
+        listEquals(other.filters.opponentFideIds, filters.opponentFideIds) &&
+        listEquals(other.filters.opponentNames, filters.opponentNames) &&
         other.filters.timeControl == filters.timeControl &&
         other.filters.minRating == filters.minRating &&
         other.filters.maxRating == filters.maxRating &&
@@ -87,6 +91,9 @@ class _LocalOpeningTreeMoveQuery {
     Object.hashAll(filters.playerIds),
     Object.hashAll(filters.playerFideIds),
     Object.hashAll(filters.playerNames),
+    Object.hashAll(filters.opponentIds),
+    Object.hashAll(filters.opponentFideIds),
+    Object.hashAll(filters.opponentNames),
     filters.timeControl,
     filters.minRating,
     filters.maxRating,
@@ -183,8 +190,8 @@ class DesktopOpeningExplorer extends ConsumerWidget {
     final localPlayerId =
         localIndex == null &&
                 usePlayerOpeningTree &&
-                state.filters.playerIds.length == 1
-            ? state.filters.playerIds.first.trim()
+                state.filters.requestPlayerId?.trim().isNotEmpty == true
+            ? state.filters.requestPlayerId!.trim()
             : null;
     if (localPlayerId != null && localPlayerId.isNotEmpty) {
       _logPlayerTree(
@@ -303,30 +310,7 @@ class DesktopOpeningExplorer extends ConsumerWidget {
 PlayerOpeningTreeFilterCriteria _localTreeCriteriaForFilters(
   GamebaseFilters filters,
 ) {
-  return PlayerOpeningTreeFilterCriteria(
-    playerIds: filters.playerIds,
-    playerFideIds: <String>[
-      for (final player in filters.selectedPlayers)
-        if (player.fideId.trim().isNotEmpty) player.fideId.trim(),
-    ],
-    playerNames: <String>[
-      for (final player in filters.selectedPlayers)
-        if (player.name.trim().isNotEmpty) player.name.trim(),
-    ],
-    timeControl:
-        filters.timeControls.isNotEmpty ? filters.timeControls.first : null,
-    minRating: filters.minRating,
-    maxRating: filters.maxRating,
-    color: switch (filters.playerColor) {
-      GamebasePlayerColor.white => 'white',
-      GamebasePlayerColor.black => 'black',
-      null => null,
-    },
-    result: filters.gameResult?.apiValue,
-    isOnline: filters.isOnline,
-    yearFrom: filters.yearFrom,
-    yearTo: filters.yearTo,
-  );
+  return playerOpeningTreeCriteriaFromFilters(filters);
 }
 
 class _ExplorerBody extends StatefulWidget {

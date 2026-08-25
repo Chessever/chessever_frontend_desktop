@@ -145,23 +145,19 @@ final queriedLiveGameEventIdsProvider = AutoDisposeFutureProvider<Set<String>>((
 /// the fetch on tap put two round trips (broadcast rows + top-game snapshots)
 /// between the click and the resort, so the promotion visibly trailed the
 /// button. Hydrating as soon as the live IDs are known makes the toggle a pure
-/// in-memory reorder that lands on the same frame as the tap. The cost while
-/// the toggle is off is at most a couple of extra current-event cards sitting
-/// below the loaded page.
+/// in-memory reorder that lands on the same frame as the tap. Newly live cards
+/// are also promoted in the For You session order so they appear without the
+/// toggle and without restarting the app.
 final tournamentLiveEventPrefetchProvider = Provider.autoDispose<void>((ref) {
   final liveIds = ref.watch(tournamentLiveGameEventIdsProvider);
   if (liveIds.isEmpty) return;
 
-  final loadedIds = <String>{
-    for (final event in ref.watch(forYouEventsProvider).events) event.id,
-  };
-  final missing = liveIds.where((id) => !loadedIds.contains(id)).toSet();
-  if (missing.isEmpty) return;
-
   final notifier = ref.read(forYouEventsProvider.notifier);
   // Off the build phase: this provider is read during a widget build and
-  // `hydrateEvents` publishes new feed state.
-  Future.microtask(() => notifier.hydrateEvents(missing));
+  // `hydrateEvents` publishes new feed state. Pass every live id, not only
+  // missing ones, so an already-loaded upcoming row that just went live is
+  // recategorized and promoted without a restart.
+  Future.microtask(() => notifier.hydrateEvents(liveIds));
 });
 
 /// The same event IDs the For You "Live" status filter returns.

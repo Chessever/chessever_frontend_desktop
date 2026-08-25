@@ -30,9 +30,21 @@ class BoardExplorerScope {
   GamebaseFilters get initialScopedFilters => enforce(initialFilters);
 
   GamebaseFilters enforce(GamebaseFilters filters) {
+    final opponentIds = <String>[
+      for (final id in filters.playerIds)
+        if (id.trim().isNotEmpty && id != player.id) id,
+    ];
+    final opponentId = opponentIds.isEmpty ? null : opponentIds.first;
     return filters.copyWith(
-      playerIds: <String>[player.id],
-      selectedPlayers: _scopedPlayers,
+      playerIds: <String>[player.id, if (opponentId != null) opponentId],
+      selectedPlayers: <GamebasePlayer>[
+        ..._scopedPlayers,
+        for (final selected in filters.selectedPlayers)
+          if (selected.id == opponentId &&
+              selected.id != player.id &&
+              !playerAliases.any((alias) => alias.id == selected.id))
+            selected,
+      ],
     );
   }
 
@@ -50,6 +62,18 @@ class BoardExplorerScope {
       initialFilters.yearTo,
     ].join('|');
   }
+}
+
+BoardExplorerScope buildPlayerTreeExplorerScope({
+  required GamebasePlayer player,
+  List<GamebasePlayer> playerAliases = const <GamebasePlayer>[],
+  GamebasePlayerColor? playerColor,
+}) {
+  return BoardExplorerScope(
+    player: player,
+    playerAliases: playerAliases,
+    initialFilters: GamebaseFilters(playerColor: playerColor),
+  );
 }
 
 /// Returns the filter update required when a board rail Explorer enters or

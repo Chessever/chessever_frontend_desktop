@@ -91,21 +91,17 @@ class ExplorerFilterBar extends ConsumerWidget {
         scrollDirection: Axis.horizontal,
         child: Row(
           children: [
-            if (!isBuildTreeScope) ...[
-              _GroupLabel(compact ? 'Lv' : 'Level'),
-              for (final title in GamebasePlayerTitle.values) ...[
-                _FilterChip(
-                  label:
-                      compact
-                          ? title.label
-                          : '${title.label} ${title.subtitle}',
-                  active: selectedTitle == title,
-                  onTap: () => notifier.toggleTitle(title),
-                ),
-                const SizedBox(width: 6),
-              ],
-              const _RailDivider(),
+            _GroupLabel(compact ? 'Lv' : 'Level'),
+            for (final title in GamebasePlayerTitle.values) ...[
+              _FilterChip(
+                label:
+                    compact ? title.label : '${title.label} ${title.subtitle}',
+                active: selectedTitle == title,
+                onTap: () => notifier.toggleTitle(title),
+              ),
+              const SizedBox(width: 6),
             ],
+            const _RailDivider(),
             _GroupLabel(compact ? 'TC' : 'Time'),
             for (final tc in _timeControls) ...[
               _FilterChip(
@@ -117,18 +113,16 @@ class ExplorerFilterBar extends ConsumerWidget {
               const SizedBox(width: 6),
             ],
             const _RailDivider(),
-            if (!isBuildTreeScope) ...[
-              _GroupLabel(compact ? 'Res' : 'Result'),
-              for (final r in GamebaseGameResult.values) ...[
-                _FilterChip(
-                  label: r.displayText,
-                  active: scopedFilters.gameResult == r,
-                  onTap: () => notifier.toggleGameResult(r),
-                ),
-                const SizedBox(width: 6),
-              ],
-              const _RailDivider(),
+            _GroupLabel(compact ? 'Res' : 'Result'),
+            for (final r in GamebaseGameResult.values) ...[
+              _FilterChip(
+                label: r.displayText,
+                active: scopedFilters.gameResult == r,
+                onTap: () => notifier.toggleGameResult(r),
+              ),
+              const SizedBox(width: 6),
             ],
+            const _RailDivider(),
             _GroupLabel(compact ? 'Fmt' : 'Format'),
             _FilterChip(
               icon: Icons.public_off_rounded,

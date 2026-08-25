@@ -30,6 +30,20 @@ class DesktopBoardWindowService {
     await _openPayload(DesktopBoardWindowPayload.fromArgs(args));
   }
 
+  Future<void> openPictureInPictureWindow(BoardTabGameArgs args) async {
+    AnalyticsService.instance.trackEventDetached(
+      'Desktop Picture In Picture Opened',
+      properties: {
+        'source': args.viewSource.name,
+        'has_game_id': args.gameId?.trim().isNotEmpty == true,
+        'has_pgn': args.pgn.trim().isNotEmpty,
+      },
+    );
+    await _openPayload(
+      DesktopBoardWindowPayload.fromArgs(args, pictureInPicture: true),
+    );
+  }
+
   Future<void> openDesktopTabWindow(
     ProviderContainer container,
     DesktopTab tab,
@@ -62,6 +76,10 @@ class DesktopBoardWindowService {
     final controller = await WindowController.create(
       WindowConfiguration(hiddenAtLaunch: true, arguments: payload.encode()),
     );
+    // PiP configures and reveals itself only after the secondary engine has
+    // applied its compact always-on-top bounds. Showing it here would expose
+    // the platform runner's large default rectangle for a visible frame.
+    if (payload.pictureInPicture) return;
     await controller.show();
   }
 
@@ -166,6 +184,12 @@ final desktopBoardWindowServiceProvider = Provider<DesktopBoardWindowService>((
 
 Future<void> openBoardGameWindow(WidgetRef ref, BoardTabGameArgs args) {
   return ref.read(desktopBoardWindowServiceProvider).openBoardGameWindow(args);
+}
+
+Future<void> openPictureInPictureWindow(WidgetRef ref, BoardTabGameArgs args) {
+  return ref
+      .read(desktopBoardWindowServiceProvider)
+      .openPictureInPictureWindow(args);
 }
 
 Future<bool> detachBoardTabToWindow(ProviderContainer container, String tabId) {

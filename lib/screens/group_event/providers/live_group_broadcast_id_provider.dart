@@ -161,7 +161,9 @@ final liveGroupBroadcastIdsProvider = AutoDisposeStreamProvider<List<String>>((
   );
 
   final refreshTimer = Timer.periodic(_liveIndicatorRefreshInterval, (_) {
-    unawaited(emitResolvedIds());
+    // Re-read settings. Re-resolving the last snapshot cannot see a Titled
+    // Tuesday that went live if realtime missed the settings row update.
+    unawaited(refreshSettingsSnapshot('periodic refresh'));
   });
 
   ref.onDispose(() {

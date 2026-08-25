@@ -19,6 +19,7 @@ class GameViewModeToggle extends ConsumerWidget {
     super.key,
     this.showSelectedState = true,
     this.onSelected,
+    this.buttonSize = 28,
   });
 
   /// Allows a parent with an additional mutually-exclusive view to suppress
@@ -26,6 +27,12 @@ class GameViewModeToggle extends ConsumerWidget {
   final bool showSelectedState;
 
   final ValueChanged<GamesListViewMode>? onSelected;
+
+  /// Square size of each mode button.
+  ///
+  /// The compact 28px default suits dense game toolbars. Pass 38px when the
+  /// switcher sits beside the full-height controls in a pane header.
+  final double buttonSize;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -45,6 +52,7 @@ class GameViewModeToggle extends ConsumerWidget {
           tooltip: 'Card view',
           selected: showSelectedState && mode == GamesListViewMode.gamesCard,
           onTap: () => select(GamesListViewMode.gamesCard),
+          size: buttonSize,
         ),
         const SizedBox(width: 4),
         _ToggleButton(
@@ -52,6 +60,7 @@ class GameViewModeToggle extends ConsumerWidget {
           tooltip: 'List view',
           selected: showSelectedState && mode == GamesListViewMode.chessBoard,
           onTap: () => select(GamesListViewMode.chessBoard),
+          size: buttonSize,
         ),
         const SizedBox(width: 4),
         _ToggleButton(
@@ -60,6 +69,7 @@ class GameViewModeToggle extends ConsumerWidget {
           selected:
               showSelectedState && mode == GamesListViewMode.chessBoardGrid,
           onTap: () => select(GamesListViewMode.chessBoardGrid),
+          size: buttonSize,
         ),
       ],
     );
@@ -72,12 +82,14 @@ class _ToggleButton extends StatefulWidget {
     required this.tooltip,
     required this.selected,
     required this.onTap,
+    required this.size,
   });
 
   final IconData icon;
   final String tooltip;
   final bool selected;
   final VoidCallback onTap;
+  final double size;
 
   @override
   State<_ToggleButton> createState() => _ToggleButtonState();
@@ -103,14 +115,14 @@ class _ToggleButtonState extends State<_ToggleButton> {
           child: DesktopTooltip(
             message: widget.tooltip,
             child: Container(
-              width: 28,
-              height: 28,
+              width: widget.size,
+              height: widget.size,
               decoration: BoxDecoration(
                 color:
                     selected
                         ? kPrimaryColor.withValues(alpha: 0.15)
                         : (_hovered ? kBlack3Color : Colors.transparent),
-                borderRadius: BorderRadius.circular(5),
+                borderRadius: BorderRadius.circular(widget.size >= 34 ? 8 : 5),
                 border: Border.all(
                   color: selected ? kPrimaryColor : kDividerColor,
                 ),
@@ -118,7 +130,7 @@ class _ToggleButtonState extends State<_ToggleButton> {
               alignment: Alignment.center,
               child: Icon(
                 widget.icon,
-                size: 14,
+                size: widget.size >= 34 ? 18 : 14,
                 color: selected ? kPrimaryColor : kWhiteColor70,
               ),
             ),

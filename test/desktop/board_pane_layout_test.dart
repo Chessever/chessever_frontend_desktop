@@ -1587,5 +1587,41 @@ void main() {
     expect(regularWithoutPlayers.hasHeaders, isFalse);
     expect(regularWithoutPlayers.topRowHeight, 32);
     expect(regularWithoutPlayers.bottomRowHeight, 22);
+
+    final pictureInPicture = computeBoardAreaChromeMetrics(
+      focusMode: true,
+      hasPlayerInfo: true,
+      boardOnly: true,
+    );
+    expect(pictureInPicture.hasHeaders, isFalse);
+    expect(pictureInPicture.topRowHeight, 0);
+    expect(pictureInPicture.bottomRowHeight, 0);
+    expect(pictureInPicture.headerGapTotal, 0);
+    expect(pictureInPicture.outerPadding, 0);
+  });
+
+  test('picture in picture requires both a live game and watch dwell', () {
+    expect(
+      isDesktopPictureInPictureEligible(
+        isLiveGame: true,
+        watchedLongEnough: true,
+      ),
+      isTrue,
+    );
+    expect(
+      isDesktopPictureInPictureEligible(
+        isLiveGame: false,
+        watchedLongEnough: true,
+      ),
+      isFalse,
+    );
+    expect(
+      isDesktopPictureInPictureEligible(
+        isLiveGame: true,
+        watchedLongEnough: false,
+      ),
+      isFalse,
+    );
+    expect(desktopPictureInPictureWatchThreshold, const Duration(seconds: 30));
   });
 }

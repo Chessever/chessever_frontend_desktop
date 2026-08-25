@@ -5,6 +5,27 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 
 void main() {
+  test('global search chords remain reserved from board remapping', () {
+    expect(
+      isReservedDesktopGlobalSearchShortcut(
+        const SingleActivator(LogicalKeyboardKey.keyF, meta: true),
+      ),
+      isTrue,
+    );
+    expect(
+      isReservedDesktopGlobalSearchShortcut(
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true),
+      ),
+      isTrue,
+    );
+    expect(
+      isReservedDesktopGlobalSearchShortcut(
+        const SingleActivator(LogicalKeyboardKey.keyF),
+      ),
+      isFalse,
+    );
+  });
+
   group('desktop global search shortcut', () {
     testWidgets('handles Ctrl+F outside pane-local shortcuts', (tester) async {
       var searchCount = 0;

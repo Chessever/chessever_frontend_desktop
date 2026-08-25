@@ -1,4 +1,5 @@
 import 'package:chessever/desktop/widgets/player_profile_view.dart';
+import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
@@ -7,6 +8,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('memorial profiles omit Events but keep Overview and Games', () {
+    expect(
+      playerProfileSectionsFor(isMemorial: true),
+      const <PlayerProfileSection>[
+        PlayerProfileSection.about,
+        PlayerProfileSection.games,
+      ],
+    );
+  });
+
+  test('regular profiles retain all existing tabs', () {
+    expect(
+      playerProfileSectionsFor(isMemorial: false),
+      PlayerProfileSection.values,
+    );
+  });
+
   test('TWIC player profile game-result chips filter loaded rows locally', () {
     const key = PlayerProfileKey(
       fideId: 1503014,
@@ -43,10 +61,7 @@ void main() {
       filter: GameFilter(result: GameResultFilter.draw),
     );
 
-    expect(
-      playerProfileGameCountForTab(state, authoritativeTotal: 4217),
-      4217,
-    );
+    expect(playerProfileGameCountForTab(state, authoritativeTotal: 4217), 4217);
     expect(playerProfileGameCountForTab(state), 842);
   });
 

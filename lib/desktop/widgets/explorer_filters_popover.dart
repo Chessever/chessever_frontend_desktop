@@ -54,7 +54,7 @@ class _ExplorerFiltersPopoverButtonState
               state.filters,
               widget.scopedPlayer!,
             );
-    final activeCount = _activeFilterCount(filters, widget.scopedPlayer);
+    final activeCount = explorerActiveFilterCount(filters, widget.scopedPlayer);
     final hasActive = activeCount > 0;
 
     return FTheme(
@@ -154,48 +154,4 @@ class _ExplorerFiltersPopoverButtonState
       ),
     );
   }
-}
-
-int _activeFilterCount(dynamic filters, GamebasePlayer? scopedPlayer) {
-  // Lightweight introspection of the explorer filters object — we avoid
-  // a hard dependency on its concrete type so this widget keeps compiling
-  // if the filter shape grows. `hasActiveFilters` already exists on the
-  // explorer state for the boolean case; we count individually for the
-  // badge.
-  var count = 0;
-  try {
-    final tcs = filters.timeControls as List;
-    if (tcs.isNotEmpty) count += 1;
-  } catch (_) {}
-  try {
-    if (scopedPlayer == null && filters.gameResult != null) count += 1;
-  } catch (_) {}
-  try {
-    if (filters.playerColor != null) count += 1;
-  } catch (_) {}
-  try {
-    if (scopedPlayer == null &&
-        (filters.minRating != null || filters.maxRating != null)) {
-      count += 1;
-    }
-  } catch (_) {}
-  try {
-    if (scopedPlayer == null &&
-        (filters.yearFrom != null || filters.yearTo != null)) {
-      count += 1;
-    }
-  } catch (_) {}
-  try {
-    if (filters.isOnline != null) count += 1;
-  } catch (_) {}
-  try {
-    final players = filters.selectedPlayers as List;
-    final playerIsScope =
-        scopedPlayer != null &&
-        players.length == 1 &&
-        players.first is GamebasePlayer &&
-        (players.first as GamebasePlayer).id == scopedPlayer.id;
-    if (players.isNotEmpty && !playerIsScope) count += 1;
-  } catch (_) {}
-  return count;
 }

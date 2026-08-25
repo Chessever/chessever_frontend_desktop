@@ -7,6 +7,7 @@ import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 enum _BoardContextAction {
   share,
   flipBoard,
+  pictureInPicture,
   toggleBoardFocus,
   copyPgn,
   copyFen,
@@ -33,6 +34,9 @@ Future<void> showBoardContextMenu(
   required VoidCallback onOpenPositionSetup,
   required bool canCopyOrSavePgn,
   required bool boardFocusMode,
+  VoidCallback? onOpenPictureInPicture,
+  bool showPictureInPictureAction = false,
+  bool showBoardFocusAction = true,
   VoidCallback? onPlayFromHere,
 }) async {
   final shortcuts =
@@ -60,15 +64,23 @@ Future<void> showBoardContextMenu(
         icon: Icons.flip_camera_android_rounded,
         label: 'Flip board',
       ),
-      DesktopContextMenuItem(
-        value: _BoardContextAction.toggleBoardFocus,
-        icon:
-            boardFocusMode
-                ? Icons.fullscreen_exit_rounded
-                : Icons.fullscreen_rounded,
-        label: boardFocusMode ? 'Exit board focus' : 'Board focus',
-        shortcut: hintFor(BoardActionKey.toggleBoardFocus),
-      ),
+      if (showPictureInPictureAction)
+        DesktopContextMenuItem(
+          value: _BoardContextAction.pictureInPicture,
+          icon: Icons.picture_in_picture_alt_rounded,
+          label: 'Open picture in picture',
+          enabled: onOpenPictureInPicture != null,
+        ),
+      if (showBoardFocusAction)
+        DesktopContextMenuItem(
+          value: _BoardContextAction.toggleBoardFocus,
+          icon:
+              boardFocusMode
+                  ? Icons.fullscreen_exit_rounded
+                  : Icons.fullscreen_rounded,
+          label: boardFocusMode ? 'Exit board focus' : 'Board focus',
+          shortcut: hintFor(BoardActionKey.toggleBoardFocus),
+        ),
       const DesktopContextMenuDivider(),
       DesktopContextMenuItem(
         value: _BoardContextAction.copyPgn,
@@ -125,6 +137,8 @@ Future<void> showBoardContextMenu(
       onShareGame();
     case _BoardContextAction.flipBoard:
       onFlipBoard();
+    case _BoardContextAction.pictureInPicture:
+      onOpenPictureInPicture?.call();
     case _BoardContextAction.toggleBoardFocus:
       onToggleBoardFocus();
     case _BoardContextAction.copyPgn:

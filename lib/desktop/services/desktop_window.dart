@@ -6,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_window_geometry.dart';
+import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 
 /// Window-manager bootstrap for desktop platforms.
 ///
@@ -16,40 +17,76 @@ class DesktopWindow {
 
   static const Size minSize = Size(1024, 720);
   static const Size defaultSize = Size(1440, 900);
+  static const double _pictureInPictureDefaultBoardEdge = 390;
+  static const double _pictureInPictureMinBoardEdge = 300;
+  static const Size pictureInPictureMinSize = Size(
+    _pictureInPictureMinBoardEdge,
+    _pictureInPictureMinBoardEdge + kDesktopChromeBarHeight,
+  );
+  static const Size pictureInPictureDefaultSize = Size(
+    _pictureInPictureDefaultBoardEdge,
+    _pictureInPictureDefaultBoardEdge + kDesktopChromeBarHeight,
+  );
   static String get windowTitle => DesktopBuildIdentity.current.displayName;
 
-  static Future<void> initialize() async {
+  static Future<void> initialize({bool pictureInPicture = false}) async {
     if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
       return;
     }
     WidgetsFlutterBinding.ensureInitialized();
     await windowManager.ensureInitialized();
 
-    final initialSize = await _initialSizeForCurrentDisplay();
+    final displayGeometry = await _initialGeometryForCurrentDisplay(
+      pictureInPicture: pictureInPicture,
+    );
+    final initialSize = displayGeometry.size;
+    final desiredMinSize = pictureInPicture ? pictureInPictureMinSize : minSize;
     final effectiveMinSize = effectiveMinimumWindowSize(
-      desiredMinimumSize: minSize,
+      desiredMinimumSize: desiredMinSize,
       fittedSize: initialSize,
     );
 
     final options = WindowOptions(
       size: initialSize,
       minimumSize: effectiveMinSize,
-      center: true,
+      center: !pictureInPicture,
+      alwaysOnTop: pictureInPicture ? true : null,
+      fullScreen: pictureInPicture ? false : null,
       title: windowTitle,
       backgroundColor: const Color(0xFF0C0C0E),
-      skipTaskbar: false,
+      skipTaskbar: pictureInPicture,
       titleBarStyle: TitleBarStyle.hidden,
       windowButtonVisibility: Platform.isMacOS,
     );
 
     await windowManager.waitUntilReadyToShow(options, () async {
       await windowManager.setTitle(windowTitle);
+      if (pictureInPicture) {
+        final visibleBounds = displayGeometry.visibleBounds;
+        if (visibleBounds != null) {
+          await windowManager.setBounds(
+            pictureInPictureRectForVisibleBounds(
+              size: initialSize,
+              visibleBounds: visibleBounds,
+            ),
+          );
+        } else {
+          await windowManager.setAlignment(Alignment.bottomRight);
+        }
+        if (Platform.isMacOS || Platform.isWindows) {
+          await windowManager.setMaximizable(false);
+        }
+      }
       await windowManager.show();
       await windowManager.focus();
     });
   }
 
-  static Future<Size> _initialSizeForCurrentDisplay() async {
+  static Future<({Size size, Rect? visibleBounds})>
+  _initialGeometryForCurrentDisplay({required bool pictureInPicture}) async {
+    final preferredSize =
+        pictureInPicture ? pictureInPictureDefaultSize : defaultSize;
+    final desiredMinSize = pictureInPicture ? pictureInPictureMinSize : minSize;
     try {
       final primaryDisplay = await screenRetriever.getPrimaryDisplay();
       final allDisplays = await screenRetriever.getAllDisplays();
@@ -58,13 +95,17 @@ class DesktopWindow {
         (display) => visibleBoundsForDisplay(display).contains(cursorPosition),
         orElse: () => primaryDisplay,
       );
-      return fitWindowSizeToVisibleBounds(
-        preferredSize: defaultSize,
-        minimumSize: minSize,
-        visibleBounds: visibleBoundsForDisplay(currentDisplay),
+      final visibleBounds = visibleBoundsForDisplay(currentDisplay);
+      return (
+        size: fitWindowSizeToVisibleBounds(
+          preferredSize: preferredSize,
+          minimumSize: desiredMinSize,
+          visibleBounds: visibleBounds,
+        ),
+        visibleBounds: visibleBounds,
       );
     } catch (_) {
-      return defaultSize;
+      return (size: preferredSize, visibleBounds: null);
     }
   }
 }

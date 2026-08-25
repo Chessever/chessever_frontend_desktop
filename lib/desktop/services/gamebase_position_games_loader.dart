@@ -4,11 +4,12 @@ import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/player_opening_tree_filter_adapter.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
-import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
+import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
@@ -115,16 +116,9 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
         index: localState.index,
         fen: query.fen,
         uci: query.uci,
-        filters: PlayerOpeningTreeFilterCriteria(
-          playerId: playerId,
-          timeControl: query.timeControl,
-          minRating: query.minRating,
-          maxRating: query.maxRating,
-          color: query.color,
-          result: query.result,
-          isOnline: query.isOnline,
-          yearFrom: query.yearFrom,
-          yearTo: query.yearTo,
+        filters: _localTreeCriteriaFromQuery(
+          query,
+          filters: ref.read(gamebaseExplorerProvider).filters,
         ),
         sortBy: query.sortBy,
         sortDirection: query.sortDirection,
@@ -229,20 +223,44 @@ PlayerOpeningTreeFilterCriteria _localTreeCriteriaFromQuery(
   GamebasePositionGamesQuery query, {
   GamebaseFilters? filters,
 }) {
+  final sourceFilters =
+      filters ??
+      GamebaseFilters(
+        playerIds: <String>[
+          if (query.playerId?.trim().isNotEmpty == true) query.playerId!.trim(),
+        ],
+        timeControls: <TimeControl>[
+          if (query.timeControl != null) query.timeControl!,
+        ],
+        minRating: query.minRating,
+        maxRating: query.maxRating,
+        playerColor: switch (query.color) {
+          'white' => GamebasePlayerColor.white,
+          'black' => GamebasePlayerColor.black,
+          _ => null,
+        },
+        gameResult: switch (query.result) {
+          'W' => GamebaseGameResult.whiteWins,
+          'B' => GamebaseGameResult.blackWins,
+          'D' => GamebaseGameResult.draw,
+          _ => null,
+        },
+        isOnline: query.isOnline,
+        yearFrom: query.yearFrom,
+        yearTo: query.yearTo,
+      );
+  final identities = playerOpeningTreeCriteriaFromFilters(
+    sourceFilters,
+    subjectPlayerId: query.playerId,
+  );
   return PlayerOpeningTreeFilterCriteria(
-    playerId: query.playerId,
-    playerIds: <String>[
-      if (query.playerId?.trim().isNotEmpty == true) query.playerId!.trim(),
-      ...?filters?.playerIds,
-    ],
-    playerFideIds: <String>[
-      for (final player in filters?.selectedPlayers ?? const <GamebasePlayer>[])
-        if (player.fideId.trim().isNotEmpty) player.fideId.trim(),
-    ],
-    playerNames: <String>[
-      for (final player in filters?.selectedPlayers ?? const <GamebasePlayer>[])
-        if (player.name.trim().isNotEmpty) player.name.trim(),
-    ],
+    playerId: identities.playerId,
+    playerIds: identities.playerIds,
+    playerFideIds: identities.playerFideIds,
+    playerNames: identities.playerNames,
+    opponentIds: identities.opponentIds,
+    opponentFideIds: identities.opponentFideIds,
+    opponentNames: identities.opponentNames,
     timeControl: query.timeControl,
     minRating: query.minRating,
     maxRating: query.maxRating,
