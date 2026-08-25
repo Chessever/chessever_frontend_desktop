@@ -140,6 +140,10 @@ class DesktopBoardWindowService {
     _setPictureInPictureVisible(gameId);
   }
 
+  void markPictureInPictureHidden() {
+    _setPictureInPictureHidden();
+  }
+
   Future<void> openDesktopTabWindow(
     ProviderContainer container,
     DesktopTab tab,

@@ -7398,7 +7398,10 @@ class _PictureInPictureBoardOverlayState
         children: [
           SizedBox(
             height: DesktopWindow.pictureInPictureControllerHeight,
-            child: _PictureInPictureTopController(onDismiss: widget.onDismiss),
+            child: _PictureInPictureTopController(
+              onRestoreMainWindow: widget.onRestoreMainWindow,
+              onDismiss: widget.onDismiss,
+            ),
           ),
           Expanded(
             child: GestureDetector(
@@ -7464,8 +7467,12 @@ class _PictureInPictureBoardOverlayState
 }
 
 class _PictureInPictureTopController extends StatelessWidget {
-  const _PictureInPictureTopController({required this.onDismiss});
+  const _PictureInPictureTopController({
+    required this.onRestoreMainWindow,
+    required this.onDismiss,
+  });
 
+  final VoidCallback onRestoreMainWindow;
   final VoidCallback onDismiss;
 
   @override
@@ -7477,80 +7484,92 @@ class _PictureInPictureTopController extends StatelessWidget {
       ),
       child: Row(
         children: [
+          const SizedBox(width: 4),
+          _PictureInPictureTopBarButton(
+            tooltip: 'Return to main window',
+            icon: Icons.fullscreen_rounded,
+            onPress: onRestoreMainWindow,
+          ),
           Expanded(
             child: SizedBox.expand(
               child: Semantics(
                 label: 'Drag picture in picture window',
                 child: DragToMoveArea(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.picture_in_picture_alt_rounded,
-                          size: 16,
-                          color: kWhiteColor70,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'ChessEver',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
                         ),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text(
-                            'ChessEver',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: kWhiteColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-          DesktopTooltip(
-            message: 'Close picture in picture',
-            child: Semantics(
-              button: true,
-              label: 'Close picture in picture',
-              child: FTheme(
-                data: FThemes.zinc.dark,
-                child: SizedBox.square(
-                  dimension: 32,
-                  child: FButton.icon(
-                    style: FButtonStyle.ghost(
-                      (style) => style.copyWith(
-                        decoration: FWidgetStateMap({
-                          WidgetState.hovered |
-                              WidgetState.pressed: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          WidgetState.any: const BoxDecoration(
-                            color: Colors.transparent,
-                          ),
-                        }),
-                        iconContentStyle:
-                            (content) =>
-                                content.copyWith(padding: EdgeInsets.zero),
-                      ),
-                    ),
-                    onPress: onDismiss,
-                    child: const Icon(
-                      Icons.close_rounded,
-                      size: 18,
-                      color: kWhiteColor,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          _PictureInPictureTopBarButton(
+            tooltip: 'Close picture in picture',
+            icon: Icons.close_rounded,
+            onPress: onDismiss,
           ),
           const SizedBox(width: 4),
         ],
+      ),
+    );
+  }
+}
+
+class _PictureInPictureTopBarButton extends StatelessWidget {
+  const _PictureInPictureTopBarButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPress,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPress;
+
+  @override
+  Widget build(BuildContext context) {
+    return DesktopTooltip(
+      message: tooltip,
+      child: Semantics(
+        button: true,
+        label: tooltip,
+        child: FTheme(
+          data: FThemes.zinc.dark,
+          child: SizedBox.square(
+            dimension: 32,
+            child: FButton.icon(
+              style: FButtonStyle.ghost(
+                (style) => style.copyWith(
+                  decoration: FWidgetStateMap({
+                    WidgetState.hovered | WidgetState.pressed: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    WidgetState.any: const BoxDecoration(
+                      color: Colors.transparent,
+                    ),
+                  }),
+                  iconContentStyle:
+                      (content) => content.copyWith(padding: EdgeInsets.zero),
+                ),
+              ),
+              onPress: onPress,
+              child: Icon(icon, size: 18, color: kWhiteColor),
+            ),
+          ),
+        ),
       ),
     );
   }

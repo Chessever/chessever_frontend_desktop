@@ -385,9 +385,9 @@ Future<void> _desktopBoot({
         );
       },
       onPictureInPictureDismissed: () async {
-        await container
+        container
             .read(desktopBoardWindowServiceProvider)
-            .dismissPictureInPictureWindow();
+            .markPictureInPictureHidden();
       },
       onPictureInPictureGameChanged: (gameId) async {
         container

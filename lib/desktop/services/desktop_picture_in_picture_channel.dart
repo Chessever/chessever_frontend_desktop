@@ -12,39 +12,93 @@ const String _pictureInPictureDismissedMethod = 'pictureInPictureDismissed';
 const String _pictureInPictureGameChangedMethod = 'pictureInPictureGameChanged';
 const String _replacePictureInPictureGameMethod = 'replacePictureInPictureGame';
 
+abstract interface class PictureInPictureMainWindowController {
+  Future<bool> isMinimized();
+  Future<void> restore();
+  Future<void> show();
+  Future<void> focus();
+  Future<void> blur();
+}
+
+class _SystemPictureInPictureMainWindowController
+    implements PictureInPictureMainWindowController {
+  const _SystemPictureInPictureMainWindowController();
+
+  @override
+  Future<bool> isMinimized() => windowManager.isMinimized();
+
+  @override
+  Future<void> restore() => windowManager.restore();
+
+  @override
+  Future<void> show() => windowManager.show();
+
+  @override
+  Future<void> focus() => windowManager.focus();
+
+  @override
+  Future<void> blur() => windowManager.blur();
+}
+
 /// Registers the single receiver owned by the primary desktop engine.
 Future<void> registerPictureInPictureMainWindowHandler({
   Future<void> Function(String encodedBoardPayload)? onRestoreBoard,
   Future<void> Function()? onPictureInPictureDismissed,
   Future<void> Function(String gameId)? onPictureInPictureGameChanged,
 }) {
-  return _pictureInPictureChannel.setMethodCallHandler((call) async {
-    switch (call.method) {
-      case _pictureInPictureDismissedMethod:
-        await onPictureInPictureDismissed?.call();
-        return true;
-      case _pictureInPictureGameChangedMethod:
-        final gameId = call.arguments?.toString().trim() ?? '';
-        if (gameId.isNotEmpty) {
-          await onPictureInPictureGameChanged?.call(gameId);
-        }
-        return true;
-      case _restoreMainWindowMethod:
-        final encodedBoardPayload = call.arguments;
-        if (onRestoreBoard != null && encodedBoardPayload is String) {
-          await onRestoreBoard(encodedBoardPayload);
-        }
-        await onPictureInPictureDismissed?.call();
-        if (await windowManager.isMinimized()) {
-          await windowManager.restore();
-        }
-        await windowManager.show();
-        await windowManager.focus();
-        return true;
-      default:
-        throw MissingPluginException('Unknown PiP method: ${call.method}');
-    }
-  });
+  return _pictureInPictureChannel.setMethodCallHandler(
+    (call) => handlePictureInPictureMainWindowMethod(
+      call: call,
+      windowController: const _SystemPictureInPictureMainWindowController(),
+      onRestoreBoard: onRestoreBoard,
+      onPictureInPictureDismissed: onPictureInPictureDismissed,
+      onPictureInPictureGameChanged: onPictureInPictureGameChanged,
+    ),
+  );
+}
+
+/// Keeps PiP-only dismissal and explicit main-window restoration as separate
+/// command paths. Clicking the PiP close control can cause the OS to promote
+/// another window from this process when the key PiP window disappears, so
+/// dismissal deliberately sends the primary window back out of the foreground.
+Future<bool> handlePictureInPictureMainWindowMethod({
+  required MethodCall call,
+  required PictureInPictureMainWindowController windowController,
+  Future<void> Function(String encodedBoardPayload)? onRestoreBoard,
+  Future<void> Function()? onPictureInPictureDismissed,
+  Future<void> Function(String gameId)? onPictureInPictureGameChanged,
+}) async {
+  switch (call.method) {
+    case _pictureInPictureDismissedMethod:
+      await onPictureInPictureDismissed?.call();
+      try {
+        await windowController.blur();
+      } catch (_) {
+        // Dismissal must still complete if a window manager cannot explicitly
+        // transfer focus (for example, a Linux compositor without blur).
+      }
+      return true;
+    case _pictureInPictureGameChangedMethod:
+      final gameId = call.arguments?.toString().trim() ?? '';
+      if (gameId.isNotEmpty) {
+        await onPictureInPictureGameChanged?.call(gameId);
+      }
+      return true;
+    case _restoreMainWindowMethod:
+      final encodedBoardPayload = call.arguments;
+      if (onRestoreBoard != null && encodedBoardPayload is String) {
+        await onRestoreBoard(encodedBoardPayload);
+      }
+      await onPictureInPictureDismissed?.call();
+      if (await windowController.isMinimized()) {
+        await windowController.restore();
+      }
+      await windowController.show();
+      await windowController.focus();
+      return true;
+    default:
+      throw MissingPluginException('Unknown PiP method: ${call.method}');
+  }
 }
 
 /// Registers the receiver owned by the one reusable PiP child engine.
