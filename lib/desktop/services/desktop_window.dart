@@ -16,7 +16,6 @@ class DesktopWindow {
 
   static const Size minSize = Size(1024, 720);
   static const Size defaultSize = Size(1440, 900);
-  static const double _pictureInPictureDefaultBoardEdge = 390;
   static const double _pictureInPictureMinBoardEdge = 300;
   static const double _pictureInPictureHorizontalChrome = 56;
   static const double _pictureInPictureVerticalChrome = 124;
@@ -30,10 +29,10 @@ class DesktopWindow {
     _pictureInPictureMinBoardEdge + _pictureInPictureHorizontalChrome,
     _pictureInPictureMinBoardEdge + _pictureInPictureVerticalChrome,
   );
-  static const Size pictureInPictureDefaultSize = Size(
-    _pictureInPictureDefaultBoardEdge + _pictureInPictureHorizontalChrome,
-    _pictureInPictureDefaultBoardEdge + _pictureInPictureVerticalChrome,
-  );
+  // Start at the same compact size users can reach by resizing to the
+  // minimum. The window remains freely resizable above this on every desktop
+  // platform.
+  static const Size pictureInPictureDefaultSize = pictureInPictureMinSize;
   static String get windowTitle => DesktopBuildIdentity.current.displayName;
 
   static Future<void> initialize({bool pictureInPicture = false}) async {
