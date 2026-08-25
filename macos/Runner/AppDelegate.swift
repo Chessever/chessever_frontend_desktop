@@ -8,7 +8,10 @@ class AppDelegate: FlutterAppDelegate {
   }
 
   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    return true
+    // PiP is a secondary Flutter window. Dismissing it must never terminate
+    // the application process; primary-window shutdown remains explicit via
+    // DesktopShutdownCoordinator / NSApp.terminate.
+    return false
   }
 
   override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {

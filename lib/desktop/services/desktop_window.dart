@@ -71,6 +71,10 @@ class DesktopWindow {
       await windowManager.setTitle(windowTitle);
       if (pictureInPicture) {
         await windowManager.setAsFrameless();
+        // Native close accelerators (Cmd/Ctrl+W, task switcher close) must
+        // never enter the primary application's shutdown path. The PiP frame
+        // intercepts that event and hides its own multi-window controller.
+        await windowManager.setPreventClose(true);
         final visibleBounds = displayGeometry.visibleBounds;
         if (visibleBounds != null) {
           await windowManager.setBounds(

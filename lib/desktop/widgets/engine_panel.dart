@@ -63,6 +63,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.autoAnalysisAllowed = true,
     this.reportController,
     this.onPictureInPicture,
+    this.pictureInPictureSelected = false,
   });
 
   final String fen;
@@ -98,9 +99,11 @@ class EnginePanel extends ConsumerStatefulWidget {
 
   final bool autoAnalysisAllowed;
 
-  /// Opens the current live game in a compact always-on-top board window.
-  /// Null for non-live games, which removes the header action entirely.
+  /// Toggles the current game in the compact always-on-top board window.
+  /// It remains available after that game finishes while the same PiP is
+  /// visible, so the selected action can still turn PiP off.
   final VoidCallback? onPictureInPicture;
+  final bool pictureInPictureSelected;
 
   /// Test seam for driving report lifecycle transitions without spawning a
   /// real Stockfish process. The controller must remain stable for this
@@ -389,7 +392,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           _EngineQuickToggle(enabled: engineOn),
           const SizedBox(width: 4),
           if (widget.onPictureInPicture != null) ...[
-            _EnginePictureInPictureButton(onPress: widget.onPictureInPicture!),
+            _EnginePictureInPictureButton(
+              selected: widget.pictureInPictureSelected,
+              onPress: widget.onPictureInPicture!,
+            ),
             const SizedBox(width: 4),
           ],
           const EngineSettingsPopover(dimension: 28),
@@ -1706,30 +1712,69 @@ class _DepthChip extends StatelessWidget {
 }
 
 class _EnginePictureInPictureButton extends StatelessWidget {
-  const _EnginePictureInPictureButton({required this.onPress});
+  const _EnginePictureInPictureButton({
+    required this.selected,
+    required this.onPress,
+  });
 
+  final bool selected;
   final VoidCallback onPress;
 
   @override
   Widget build(BuildContext context) {
+    final tooltip =
+        selected ? 'Close picture in picture' : 'Open picture in picture';
     return DesktopTooltip(
-      message: 'Open picture in picture',
-      child: FTheme(
-        data: FThemes.zinc.dark,
-        child: SizedBox.square(
-          dimension: 28,
-          child: FButton.icon(
-            style: FButtonStyle.ghost(
-              (style) => style.copyWith(
-                iconContentStyle:
-                    (content) => content.copyWith(padding: EdgeInsets.zero),
+      message: tooltip,
+      child: Semantics(
+        button: true,
+        toggled: selected,
+        label: tooltip,
+        child: FTheme(
+          data: FThemes.zinc.dark,
+          child: SizedBox.square(
+            dimension: 28,
+            child: FButton.icon(
+              style: FButtonStyle.ghost(
+                (style) => style.copyWith(
+                  decoration: FWidgetStateMap({
+                    WidgetState.hovered | WidgetState.pressed: BoxDecoration(
+                      color:
+                          selected
+                              ? kPrimaryColor.withValues(alpha: 0.18)
+                              : kBlack3Color,
+                      borderRadius: BorderRadius.circular(6),
+                      border:
+                          selected
+                              ? Border.all(
+                                color: kPrimaryColor.withValues(alpha: 0.42),
+                              )
+                              : null,
+                    ),
+                    WidgetState.any: BoxDecoration(
+                      color:
+                          selected
+                              ? kPrimaryColor.withValues(alpha: 0.11)
+                              : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                      border:
+                          selected
+                              ? Border.all(
+                                color: kPrimaryColor.withValues(alpha: 0.34),
+                              )
+                              : null,
+                    ),
+                  }),
+                  iconContentStyle:
+                      (content) => content.copyWith(padding: EdgeInsets.zero),
+                ),
               ),
-            ),
-            onPress: onPress,
-            child: const Icon(
-              Icons.picture_in_picture_alt_rounded,
-              color: kWhiteColor70,
-              size: 16,
+              onPress: onPress,
+              child: Icon(
+                Icons.picture_in_picture_alt_rounded,
+                color: selected ? kPrimaryColor : kWhiteColor70,
+                size: 16,
+              ),
             ),
           ),
         ),

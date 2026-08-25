@@ -20,6 +20,7 @@ import 'package:chessever/desktop/desktop_app.dart';
 import 'package:chessever/firebase_options.dart';
 import 'package:chessever/desktop/services/billing/desktop_deep_link_listener.dart';
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
+import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_db_init.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
@@ -383,6 +384,16 @@ Future<void> _desktopBoot({
           focus: true,
         );
       },
+      onPictureInPictureDismissed: () async {
+        await container
+            .read(desktopBoardWindowServiceProvider)
+            .dismissPictureInPictureWindow();
+      },
+      onPictureInPictureGameChanged: (gameId) async {
+        container
+            .read(desktopBoardWindowServiceProvider)
+            .markPictureInPictureVisible(gameId);
+      },
     );
     print('[desktop] picture-in-picture return channel ready');
   } catch (e, stack) {
@@ -555,6 +566,43 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
                 focus: true,
               );
   _restoreDetachedTabMetadata(container, tabId, payload);
+  if (payload.pictureInPicture) {
+    try {
+      final controller = await WindowController.fromCurrentEngine();
+      await registerPictureInPictureWindowHandler(
+        controller: controller,
+        onReplaceBoard: (encodedBoardPayload) async {
+          final replacement = DesktopBoardWindowPayload.decode(
+            encodedBoardPayload,
+          );
+          final replacementArgs = replacement.args;
+          if (!replacement.pictureInPicture ||
+              replacement.kind != TabKind.board ||
+              replacementArgs == null) {
+            throw const FormatException(
+              'PiP replacement must contain a PiP board payload',
+            );
+          }
+          openBoardGameTabFromContainer(
+            container,
+            replacementArgs,
+            reuseExisting: false,
+            focus: true,
+            replaceActive: true,
+          );
+          await windowManager.setTitle(replacement.title);
+        },
+      );
+      print('[desktop] picture-in-picture child channel ready');
+    } catch (e, stack) {
+      print('[desktop] ⚠️ picture-in-picture child channel failed');
+      ErrorReporter.report(
+        e,
+        stackTrace: stack,
+        tag: 'desktop.pip_child_channel',
+      );
+    }
+  }
   runApp(
     SentryWidget(
       child: UncontrolledProviderScope(

@@ -16,7 +16,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
-import 'package:window_manager/window_manager.dart';
+import 'package:window_manager/window_manager.dart' show DragToMoveArea;
 
 import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
@@ -808,6 +808,24 @@ class _BoardPaneContent extends HookConsumerWidget {
       const [],
     );
     final pictureInPictureMode = ref.watch(boardPictureInPictureModeProvider);
+    final pictureInPictureVisibility = ref.watch(
+      boardPictureInPictureVisibilityProvider,
+    );
+    final currentGameIsInPictureInPicture = pictureInPictureVisibility
+        .isShowingGame(boardArgs?.gameId);
+    useEffect(() {
+      final gameId = boardArgs?.gameId?.trim() ?? '';
+      if (!pictureInPictureMode || gameId.isEmpty) return null;
+      Future.microtask(() async {
+        try {
+          await notifyPictureInPictureGameChanged(gameId);
+        } catch (_) {
+          // The primary window can be shutting down while its PiP child is
+          // still mounted. Visibility synchronization is best effort there.
+        }
+      });
+      return null;
+    }, [pictureInPictureMode, boardArgs?.gameId]);
     final requestedBoardFocusMode = ref.watch(boardFocusModeProvider);
     final boardFocusMode = pictureInPictureMode || requestedBoardFocusMode;
     final boardSizePreference = useState<double?>(null);
@@ -3250,10 +3268,21 @@ class _BoardPaneContent extends HookConsumerWidget {
               DesktopBoardWindowPayload.fromArgs(snapshot).encode(),
         );
         if (!restored) throw StateError('Primary window did not respond');
-        await windowManager.close();
+        await dismissCurrentPictureInPictureWindow(notifyMainWindow: false);
       } catch (_) {
         if (context.mounted) {
           showToast('Couldn’t return to the main window.', error: true);
+        }
+      }
+    }
+
+    Future<void> dismissPictureInPictureAction() async {
+      if (!pictureInPictureMode) return;
+      try {
+        await dismissCurrentPictureInPictureWindow();
+      } catch (_) {
+        if (context.mounted) {
+          showToast('Couldn’t close picture in picture.', error: true);
         }
       }
     }
@@ -3455,7 +3484,7 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     Future<void> openPictureInPictureAction() async {
       if (pictureInPictureMode) return;
-      if (!isLiveGame) {
+      if (!isLiveGame && !currentGameIsInPictureInPicture) {
         showToast(
           'Picture in picture is available only for live games.',
           error: true,
@@ -3474,10 +3503,10 @@ class _BoardPaneContent extends HookConsumerWidget {
           fenSeed: position.fen,
           initialFen: position.fen,
         );
-        await openPictureInPictureWindow(ref, snapshot);
+        await togglePictureInPictureWindow(ref, snapshot);
       } catch (_) {
         if (context.mounted) {
-          showToast('Couldn’t open picture in picture.', error: true);
+          showToast('Couldn’t update picture in picture.', error: true);
         }
       }
     }
@@ -4184,7 +4213,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           return true;
         case BoardActionKey.closeWindow:
           if (pictureInPictureMode) {
-            unawaited(windowManager.close());
+            unawaited(dismissPictureInPictureAction());
             return true;
           }
           if (boardFocusMode) {
@@ -4514,10 +4543,15 @@ class _BoardPaneContent extends HookConsumerWidget {
                 ref.read(boardFocusModeProvider.notifier).state =
                     !boardFocusMode,
         onOpenPictureInPicture:
-            pictureInPictureMode || boardArgs == null || !isLiveGame
+            pictureInPictureMode ||
+                    boardArgs == null ||
+                    (!isLiveGame && !currentGameIsInPictureInPicture)
                 ? null
                 : () => unawaited(openPictureInPictureAction()),
-        showPictureInPictureAction: !pictureInPictureMode && isLiveGame,
+        showPictureInPictureAction:
+            !pictureInPictureMode &&
+            (isLiveGame || currentGameIsInPictureInPicture),
+        pictureInPictureSelected: currentGameIsInPictureInPicture,
         onCopyPgn: copyPgnAction,
         onCopyFen: copyFenAction,
         onSavePgn: savePgnAction,
@@ -4705,6 +4739,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                               () => unawaited(
                                 restoreMainWindowFromPictureInPictureAction(),
                               ),
+                          onDismissPictureInPicture:
+                              () => unawaited(dismissPictureInPictureAction()),
                           onNextGame: navigateNextGameManually,
                           onOpenContextMenu: openBoardContextMenu,
                           boardSizePreference: boardSizePreference.value,
@@ -4942,9 +4978,13 @@ class _BoardPaneContent extends HookConsumerWidget {
                         autoAnalysisAllowed:
                             allowGameAnalysis && isForegroundSurface,
                         onPictureInPicture:
-                            boardArgs == null || !isLiveGame
+                            boardArgs == null ||
+                                    (!isLiveGame &&
+                                        !currentGameIsInPictureInPicture)
                                 ? null
                                 : () => unawaited(openPictureInPictureAction()),
+                        pictureInPictureSelected:
+                            currentGameIsInPictureInPicture,
                       ),
                     ),
                   ),
@@ -7266,13 +7306,14 @@ class _RightRailBoardActions extends StatelessWidget {
 }
 
 /// Keeps the responsive PiP game surface unobstructed until the pointer enters
-/// or the board is tapped, then exposes the three controls people expect from
-/// video PiP.
+/// or the board is tapped, then exposes the navigation/restore controls and a
+/// compact draggable close bar without reserving board-layout space.
 class _PictureInPictureBoardOverlay extends StatefulWidget {
   const _PictureInPictureBoardOverlay({
     required this.enabled,
     required this.onPreviousGame,
     required this.onRestoreMainWindow,
+    required this.onDismiss,
     required this.onNextGame,
     required this.child,
   });
@@ -7280,6 +7321,7 @@ class _PictureInPictureBoardOverlay extends StatefulWidget {
   final bool enabled;
   final VoidCallback onPreviousGame;
   final VoidCallback onRestoreMainWindow;
+  final VoidCallback onDismiss;
   final VoidCallback onNextGame;
   final Widget child;
 
@@ -7400,17 +7442,110 @@ class _PictureInPictureBoardOverlayState
             ),
             if (_controlsVisible)
               Positioned(
-                top: 0,
-                left: 5,
-                right: 5,
-                height: 58,
-                child: Semantics(
-                  label: 'Drag picture in picture window',
-                  child: DragToMoveArea(child: const SizedBox.expand()),
+                top: 8,
+                left: 8,
+                right: 8,
+                height: 38,
+                child: _PictureInPictureTopController(
+                  onDismiss: widget.onDismiss,
                 ),
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PictureInPictureTopController extends StatelessWidget {
+  const _PictureInPictureTopController({required this.onDismiss});
+
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBlack2Color.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.11)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: SizedBox.expand(
+              child: Semantics(
+                label: 'Drag picture in picture window',
+                child: DragToMoveArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 11),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.picture_in_picture_alt_rounded,
+                          size: 15,
+                          color: kWhiteColor70,
+                        ),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'ChessEver',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: kWhiteColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          DesktopTooltip(
+            message: 'Close picture in picture',
+            child: Semantics(
+              button: true,
+              label: 'Close picture in picture',
+              child: FTheme(
+                data: FThemes.zinc.dark,
+                child: SizedBox.square(
+                  dimension: 32,
+                  child: FButton.icon(
+                    style: FButtonStyle.ghost(
+                      (style) => style.copyWith(
+                        decoration: FWidgetStateMap({
+                          WidgetState.hovered |
+                              WidgetState.pressed: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          WidgetState.any: const BoxDecoration(
+                            color: Colors.transparent,
+                          ),
+                        }),
+                        iconContentStyle:
+                            (content) =>
+                                content.copyWith(padding: EdgeInsets.zero),
+                      ),
+                    ),
+                    onPress: onDismiss,
+                    child: const Icon(
+                      Icons.close_rounded,
+                      size: 18,
+                      color: kWhiteColor,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 3),
+        ],
       ),
     );
   }
@@ -7615,6 +7750,7 @@ class _BoardArea extends ConsumerWidget {
     required this.pictureInPicture,
     required this.onPreviousGame,
     required this.onRestoreMainWindow,
+    required this.onDismissPictureInPicture,
     required this.onNextGame,
     required this.onOpenContextMenu,
     required this.boardSizePreference,
@@ -7721,6 +7857,7 @@ class _BoardArea extends ConsumerWidget {
   final bool pictureInPicture;
   final VoidCallback onPreviousGame;
   final VoidCallback onRestoreMainWindow;
+  final VoidCallback onDismissPictureInPicture;
   final VoidCallback onNextGame;
   final ValueChanged<Offset> onOpenContextMenu;
   final double? boardSizePreference;
@@ -8213,6 +8350,7 @@ class _BoardArea extends ConsumerWidget {
       enabled: pictureInPicture,
       onPreviousGame: onPreviousGame,
       onRestoreMainWindow: onRestoreMainWindow,
+      onDismiss: onDismissPictureInPicture,
       onNextGame: onNextGame,
       child: boardSurface,
     );

@@ -36,6 +36,7 @@ Future<void> showBoardContextMenu(
   required bool boardFocusMode,
   VoidCallback? onOpenPictureInPicture,
   bool showPictureInPictureAction = false,
+  bool pictureInPictureSelected = false,
   bool showBoardFocusAction = true,
   VoidCallback? onPlayFromHere,
 }) async {
@@ -68,7 +69,10 @@ Future<void> showBoardContextMenu(
         DesktopContextMenuItem(
           value: _BoardContextAction.pictureInPicture,
           icon: Icons.picture_in_picture_alt_rounded,
-          label: 'Open picture in picture',
+          label:
+              pictureInPictureSelected
+                  ? 'Close picture in picture'
+                  : 'Open picture in picture',
           enabled: onOpenPictureInPicture != null,
         ),
       if (showBoardFocusAction)

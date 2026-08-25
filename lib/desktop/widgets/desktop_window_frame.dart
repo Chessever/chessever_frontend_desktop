@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
+import 'package:chessever/desktop/services/desktop_picture_in_picture_channel.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -144,6 +145,13 @@ class _DesktopWindowFrameState extends State<DesktopWindowFrame>
   @override
   void onWindowRestore() {
     unawaited(_refreshMaximizedState());
+  }
+
+  @override
+  void onWindowClose() {
+    if (widget.framelessContent) {
+      unawaited(dismissCurrentPictureInPictureWindow());
+    }
   }
 }
 
