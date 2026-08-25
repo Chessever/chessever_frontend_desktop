@@ -18,11 +18,14 @@ class DesktopWindow {
   static const Size defaultSize = Size(1440, 900);
   static const double _pictureInPictureMinBoardEdge = 300;
   static const double _pictureInPictureHorizontalChrome = 56;
-  static const double _pictureInPictureVerticalChrome = 124;
+  static const double _pictureInPictureGameVerticalChrome = 124;
+  static const double pictureInPictureControllerHeight = 40;
+  static const double _pictureInPictureVerticalChrome =
+      _pictureInPictureGameVerticalChrome + pictureInPictureControllerHeight;
   // PiP is a responsive game card rather than a square crop. The width
   // reserves the board, evaluation gauge, and compact horizontal padding;
-  // the height reserves both player rows and their spacing. Native and custom
-  // title bars are intentionally absent.
+  // the height reserves both player rows, their spacing, and the dedicated
+  // Flutter controller row. Native title bars remain intentionally absent.
   // Users can freely resize either dimension and the board layout fits the
   // largest complete square into the remaining space.
   static const Size pictureInPictureMinSize = Size(

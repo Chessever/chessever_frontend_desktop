@@ -171,8 +171,8 @@ class DesktopStandaloneWindowChrome extends StatelessWidget {
   Widget build(BuildContext context) {
     if (framelessContent) {
       // The native frame and window buttons are removed by DesktopWindow.
-      // PiP therefore renders its game surface edge to edge with no second
-      // Flutter title row consuming vertical space.
+      // PiP owns its dedicated controller row inside the board surface, so
+      // this outer frame must not add a second title bar around it.
       return ColoredBox(color: kBackgroundColor, child: child);
     }
     return ColoredBox(

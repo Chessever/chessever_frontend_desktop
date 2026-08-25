@@ -30,6 +30,7 @@ import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_picture_in_picture_channel.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
+import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
@@ -7305,9 +7306,9 @@ class _RightRailBoardActions extends StatelessWidget {
   }
 }
 
-/// Keeps the responsive PiP game surface unobstructed until the pointer enters
-/// or the board is tapped, then exposes the navigation/restore controls and a
-/// compact draggable close bar without reserving board-layout space.
+/// Keeps the PiP controller in a dedicated top row while the responsive game
+/// surface below retains its complete board, evaluation bar, and player rows.
+/// Pointer hover or a board tap reveals only the navigation/restore overlay.
 class _PictureInPictureBoardOverlay extends StatefulWidget {
   const _PictureInPictureBoardOverlay({
     required this.enabled,
@@ -7393,65 +7394,70 @@ class _PictureInPictureBoardOverlayState
       onEnter: (_) => _showForPointer(),
       onHover: (_) => _showForPointer(),
       onExit: (_) => _hideForPointer(),
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: _toggleForTap,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            widget.child,
-            Positioned.fill(
-              child: ExcludeSemantics(
-                excluding: !_controlsVisible,
-                child: IgnorePointer(
-                  ignoring: !_controlsVisible,
-                  child: AnimatedOpacity(
-                    duration: const Duration(milliseconds: 140),
-                    curve: Curves.easeOut,
-                    opacity: _controlsVisible ? 1 : 0,
-                    child: ColoredBox(
-                      color: Colors.black.withValues(alpha: 0.52),
-                      child: FTheme(
-                        data: FThemes.zinc.dark,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            _PictureInPictureOverlayButton(
-                              tooltip: 'Previous live game',
-                              icon: Icons.keyboard_double_arrow_left_rounded,
-                              onPress: widget.onPreviousGame,
+      child: Column(
+        children: [
+          SizedBox(
+            height: DesktopWindow.pictureInPictureControllerHeight,
+            child: _PictureInPictureTopController(onDismiss: widget.onDismiss),
+          ),
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _toggleForTap,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  widget.child,
+                  Positioned.fill(
+                    child: ExcludeSemantics(
+                      excluding: !_controlsVisible,
+                      child: IgnorePointer(
+                        ignoring: !_controlsVisible,
+                        child: AnimatedOpacity(
+                          duration: const Duration(milliseconds: 140),
+                          curve: Curves.easeOut,
+                          opacity: _controlsVisible ? 1 : 0,
+                          child: ColoredBox(
+                            color: Colors.black.withValues(alpha: 0.52),
+                            child: FTheme(
+                              data: FThemes.zinc.dark,
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  _PictureInPictureOverlayButton(
+                                    tooltip: 'Previous live game',
+                                    icon:
+                                        Icons
+                                            .keyboard_double_arrow_left_rounded,
+                                    onPress: widget.onPreviousGame,
+                                  ),
+                                  _PictureInPictureOverlayButton(
+                                    tooltip: 'Return to main window',
+                                    icon: Icons.fullscreen_rounded,
+                                    emphasized: true,
+                                    onPress: widget.onRestoreMainWindow,
+                                  ),
+                                  _PictureInPictureOverlayButton(
+                                    tooltip: 'Next live game',
+                                    icon:
+                                        Icons
+                                            .keyboard_double_arrow_right_rounded,
+                                    onPress: widget.onNextGame,
+                                  ),
+                                ],
+                              ),
                             ),
-                            _PictureInPictureOverlayButton(
-                              tooltip: 'Return to main window',
-                              icon: Icons.fullscreen_rounded,
-                              emphasized: true,
-                              onPress: widget.onRestoreMainWindow,
-                            ),
-                            _PictureInPictureOverlayButton(
-                              tooltip: 'Next live game',
-                              icon: Icons.keyboard_double_arrow_right_rounded,
-                              onPress: widget.onNextGame,
-                            ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
+                ],
               ),
             ),
-            if (_controlsVisible)
-              Positioned(
-                top: 8,
-                left: 8,
-                right: 8,
-                height: 38,
-                child: _PictureInPictureTopController(
-                  onDismiss: widget.onDismiss,
-                ),
-              ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -7465,10 +7471,9 @@ class _PictureInPictureTopController extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: kBlack2Color.withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(9),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.11)),
+      decoration: const BoxDecoration(
+        color: kBlack2Color,
+        border: Border(bottom: BorderSide(color: kDividerColor, width: 1)),
       ),
       child: Row(
         children: [
@@ -7478,12 +7483,12 @@ class _PictureInPictureTopController extends StatelessWidget {
                 label: 'Drag picture in picture window',
                 child: DragToMoveArea(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 11),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Row(
                       children: [
                         const Icon(
                           Icons.picture_in_picture_alt_rounded,
-                          size: 15,
+                          size: 16,
                           color: kWhiteColor70,
                         ),
                         const SizedBox(width: 8),
@@ -7522,7 +7527,7 @@ class _PictureInPictureTopController extends StatelessWidget {
                           WidgetState.hovered |
                               WidgetState.pressed: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(7),
+                            borderRadius: BorderRadius.circular(8),
                           ),
                           WidgetState.any: const BoxDecoration(
                             color: Colors.transparent,
@@ -7544,7 +7549,7 @@ class _PictureInPictureTopController extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 3),
+          const SizedBox(width: 4),
         ],
       ),
     );
