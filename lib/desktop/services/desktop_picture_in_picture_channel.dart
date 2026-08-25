@@ -17,7 +17,6 @@ abstract interface class PictureInPictureMainWindowController {
   Future<void> restore();
   Future<void> show();
   Future<void> focus();
-  Future<void> blur();
 }
 
 class _SystemPictureInPictureMainWindowController
@@ -35,9 +34,6 @@ class _SystemPictureInPictureMainWindowController
 
   @override
   Future<void> focus() => windowManager.focus();
-
-  @override
-  Future<void> blur() => windowManager.blur();
 }
 
 /// Registers the single receiver owned by the primary desktop engine.
@@ -58,9 +54,8 @@ Future<void> registerPictureInPictureMainWindowHandler({
 }
 
 /// Keeps PiP-only dismissal and explicit main-window restoration as separate
-/// command paths. Clicking the PiP close control can cause the OS to promote
-/// another window from this process when the key PiP window disappears, so
-/// dismissal deliberately sends the primary window back out of the foreground.
+/// command paths. Dismissal may synchronize PiP state, but it must never issue
+/// a lifecycle, visibility, or focus command against the primary window.
 Future<bool> handlePictureInPictureMainWindowMethod({
   required MethodCall call,
   required PictureInPictureMainWindowController windowController,
@@ -71,12 +66,6 @@ Future<bool> handlePictureInPictureMainWindowMethod({
   switch (call.method) {
     case _pictureInPictureDismissedMethod:
       await onPictureInPictureDismissed?.call();
-      try {
-        await windowController.blur();
-      } catch (_) {
-        // Dismissal must still complete if a window manager cannot explicitly
-        // transfer focus (for example, a Linux compositor without blur).
-      }
       return true;
     case _pictureInPictureGameChangedMethod:
       final gameId = call.arguments?.toString().trim() ?? '';
