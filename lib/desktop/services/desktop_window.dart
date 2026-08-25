@@ -19,13 +19,24 @@ class DesktopWindow {
   static const Size defaultSize = Size(1440, 900);
   static const double _pictureInPictureDefaultBoardEdge = 390;
   static const double _pictureInPictureMinBoardEdge = 300;
+  static const double _pictureInPictureHorizontalChrome = 56;
+  static const double _pictureInPictureVerticalChrome = 124;
+  // PiP is a responsive game card rather than a square crop. The width
+  // reserves the board, evaluation gauge, and compact horizontal padding;
+  // the height also reserves both player rows and the draggable title bar.
+  // Users can freely resize either dimension and the board layout fits the
+  // largest complete square into the remaining space.
   static const Size pictureInPictureMinSize = Size(
-    _pictureInPictureMinBoardEdge,
-    _pictureInPictureMinBoardEdge + kDesktopChromeBarHeight,
+    _pictureInPictureMinBoardEdge + _pictureInPictureHorizontalChrome,
+    _pictureInPictureMinBoardEdge +
+        _pictureInPictureVerticalChrome +
+        kDesktopChromeBarHeight,
   );
   static const Size pictureInPictureDefaultSize = Size(
-    _pictureInPictureDefaultBoardEdge,
-    _pictureInPictureDefaultBoardEdge + kDesktopChromeBarHeight,
+    _pictureInPictureDefaultBoardEdge + _pictureInPictureHorizontalChrome,
+    _pictureInPictureDefaultBoardEdge +
+        _pictureInPictureVerticalChrome +
+        kDesktopChromeBarHeight,
   );
   static String get windowTitle => DesktopBuildIdentity.current.displayName;
 

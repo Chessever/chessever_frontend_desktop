@@ -584,17 +584,7 @@ bool shouldClearBoardAnnotationsForBoardAreaClick({
 computeBoardAreaChromeMetrics({
   required bool focusMode,
   required bool hasPlayerInfo,
-  bool boardOnly = false,
 }) {
-  if (boardOnly) {
-    return (
-      hasHeaders: false,
-      topRowHeight: 0.0,
-      bottomRowHeight: 0.0,
-      headerGapTotal: 0.0,
-      outerPadding: 0.0,
-    );
-  }
   final hasHeaders = focusMode || hasPlayerInfo;
   final topRowHeight = hasHeaders ? _BoardArea.headerHeight : _focusButtonSize;
   final bottomRowHeight =
@@ -4709,7 +4699,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           viewSource:
                               boardArgs?.viewSource ?? ChessboardView.tour,
                           focusMode: boardFocusMode,
-                          boardOnly: pictureInPictureMode,
+                          pictureInPicture: pictureInPictureMode,
                           onPreviousGame: navigatePreviousGameManually,
                           onRestoreMainWindow:
                               () => unawaited(
@@ -4742,8 +4732,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           onBoardSizeChangeEnd: () {
                             persistBoardSizePreference();
                           },
-                          suppressEngineAnalysis:
-                              pictureInPictureMode || !runLiveBoardAnalysis,
+                          suppressEngineAnalysis: !runLiveBoardAnalysis,
                         ),
                       ),
                     ),
@@ -7276,8 +7265,9 @@ class _RightRailBoardActions extends StatelessWidget {
   }
 }
 
-/// Keeps PiP visually board-only until the pointer enters or the board is
-/// tapped, then exposes the three controls people expect from video PiP.
+/// Keeps the responsive PiP game surface unobstructed until the pointer enters
+/// or the board is tapped, then exposes the three controls people expect from
+/// video PiP.
 class _PictureInPictureBoardOverlay extends StatefulWidget {
   const _PictureInPictureBoardOverlay({
     required this.enabled,
@@ -7610,7 +7600,7 @@ class _BoardArea extends ConsumerWidget {
     required this.isLiveAtTip,
     required this.isForegroundTab,
     required this.focusMode,
-    required this.boardOnly,
+    required this.pictureInPicture,
     required this.onPreviousGame,
     required this.onRestoreMainWindow,
     required this.onNextGame,
@@ -7716,7 +7706,7 @@ class _BoardArea extends ConsumerWidget {
 
   final ValueChanged<int> onWheelStep;
   final bool focusMode;
-  final bool boardOnly;
+  final bool pictureInPicture;
   final VoidCallback onPreviousGame;
   final VoidCallback onRestoreMainWindow;
   final VoidCallback onNextGame;
@@ -7739,9 +7729,7 @@ class _BoardArea extends ConsumerWidget {
         ref.watch(engineSettingsProviderNew).valueOrNull ??
         const EngineSettings();
     final showEngineAnalysis =
-        !boardOnly &&
-        engineSettings.showEngineAnalysis &&
-        !suppressEngineAnalysis;
+        engineSettings.showEngineAnalysis && !suppressEngineAnalysis;
     // [analysisFen] comes from [activeBoardEvalTarget] above the board and
     // right rail, so the gauge and PV list always query the same position.
     // A threat probe can only be active when a legal null move was formed.
@@ -7761,8 +7749,7 @@ class _BoardArea extends ConsumerWidget {
               for (final moves in evalPvMoveLines.split('\u0000'))
                 BoardPv(evaluation: 0, mate: null, moves: moves),
             ];
-    final showEvalBar =
-        !boardOnly && shouldShowDesktopBoardEvalBar(engineSettings);
+    final showEvalBar = shouldShowDesktopBoardEvalBar(engineSettings);
     final tournament =
         boardArgs == null ? ref.watch(tournamentGamesProvider) : null;
     final activeTournamentGameId = tournament?.activeGameId;
@@ -7871,15 +7858,13 @@ class _BoardArea extends ConsumerWidget {
       focusMode ? '--:--' : null,
     );
     final hasPlayerInfo =
-        !boardOnly &&
-        (whiteName.isNotEmpty ||
-            blackName.isNotEmpty ||
-            whiteClockDisplay != null ||
-            blackClockDisplay != null);
+        whiteName.isNotEmpty ||
+        blackName.isNotEmpty ||
+        whiteClockDisplay != null ||
+        blackClockDisplay != null;
     final chromeMetrics = computeBoardAreaChromeMetrics(
       focusMode: focusMode,
       hasPlayerInfo: hasPlayerInfo,
-      boardOnly: boardOnly,
     );
     final hasHeaders = chromeMetrics.hasHeaders;
     // Focus mode still hides the surrounding board toolbar and move-nav
@@ -8009,11 +7994,11 @@ class _BoardArea extends ConsumerWidget {
           );
 
           final moreActionsButton =
-              boardOnly
+              pictureInPicture
                   ? null
                   : _BoardMoreActionsButton(onPressed: onOpenContextMenu);
           final resizeHandle =
-              boardOnly
+              pictureInPicture
                   ? null
                   : _BoardResizeHandle(
                     boardSize: boardSize,
@@ -8126,9 +8111,12 @@ class _BoardArea extends ConsumerWidget {
                                       // Reserve the actions menu's space in
                                       // the player bar, but keep the actual
                                       // control outside the export boundary.
-                                      trailingControl: const SizedBox.square(
-                                        dimension: _focusButtonSize,
-                                      ),
+                                      trailingControl:
+                                          pictureInPicture
+                                              ? null
+                                              : const SizedBox.square(
+                                                dimension: _focusButtonSize,
+                                              ),
                                       activeGameId: activeGameId,
                                       historyOwnerId: tabId,
                                       useLiveClock:
@@ -8210,7 +8198,7 @@ class _BoardArea extends ConsumerWidget {
       ),
     );
     return _PictureInPictureBoardOverlay(
-      enabled: boardOnly,
+      enabled: pictureInPicture,
       onPreviousGame: onPreviousGame,
       onRestoreMainWindow: onRestoreMainWindow,
       onNextGame: onNextGame,

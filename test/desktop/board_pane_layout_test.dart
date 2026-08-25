@@ -1591,12 +1591,11 @@ void main() {
     final pictureInPicture = computeBoardAreaChromeMetrics(
       focusMode: true,
       hasPlayerInfo: true,
-      boardOnly: true,
     );
-    expect(pictureInPicture.hasHeaders, isFalse);
-    expect(pictureInPicture.topRowHeight, 0);
-    expect(pictureInPicture.bottomRowHeight, 0);
-    expect(pictureInPicture.headerGapTotal, 0);
-    expect(pictureInPicture.outerPadding, 0);
+    expect(pictureInPicture.hasHeaders, isTrue);
+    expect(pictureInPicture.topRowHeight, 48);
+    expect(pictureInPicture.bottomRowHeight, 48);
+    expect(pictureInPicture.headerGapTotal, 8);
+    expect(pictureInPicture.outerPadding, 10);
   });
 }
