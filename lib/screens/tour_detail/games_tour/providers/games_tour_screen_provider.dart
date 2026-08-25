@@ -51,6 +51,30 @@ final gamesTourScreenProvider = StateNotifierProvider<
 // Can use this in future to maintain the state across the app
 final showFinishedGamesProvider = StateProvider<bool>((ref) => true);
 
+@visibleForTesting
+class GamesScreenRecomputeEpoch {
+  int _generation = 0;
+
+  int begin() => ++_generation;
+
+  bool isCurrent(int generation) => generation == _generation;
+
+  void invalidate() {
+    _generation += 1;
+  }
+}
+
+@visibleForTesting
+int sourceGameCountForScreenModel({
+  required GameDisplayMode displayMode,
+  required int primaryProviderGameCount,
+  required int processedInputGameCount,
+}) {
+  return displayMode == GameDisplayMode.all
+      ? primaryProviderGameCount
+      : processedInputGameCount;
+}
+
 class _GamesProcessingArgs {
   final List<Games> games;
   final List<String> pinnedIds;
@@ -209,6 +233,7 @@ class GamesTourScreenProvider
   final Ref ref;
   final AboutTourModel? aboutTourModel;
   final Object? error;
+  final GamesScreenRecomputeEpoch _recomputeEpoch = GamesScreenRecomputeEpoch();
 
   Future<void> _setupListeners() async {
     // The display-mode provider lives outside this notifier so it survives
@@ -344,6 +369,7 @@ class GamesTourScreenProvider
     List<String>? pinnedIdsOverride, // allow optimistic pins
   }) async {
     if (aboutTourModel == null) return;
+    final generation = _recomputeEpoch.begin();
 
     try {
       final gamesAsync = ref.read(gamesTourProvider(aboutTourModel!.id));
@@ -402,6 +428,7 @@ class GamesTourScreenProvider
           isSearchMode: isSearchMode,
         ),
       );
+      if (!mounted || !_recomputeEpoch.isCurrent(generation)) return;
 
       // Read the persisted display mode so it survives notifier recreations
       // (category change, live-tour-id push). `current?.gameDisplayMode` is
@@ -411,20 +438,21 @@ class GamesTourScreenProvider
         gameDisplayModeProvider(aboutTourModel!.id),
       );
 
-      if (mounted) {
-        state = AsyncValue.data(
-          GamesScreenModel(
-            gamesTourModels: models,
-            // Show pins even in search mode for correct icon state.
-            pinnedGamedIs: pinnedIds,
-            isSearchMode: isSearchMode,
-            searchQuery: searchQuery,
-            gameDisplayMode: persistedDisplayMode,
-          ),
-        );
-      }
+      state = AsyncValue.data(
+        GamesScreenModel(
+          gamesTourModels: models,
+          sourceGameCount: allGames.length,
+          // Show pins even in search mode for correct icon state.
+          pinnedGamedIs: pinnedIds,
+          isSearchMode: isSearchMode,
+          searchQuery: searchQuery,
+          gameDisplayMode: persistedDisplayMode,
+        ),
+      );
     } catch (e, st) {
-      if (mounted) state = AsyncValue.error(e, st);
+      if (mounted && _recomputeEpoch.isCurrent(generation)) {
+        state = AsyncValue.error(e, st);
+      }
     }
   }
 
@@ -529,6 +557,7 @@ class GamesTourScreenProvider
 
   Future<void> showFinishedGames() async {
     if (aboutTourModel == null) return;
+    _recomputeEpoch.invalidate();
 
     final pinnedIds = ref.read(gamesPinprovider(aboutTourModel!.id)).allPins;
     final allGames = _collectGamesAcrossVisibleStages();
@@ -542,6 +571,16 @@ class GamesTourScreenProvider
     state = AsyncValue.data(
       GamesScreenModel(
         gamesTourModels: models,
+        sourceGameCount: sourceGameCountForScreenModel(
+          displayMode: GameDisplayMode.showfinishedGame,
+          primaryProviderGameCount:
+              ref
+                  .read(gamesTourProvider(aboutTourModel!.id))
+                  .valueOrNull
+                  ?.length ??
+              0,
+          processedInputGameCount: finishedGames.length,
+        ),
         pinnedGamedIs: pinnedIds,
         isSearchMode: false,
         gameDisplayMode: GameDisplayMode.showfinishedGame,
@@ -551,6 +590,7 @@ class GamesTourScreenProvider
 
   Future<void> hideFinishedGames() async {
     if (aboutTourModel == null) return;
+    _recomputeEpoch.invalidate();
 
     final pinnedIds = ref.read(gamesPinprovider(aboutTourModel!.id)).allPins;
     final allGames = _collectGamesAcrossVisibleStages();
@@ -564,6 +604,16 @@ class GamesTourScreenProvider
     state = AsyncValue.data(
       GamesScreenModel(
         gamesTourModels: models,
+        sourceGameCount: sourceGameCountForScreenModel(
+          displayMode: GameDisplayMode.hideFinishedGames,
+          primaryProviderGameCount:
+              ref
+                  .read(gamesTourProvider(aboutTourModel!.id))
+                  .valueOrNull
+                  ?.length ??
+              0,
+          processedInputGameCount: unfinishedGames.length,
+        ),
         pinnedGamedIs: pinnedIds,
         isSearchMode: false,
         gameDisplayMode: GameDisplayMode.hideFinishedGames,
@@ -573,8 +623,12 @@ class GamesTourScreenProvider
 
   Future<void> showAllGames() async {
     if (aboutTourModel == null) return;
+    _recomputeEpoch.invalidate();
 
     final pinnedIds = ref.read(gamesPinprovider(aboutTourModel!.id)).allPins;
+    final primaryProviderGameCount =
+        ref.read(gamesTourProvider(aboutTourModel!.id)).valueOrNull?.length ??
+        0;
     final allGames = _collectGamesAcrossVisibleStages();
     final sortedGames = _sortGamesForFilters(allGames, pinnedIds);
     final models = _mapGamesToModels(sortedGames);
@@ -585,6 +639,11 @@ class GamesTourScreenProvider
     state = AsyncValue.data(
       GamesScreenModel(
         gamesTourModels: models,
+        sourceGameCount: sourceGameCountForScreenModel(
+          displayMode: GameDisplayMode.all,
+          primaryProviderGameCount: primaryProviderGameCount,
+          processedInputGameCount: allGames.length,
+        ),
         pinnedGamedIs: pinnedIds,
         isSearchMode: false,
         gameDisplayMode: GameDisplayMode.all,
@@ -723,6 +782,7 @@ class GamesTourScreenProvider
       clearSearch();
       return;
     }
+    final generation = _recomputeEpoch.begin();
 
     final pinnedIds = ref.read(gamesPinprovider(aboutTourModel!.id)).allPins;
     final allGames = _collectGamesAcrossVisibleStages();
@@ -730,6 +790,7 @@ class GamesTourScreenProvider
       _searchGamesWorker,
       _GamesSearchArgs(games: allGames, query: trimmed),
     );
+    if (!mounted || !_recomputeEpoch.isCurrent(generation)) return;
     final models = _mapGamesToModels(games);
 
     debugPrint(
@@ -776,6 +837,12 @@ class GamesTourScreenProvider
     } catch (e, st) {
       if (mounted) state = AsyncValue.error(e, st);
     }
+  }
+
+  @override
+  void dispose() {
+    _recomputeEpoch.invalidate();
+    super.dispose();
   }
 
   // Helper method to extract round number from round slug.

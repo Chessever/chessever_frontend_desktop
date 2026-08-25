@@ -31,6 +31,39 @@ void main() {
     );
   });
 
+  test('partial All snapshot waits for the complete provider model', () {
+    expect(
+      isGamesModelReadyForDisplay(
+        displayMode: GameDisplayMode.all,
+        isSearchMode: false,
+        providerGameCount: 630,
+        modelGameCount: 72,
+      ),
+      isFalse,
+    );
+  });
+
+  test(
+    'complete source coverage is ready when malformed models are skipped',
+    () {
+      final model = GamesScreenModel(
+        gamesTourModels: const [],
+        pinnedGamedIs: const [],
+        sourceGameCount: 630,
+      );
+
+      expect(
+        isGamesModelReadyForDisplay(
+          displayMode: GameDisplayMode.all,
+          isSearchMode: false,
+          providerGameCount: 630,
+          modelGameCount: model.sourceGameCount,
+        ),
+        isTrue,
+      );
+    },
+  );
+
   test('Live mode includes only games explicitly marked ongoing', () {
     expect(
       isGameStatusVisible(

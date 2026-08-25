@@ -21,13 +21,15 @@ class GamesScreenModel {
     this.gameDisplayMode = GameDisplayMode.all,
     this.isSearchMode = false,
     this.searchQuery,
-  });
+    int? sourceGameCount,
+  }) : sourceGameCount = sourceGameCount ?? gamesTourModels.length;
 
   final List<GamesTourModel> gamesTourModels;
   final List<String> pinnedGamedIs;
   final bool isSearchMode;
   final String? searchQuery;
   final GameDisplayMode gameDisplayMode;
+  final int sourceGameCount;
 
   GamesScreenModel copyWith({
     List<GamesTourModel>? gamesTourModels,
@@ -35,6 +37,7 @@ class GamesScreenModel {
     bool? isSearchMode,
     String? searchQuery,
     final GameDisplayMode? gameDisplayMode,
+    int? sourceGameCount,
   }) {
     return GamesScreenModel(
       gamesTourModels: gamesTourModels ?? this.gamesTourModels,
@@ -42,6 +45,7 @@ class GamesScreenModel {
       isSearchMode: isSearchMode ?? this.isSearchMode,
       searchQuery: searchQuery ?? this.searchQuery,
       gameDisplayMode: gameDisplayMode ?? this.gameDisplayMode,
+      sourceGameCount: sourceGameCount ?? this.sourceGameCount,
     );
   }
 
@@ -50,11 +54,13 @@ class GamesScreenModel {
     if (identical(this, other)) return true;
     return other is GamesScreenModel &&
         other.gamesTourModels == gamesTourModels &&
-        other.pinnedGamedIs == pinnedGamedIs;
+        other.pinnedGamedIs == pinnedGamedIs &&
+        other.sourceGameCount == sourceGameCount;
   }
 
   @override
-  int get hashCode => gamesTourModels.hashCode ^ pinnedGamedIs.hashCode;
+  int get hashCode =>
+      Object.hash(gamesTourModels, pinnedGamedIs, sourceGameCount);
 }
 
 class GamesTourModel {

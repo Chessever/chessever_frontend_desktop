@@ -34,6 +34,61 @@ void main() {
   });
 
   group('initial tournament game loading', () {
+    test(
+      'mounted notifier replaces an arbitrary partial cache with fresh games',
+      () async {
+        final freshGames = Completer<List<Games>>();
+        final cachedPublished = Completer<void>();
+        final freshPublished = Completer<void>();
+        late _StaleCacheGamesLocalStorage storage;
+        final container = ProviderContainer(
+          overrides: [
+            shouldStreamProvider.overrideWith((ref) => false),
+            gamesLocalStorage.overrideWith((ref) {
+              storage = _StaleCacheGamesLocalStorage(
+                ref,
+                cachedGames: List<Games>.generate(
+                  72,
+                  (index) => _game('cached-$index'),
+                ),
+                freshGames: freshGames,
+              );
+              return storage;
+            }),
+          ],
+        );
+        final subscription = container.listen(gamesTourProvider('tour'), (
+          _,
+          next,
+        ) {
+          final count = next.valueOrNull?.length;
+          if (count == 72 && !cachedPublished.isCompleted) {
+            cachedPublished.complete();
+          }
+          if (count == 630 && !freshPublished.isCompleted) {
+            freshPublished.complete();
+          }
+        }, fireImmediately: true);
+        addTearDown(() {
+          subscription.close();
+          container.dispose();
+        });
+
+        await cachedPublished.future.timeout(const Duration(seconds: 2));
+
+        expect(storage.freshFetches, 1);
+        freshGames.complete(
+          List<Games>.generate(630, (index) => _game('fresh-$index')),
+        );
+        await freshPublished.future.timeout(const Duration(seconds: 2));
+
+        expect(
+          container.read(gamesTourProvider('tour')).valueOrNull,
+          hasLength(630),
+        );
+      },
+    );
+
     test('publishes cached games without waiting for the network', () async {
       var freshFetches = 0;
 
@@ -155,5 +210,29 @@ class _ThrowingGameRepository extends GameRepository {
     int offset = 0,
   }) async {
     throw StateError('offline');
+  }
+}
+
+class _StaleCacheGamesLocalStorage extends GamesLocalStorage {
+  _StaleCacheGamesLocalStorage(
+    super.ref, {
+    required this.cachedGames,
+    required this.freshGames,
+  });
+
+  final List<Games> cachedGames;
+  final Completer<List<Games>> freshGames;
+  int freshFetches = 0;
+
+  @override
+  Future<List<Games>> getCachedGames(String tourId) async => cachedGames;
+
+  @override
+  Future<List<Games>> fetchAndSaveGames(
+    String tourId, {
+    bool forceRefresh = false,
+  }) {
+    freshFetches += 1;
+    return freshGames.future;
   }
 }

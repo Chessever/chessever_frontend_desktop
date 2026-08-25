@@ -165,18 +165,36 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
   Future<void> _loadInitialGames({bool forceRefresh = false}) async {
     try {
       final gamesLocalStorageProvider = ref.read(gamesLocalStorage);
+      var loadedFromCache = false;
       final games = await loadInitialTournamentGames(
-        readCachedGames: () => gamesLocalStorageProvider.getCachedGames(tourId),
-        fetchFreshGames:
-            () => gamesLocalStorageProvider.fetchAndSaveGames(
-              tourId,
-              forceRefresh: forceRefresh,
-            ),
+        readCachedGames: () async {
+          final cachedGames = await gamesLocalStorageProvider.getCachedGames(
+            tourId,
+          );
+          loadedFromCache = cachedGames.isNotEmpty;
+          return cachedGames;
+        },
+        fetchFreshGames: () {
+          loadedFromCache = false;
+          return gamesLocalStorageProvider.fetchAndSaveGames(
+            tourId,
+            forceRefresh: forceRefresh,
+          );
+        },
         useCache: !forceRefresh,
       );
 
       if (mounted) {
         state = AsyncValue.data(games);
+
+        // Cached rows keep the first paint fast, but a non-empty cache is not
+        // proof that a live tournament snapshot is complete. Refresh this same
+        // mounted notifier immediately so an arbitrary partial cache (for
+        // example, 72 of 630 games) cannot remain visible indefinitely when
+        // desktop polling registration is delayed or briefly inactive.
+        if (loadedFromCache) {
+          unawaited(_checkForNewGames(ignoreActivity: true));
+        }
 
         // Only start periodic refresh if streaming is enabled
         if (_periodicRefreshAllowed) {
