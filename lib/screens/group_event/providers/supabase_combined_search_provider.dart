@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/repository/gamebase/memorial_player.dart';
+import 'package:chessever/repository/gamebase/memorial_player_local_search.dart';
 import 'package:chessever/screens/group_event/group_event_screen.dart';
 import 'package:chessever/screens/group_event/providers/live_group_broadcast_id_provider.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
@@ -81,7 +83,14 @@ final supabaseCombinedSearchProvider = AutoDisposeFutureProvider.family<
         : Future.value(<SearchResult>[]),
     // 3. Direct chess_players search
     _fetchPlayersByName(query: trimmedQuery, limit: 25),
-    // 4. Local cache searches
+    // 4. Bundled reviewed Memorial index. This performs no network or database
+    // work and therefore cannot lengthen existing player/event queries.
+    searchBundledMemorialPlayers(
+      query: trimmedQuery,
+      includeWithoutGames: true,
+      limit: 25,
+    ).catchError((_) => <MemorialPlayerSearchMatch>[]),
+    // 5. Local cache searches
     ref
         .read(groupBroadcastLocalStorage(GroupEventCategory.current))
         .searchWithScoring(trimmedQuery, liveIds)
@@ -95,8 +104,12 @@ final supabaseCombinedSearchProvider = AutoDisposeFutureProvider.family<
   final broadcasts = parallelResults[0] as List<GroupBroadcast>;
   final countryPlayerResults = parallelResults[1] as List<SearchResult>;
   final directPlayerResults = parallelResults[2] as List<SearchResult>;
-  final localSearchCurrent = parallelResults[3] as EnhancedSearchResult;
-  final localSearchPast = parallelResults[4] as EnhancedSearchResult;
+  final memorialMatches = parallelResults[3] as List<MemorialPlayerSearchMatch>;
+  final memorialPlayers = memorialMatches
+      .map((match) => match.player)
+      .toList(growable: false);
+  final localSearchCurrent = parallelResults[4] as EnhancedSearchResult;
+  final localSearchPast = parallelResults[5] as EnhancedSearchResult;
 
   debugPrint(
     '[Search] Query: "$trimmedQuery", results: ${broadcasts.length} events, ${directPlayerResults.length} players',
@@ -188,23 +201,72 @@ final supabaseCombinedSearchProvider = AutoDisposeFutureProvider.family<
     return parts.join(' ');
   }
 
-  // Add chess_players results (already fetched in parallel)
-  playerResults.addAll(directPlayerResults);
+  // Merge only by a reviewed identity. A normalized name is presentation data,
+  // not proof that a current player and a historical player are the same person.
+  final memorialByFideId = <String, MemorialPlayer>{
+    for (final player in memorialPlayers)
+      if ((player.fideId ?? '').isNotEmpty) player.fideId!: player,
+  };
+  String playerIdentityKey(SearchResult result) {
+    final player = result.player;
+    if (player?.fideId != null && player!.fideId! > 0) {
+      return 'fide:${player.fideId}';
+    }
+    final memorialIdentity = player?.memorialSourceIdentity?.trim();
+    if (memorialIdentity != null && memorialIdentity.isNotEmpty) {
+      return 'memorial:${memorialIdentity.toLowerCase()}';
+    }
+    return 'name:${normalizeName(player?.name ?? result.matchedText)}';
+  }
 
-  // Merge in country player results (dedupe by normalized name, prefer FIDE ID then higher Elo)
+  final consumedMemorialKeys = <String>{};
+  for (final result in directPlayerResults) {
+    final player = result.player;
+    if (player == null) {
+      playerResults.add(result);
+      continue;
+    }
+    final memorial =
+        player.fideId == null
+            ? null
+            : memorialByFideId[player.fideId.toString()];
+    if (memorial == null) {
+      playerResults.add(result);
+      continue;
+    }
+    consumedMemorialKeys.add(memorial.profileKey);
+    playerResults.add(
+      SearchResult(
+        tournament: result.tournament,
+        score: result.score,
+        matchedText: result.matchedText,
+        type: result.type,
+        player: player.copyWith(
+          gamebasePlayerId:
+              player.gamebasePlayerId ?? memorial.gamebasePlayerId,
+          memorialSourceIdentity: memorial.sourceIdentity,
+          memorialRouteId: memorial.routeId,
+        ),
+      ),
+    );
+  }
+  for (final match in memorialMatches) {
+    final memorial = match.player;
+    if (consumedMemorialKeys.contains(memorial.profileKey)) continue;
+    playerResults.add(_memorialSearchResult(match));
+  }
+
+  // Merge country results by the same identity keys.
   if (countryPlayerResults.isNotEmpty) {
-    final byNormalizedName = <String, SearchResult>{
-      for (final r in playerResults)
-        normalizeName(r.player?.name ?? r.matchedText): r,
+    final byIdentity = <String, SearchResult>{
+      for (final r in playerResults) playerIdentityKey(r): r,
     };
 
     for (final countryResult in countryPlayerResults) {
-      final keyName = normalizeName(
-        countryResult.player?.name ?? countryResult.matchedText,
-      );
-      final existing = byNormalizedName[keyName];
+      final key = playerIdentityKey(countryResult);
+      final existing = byIdentity[key];
       if (existing == null) {
-        byNormalizedName[keyName] = countryResult;
+        byIdentity[key] = countryResult;
       } else {
         // Prefer player with FIDE ID
         final existingHasFideId =
@@ -213,20 +275,20 @@ final supabaseCombinedSearchProvider = AutoDisposeFutureProvider.family<
             countryResult.player?.fideId != null &&
             countryResult.player!.fideId! > 0;
         if (newHasFideId && !existingHasFideId) {
-          byNormalizedName[keyName] = countryResult;
+          byIdentity[key] = countryResult;
         } else if (existingHasFideId == newHasFideId) {
           // Both have or both lack FIDE ID - prefer higher rating
           final existingElo = existing.player?.rating ?? 0;
           final newElo = countryResult.player?.rating ?? 0;
           if (newElo > existingElo) {
-            byNormalizedName[keyName] = countryResult;
+            byIdentity[key] = countryResult;
           }
         }
       }
     }
     playerResults
       ..clear()
-      ..addAll(byNormalizedName.values);
+      ..addAll(byIdentity.values);
   }
 
   await _backfillMissingPlayerRatings(
@@ -286,10 +348,11 @@ final supabaseCombinedSearchProvider = AutoDisposeFutureProvider.family<
     return 50;
   }
 
-  // Final deduplication: prefer players with FIDE ID over those without
+  // Common names can describe different people, so never dedupe a Memorial
+  // source identity against a name-only result.
   final deduped = <String, SearchResult>{};
   for (final r in playerResults) {
-    final key = normalizeName(r.player?.name ?? r.matchedText);
+    final key = playerIdentityKey(r);
     final existing = deduped[key];
     if (existing == null) {
       deduped[key] = r;
@@ -312,7 +375,29 @@ final supabaseCombinedSearchProvider = AutoDisposeFutureProvider.family<
   }
   playerResults
     ..clear()
-    ..addAll(deduped.values);
+    ..addAll(
+      deduped.values.map((result) {
+        final player = result.player;
+        if (player == null) return result;
+        final memorial =
+            player.fideId == null
+                ? null
+                : memorialByFideId[player.fideId.toString()];
+        if (memorial == null) return result;
+        return SearchResult(
+          tournament: result.tournament,
+          score: result.score,
+          matchedText: result.matchedText,
+          type: result.type,
+          player: player.copyWith(
+            gamebasePlayerId:
+                player.gamebasePlayerId ?? memorial.gamebasePlayerId,
+            memorialSourceIdentity: memorial.sourceIdentity,
+            memorialRouteId: memorial.routeId,
+          ),
+        );
+      }),
+    );
 
   playerResults.sort((a, b) {
     // 0. Country match boost (when searching by country)
@@ -322,10 +407,17 @@ final supabaseCombinedSearchProvider = AutoDisposeFutureProvider.family<
       if (aMatch != bMatch) return bMatch ? -1 : 1;
     }
 
-    // 1. FIDE ID boost - players with FIDE ID are more reliable
-    final aHasFideId = a.player?.fideId != null && a.player!.fideId! > 0;
-    final bHasFideId = b.player?.fideId != null && b.player!.fideId! > 0;
-    if (aHasFideId != bHasFideId) return aHasFideId ? -1 : 1;
+    // 1. A reviewed Memorial source identity is as trustworthy as a valid
+    // FIDE ID; historical profiles are not demoted for lacking a modern ID.
+    final aHasReviewedIdentity =
+        (a.player?.fideId != null && a.player!.fideId! > 0) ||
+        (a.player?.memorialSourceIdentity?.trim().isNotEmpty ?? false);
+    final bHasReviewedIdentity =
+        (b.player?.fideId != null && b.player!.fideId! > 0) ||
+        (b.player?.memorialSourceIdentity?.trim().isNotEmpty ?? false);
+    if (aHasReviewedIdentity != bHasReviewedIdentity) {
+      return aHasReviewedIdentity ? -1 : 1;
+    }
 
     // 2. Match score (higher = better match)
     final aScore = matchScore(a.matchedText, trimmedQuery);
@@ -388,6 +480,7 @@ Future<void> _backfillMissingPlayerRatings(
     final player = result.player;
     if (player == null) continue;
     if ((player.rating ?? 0) > 0) continue;
+    if (player.memorialSourceIdentity?.trim().isNotEmpty ?? false) continue;
 
     final lookupKey =
         (player.fideId != null && player.fideId! > 0)
@@ -436,6 +529,7 @@ Future<int?> _fetchGamebaseDisplayRating(
   SearchPlayer player,
 ) async {
   try {
+    if (player.memorialSourceIdentity?.trim().isNotEmpty ?? false) return null;
     final fideId = player.fideId;
     final candidates =
         (fideId != null && fideId > 0)
@@ -686,6 +780,43 @@ Future<List<SearchResult>> _fetchPlayersByName({
   } catch (_) {
     return [];
   }
+}
+
+SearchResult _memorialSearchResult(MemorialPlayerSearchMatch match) {
+  final memorial = match.player;
+  final placeholderTournament = GroupEventCardModel(
+    id: 'memorial_${memorial.routeId}',
+    title: 'Chess Memorial',
+    dates: '',
+    maxAvgElo: 0,
+    timeUntilStart: '',
+    tourEventCategory: TourEventCategory.completed,
+    timeControl: 'Standard',
+    endDate: null,
+    startDate: null,
+    location: '',
+    searchTerms: const [],
+  );
+  final player = SearchPlayer(
+    id: memorial.profileKey,
+    name: memorial.name,
+    title: memorial.title,
+    rating: memorial.ratingClassical > 0 ? memorial.ratingClassical : null,
+    fideId: int.tryParse(memorial.fideId ?? ''),
+    fed: memorial.fed.isEmpty ? null : memorial.fed,
+    tournamentId: placeholderTournament.id,
+    tournamentName: placeholderTournament.title,
+    gamebasePlayerId: memorial.gamebasePlayerId,
+    memorialSourceIdentity: memorial.sourceIdentity,
+    memorialRouteId: memorial.routeId,
+  );
+  return SearchResult(
+    tournament: placeholderTournament,
+    score: match.score.toDouble(),
+    matchedText: match.matchedText,
+    type: SearchResultType.player,
+    player: player,
+  );
 }
 
 class _CountryPlayerCacheEntry {

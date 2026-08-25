@@ -20,6 +20,8 @@ class PlayerProfileArgs {
     this.rating,
     this.dataSource = PlayerProfileDataSource.twic,
     this.gamebasePlayerId,
+    this.memorialSourceIdentity,
+    this.memorialRouteId,
   });
 
   final String playerName;
@@ -29,6 +31,8 @@ class PlayerProfileArgs {
   final int? rating;
   final PlayerProfileDataSource dataSource;
   final String? gamebasePlayerId;
+  final String? memorialSourceIdentity;
+  final String? memorialRouteId;
 }
 
 /// Per-tab player-score-card args, keyed by [DesktopTab.id]. Mirrors the
@@ -170,6 +174,7 @@ String openPlayerProfile(
       final a = entry.value;
       if (a.playerName == args.playerName &&
           a.fideId == args.fideId &&
+          a.memorialSourceIdentity == args.memorialSourceIdentity &&
           _tabStillHostsKind(tabsState, entry.key, TabKind.playerProfile)) {
         existingTabId = entry.key;
         break;

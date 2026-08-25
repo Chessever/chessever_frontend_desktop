@@ -25,12 +25,14 @@ class PlayerEventsTab extends ConsumerStatefulWidget {
     required this.playerName,
     this.dataSource = PlayerProfileDataSource.supabase,
     this.gamebasePlayerId,
+    this.memorialSourceIdentity,
   });
 
   final int? fideId;
   final String playerName;
   final PlayerProfileDataSource dataSource;
   final String? gamebasePlayerId;
+  final String? memorialSourceIdentity;
 
   @override
   ConsumerState<PlayerEventsTab> createState() => _PlayerEventsTabState();
@@ -58,6 +60,7 @@ class _PlayerEventsTabState extends ConsumerState<PlayerEventsTab>
     playerName: widget.playerName,
     source: widget.dataSource,
     gamebasePlayerId: widget.gamebasePlayerId,
+    memorialSourceIdentity: widget.memorialSourceIdentity,
   );
 
   bool get _isTwic => widget.dataSource == PlayerProfileDataSource.twic;
@@ -79,6 +82,7 @@ class _PlayerEventsTabState extends ConsumerState<PlayerEventsTab>
       playerName: oldWidget.playerName,
       source: oldWidget.dataSource,
       gamebasePlayerId: oldWidget.gamebasePlayerId,
+      memorialSourceIdentity: oldWidget.memorialSourceIdentity,
     );
     if (oldKey != _playerKey && _isTwic) {
       _loadTwicEvents(reset: true);
@@ -146,10 +150,10 @@ class _PlayerEventsTabState extends ConsumerState<PlayerEventsTab>
 
       _twicEvents = mergeTwicPlayerEvents([..._twicEvents, ...incoming])
         ..sort((a, b) {
-        final aDate = a.endDate ?? a.startDate ?? DateTime(1900);
-        final bDate = b.endDate ?? b.startDate ?? DateTime(1900);
-        return bDate.compareTo(aDate);
-      });
+          final aDate = a.endDate ?? a.startDate ?? DateTime(1900);
+          final bDate = b.endDate ?? b.startDate ?? DateTime(1900);
+          return bDate.compareTo(aDate);
+        });
 
       _twicHasMore = response.metadata.hasMore;
       _twicTotalEvents = response.metadata.totalCount ?? _twicTotalEvents;

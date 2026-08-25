@@ -24,7 +24,8 @@ class PlayerProfilePane extends ConsumerWidget {
     // (and their preserved scroll positions) reset cleanly on tab swap.
     return PlayerProfileView(
       key: ValueKey<String>(
-        '${args.playerName}|${args.fideId ?? ''}|${args.dataSource.name}',
+        '${args.playerName}|${args.fideId ?? ''}|'
+        '${args.memorialSourceIdentity ?? ''}|${args.dataSource.name}',
       ),
       tabId: tabId,
       args: args,

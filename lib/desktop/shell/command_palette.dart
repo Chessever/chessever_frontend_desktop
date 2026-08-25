@@ -177,6 +177,9 @@ class CommandPalette extends HookConsumerWidget {
               title: player.title,
               federation: player.fed,
               rating: player.rating,
+              gamebasePlayerId: player.gamebasePlayerId,
+              memorialSourceIdentity: player.memorialSourceIdentity,
+              memorialRouteId: player.memorialRouteId,
             ),
           );
         case _RowKind.tournament:
@@ -680,8 +683,11 @@ class _PlayerRow extends StatelessWidget {
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,
           builder:
-              (context, scale, child) =>
-                  Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+              (context, scale, child) => Transform.scale(
+                scale: scale,
+                filterQuality: FilterQuality.medium,
+                child: child,
+              ),
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -805,8 +811,11 @@ class _TournamentRow extends StatelessWidget {
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,
           builder:
-              (context, scale, child) =>
-                  Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+              (context, scale, child) => Transform.scale(
+                scale: scale,
+                filterQuality: FilterQuality.medium,
+                child: child,
+              ),
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -1062,8 +1071,11 @@ class _PaletteRow extends StatelessWidget {
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,
           builder:
-              (context, scale, child) =>
-                  Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+              (context, scale, child) => Transform.scale(
+                scale: scale,
+                filterQuality: FilterQuality.medium,
+                child: child,
+              ),
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

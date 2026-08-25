@@ -48,6 +48,7 @@ class PlayerAboutTab extends ConsumerStatefulWidget {
     this.fallbackRating,
     this.dataSource = PlayerProfileDataSource.supabase,
     this.gamebasePlayerId,
+    this.memorialSourceIdentity,
     this.onOpenGames,
   });
 
@@ -58,6 +59,7 @@ class PlayerAboutTab extends ConsumerStatefulWidget {
   final int? fallbackRating;
   final PlayerProfileDataSource dataSource;
   final String? gamebasePlayerId;
+  final String? memorialSourceIdentity;
   final PlayerGamesOpenCallback? onOpenGames;
 
   @override
@@ -85,6 +87,7 @@ class _PlayerAboutTabState extends ConsumerState<PlayerAboutTab>
     playerName: widget.playerName,
     source: widget.dataSource,
     gamebasePlayerId: widget.gamebasePlayerId,
+    memorialSourceIdentity: widget.memorialSourceIdentity,
   );
 
   void _triggerFilterFlash() {
@@ -226,6 +229,7 @@ class _PlayerAboutTabState extends ConsumerState<PlayerAboutTab>
               fallbackRating: widget.fallbackRating,
               dataSource: widget.dataSource,
               gamebasePlayerId: widget.gamebasePlayerId,
+              memorialSourceIdentity: widget.memorialSourceIdentity,
               onOpenGames: widget.onOpenGames,
             ),
 
@@ -872,6 +876,7 @@ class _PlayerHeaderSection extends ConsumerStatefulWidget {
     this.fallbackRating,
     required this.dataSource,
     this.gamebasePlayerId,
+    this.memorialSourceIdentity,
     this.onOpenGames,
   });
 
@@ -883,6 +888,7 @@ class _PlayerHeaderSection extends ConsumerStatefulWidget {
   final int? fallbackRating;
   final PlayerProfileDataSource dataSource;
   final String? gamebasePlayerId;
+  final String? memorialSourceIdentity;
   final PlayerGamesOpenCallback? onOpenGames;
 
   @override
@@ -953,6 +959,7 @@ class _PlayerHeaderSectionState extends ConsumerState<_PlayerHeaderSection> {
       playerName: widget.playerName,
       source: widget.dataSource,
       gamebasePlayerId: widget.gamebasePlayerId,
+      memorialSourceIdentity: widget.memorialSourceIdentity,
     );
     final gamesState = ref.watch(playerProfileGamesKeyProvider(playerKey));
     final currentTimeControl = gamesState.filter.timeControl;

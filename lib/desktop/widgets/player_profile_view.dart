@@ -8,6 +8,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
+import 'package:chessever/repository/gamebase/memorial_player.dart';
 import 'package:chessever/desktop/panes/player_workspace_pane.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
@@ -117,7 +118,8 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   void didUpdateWidget(covariant PlayerProfileView old) {
     super.didUpdateWidget(old);
     if (old.args.playerName != widget.args.playerName ||
-        old.args.fideId != widget.args.fideId) {
+        old.args.fideId != widget.args.fideId ||
+        old.args.memorialSourceIdentity != widget.args.memorialSourceIdentity) {
       setState(() {
         _dataSource = _profileInitialDataSource();
         _gamebasePlayerId = _normalize(widget.args.gamebasePlayerId);
@@ -142,6 +144,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     playerName: widget.args.playerName,
     source: source,
     gamebasePlayerId: _gamebasePlayerId,
+    memorialSourceIdentity: widget.args.memorialSourceIdentity,
   );
 
   void _setTab(PlayerProfileSection next) {
@@ -241,11 +244,12 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     final already = favs.maybeWhen(
       data:
           (players) => players.any(
-            (p) =>
-                (fideStr != null &&
-                    fideStr.isNotEmpty &&
-                    p.fideId == fideStr) ||
-                p.playerName.trim() == playerName,
+            (player) => favoritePlayerMatchesIdentity(
+              player,
+              fideId: fideStr,
+              playerName: playerName,
+              memorialSourceIdentity: widget.args.memorialSourceIdentity,
+            ),
           ),
       orElse: () => false,
     );
@@ -263,6 +267,9 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
             countryCode: widget.args.federation,
             rating: widget.args.rating,
             title: widget.args.title,
+            gamebasePlayerId: widget.args.gamebasePlayerId,
+            memorialSourceIdentity: widget.args.memorialSourceIdentity,
+            memorialRouteId: widget.args.memorialRouteId,
           );
     } on FavoriteLimitExceededException {
       // Desktop is premium-only, so this branch should never trip in
@@ -337,19 +344,15 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
 
     final favs = ref.watch(favoritePlayersProviderNew);
     final favoriteFideId = effectiveFideId?.toString();
-    final favoritePlayerNames =
-        {
-          effectiveName.trim(),
-          widget.args.playerName.trim(),
-        }.where((name) => name.isNotEmpty).toSet();
     final isFavorite = favs.maybeWhen(
       data:
           (players) => players.any(
-            (p) =>
-                (favoriteFideId != null &&
-                    favoriteFideId.isNotEmpty &&
-                    p.fideId == favoriteFideId) ||
-                favoritePlayerNames.contains(p.playerName.trim()),
+            (player) => favoritePlayerMatchesIdentity(
+              player,
+              fideId: favoriteFideId,
+              playerName: widget.args.playerName,
+              memorialSourceIdentity: widget.args.memorialSourceIdentity,
+            ),
           ),
       orElse: () => false,
     );
@@ -410,6 +413,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
             title: effectiveTitle,
             federation: effectiveFederation,
             fideId: effectiveFideId,
+            memorialSourceIdentity: widget.args.memorialSourceIdentity,
             birthday: activeProfile?.birthday,
             totalGames: twicSummaryAsync.valueOrNull?.totalGames,
             isSummaryLoading: twicSummaryAsync.isLoading,
@@ -510,6 +514,7 @@ class _Header extends StatelessWidget {
     required this.title,
     required this.federation,
     required this.fideId,
+    this.memorialSourceIdentity,
     required this.birthday,
     required this.totalGames,
     required this.isSummaryLoading,
@@ -528,6 +533,7 @@ class _Header extends StatelessWidget {
   final String? title;
   final String? federation;
   final int? fideId;
+  final String? memorialSourceIdentity;
   final String? birthday;
   final int? totalGames;
   final bool isSummaryLoading;
@@ -554,7 +560,12 @@ class _Header extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          _ProfileAvatar(fideId: fideId, name: name, size: 68),
+          _ProfileAvatar(
+            fideId: fideId,
+            name: name,
+            memorialSourceIdentity: memorialSourceIdentity,
+            size: 68,
+          ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
@@ -725,11 +736,13 @@ class _ProfileAvatar extends StatefulWidget {
   const _ProfileAvatar({
     required this.fideId,
     required this.name,
+    this.memorialSourceIdentity,
     required this.size,
   });
 
   final int? fideId;
   final String name;
+  final String? memorialSourceIdentity;
   final double size;
 
   @override
@@ -748,15 +761,25 @@ class _ProfileAvatarState extends State<_ProfileAvatar> {
   @override
   void didUpdateWidget(covariant _ProfileAvatar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.fideId != widget.fideId) _configurePhotoFuture();
+    if (oldWidget.fideId != widget.fideId ||
+        oldWidget.name != widget.name ||
+        oldWidget.memorialSourceIdentity != widget.memorialSourceIdentity) {
+      _configurePhotoFuture();
+    }
   }
 
   void _configurePhotoFuture() {
     final fideId = widget.fideId;
+    final memorialUrl = memorialPlayerPhotoUrl(
+      playerName: widget.name,
+      sourceIdentity: widget.memorialSourceIdentity,
+    );
     _photoFuture =
         fideId != null && fideId > 0
-            ? FidePhotoService.getPhotoUrlOrNull(fideId.toString())
-            : null;
+            ? (() async =>
+                await FidePhotoService.getPhotoUrlOrNull(fideId.toString()) ??
+                memorialUrl)()
+            : Future<String?>.value(memorialUrl);
   }
 
   @override

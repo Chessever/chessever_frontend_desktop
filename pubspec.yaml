@@ -228,6 +228,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/changelog/desktop_releases.json
+    - assets/data/memorial-player-catalog.json
     - assets/fonts/Geist-VariableFont_wght.ttf
     - assets/fonts/Geist-Italic-VariableFont_wght.ttf
     - assets/svgs/

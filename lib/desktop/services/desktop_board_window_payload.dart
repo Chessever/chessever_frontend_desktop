@@ -374,6 +374,7 @@ Map<String, Object?> _playerProfileKeyToJson(PlayerProfileKey key) {
     'playerName': key.playerName,
     'source': key.source.name,
     'gamebasePlayerId': key.gamebasePlayerId,
+    'memorialSourceIdentity': key.memorialSourceIdentity,
   };
 }
 
@@ -415,6 +416,7 @@ PlayerProfileKey _playerProfileKeyFromJson(Map<String, Object?> json) {
     playerName: _string(json['playerName']),
     source: _playerProfileDataSource(json['source']),
     gamebasePlayerId: _nullableString(json['gamebasePlayerId']),
+    memorialSourceIdentity: _nullableString(json['memorialSourceIdentity']),
   );
 }
 

@@ -491,6 +491,7 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
         }
       });
     }
+
     const cardStreamingEnabled = true;
     if (layout == DesktopCardLayout.grid) {
       // Compute column count first so PageUp/PageDown can stride by a full
@@ -547,42 +548,42 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
                             selected:
                                 selection?.isGroup == true &&
                                 selection?.groupId == groups[groupIndex].key,
-                            onToggle:
-                                () => toggleGroup(groups[groupIndex].key),
+                            onToggle: () => toggleGroup(groups[groupIndex].key),
                           ),
                         ),
                       ),
                     ),
                     if (!_collapsedGroups.contains(groups[groupIndex].key))
                       SliverGrid(
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        mainAxisSpacing: 8,
-                        crossAxisSpacing: 8,
-                        childAspectRatio: 0.95,
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                          childAspectRatio: 0.95,
+                        ),
+                        delegate: SliverChildBuilderDelegate((context, i) {
+                          final game = groups[groupIndex].games[i];
+                          return DesktopGroupedGameKeyboardItem(
+                            itemKey: keyForGame(
+                              groups[groupIndex].key,
+                              game.gameId,
+                            ),
+                            groupId: groups[groupIndex].key,
+                            gameId: game.gameId,
+                            onSelect: selectGame,
+                            child: _FavoriteLiveGameCard(
+                              game: game,
+                              layout: DesktopCardLayout.grid,
+                              allGames: widget.games,
+                              selected:
+                                  selection?.groupId ==
+                                      groups[groupIndex].key &&
+                                  selection?.gameId == game.gameId,
+                              streamEnabled: cardStreamingEnabled,
+                            ),
+                          );
+                        }, childCount: groups[groupIndex].games.length),
                       ),
-                      delegate: SliverChildBuilderDelegate((context, i) {
-                        final game = groups[groupIndex].games[i];
-                        return DesktopGroupedGameKeyboardItem(
-                          itemKey: keyForGame(
-                            groups[groupIndex].key,
-                            game.gameId,
-                          ),
-                          groupId: groups[groupIndex].key,
-                          gameId: game.gameId,
-                          onSelect: selectGame,
-                          child: _FavoriteLiveGameCard(
-                            game: game,
-                            layout: DesktopCardLayout.grid,
-                            allGames: widget.games,
-                            selected:
-                                selection?.groupId == groups[groupIndex].key &&
-                                selection?.gameId == game.gameId,
-                            streamEnabled: cardStreamingEnabled,
-                          ),
-                        );
-                      }, childCount: groups[groupIndex].games.length),
-                    ),
                   ],
                   if (widget.isLoading)
                     const SliverToBoxAdapter(child: _InlineLoader()),
@@ -645,34 +646,34 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
               ),
               if (!_collapsedGroups.contains(groups[groupIndex].key))
                 SliverToBoxAdapter(
-                child: DesktopGameCardsFlow(
-                  layout: layout,
-                  embedded: true,
-                  onColumnsResolved: (c) => _keyboardColumns = c,
-                  itemCount: groups[groupIndex].games.length,
-                  itemBuilder: (context, i) {
-                    final game = groups[groupIndex].games[i];
-                    return DesktopGroupedGameKeyboardItem(
-                      itemKey: keyForGame(
-                        groups[groupIndex].key,
-                        game.gameId,
-                      ),
-                      groupId: groups[groupIndex].key,
-                      gameId: game.gameId,
-                      onSelect: selectGame,
-                      child: _FavoriteLiveGameCard(
-                        game: game,
-                        layout: layout,
-                        allGames: widget.games,
-                        selected:
-                            selection?.groupId == groups[groupIndex].key &&
-                            selection?.gameId == game.gameId,
-                        streamEnabled: cardStreamingEnabled,
-                      ),
-                    );
-                  },
+                  child: DesktopGameCardsFlow(
+                    layout: layout,
+                    embedded: true,
+                    onColumnsResolved: (c) => _keyboardColumns = c,
+                    itemCount: groups[groupIndex].games.length,
+                    itemBuilder: (context, i) {
+                      final game = groups[groupIndex].games[i];
+                      return DesktopGroupedGameKeyboardItem(
+                        itemKey: keyForGame(
+                          groups[groupIndex].key,
+                          game.gameId,
+                        ),
+                        groupId: groups[groupIndex].key,
+                        gameId: game.gameId,
+                        onSelect: selectGame,
+                        child: _FavoriteLiveGameCard(
+                          game: game,
+                          layout: layout,
+                          allGames: widget.games,
+                          selected:
+                              selection?.groupId == groups[groupIndex].key &&
+                              selection?.gameId == game.gameId,
+                          streamEnabled: cardStreamingEnabled,
+                        ),
+                      );
+                    },
+                  ),
                 ),
-              ),
             ],
             if (widget.isLoading)
               const SliverToBoxAdapter(child: _InlineLoader()),
@@ -1073,6 +1074,8 @@ class _PlayerTileState extends ConsumerState<_PlayerTile> {
         federation: p.countryCode.trim().isEmpty ? null : p.countryCode.trim(),
         rating: p.score > 0 ? p.score : null,
         gamebasePlayerId: p.gamebasePlayerId,
+        memorialSourceIdentity: p.memorialSourceIdentity,
+        memorialRouteId: p.memorialRouteId,
       ),
     );
   }

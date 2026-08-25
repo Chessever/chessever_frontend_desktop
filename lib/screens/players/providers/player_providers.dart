@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/pending_favorite_players_provider.dart';
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/repository/gamebase/memorial_player.dart';
 import 'package:chessever/screens/players/view_models/player_view_model.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -77,17 +79,31 @@ class PlayerPaginationNotifier
       if (currentVersion != _searchVersion) return;
 
       final country = _search.isEmpty ? _countryCode : null;
-      final firstBatch = await _viewModel.fetchNextPage(
-        search: _search,
-        countryCode: country,
-      );
+      final results = await Future.wait<dynamic>([
+        _viewModel.fetchNextPage(search: _search, countryCode: country),
+        if (_search.trim().isNotEmpty)
+          _ref
+              .read(gamebaseRepositoryProvider)
+              .getMemorialPlayers(
+                name: _search,
+                includeWithoutGames: true,
+                pageSize: 100,
+              )
+              .catchError((_) => <MemorialPlayer>[])
+        else
+          Future.value(<MemorialPlayer>[]),
+      ]);
+      final firstBatch = results[0] as List<Map<String, dynamic>>;
+      final memorialPlayers = results[1] as List<MemorialPlayer>;
 
       // Check again if a newer search was started
       if (currentVersion != _searchVersion) return;
 
-      final enriched = _mergeWithFavorites(_filterRealPlayers(firstBatch));
+      final enriched = _mergeWithFavorites(
+        _mergeMemorialPlayers(_filterRealPlayers(firstBatch), memorialPlayers),
+      );
       state = AsyncValue.data(enriched);
-      hasMore = enriched.isNotEmpty;
+      hasMore = firstBatch.isNotEmpty;
     } catch (e) {
       // Only set error if this is still the current search
       if (currentVersion == _searchVersion) {
@@ -233,10 +249,6 @@ class PlayerPaginationNotifier
   ) {
     final favorites = _ref.read(favoritePlayersProviderNew).valueOrNull ?? [];
     final pendingFavorites = _ref.read(pendingFavoriteSelectionsProvider);
-    final favoriteNames =
-        favorites.map((f) => f.playerName.toLowerCase()).toSet();
-    final favoriteFideIds =
-        favorites.map((f) => f.fideId?.toLowerCase() ?? '').toSet();
     final pendingFideIds =
         pendingFavorites.values
             .where((p) => p.isSelected)
@@ -244,15 +256,57 @@ class PlayerPaginationNotifier
             .toSet();
 
     return players.map((player) {
-      final name = (player['name'] ?? '').toString().toLowerCase();
+      final name = (player['name'] ?? '').toString();
       final fideId = player['fideId']?.toString().toLowerCase() ?? '';
+      final memorialIdentity = player['memorialSourceIdentity']?.toString();
       final isFav =
-          favoriteNames.contains(name) ||
-          (fideId.isNotEmpty &&
-              (favoriteFideIds.contains(fideId) ||
-                  pendingFideIds.contains(fideId)));
+          favorites.any(
+            (favorite) => favoritePlayerMatchesIdentity(
+              favorite,
+              fideId: fideId,
+              playerName: name,
+              memorialSourceIdentity: memorialIdentity,
+            ),
+          ) ||
+          (fideId.isNotEmpty && pendingFideIds.contains(fideId));
       return {...player, 'isFavorite': isFav};
     }).toList();
+  }
+
+  List<Map<String, dynamic>> _mergeMemorialPlayers(
+    List<Map<String, dynamic>> existing,
+    List<MemorialPlayer> memorialPlayers,
+  ) {
+    final merged = existing
+        .map((player) => Map<String, dynamic>.from(player))
+        .toList(growable: true);
+
+    for (final memorial in memorialPlayers) {
+      final memorialFideId = memorial.fideId?.trim() ?? '';
+      final index = merged.indexWhere((player) {
+        final existingFideId = player['fideId']?.toString().trim() ?? '';
+        return memorialFideId.isNotEmpty && existingFideId == memorialFideId;
+      });
+      final routing = <String, dynamic>{
+        'gamebasePlayerId': memorial.gamebasePlayerId,
+        'memorialSourceIdentity': memorial.sourceIdentity,
+        'memorialRouteId': memorial.routeId,
+      };
+      if (index >= 0) {
+        merged[index] = {...merged[index], ...routing};
+      } else {
+        merged.add({
+          'id': memorial.profileKey,
+          'name': memorial.name,
+          'title': memorial.title,
+          'rating': memorial.ratingClassical,
+          'fideId': int.tryParse(memorialFideId),
+          'fed': memorial.fed,
+          ...routing,
+        });
+      }
+    }
+    return merged;
   }
 }
 

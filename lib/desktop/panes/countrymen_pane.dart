@@ -798,6 +798,8 @@ class _CountryPlayerTileState extends ConsumerState<_CountryPlayerTile> {
         federation: p.countryCode.trim().isEmpty ? null : p.countryCode.trim(),
         rating: p.score > 0 ? p.score : null,
         gamebasePlayerId: p.gamebasePlayerId,
+        memorialSourceIdentity: p.memorialSourceIdentity,
+        memorialRouteId: p.memorialRouteId,
       ),
     );
   }
@@ -1741,6 +1743,7 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
         }
       });
     }
+
     if (layout == DesktopCardLayout.grid) {
       // Compute column count first so PageUp/PageDown can stride by a full
       // page (~3 rows of `columns` cards). The previous `pageStride: 9`
@@ -1803,74 +1806,74 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                             selected:
                                 selection?.isGroup == true &&
                                 selection?.groupId == groups[groupIndex].key,
-                            onToggle:
-                                () => toggleGroup(groups[groupIndex].key),
+                            onToggle: () => toggleGroup(groups[groupIndex].key),
                           ),
                         ),
                       ),
                     ),
                     if (!_collapsedGroups.contains(groups[groupIndex].key))
                       SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      sliver: SliverGrid(
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          mainAxisSpacing: 8,
-                          crossAxisSpacing: 8,
-                          childAspectRatio: 0.95,
-                        ),
-                        delegate: SliverChildBuilderDelegate((context, i) {
-                          final flatIndex =
-                              groups
-                                  .take(groupIndex)
-                                  .fold<int>(
-                                    0,
-                                    (sum, group) => sum + group.games.length,
-                                  ) +
-                              i;
-                          final delay = Duration(
-                            milliseconds: (flatIndex.clamp(0, 12)) * 32,
-                          );
-                          final game = groups[groupIndex].games[i];
-                          return DesktopGroupedGameKeyboardItem(
-                            itemKey: keyForGame(
-                              groups[groupIndex].key,
-                              game.gameId,
-                            ),
-                            groupId: groups[groupIndex].key,
-                            gameId: game.gameId,
-                            onSelect: selectGame,
-                            child: Cue.onMount(
-                              motion: const CueMotion.smooth(),
-                              child: Actor(
-                                delay: delay,
-                                acts: const [
-                                  Act.fadeIn(),
-                                  Act.slideY(from: 0.18),
-                                ],
-                                child: LiveDesktopGameCard(
-                                  game: game,
-                                  tournamentTitle:
-                                      game.tourSlug ?? 'Countrymen',
-                                  routeTitle: widget.routeTitle,
-                                  routeGames: widget.games,
-                                  routeGamesContinuation:
-                                      const BoardTabGamesContinuation.countrymen(),
-                                  layout: DesktopCardLayout.grid,
-                                  selected:
-                                      selection?.groupId ==
-                                          groups[groupIndex].key &&
-                                      selection?.gameId == game.gameId,
-                                  viewSource: ChessboardView.countryman,
-                                  streamingEnabled: cardStreamingEnabled,
-                                  allowStockfishFallback: true,
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        sliver: SliverGrid(
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                mainAxisSpacing: 8,
+                                crossAxisSpacing: 8,
+                                childAspectRatio: 0.95,
+                              ),
+                          delegate: SliverChildBuilderDelegate((context, i) {
+                            final flatIndex =
+                                groups
+                                    .take(groupIndex)
+                                    .fold<int>(
+                                      0,
+                                      (sum, group) => sum + group.games.length,
+                                    ) +
+                                i;
+                            final delay = Duration(
+                              milliseconds: (flatIndex.clamp(0, 12)) * 32,
+                            );
+                            final game = groups[groupIndex].games[i];
+                            return DesktopGroupedGameKeyboardItem(
+                              itemKey: keyForGame(
+                                groups[groupIndex].key,
+                                game.gameId,
+                              ),
+                              groupId: groups[groupIndex].key,
+                              gameId: game.gameId,
+                              onSelect: selectGame,
+                              child: Cue.onMount(
+                                motion: const CueMotion.smooth(),
+                                child: Actor(
+                                  delay: delay,
+                                  acts: const [
+                                    Act.fadeIn(),
+                                    Act.slideY(from: 0.18),
+                                  ],
+                                  child: LiveDesktopGameCard(
+                                    game: game,
+                                    tournamentTitle:
+                                        game.tourSlug ?? 'Countrymen',
+                                    routeTitle: widget.routeTitle,
+                                    routeGames: widget.games,
+                                    routeGamesContinuation:
+                                        const BoardTabGamesContinuation.countrymen(),
+                                    layout: DesktopCardLayout.grid,
+                                    selected:
+                                        selection?.groupId ==
+                                            groups[groupIndex].key &&
+                                        selection?.gameId == game.gameId,
+                                    viewSource: ChessboardView.countryman,
+                                    streamingEnabled: cardStreamingEnabled,
+                                    allowStockfishFallback: true,
+                                  ),
                                 ),
                               ),
-                            ),
-                          );
-                        }, childCount: groups[groupIndex].games.length),
+                            );
+                          }, childCount: groups[groupIndex].games.length),
+                        ),
                       ),
-                    ),
                   ],
                   if (widget.isLoading)
                     const SliverPadding(
@@ -1939,61 +1942,65 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
               ),
               if (!_collapsedGroups.contains(groups[groupIndex].key))
                 SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                sliver: SliverToBoxAdapter(
-                  child: DesktopGameCardsFlow(
-                    layout: layout,
-                    embedded: true,
-                    onColumnsResolved: (c) => _keyboardColumns = c,
-                    itemCount: groups[groupIndex].games.length,
-                    itemBuilder: (context, i) {
-                      final flatIndex =
-                          groups
-                              .take(groupIndex)
-                              .fold<int>(
-                                0,
-                                (sum, group) => sum + group.games.length,
-                              ) +
-                          i;
-                      final delay = Duration(
-                        milliseconds: (flatIndex.clamp(0, 12)) * 32,
-                      );
-                      final game = groups[groupIndex].games[i];
-                    return DesktopGroupedGameKeyboardItem(
-                      itemKey: keyForGame(
-                        groups[groupIndex].key,
-                        game.gameId,
-                      ),
-                      groupId: groups[groupIndex].key,
-                      gameId: game.gameId,
-                        onSelect: selectGame,
-                        child: Cue.onMount(
-                          motion: const CueMotion.smooth(),
-                          child: Actor(
-                            delay: delay,
-                            acts: const [Act.fadeIn(), Act.slideY(from: 0.18)],
-                            child: LiveDesktopGameCard(
-                              game: game,
-                              tournamentTitle: game.tourSlug ?? 'Countrymen',
-                              routeTitle: widget.routeTitle,
-                              routeGames: widget.games,
-                              routeGamesContinuation:
-                                  const BoardTabGamesContinuation.countrymen(),
-                              layout: layout,
-                            selected:
-                                selection?.groupId == groups[groupIndex].key &&
-                                selection?.gameId == game.gameId,
-                              viewSource: ChessboardView.countryman,
-                              streamingEnabled: cardStreamingEnabled,
-                              allowStockfishFallback: true,
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  sliver: SliverToBoxAdapter(
+                    child: DesktopGameCardsFlow(
+                      layout: layout,
+                      embedded: true,
+                      onColumnsResolved: (c) => _keyboardColumns = c,
+                      itemCount: groups[groupIndex].games.length,
+                      itemBuilder: (context, i) {
+                        final flatIndex =
+                            groups
+                                .take(groupIndex)
+                                .fold<int>(
+                                  0,
+                                  (sum, group) => sum + group.games.length,
+                                ) +
+                            i;
+                        final delay = Duration(
+                          milliseconds: (flatIndex.clamp(0, 12)) * 32,
+                        );
+                        final game = groups[groupIndex].games[i];
+                        return DesktopGroupedGameKeyboardItem(
+                          itemKey: keyForGame(
+                            groups[groupIndex].key,
+                            game.gameId,
+                          ),
+                          groupId: groups[groupIndex].key,
+                          gameId: game.gameId,
+                          onSelect: selectGame,
+                          child: Cue.onMount(
+                            motion: const CueMotion.smooth(),
+                            child: Actor(
+                              delay: delay,
+                              acts: const [
+                                Act.fadeIn(),
+                                Act.slideY(from: 0.18),
+                              ],
+                              child: LiveDesktopGameCard(
+                                game: game,
+                                tournamentTitle: game.tourSlug ?? 'Countrymen',
+                                routeTitle: widget.routeTitle,
+                                routeGames: widget.games,
+                                routeGamesContinuation:
+                                    const BoardTabGamesContinuation.countrymen(),
+                                layout: layout,
+                                selected:
+                                    selection?.groupId ==
+                                        groups[groupIndex].key &&
+                                    selection?.gameId == game.gameId,
+                                viewSource: ChessboardView.countryman,
+                                streamingEnabled: cardStreamingEnabled,
+                                allowStockfishFallback: true,
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
                 ),
-              ),
             ],
             if (widget.isLoading)
               const SliverPadding(

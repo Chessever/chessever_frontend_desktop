@@ -46,12 +46,14 @@ class PlayerGamesTab extends ConsumerStatefulWidget {
     required this.playerName,
     this.dataSource = PlayerProfileDataSource.supabase,
     this.gamebasePlayerId,
+    this.memorialSourceIdentity,
   });
 
   final int? fideId;
   final String playerName;
   final PlayerProfileDataSource dataSource;
   final String? gamebasePlayerId;
+  final String? memorialSourceIdentity;
 
   @override
   ConsumerState<PlayerGamesTab> createState() => _PlayerGamesTabState();
@@ -169,6 +171,7 @@ class _PlayerGamesTabState extends ConsumerState<PlayerGamesTab>
     playerName: widget.playerName,
     source: widget.dataSource,
     gamebasePlayerId: widget.gamebasePlayerId,
+    memorialSourceIdentity: widget.memorialSourceIdentity,
   );
 
   @override
@@ -1411,7 +1414,8 @@ class _PlayerGamesTabState extends ConsumerState<PlayerGamesTab>
       // successful auto-load advanced the next-page number (defensive
       // against a backend that returns hasMore=true without progressing
       // the page cursor — which would otherwise re-fire forever).
-      final canAutoLoad = _autoLoadCount < _maxAutoLoadBatches &&
+      final canAutoLoad =
+          _autoLoadCount < _maxAutoLoadBatches &&
           state.nextPageNumber != _lastAutoLoadedPageNumber;
       if (canAutoLoad) {
         _lastAutoLoadedPageNumber = state.nextPageNumber;

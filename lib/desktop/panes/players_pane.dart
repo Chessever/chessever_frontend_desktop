@@ -17,6 +17,8 @@ import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
+import 'package:chessever/repository/favorites/models/favorite_player.dart';
+import 'package:chessever/repository/gamebase/memorial_player.dart';
 import 'package:chessever/screens/players/providers/player_providers.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -87,18 +89,7 @@ class RankingsPane extends HookConsumerWidget {
       });
     }
 
-    final favoriteIds =
-        favorites.valueOrNull
-            ?.map((p) => p.fideId?.trim().toLowerCase() ?? '')
-            .where((id) => id.isNotEmpty)
-            .toSet() ??
-        const <String>{};
-    final favoriteNames =
-        favorites.valueOrNull
-            ?.map((p) => _normalizeName(p.playerName))
-            .where((name) => name.isNotEmpty)
-            .toSet() ??
-        const <String>{};
+    final favoritePlayers = favorites.valueOrNull ?? const <FavoritePlayer>[];
 
     return Container(
       color: kBackgroundColor,
@@ -152,8 +143,7 @@ class RankingsPane extends HookConsumerWidget {
                 return _PlayersList(
                   controller: scrollController,
                   players: players,
-                  favoriteIds: favoriteIds,
-                  favoriteNames: favoriteNames,
+                  favoritePlayers: favoritePlayers,
                 );
               },
               loading: () => const _CenteredSpinner(),
@@ -179,14 +169,12 @@ class _PlayersList extends HookConsumerWidget {
   const _PlayersList({
     required this.controller,
     required this.players,
-    required this.favoriteIds,
-    required this.favoriteNames,
+    required this.favoritePlayers,
   });
 
   final ScrollController controller;
   final List<Map<String, dynamic>> players;
-  final Set<String> favoriteIds;
-  final Set<String> favoriteNames;
+  final List<FavoritePlayer> favoritePlayers;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -220,8 +208,7 @@ class _PlayersList extends HookConsumerWidget {
               final player = players[index];
               final favorite = _isFavorite(
                 player,
-                favoriteIds: favoriteIds,
-                favoriteNames: favoriteNames,
+                favoritePlayers: favoritePlayers,
               );
               return _PlayerTile(
                 key: ValueKey(_playerKey(player, index)),
@@ -371,6 +358,10 @@ class _PlayerTileState extends State<_PlayerTile> {
                   const SizedBox(width: 12),
                   _PlayerAvatar(
                     fideId: fideId,
+                    playerName: name,
+                    memorialSourceIdentity: _stringField(widget.player, const [
+                      'memorialSourceIdentity',
+                    ]),
                     initials: _initials(name),
                     size: 44,
                   ),
@@ -530,23 +521,30 @@ class _FavoriteToggleState extends State<_FavoriteToggle> {
 class _PlayerAvatar extends HookWidget {
   const _PlayerAvatar({
     required this.fideId,
+    required this.playerName,
+    required this.memorialSourceIdentity,
     required this.initials,
     required this.size,
   });
 
   final String fideId;
+  final String playerName;
+  final String memorialSourceIdentity;
   final String initials;
   final double size;
 
   @override
   Widget build(BuildContext context) {
-    final photoFuture = useMemoized(
-      () =>
-          fideId.isEmpty
-              ? Future<String?>.value()
-              : FidePhotoService.getPhotoUrlOrNull(fideId),
-      [fideId],
-    );
+    final photoFuture = useMemoized(() {
+      final memorialUrl = memorialPlayerPhotoUrl(
+        playerName: playerName,
+        sourceIdentity:
+            memorialSourceIdentity.isEmpty ? null : memorialSourceIdentity,
+      );
+      if (fideId.isEmpty) return Future<String?>.value(memorialUrl);
+      return (() async =>
+          await FidePhotoService.getPhotoUrlOrNull(fideId) ?? memorialUrl)();
+    }, [fideId, playerName, memorialSourceIdentity]);
     final photo = useFuture(photoFuture).data;
 
     return PlayerInitialsAvatarCompact(
@@ -706,7 +704,42 @@ Future<void> _toggleFavorite(
   }
 
   final fideId = _playerFideId(player);
-  if (fideId.isEmpty) return;
+  final memorialIdentity = _stringField(player, const [
+    'memorialSourceIdentity',
+  ]);
+  if (fideId.isEmpty || memorialIdentity.isNotEmpty) {
+    final name = _playerName(player);
+    if (name.isEmpty) return;
+    unawaited(
+      isFavorite
+          ? ref
+              .read(favoritePlayersProviderNew.notifier)
+              .removeFavorite(
+                name,
+                fideId: fideId.isEmpty ? null : fideId,
+                memorialSourceIdentity:
+                    memorialIdentity.isEmpty ? null : memorialIdentity,
+              )
+          : ref
+              .read(favoritePlayersProviderNew.notifier)
+              .addFavorite(
+                fideId: fideId.isEmpty ? null : fideId,
+                playerName: name,
+                countryCode: _playerFederation(player),
+                rating: _playerRating(player),
+                title: _playerTitle(player),
+                gamebasePlayerId: _stringField(player, const [
+                  'gamebasePlayerId',
+                ]),
+                memorialSourceIdentity:
+                    memorialIdentity.isEmpty ? null : memorialIdentity,
+                memorialRouteId: _stringField(player, const [
+                  'memorialRouteId',
+                ]),
+              ),
+    );
+    return;
+  }
   unawaited(
     ref
         .read(playerPaginationProvider.notifier)
@@ -729,6 +762,11 @@ void _openPlayer(
       title: _playerTitle(player),
       federation: _playerFederation(player),
       rating: _playerRating(player),
+      gamebasePlayerId: _stringField(player, const ['gamebasePlayerId']),
+      memorialSourceIdentity: _stringField(player, const [
+        'memorialSourceIdentity',
+      ]),
+      memorialRouteId: _stringField(player, const ['memorialRouteId']),
     ),
     focus: focus,
   );
@@ -736,18 +774,22 @@ void _openPlayer(
 
 bool _isFavorite(
   Map<String, dynamic> player, {
-  required Set<String> favoriteIds,
-  required Set<String> favoriteNames,
+  required List<FavoritePlayer> favoritePlayers,
 }) {
   final fideId = _playerFideId(player).toLowerCase();
-  final name = _normalizeName(_playerName(player));
-  final titledName = _normalizeName(
-    [_playerTitle(player), _playerName(player)].whereType<String>().join(' '),
-  );
+  final name = _playerName(player);
+  final memorialIdentity = _stringField(player, const [
+    'memorialSourceIdentity',
+  ]);
   return player['isFavorite'] == true ||
-      (fideId.isNotEmpty && favoriteIds.contains(fideId)) ||
-      favoriteNames.contains(name) ||
-      favoriteNames.contains(titledName);
+      favoritePlayers.any(
+        (favorite) => favoritePlayerMatchesIdentity(
+          favorite,
+          fideId: fideId,
+          playerName: name,
+          memorialSourceIdentity: memorialIdentity,
+        ),
+      );
 }
 
 String _playerKey(Map<String, dynamic> player, int index) {
@@ -835,10 +877,6 @@ String _stringField(Map<String, dynamic> player, List<String> keys) {
     if (text.isNotEmpty) return text;
   }
   return '';
-}
-
-String _normalizeName(String name) {
-  return name.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 }
 
 String _initials(String name) {

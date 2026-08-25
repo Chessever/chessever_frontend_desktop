@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models_extra.dart';
+import 'package:chessever/repository/gamebase/memorial_player.dart';
 
 part 'gamebase_repository.mapper.dart';
 
@@ -1118,6 +1119,33 @@ class GamebaseRepository {
     }
   }
 
+  Future<List<MemorialPlayer>> getMemorialPlayers({
+    String? name,
+    String? federation,
+    bool includeWithoutGames = false,
+    int pageNumber = 0,
+    int pageSize = 20,
+  }) async {
+    final response = await _dio.get(
+      '$_baseUrl/api/player/memorial',
+      queryParameters: <String, dynamic>{
+        if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+        if (federation != null && federation.trim().isNotEmpty)
+          'fed': federation.trim().toUpperCase(),
+        'includeWithoutGames': includeWithoutGames,
+        'pageNumber': pageNumber,
+        'pageSize': pageSize,
+      },
+      options: Options(headers: _headers),
+    );
+    final data = response.data['data'];
+    if (data is! List) return const [];
+    return data
+        .whereType<Map>()
+        .map((row) => MemorialPlayer.fromJson(Map<String, dynamic>.from(row)))
+        .toList(growable: false);
+  }
+
   Future<GamebaseGame?> getGameById(String id) async {
     try {
       final response = await _dio.get(
@@ -1710,6 +1738,54 @@ class GamebaseRepository {
       }
       rethrow;
     }
+  }
+
+  Future<Map<String, dynamic>> getMemorialPlayerGames({
+    required String sourceIdentity,
+    String? q,
+    String color = 'all',
+    String? timeControl,
+    String? outcome,
+    String? eco,
+    String? opening,
+    String? variation,
+    String? event,
+    String? site,
+    String? dateFrom,
+    String? dateTo,
+    String? opponentId,
+    int? ratingFrom,
+    int? ratingTo,
+    bool? isOnline,
+    int pageNumber = 0,
+    int pageSize = 100,
+  }) async {
+    final queryParams = <String, dynamic>{
+      'color': color,
+      if (q != null && q.isNotEmpty) 'q': q,
+      'pageNumber': pageNumber,
+      'pageSize': pageSize,
+      if (timeControl != null) 'timeControl': timeControl,
+      if (outcome != null) 'outcome': outcome,
+      if (eco != null) 'eco': eco,
+      if (opening != null) 'opening': opening,
+      if (variation != null) 'variation': variation,
+      if (event != null) 'event': event,
+      if (site != null) 'site': site,
+      if (dateFrom != null) 'dateFrom': dateFrom,
+      if (dateTo != null) 'dateTo': dateTo,
+      if (opponentId != null) 'opponentId': opponentId,
+      if (ratingFrom != null) 'ratingFrom': ratingFrom,
+      if (ratingTo != null) 'ratingTo': ratingTo,
+      if (isOnline != null) 'isOnline': isOnline,
+    };
+    final response = await _dio.get(
+      '$_baseUrl/api/player/memorial/${Uri.encodeComponent(sourceIdentity)}'
+      '/games',
+      queryParameters: queryParams,
+      options: Options(headers: _headers),
+    );
+    return Map<String, dynamic>.from(response.data);
   }
 
   /// Fetch exact aggregated stats for a specific player with server-side filters.

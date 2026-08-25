@@ -41,6 +41,7 @@ import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
+import 'package:chessever/repository/gamebase/memorial_player_local_search.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
@@ -257,6 +258,13 @@ Future<void> _desktopBoot({
 
   WidgetsFlutterBinding.ensureInitialized();
   print('[desktop] flutter binding ready');
+
+  // Keep first paint and the established remote search path untouched. The
+  // reviewed Memorial JSON is parsed once in a worker isolate after first
+  // frame, then searched in memory.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(warmBundledMemorialPlayerCatalog());
+  });
 
   await _initializeFirebaseForCurrentPlatform(tag: 'desktop.firebase_init');
   await AnalyticsService.instance.initialize();
@@ -651,6 +659,8 @@ PlayerProfileArgs? _playerProfileArgsFromMetadata(Map<String, Object?> json) {
     rating: _nullableInt(json['rating']),
     dataSource: _playerProfileDataSource(json['dataSource']),
     gamebasePlayerId: _nullableString(json['gamebasePlayerId']),
+    memorialSourceIdentity: _nullableString(json['memorialSourceIdentity']),
+    memorialRouteId: _nullableString(json['memorialRouteId']),
   );
 }
 

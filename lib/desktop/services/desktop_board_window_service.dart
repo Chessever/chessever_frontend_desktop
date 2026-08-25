@@ -131,6 +131,8 @@ Map<String, Object?> _metadataForTab(
         'rating': args.rating,
         'dataSource': args.dataSource.name,
         'gamebasePlayerId': args.gamebasePlayerId,
+        'memorialSourceIdentity': args.memorialSourceIdentity,
+        'memorialRouteId': args.memorialRouteId,
       };
     case TabKind.countrymen:
       final effectiveCountry =

@@ -65,6 +65,8 @@ class PlayerProfileScreen extends ConsumerStatefulWidget {
     this.rating,
     this.dataSource = PlayerProfileDataSource.twic,
     this.gamebasePlayerId,
+    this.memorialSourceIdentity,
+    this.memorialRouteId,
   });
 
   /// FIDE ID - can be null for players without official FIDE registration
@@ -75,6 +77,8 @@ class PlayerProfileScreen extends ConsumerStatefulWidget {
   final int? rating;
   final PlayerProfileDataSource dataSource;
   final String? gamebasePlayerId;
+  final String? memorialSourceIdentity;
+  final String? memorialRouteId;
 
   /// Create from SearchPlayer model
   factory PlayerProfileScreen.fromSearchPlayer(SearchPlayer player) {
@@ -85,6 +89,9 @@ class PlayerProfileScreen extends ConsumerStatefulWidget {
       federation: player.fed,
       rating: player.rating,
       dataSource: PlayerProfileDataSource.supabase,
+      gamebasePlayerId: player.gamebasePlayerId,
+      memorialSourceIdentity: player.memorialSourceIdentity,
+      memorialRouteId: player.memorialRouteId,
     );
   }
 
@@ -229,6 +236,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
       playerName: widget.playerName,
       source: _currentDataSource,
       gamebasePlayerId: _currentGamebasePlayerId,
+      memorialSourceIdentity: widget.memorialSourceIdentity,
     );
     final currentState = ref.read(playerProfileGamesKeyProvider(playerKey));
     final notifier = ref.read(
@@ -278,6 +286,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
       playerName: widget.playerName,
       source: PlayerProfileDataSource.twic,
       gamebasePlayerId: _currentGamebasePlayerId,
+      memorialSourceIdentity: widget.memorialSourceIdentity,
     );
     return ref
         .read(twicProfileSummaryProvider(twicLookupKey))
@@ -303,6 +312,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
       playerName: widget.playerName,
       source: _currentDataSource,
       gamebasePlayerId: _currentGamebasePlayerId,
+      memorialSourceIdentity: widget.memorialSourceIdentity,
     );
     final activeProfile =
         ref.read(playerProfileDataKeyProvider(activePlayerKey)).valueOrNull;
@@ -364,6 +374,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
       playerName: widget.playerName,
       source: _currentDataSource,
       gamebasePlayerId: _currentGamebasePlayerId,
+      memorialSourceIdentity: widget.memorialSourceIdentity,
     );
     final gameFilter =
         ref.read(playerProfileGamesKeyProvider(playerKey)).filter;
@@ -410,7 +421,15 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
     final currentlyFavorited = ref
         .read(favoritePlayersProviderNew)
         .maybeWhen(
-          data: (players) => players.any((p) => p.fideId == fideIdStr),
+          data:
+              (players) => players.any(
+                (player) => favoritePlayerMatchesIdentity(
+                  player,
+                  fideId: fideIdStr,
+                  playerName: widget.playerName,
+                  memorialSourceIdentity: widget.memorialSourceIdentity,
+                ),
+              ),
           orElse: () => false,
         );
     if (!currentlyFavorited) {
@@ -430,6 +449,9 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
             countryCode: widget.federation,
             rating: widget.rating,
             title: widget.title,
+            gamebasePlayerId: widget.gamebasePlayerId,
+            memorialSourceIdentity: widget.memorialSourceIdentity,
+            memorialRouteId: widget.memorialRouteId,
           );
       if (isNowFavorite) {
         _favoriteAnimationController.forward().then(
@@ -472,6 +494,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
       playerName: widget.playerName,
       source: _currentDataSource,
       gamebasePlayerId: _currentGamebasePlayerId,
+      memorialSourceIdentity: widget.memorialSourceIdentity,
     );
     final activeProfileAsync = ref.watch(
       playerProfileDataKeyProvider(activePlayerKey),
@@ -510,6 +533,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
       playerName: widget.playerName,
       source: PlayerProfileDataSource.twic,
       gamebasePlayerId: _currentGamebasePlayerId,
+      memorialSourceIdentity: widget.memorialSourceIdentity,
     );
     // Always watch so the source selector stays visible in both modes.
     final twicSummaryAsync = ref.watch(
@@ -519,9 +543,17 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
     // Watch favorites to show correct state
     final favoritesAsync = ref.watch(favoritePlayersProviderNew);
     final isFavorite = favoritesAsync.maybeWhen(
-      data:
-          (players) =>
-              players.any((p) => p.fideId == widget.fideId?.toString()),
+      data: (players) {
+        final fideId = widget.fideId?.toString();
+        return players.any(
+          (player) => favoritePlayerMatchesIdentity(
+            player,
+            fideId: fideId,
+            playerName: widget.playerName,
+            memorialSourceIdentity: widget.memorialSourceIdentity,
+          ),
+        );
+      },
       orElse: () => false,
     );
 
@@ -530,6 +562,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
       playerName: widget.playerName,
       source: _currentDataSource,
       gamebasePlayerId: _currentGamebasePlayerId,
+      memorialSourceIdentity: widget.memorialSourceIdentity,
     );
     final gamesState = ref.watch(playerProfileGamesKeyProvider(playerKey));
     final hasActiveFilter = gamesState.hasActiveFilters;
@@ -575,6 +608,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
       playerName: widget.playerName,
       source: PlayerProfileDataSource.supabase,
       gamebasePlayerId: _currentGamebasePlayerId,
+      memorialSourceIdentity: widget.memorialSourceIdentity,
     );
     final supabaseGamesState = ref.watch(
       playerProfileGamesKeyProvider(supabaseKey),
@@ -880,6 +914,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
         final storageKey =
             'player-profile-${widget.fideId ?? widget.playerName}-'
             '${_currentDataSource.name}-${_currentGamebasePlayerId ?? ''}-'
+            '${widget.memorialSourceIdentity ?? ''}-'
             '${tab.name}';
 
         switch (tab) {
@@ -894,6 +929,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
                 fallbackRating: widget.rating,
                 dataSource: _currentDataSource,
                 gamebasePlayerId: _currentGamebasePlayerId,
+                memorialSourceIdentity: widget.memorialSourceIdentity,
                 onOpenGames: _openGames,
               ),
             );
@@ -905,6 +941,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
                 playerName: widget.playerName,
                 dataSource: _currentDataSource,
                 gamebasePlayerId: _currentGamebasePlayerId,
+                memorialSourceIdentity: widget.memorialSourceIdentity,
               ),
             );
           case PlayerProfileTab.events:
@@ -915,6 +952,7 @@ class _PlayerProfileScreenState extends ConsumerState<PlayerProfileScreen>
                 playerName: widget.playerName,
                 dataSource: _currentDataSource,
                 gamebasePlayerId: _currentGamebasePlayerId,
+                memorialSourceIdentity: widget.memorialSourceIdentity,
               ),
             );
         }

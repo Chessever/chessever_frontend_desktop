@@ -181,6 +181,9 @@ class _FavoritesListTabState extends ConsumerState<FavoritesListTab>
                         title: player.title,
                         federation: player.countryCode,
                         rating: player.score,
+                        gamebasePlayerId: player.gamebasePlayerId,
+                        memorialSourceIdentity: player.memorialSourceIdentity,
+                        memorialRouteId: player.memorialRouteId,
                       ),
                 ),
               );
@@ -270,7 +273,11 @@ class _FavoritesListTabState extends ConsumerState<FavoritesListTab>
 
     await ref
         .read(favoritePlayersProviderNew.notifier)
-        .removeFavorite(player.name);
+        .removeFavorite(
+          player.name,
+          fideId: player.fideId?.toString(),
+          memorialSourceIdentity: player.memorialSourceIdentity,
+        );
   }
 
   Future<void> _showContextMenu(

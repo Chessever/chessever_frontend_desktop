@@ -9,6 +9,8 @@ class PlayerStandingModel {
   final String? matchScore;
   final int? fideId;
   final String? gamebasePlayerId;
+  final String? memorialSourceIdentity;
+  final String? memorialRouteId;
 
   /// 1-based position in the *unfiltered* sorted standings. Preserved across
   /// search so filtered results still display the player's overall standing
@@ -24,6 +26,8 @@ class PlayerStandingModel {
     required this.matchScore,
     this.fideId,
     this.gamebasePlayerId,
+    this.memorialSourceIdentity,
+    this.memorialRouteId,
     this.overallRank,
   });
 
@@ -62,6 +66,8 @@ class PlayerStandingModel {
     String? matchScore,
     int? fideId,
     String? gamebasePlayerId,
+    String? memorialSourceIdentity,
+    String? memorialRouteId,
     int? overallRank,
   }) {
     return PlayerStandingModel(
@@ -73,6 +79,9 @@ class PlayerStandingModel {
       matchScore: matchScore ?? this.matchScore,
       fideId: fideId ?? this.fideId,
       gamebasePlayerId: gamebasePlayerId ?? this.gamebasePlayerId,
+      memorialSourceIdentity:
+          memorialSourceIdentity ?? this.memorialSourceIdentity,
+      memorialRouteId: memorialRouteId ?? this.memorialRouteId,
       overallRank: overallRank ?? this.overallRank,
     );
   }
@@ -87,6 +96,8 @@ class PlayerStandingModel {
       matchScore: json['matchScore'] as String?,
       fideId: json['fideId'] as int?,
       gamebasePlayerId: json['gamebasePlayerId'] as String?,
+      memorialSourceIdentity: json['memorialSourceIdentity'] as String?,
+      memorialRouteId: json['memorialRouteId'] as String?,
       overallRank: json['overallRank'] as int?,
     );
   }
@@ -102,6 +113,8 @@ class PlayerStandingModel {
       'matchScore': matchScore,
       'fideId': fideId,
       'gamebasePlayerId': gamebasePlayerId,
+      'memorialSourceIdentity': memorialSourceIdentity,
+      'memorialRouteId': memorialRouteId,
       'overallRank': overallRank,
     };
   }
@@ -118,6 +131,8 @@ class PlayerStandingModel {
         other.matchScore == matchScore &&
         other.fideId == fideId &&
         other.gamebasePlayerId == gamebasePlayerId &&
+        other.memorialSourceIdentity == memorialSourceIdentity &&
+        other.memorialRouteId == memorialRouteId &&
         other.overallRank == overallRank;
   }
 
@@ -132,6 +147,8 @@ class PlayerStandingModel {
       matchScore,
       fideId,
       gamebasePlayerId,
+      memorialSourceIdentity,
+      memorialRouteId,
       overallRank,
     );
   }
