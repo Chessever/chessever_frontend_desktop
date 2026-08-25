@@ -7349,6 +7349,7 @@ class _PictureInPictureBoardOverlayState
 
     return MouseRegion(
       onEnter: (_) => _showForPointer(),
+      onHover: (_) => _showForPointer(),
       onExit: (_) => _hideForPointer(),
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
@@ -7375,7 +7376,7 @@ class _PictureInPictureBoardOverlayState
                           children: [
                             _PictureInPictureOverlayButton(
                               tooltip: 'Previous live game',
-                              icon: Icons.chevron_left_rounded,
+                              icon: Icons.keyboard_double_arrow_left_rounded,
                               onPress: widget.onPreviousGame,
                             ),
                             _PictureInPictureOverlayButton(
@@ -7386,7 +7387,7 @@ class _PictureInPictureBoardOverlayState
                             ),
                             _PictureInPictureOverlayButton(
                               tooltip: 'Next live game',
-                              icon: Icons.chevron_right_rounded,
+                              icon: Icons.keyboard_double_arrow_right_rounded,
                               onPress: widget.onNextGame,
                             ),
                           ],
@@ -7397,6 +7398,17 @@ class _PictureInPictureBoardOverlayState
                 ),
               ),
             ),
+            if (_controlsVisible)
+              Positioned(
+                top: 0,
+                left: 5,
+                right: 5,
+                height: 58,
+                child: Semantics(
+                  label: 'Drag picture in picture window',
+                  child: DragToMoveArea(child: const SizedBox.expand()),
+                ),
+              ),
           ],
         ),
       ),

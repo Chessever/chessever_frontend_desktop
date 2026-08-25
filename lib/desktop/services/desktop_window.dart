@@ -6,7 +6,6 @@ import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_window_geometry.dart';
-import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 
 /// Window-manager bootstrap for desktop platforms.
 ///
@@ -23,20 +22,17 @@ class DesktopWindow {
   static const double _pictureInPictureVerticalChrome = 124;
   // PiP is a responsive game card rather than a square crop. The width
   // reserves the board, evaluation gauge, and compact horizontal padding;
-  // the height also reserves both player rows and the draggable title bar.
+  // the height reserves both player rows and their spacing. Native and custom
+  // title bars are intentionally absent.
   // Users can freely resize either dimension and the board layout fits the
   // largest complete square into the remaining space.
   static const Size pictureInPictureMinSize = Size(
     _pictureInPictureMinBoardEdge + _pictureInPictureHorizontalChrome,
-    _pictureInPictureMinBoardEdge +
-        _pictureInPictureVerticalChrome +
-        kDesktopChromeBarHeight,
+    _pictureInPictureMinBoardEdge + _pictureInPictureVerticalChrome,
   );
   static const Size pictureInPictureDefaultSize = Size(
     _pictureInPictureDefaultBoardEdge + _pictureInPictureHorizontalChrome,
-    _pictureInPictureDefaultBoardEdge +
-        _pictureInPictureVerticalChrome +
-        kDesktopChromeBarHeight,
+    _pictureInPictureDefaultBoardEdge + _pictureInPictureVerticalChrome,
   );
   static String get windowTitle => DesktopBuildIdentity.current.displayName;
 
@@ -66,13 +62,16 @@ class DesktopWindow {
       title: windowTitle,
       backgroundColor: const Color(0xFF0C0C0E),
       skipTaskbar: pictureInPicture,
-      titleBarStyle: TitleBarStyle.hidden,
-      windowButtonVisibility: Platform.isMacOS,
+      // PiP becomes truly frameless in the ready callback. Passing a title
+      // style here would restore native framing after setAsFrameless().
+      titleBarStyle: pictureInPicture ? null : TitleBarStyle.hidden,
+      windowButtonVisibility: pictureInPicture ? false : Platform.isMacOS,
     );
 
     await windowManager.waitUntilReadyToShow(options, () async {
       await windowManager.setTitle(windowTitle);
       if (pictureInPicture) {
+        await windowManager.setAsFrameless();
         final visibleBounds = displayGeometry.visibleBounds;
         if (visibleBounds != null) {
           await windowManager.setBounds(
@@ -82,7 +81,7 @@ class DesktopWindow {
             ),
           );
         } else {
-          await windowManager.setAlignment(Alignment.bottomRight);
+          await windowManager.setAlignment(Alignment.topRight);
         }
         if (Platform.isMacOS || Platform.isWindows) {
           await windowManager.setMaximizable(false);

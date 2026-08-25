@@ -24,10 +24,12 @@ class DesktopWindowFrame extends StatefulWidget {
     super.key,
     required this.child,
     this.allowMaximize = true,
+    this.framelessContent = false,
   });
 
   final Widget child;
   final bool allowMaximize;
+  final bool framelessContent;
 
   @override
   State<DesktopWindowFrame> createState() => _DesktopWindowFrameState();
@@ -90,6 +92,12 @@ class _DesktopWindowFrameState extends State<DesktopWindowFrame>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.framelessContent) {
+      // Keep every pixel visually owned by the PiP game surface. These
+      // transparent edge targets preserve free resizing without adding the
+      // VirtualWindowFrame border, radius, shadow, or caption controls.
+      return DragToResizeArea(resizeEdgeSize: 5, child: widget.child);
+    }
     final controlsWidth =
         widget.allowMaximize
             ? kDesktopWindowControlsWidth
@@ -145,19 +153,20 @@ class DesktopStandaloneWindowChrome extends StatelessWidget {
   const DesktopStandaloneWindowChrome({
     super.key,
     required this.child,
-    this.pictureInPictureTitle,
+    this.framelessContent = false,
   });
 
   final Widget child;
-  final String? pictureInPictureTitle;
+  final bool framelessContent;
 
   @override
   Widget build(BuildContext context) {
-    final allowMaximize = pictureInPictureTitle == null;
-    final controlsWidth =
-        allowMaximize
-            ? kDesktopWindowControlsWidth
-            : kDesktopWindowControlsWidth * 2 / 3;
+    if (framelessContent) {
+      // The native frame and window buttons are removed by DesktopWindow.
+      // PiP therefore renders its game surface edge to edge with no second
+      // Flutter title row consuming vertical space.
+      return ColoredBox(color: kBackgroundColor, child: child);
+    }
     return ColoredBox(
       color: kBackgroundColor,
       child: Column(
@@ -175,64 +184,16 @@ class DesktopStandaloneWindowChrome extends StatelessWidget {
                 children: [
                   if (Platform.isMacOS) const SizedBox(width: 78),
                   Expanded(
-                    child: DragToMoveArea(
-                      child:
-                          pictureInPictureTitle == null
-                              ? const SizedBox.expand()
-                              : _PictureInPictureTitle(
-                                title: pictureInPictureTitle!,
-                              ),
-                    ),
+                    child: DragToMoveArea(child: const SizedBox.expand()),
                   ),
-                  if (Platform.isMacOS && pictureInPictureTitle != null)
-                    const SizedBox(width: 78),
-                  if (_usesCustomWindowControls) SizedBox(width: controlsWidth),
+                  if (_usesCustomWindowControls)
+                    const SizedBox(width: kDesktopWindowControlsWidth),
                 ],
               ),
             ),
           ),
           Expanded(child: child),
         ],
-      ),
-    );
-  }
-}
-
-class _PictureInPictureTitle extends StatelessWidget {
-  const _PictureInPictureTitle({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: 'Picture in picture, always on top: $title',
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.picture_in_picture_alt_rounded,
-              size: 14,
-              color: kWhiteColor70,
-            ),
-            const SizedBox(width: 7),
-            Flexible(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  height: 1,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

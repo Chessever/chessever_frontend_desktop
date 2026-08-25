@@ -13,7 +13,7 @@ Rect pictureInPictureRectForVisibleBounds({
   final safeBounds = _safeBounds(visibleBounds, padding);
   return Rect.fromLTWH(
     math.max(safeBounds.left, safeBounds.right - size.width),
-    math.max(safeBounds.top, safeBounds.bottom - size.height),
+    safeBounds.top,
     math.min(size.width, safeBounds.width),
     math.min(size.height, safeBounds.height),
   );

@@ -11,7 +11,7 @@ void main() {
         visibleBounds: const Rect.fromLTWH(100, 40, 1920, 1040),
       );
 
-      expect(rect, const Rect.fromLTWH(1488, 52, 520, 650));
+      expect(rect, const Rect.fromLTWH(1476, 64, 520, 650));
     });
 
     test('fits a compact window inside a smaller visible work area', () {
@@ -20,7 +20,7 @@ void main() {
         visibleBounds: const Rect.fromLTWH(0, 0, 480, 600),
       );
 
-      expect(rect, const Rect.fromLTWH(12, 12, 456, 576));
+      expect(rect, const Rect.fromLTWH(24, 24, 432, 552));
     });
   });
 
