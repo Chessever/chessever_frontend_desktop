@@ -117,6 +117,85 @@ void main() {
     );
   });
 
+  testWidgets(
+    'deep PV churn with stable arrows does not rebuild the board surface',
+    (tester) async {
+      final probe = await _pumpBoardProbe(tester);
+      probe.notifier.emit(_evalState(_initialPvs, depth: 10));
+      await tester.pump();
+      await tester.pump();
+
+      final boardBoundaryFinder = find.descendant(
+        of: find.byType(DesktopChessBoard),
+        matching: find.byType(RepaintBoundary),
+      );
+      expect(boardBoundaryFinder, findsWidgets);
+      final boardBoundary = tester.renderObject<RenderObject>(
+        boardBoundaryFinder.first,
+      );
+
+      final rebuiltTypes = <String, int>{};
+      var boardBoundaryPaints = 0;
+      final previousRebuildCallback = debugOnRebuildDirtyWidget;
+      final previousPaintCallback = debugOnProfilePaint;
+      debugOnRebuildDirtyWidget = (element, builtOnce) {
+        final type = element.widget.runtimeType.toString();
+        rebuiltTypes.update(type, (count) => count + 1, ifAbsent: () => 1);
+      };
+      debugOnProfilePaint = (renderObject) {
+        if (identical(renderObject, boardBoundary)) boardBoundaryPaints++;
+      };
+      addTearDown(() {
+        debugOnRebuildDirtyWidget = previousRebuildCallback;
+        debugOnProfilePaint = previousPaintCallback;
+      });
+
+      // Stockfish regularly refines the continuation while keeping the same
+      // candidate move. Only the first UCI move is drawn on the board, so this
+      // update belongs to the engine-lines pane and must not wake chessground.
+      probe.notifier.emit(
+        _evalState(const <BoardPv>[
+          BoardPv(
+            evaluation: 0.25,
+            mate: null,
+            moves: 'b1c3 d7d5 e2e4 g8f6 f1d3',
+          ),
+        ], depth: 11),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final arrow = _singleEngineArrow(tester);
+      final observed = (
+        boardAreaBuilds: rebuiltTypes['_BoardArea'] ?? 0,
+        annotationBuilds: rebuiltTypes['_BoardWithAnnotations'] ?? 0,
+        chessboardBuilds: rebuiltTypes['DesktopChessBoard'] ?? 0,
+        boardPaints: boardBoundaryPaints,
+        enginePanelBuilds: rebuiltTypes['EnginePanel'] ?? 0,
+      );
+      debugOnRebuildDirtyWidget = previousRebuildCallback;
+      debugOnProfilePaint = previousPaintCallback;
+
+      expect(
+        (orig: arrow.orig, dest: arrow.dest),
+        (orig: Square.b1, dest: Square.c3),
+      );
+      expect(
+        observed,
+        (
+          boardAreaBuilds: 0,
+          annotationBuilds: 0,
+          chessboardBuilds: 0,
+          boardPaints: 0,
+          enginePanelBuilds: 0,
+        ),
+        reason:
+            'Deep engine-line refinements do not change any board pixel. '
+            'Rebuilds: $rebuiltTypes',
+      );
+    },
+  );
+
   testWidgets('a changed first PV move still updates the board arrow', (
     tester,
   ) async {

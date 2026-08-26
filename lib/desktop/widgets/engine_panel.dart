@@ -269,14 +269,12 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         engineOn &&
         runLiveBoardAnalysis &&
         (engineReady || widget.fen.isNotEmpty);
-    final evalState =
-        engineActive ? ref.watch(boardEvalProvider(widget.fen)) : null;
 
     final engineContent =
         liveAnalysisPausedForReport
             ? const _EnginePausedForReport()
             : engineActive
-            ? _buildEngineLines(evalState!)
+            ? _EngineLinesSurface(fen: widget.fen, onPlayUci: widget.onPlayUci)
             : const _EngineNotReady();
     final reportContent = GameReportView(
       state: reportState,
@@ -326,11 +324,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildHeader(
-            engineOn: engineOn,
-            engineActive: engineActive,
-            evalState: evalState,
-          ),
+          _buildHeader(engineOn: engineOn, engineActive: engineActive),
           if (body != null) Expanded(child: body),
         ],
       ),
@@ -340,24 +334,13 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
   /// Persistent header carrying the two independent toggles (engine on/off
   /// and report on/off) plus the engine gear. The engine readout collapses
   /// away when the engine is off so the report can own the panel alone.
-  Widget _buildHeader({
-    required bool engineOn,
-    required bool engineActive,
-    required BoardEvalState? evalState,
-  }) {
+  Widget _buildHeader({required bool engineOn, required bool engineActive}) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
       child: Row(
         children: [
           if (engineActive) ...[
-            Container(
-              width: 6,
-              height: 6,
-              decoration: BoxDecoration(
-                color: evalState!.isEvaluating ? kGreenColor : kLightGreyColor,
-                shape: BoxShape.circle,
-              ),
-            ),
+            _EngineActivityIndicator(fen: widget.fen),
             const SizedBox(width: 8),
           ],
           Expanded(
@@ -373,20 +356,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           ),
           if (engineActive) ...[
             const SizedBox(width: 8),
-            Text(
-              _formatScore(evalState!.evaluation, evalState.mate),
-              style: const TextStyle(
-                color: kPrimaryColor,
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-            const SizedBox(width: 8),
-            _DepthChip(
-              depth: evalState.depth,
-              isEvaluating: evalState.isEvaluating,
-            ),
+            _EngineScoreDepthReadout(fen: widget.fen),
           ],
           const SizedBox(width: 6),
           _EngineQuickToggle(enabled: engineOn),
@@ -403,18 +373,126 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       ),
     );
   }
+}
 
-  Widget _buildEngineLines(BoardEvalState state) {
-    final pvs = state.pvs;
+class _EngineActivityIndicator extends ConsumerWidget {
+  const _EngineActivityIndicator({required this.fen});
+
+  final String fen;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isEvaluating = ref.watch(
+      boardEvalProvider(fen).select((state) => state.isEvaluating),
+    );
+    return Container(
+      width: 6,
+      height: 6,
+      decoration: BoxDecoration(
+        color: isEvaluating ? kGreenColor : kLightGreyColor,
+        shape: BoxShape.circle,
+      ),
+    );
+  }
+}
+
+class _EngineScoreDepthReadout extends ConsumerWidget {
+  const _EngineScoreDepthReadout({required this.fen});
+
+  final String fen;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final snapshot = ref.watch(
+      boardEvalProvider(fen).select(
+        (state) => (
+          evaluation: state.evaluation,
+          mate: state.mate,
+          depth: state.depth,
+          isEvaluating: state.isEvaluating,
+        ),
+      ),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          _formatScore(snapshot.evaluation, snapshot.mate),
+          style: const TextStyle(
+            color: kPrimaryColor,
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(width: 8),
+        _DepthChip(depth: snapshot.depth, isEvaluating: snapshot.isEvaluating),
+      ],
+    );
+  }
+}
+
+@immutable
+class _EngineLinesSnapshot {
+  const _EngineLinesSnapshot({
+    required this.pvs,
+    required this.isEvaluating,
+    required this.statusText,
+  });
+
+  factory _EngineLinesSnapshot.fromState(BoardEvalState state) {
+    return _EngineLinesSnapshot(
+      pvs: state.pvs,
+      isEvaluating: state.isEvaluating,
+      statusText: state.statusText,
+    );
+  }
+
+  final List<BoardPv> pvs;
+  final bool isEvaluating;
+  final String? statusText;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! _EngineLinesSnapshot ||
+        other.isEvaluating != isEvaluating ||
+        other.statusText != statusText ||
+        other.pvs.length != pvs.length) {
+      return false;
+    }
+    for (var index = 0; index < pvs.length; index++) {
+      if (pvs[index] != other.pvs[index]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(isEvaluating, statusText, Object.hashAll(pvs));
+}
+
+class _EngineLinesSurface extends ConsumerWidget {
+  const _EngineLinesSurface({required this.fen, required this.onPlayUci});
+
+  final String fen;
+  final void Function(String uci)? onPlayUci;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final snapshot = ref.watch(
+      boardEvalProvider(fen).select(_EngineLinesSnapshot.fromState),
+    );
+    final pvs = snapshot.pvs;
     if (pvs.isEmpty) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
         child: Align(
           alignment: Alignment.topLeft,
           child: Text(
-            state.isEvaluating
+            snapshot.isEvaluating
                 ? 'Searching…'
-                : (state.statusText ?? 'No engine line for this position.'),
+                : (snapshot.statusText ?? 'No engine line for this position.'),
             style: const TextStyle(color: kWhiteColor70, fontSize: 12),
           ),
         ),
@@ -426,11 +504,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       itemCount: pvs.length,
       separatorBuilder: (_, __) => const SizedBox(height: 6),
       itemBuilder:
-          (context, i) => _PvLine(
-            rank: i + 1,
-            pv: pvs[i],
-            fen: widget.fen,
-            onPlayUci: widget.onPlayUci,
+          (context, index) => _PvLine(
+            rank: index + 1,
+            pv: pvs[index],
+            fen: fen,
+            onPlayUci: onPlayUci,
           ),
     );
   }

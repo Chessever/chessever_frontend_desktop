@@ -7952,19 +7952,26 @@ class _BoardArea extends ConsumerWidget {
     // right rail, so the gauge and PV list always query the same position.
     // A threat probe can only be active when a legal null move was formed.
     final threatActive = threatMode;
-    final evalPvMoveLines =
-        showEngineAnalysis
+    final evalPvFirstMoves =
+        showEngineAnalysis && engineSettings.showPvArrows
             ? ref.watch(
-              boardEvalProvider(analysisFen).select(
-                (state) => state.pvs.map((pv) => pv.moves).join('\u0000'),
-              ),
+              boardEvalProvider(analysisFen).select((state) {
+                final arrowCount = math.min(
+                  engineSettings.getMaxArrowsOnBoard(),
+                  state.pvs.length,
+                );
+                return [
+                  for (var index = 0; index < arrowCount; index++)
+                    _firstPvMove(state.pvs[index].moves),
+                ].join('\u0000');
+              }),
             )
             : '';
     final evalPvs =
-        evalPvMoveLines.isEmpty
+        evalPvFirstMoves.isEmpty
             ? const <BoardPv>[]
             : <BoardPv>[
-              for (final moves in evalPvMoveLines.split('\u0000'))
+              for (final moves in evalPvFirstMoves.split('\u0000'))
                 BoardPv(evaluation: 0, mate: null, moves: moves),
             ];
     final showEvalBar = shouldShowDesktopBoardEvalBar(engineSettings);
@@ -8946,9 +8953,7 @@ List<cg.Shape> _enginePvArrowShapes({
   final limit = math.min(settings.getMaxArrowsOnBoard(), pvs.length);
   final out = <cg.Shape>[];
   for (var i = 0; i < limit; i++) {
-    final firstMove = pvs[i].moves
-        .split(RegExp(r'\s+'))
-        .firstWhere((move) => move.trim().isNotEmpty, orElse: () => '');
+    final firstMove = _firstPvMove(pvs[i].moves);
     final arrow = _engineArrowFromUci(
       position: position,
       rawUci: firstMove,
@@ -8958,6 +8963,13 @@ List<cg.Shape> _enginePvArrowShapes({
     if (arrow != null) out.add(arrow);
   }
   return out;
+}
+
+String _firstPvMove(String moves) {
+  final trimmed = moves.trim();
+  if (trimmed.isEmpty) return '';
+  final separator = trimmed.indexOf(RegExp(r'\s'));
+  return separator < 0 ? trimmed : trimmed.substring(0, separator);
 }
 
 @visibleForTesting
@@ -9105,18 +9117,6 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final liveSnapshot =
-        useLiveClock && activeGameId != null
-            ? ref.watch(
-                  baseGameProvider(
-                    activeGameId!,
-                  ).select(_LiveClockSnapshot.fromGame),
-                ) ??
-                _LiveClockSnapshot.fromGame(sourceGame)
-            : null;
-    final liveClockSeconds =
-        isWhite ? liveSnapshot?.whiteSeconds : liveSnapshot?.blackSeconds;
-    final liveLastMoveTime = liveSnapshot?.lastMoveTime;
     final photoUrl =
         fideId == null
             ? null
@@ -9131,8 +9131,8 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     final hydratedEventGames =
         boardArgs?.eventGames ?? const <TournamentGameSummary>[];
     // Memoized: this walks every hydrated event game to collect sibling tour
-    // ids, and the header rebuilds on every live-clock tick. Recomputing it per
-    // tick was an O(eventGames) scan plus a string join on the UI isolate.
+    // ids. Live clocks now rebuild below this header, while other header state
+    // changes still avoid an O(eventGames) scan plus a UI-isolate string join.
     final historyKey = useMemoized(
       () => boardPlayerHistoryKey(
         eventKey: eventKey,
@@ -9355,18 +9355,16 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
               ],
             ),
           ),
-          if (useLiveClock &&
-              (liveClockSeconds != null || liveLastMoveTime != null)) ...[
-            const SizedBox(width: 10),
-            _PlayerClock(
-              text: clockText ?? '',
+          if (useLiveClock && activeGameId != null)
+            _LiveBoardPlayerClock(
+              gameId: activeGameId!,
+              sourceGame: sourceGame,
+              isWhite: isWhite,
               isToMove: isToMove,
               result: result,
-              liveClockSeconds: liveClockSeconds,
-              liveLastMoveTime: liveLastMoveTime,
-              liveCountdownActive: isToMove && liveLastMoveTime != null,
-            ),
-          ] else if ((clockText != null && clockText!.trim().isNotEmpty) ||
+              fallbackText: clockText ?? '',
+            )
+          else if ((clockText != null && clockText!.trim().isNotEmpty) ||
               result != null) ...[
             const SizedBox(width: 10),
             _PlayerClock(
@@ -9987,22 +9985,22 @@ GamesTourModel _gamesTourModelFromSummary(
   );
 }
 
-class _LiveClockSnapshot {
-  const _LiveClockSnapshot({
-    required this.whiteSeconds,
-    required this.blackSeconds,
+class _LivePlayerClockSnapshot {
+  const _LivePlayerClockSnapshot({
+    required this.seconds,
     required this.lastMoveTime,
   });
 
-  final int? whiteSeconds;
-  final int? blackSeconds;
+  final int? seconds;
   final DateTime? lastMoveTime;
 
-  static _LiveClockSnapshot? fromGame(GamesTourModel? game) {
+  static _LivePlayerClockSnapshot? fromGame(
+    GamesTourModel? game, {
+    required bool isWhite,
+  }) {
     if (game == null) return null;
-    return _LiveClockSnapshot(
-      whiteSeconds: game.whiteClockSeconds,
-      blackSeconds: game.blackClockSeconds,
+    return _LivePlayerClockSnapshot(
+      seconds: isWhite ? game.whiteClockSeconds : game.blackClockSeconds,
       lastMoveTime: game.lastMoveTime,
     );
   }
@@ -10010,14 +10008,64 @@ class _LiveClockSnapshot {
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
-        other is _LiveClockSnapshot &&
-            other.whiteSeconds == whiteSeconds &&
-            other.blackSeconds == blackSeconds &&
+        other is _LivePlayerClockSnapshot &&
+            other.seconds == seconds &&
             other.lastMoveTime == lastMoveTime;
   }
 
   @override
-  int get hashCode => Object.hash(whiteSeconds, blackSeconds, lastMoveTime);
+  int get hashCode => Object.hash(seconds, lastMoveTime);
+}
+
+/// The selected broadcast can update its clocks several times per second.
+/// Keep that subscription below the complete player header so clock traffic
+/// never rebuilds avatars, flags, hover previews, or their gesture trees.
+class _LiveBoardPlayerClock extends ConsumerWidget {
+  const _LiveBoardPlayerClock({
+    required this.gameId,
+    required this.sourceGame,
+    required this.isWhite,
+    required this.isToMove,
+    required this.result,
+    required this.fallbackText,
+  });
+
+  final String gameId;
+  final GamesTourModel? sourceGame;
+  final bool isWhite;
+  final bool isToMove;
+  final DesktopBoardPlayerResult? result;
+  final String fallbackText;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final liveSnapshot =
+        ref.watch(
+          baseGameProvider(gameId).select(
+            (game) => _LivePlayerClockSnapshot.fromGame(game, isWhite: isWhite),
+          ),
+        ) ??
+        _LivePlayerClockSnapshot.fromGame(sourceGame, isWhite: isWhite);
+    final liveClockSeconds = liveSnapshot?.seconds;
+    final liveLastMoveTime = liveSnapshot?.lastMoveTime;
+    if (liveClockSeconds == null && liveLastMoveTime == null) {
+      return const SizedBox.shrink();
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(width: 10),
+        _PlayerClock(
+          text: fallbackText,
+          isToMove: isToMove,
+          result: result,
+          liveClockSeconds: liveClockSeconds,
+          liveLastMoveTime: liveLastMoveTime,
+          liveCountdownActive: isToMove && liveLastMoveTime != null,
+        ),
+      ],
+    );
+  }
 }
 
 /// Spring-animated player clock badge.

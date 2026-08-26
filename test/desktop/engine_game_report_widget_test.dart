@@ -41,7 +41,10 @@ void main() {
     await tester.pump();
 
     expect(find.text('Analyze Game'), findsOneWidget);
-    expect(find.textContaining('three candidate lines'), findsOneWidget);
+    expect(
+      find.textContaining('Stockfish will evaluate 3 positions'),
+      findsOneWidget,
+    );
 
     final reportSplit = tester.widget<ResizableSplitView>(
       find.byWidgetPredicate(
@@ -90,6 +93,7 @@ void main() {
       expect(find.text('50% · 2/4'), findsOneWidget);
       expect(find.text('Game report'), findsNothing);
       await tester.tap(find.text('Cancel'));
+      await tester.pump(const Duration(milliseconds: 250));
       expect(cancelled, isTrue);
     },
   );

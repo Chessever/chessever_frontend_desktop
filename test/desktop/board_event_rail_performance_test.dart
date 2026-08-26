@@ -322,10 +322,17 @@ void main() {
       );
       expect(
         rebuiltTypes['DesktopBoardPlayerHeader'] ?? 0,
+        0,
+        reason:
+            'Live clock snapshots must stay below the complete player headers. '
+            'Rebuilds: $rebuiltTypes',
+      );
+      expect(
+        rebuiltTypes['_LiveBoardPlayerClock'] ?? 0,
         greaterThanOrEqualTo(2),
         reason:
-            'Both compact player headers must receive the real legacy clock '
-            'snapshot without invalidating the board surface.',
+            'Both compact clock leaves must receive the real legacy snapshot '
+            'without invalidating the surrounding player chrome.',
       );
       final metadataOnlyMetrics = (
         paneBuilds: rebuiltTypes['_BoardPaneContent'] ?? 0,
@@ -943,17 +950,17 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    int renderedStatusCells() =>
+    int renderedMatchupCells() =>
         find
             .byWidgetPredicate(
               (widget) =>
-                  widget.runtimeType.toString() == '_EventGameStatusCell',
+                  widget.runtimeType.toString() == '_EventGameMatchupCell',
             )
             .evaluate()
             .length;
 
     // A 1092-game event opens with one bounded slice of rows, not all of them.
-    expect(renderedStatusCells(), lessThanOrEqualTo(64));
+    expect(renderedMatchupCells(), lessThanOrEqualTo(64));
 
     // No page controls: the rail is scroll-to-fetch only.
     expect(find.text('Page 1 of 18'), findsNothing);
@@ -986,7 +993,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
     }
 
-    expect(renderedStatusCells(), greaterThan(0));
+    expect(renderedMatchupCells(), greaterThan(0));
     expect(find.text('White 65'), findsOneWidget);
   });
 
@@ -1240,9 +1247,9 @@ Future<_TickRebuildMetrics> _measureSteadyMetadataTickRebuilds(
   final activeUpdates = StreamController<Map<String, dynamic>?>.broadcast(
     sync: true,
   );
-  final railUpdates = StreamController<Map<String, LiveGameUpdate>>.broadcast(
-    sync: true,
-  );
+  final railUpdates = StreamController<
+    LiveStreamArrival<Map<String, LiveGameUpdate>>
+  >.broadcast(sync: true);
   var batchProviderBuilds = 0;
   final moveTime = DateTime.utc(2026, 7, 14, 18);
   final sourceGame = _forYouSourceGame(moveTime);
@@ -1283,7 +1290,7 @@ Future<_TickRebuildMetrics> _measureSteadyMetadataTickRebuilds(
         liveGameUpdateArrivalStreamProvider.overrideWith(
           (ref, gameId) => _typedArrivals(activeUpdates.stream, gameId),
         ),
-        gameUpdatesBatchStreamProvider.overrideWith((ref, key) {
+        gameUpdatesBatchArrivalStreamProvider.overrideWith((ref, key) {
           batchProviderBuilds++;
           return railUpdates.stream;
         }),
@@ -1299,10 +1306,22 @@ Future<_TickRebuildMetrics> _measureSteadyMetadataTickRebuilds(
   await tester.pump();
 
   final initialUpdate = _metadataOnlyUpdate(games.first.id, moveTime);
+  final batchSnapshot = <String, LiveGameUpdate>{
+    for (final game in games)
+      game.id: LiveGameUpdate.fromLegacyMap(
+        game.id,
+        _metadataOnlyUpdate(game.id, moveTime),
+      ),
+  };
   activeUpdates.add(initialUpdate);
-  railUpdates.add(<String, LiveGameUpdate>{
-    games.first.id: LiveGameUpdate.fromLegacyMap(games.first.id, initialUpdate),
-  });
+  railUpdates.add(
+    LiveStreamArrival<Map<String, LiveGameUpdate>>(
+      value: batchSnapshot,
+      sessionEpoch: 1,
+      sequence: 1,
+      isFallback: false,
+    ),
+  );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 500));
   await tester.pump();
@@ -1311,7 +1330,8 @@ Future<_TickRebuildMetrics> _measureSteadyMetadataTickRebuilds(
   final mountedStatusCells =
       find
           .byWidgetPredicate(
-            (widget) => widget.runtimeType.toString() == '_EventGameStatusCell',
+            (widget) =>
+                widget.runtimeType.toString() == '_EventGameMatchupCell',
           )
           .evaluate()
           .length;
@@ -1326,9 +1346,17 @@ Future<_TickRebuildMetrics> _measureSteadyMetadataTickRebuilds(
       moveTime.add(const Duration(seconds: 1)),
     );
     activeUpdates.add(update);
-    railUpdates.add(<String, LiveGameUpdate>{
-      games.first.id: LiveGameUpdate.fromLegacyMap(games.first.id, update),
-    });
+    railUpdates.add(
+      LiveStreamArrival<Map<String, LiveGameUpdate>>(
+        value: <String, LiveGameUpdate>{
+          ...batchSnapshot,
+          games.first.id: LiveGameUpdate.fromLegacyMap(games.first.id, update),
+        },
+        sessionEpoch: 1,
+        sequence: 2,
+        isFallback: false,
+      ),
+    );
     await tester.pump();
     await tester.pump();
   } finally {
