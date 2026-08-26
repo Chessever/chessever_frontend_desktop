@@ -11,6 +11,7 @@ import 'package:chessever/repository/local_storage/tournament/games/pin_games_lo
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
+import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/group_event/providers/live_event_feed.dart';
@@ -157,13 +158,28 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   // In-flight `hydrateEvents` ids, so repeated live-first recomputes cannot
   // stack duplicate fetches for the same event.
   final Set<String> _hydratingEventIds = <String>{};
+  // Live first is a query parameter, not a paint-time reshuffle: when it is
+  // on, every page fetch also asks Supabase for the ranked `live` slice and
+  // publishes the two merged in server order. `_liveCohortIds` is the ranking
+  // that came back, kept so a newly live event can be detected as *not yet*
+  // ranked and trigger a re-query instead of a local promotion.
+  bool _liveFirst = false;
+  List<String> _liveCohortIds = const <String>[];
 
   ForYouNotifier(this.ref) : super(const ForYouState(isLoading: true)) {
+    _liveFirst = ref.read(liveFirstOrderingProvider);
     _setupListeners();
     _loadInitial();
   }
 
   void _setupListeners() {
+    // Live first re-queries rather than reorders. Both directions go back to
+    // Supabase, so switching it off restores the canonical ranking from the
+    // server instead of from a remembered client-side ordering.
+    ref.listen<bool>(liveFirstOrderingProvider, (_, next) {
+      unawaited(setLiveFirst(next));
+    });
+
     // Match the Current tab's behavior: when a tour transitions ongoing→live
     // (or live→completed), re-derive tourEventCategory on every existing card
     // so the _NextRoundLine flips from "starts in…" to "LIVE" without waiting
@@ -242,6 +258,36 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     if (mounted) {
       bumpForYouEventsRefreshSignal(ref);
     }
+  }
+
+  /// Switches the Live-first query mode and refetches in the new mode.
+  ///
+  /// The session order map is cleared first because it froze the arrangement
+  /// produced by the *previous* mode; keeping it would let the old ordering
+  /// outvote the page the server just ranked. Clearing it makes the flip
+  /// symmetric — on and off both publish exactly what the query returned.
+  Future<void> setLiveFirst(bool value) async {
+    if (_liveFirst == value) return;
+    _liveFirst = value;
+    _liveCohortIds = const <String>[];
+    _sessionEventOrder.clear();
+    _nextSessionEventOrder = 0;
+    await refresh();
+  }
+
+  /// Re-queries when an event went live that the ranked cohort predates.
+  ///
+  /// Resorting on new live data is a fetch, never an in-place promotion: the
+  /// cohort ranking is the server's, so a card that just went live has to be
+  /// placed by asking again rather than by moving it locally.
+  Future<void> refreshLiveFirstOrder(Iterable<String> liveIds) async {
+    if (!_liveFirst || _isFetching || state.isLoading) return;
+    final ranked = _liveCohortIds.toSet();
+    final hasUnranked = liveIds.any(
+      (id) => id.trim().isNotEmpty && !ranked.contains(id.trim()),
+    );
+    if (!hasUnranked) return;
+    await refresh();
   }
 
   Future<void> refreshIfStale({
@@ -344,6 +390,15 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         }
         var nextEvents = _sortPageOnceForSession(models);
         nextEvents = _retainHydratedLiveEvents(nextEvents, liveIds);
+        nextEvents = await _applyLiveFirstQuery(
+          nextEvents,
+          repo: repo,
+          liveIds: liveIds,
+          timeControlFilters: formatFilters,
+          minElo: hasEloFilter ? minElo : null,
+          maxElo: hasEloFilter ? maxElo : null,
+        );
+        if (!mounted) return;
         _pruneTopGameSnapshotsToEvents(nextEvents);
         state = ForYouState(
           events: nextEvents,
@@ -377,13 +432,16 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     unawaited(ref.read(errorLoggerProvider).logError(error, stackTrace));
   }
 
-  /// Loads events the paged feed has not fetched yet, by id, then promotes
-  /// anything that just went live.
+  /// Loads events the paged feed has not fetched yet and refreshes live status
+  /// without changing the normal personalized source order.
   ///
   /// For You pages 20 events at a time ordered by rating, so an event the user
   /// needs to see — a Titled Tuesday that starts while the tab is open — can
-  /// sit far below the loaded window, or not be in the ranking yet. Appending
-  /// at the end of the frozen session order hid that card until restart.
+  /// sit far below the loaded window, or not be in the ranking yet. Hydration
+  /// pulls that row in and re-derives its live category; where it *sits* is
+  /// decided by the ranking query, not here. When Live first is on,
+  /// [refreshLiveFirstOrder] turns a newly live id into a fresh cohort query
+  /// so the promotion is something the server ranked.
   Future<void> hydrateEvents(Iterable<String> eventIds) async {
     final requested =
         eventIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
@@ -431,7 +489,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     ]);
     if (!mounted) return;
 
-    final next = mergeAndPromoteLiveEvents(
+    final next = mergeLiveEventsPreservingSourceOrder(
       current: state.events,
       additions: additions,
       liveIds: liveIds,
@@ -445,6 +503,75 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     state = state.copyWith(events: next);
   }
 
+  /// Queries the server's ranked live slice and republishes the page with it.
+  ///
+  /// The cohort query carries the same format / Elo filters as the page query,
+  /// so the promoted rows are events this feed would rank anyway, and it
+  /// returns whole broadcasts so a live event sitting below the paged window
+  /// can be placed without a second round trip. A failed ordering query keeps
+  /// the canonical page rather than blanking the feed.
+  Future<List<GroupEventCardModel>> _applyLiveFirstQuery(
+    List<GroupEventCardModel> events, {
+    required GroupBroadcastRepository repo,
+    required List<String> liveIds,
+    required List<String> timeControlFilters,
+    int? minElo,
+    int? maxElo,
+  }) async {
+    if (!_liveFirst) {
+      _liveCohortIds = const <String>[];
+      return events;
+    }
+
+    final List<GroupBroadcast> ranked;
+    try {
+      ranked = await repo.getLiveFirstGroupBroadcasts(
+        timeControlFilters:
+            timeControlFilters.isNotEmpty ? timeControlFilters : null,
+        minElo: minElo,
+        maxElo: maxElo,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[ForYou] Live-first ordering query failed: $error');
+      _logErrorToSentry(error, stackTrace);
+      return events;
+    }
+    if (!mounted) return events;
+
+    final cohortIds = <String>[
+      for (final broadcast in ranked)
+        if (broadcast.id.trim().isNotEmpty) broadcast.id.trim(),
+    ];
+    _liveCohortIds = cohortIds;
+    if (cohortIds.isEmpty) return events;
+
+    final mergedLiveIds = <String>{
+      ...liveIds,
+      ...cohortIds,
+    }.toList(growable: false);
+    final knownIds = events.map((event) => event.id).toSet();
+    final additions = <GroupEventCardModel>[
+      for (final broadcast in ranked)
+        if (!knownIds.contains(broadcast.id))
+          GroupEventCardModel.fromGroupBroadcast(broadcast, mergedLiveIds),
+    ];
+    if (additions.isNotEmpty) {
+      await _prefetchTopGameSnapshots(additions, replace: false);
+      if (!mounted) return events;
+    }
+
+    final ordered = orderEventsByLiveCohort(
+      events: mergeLiveEventsPreservingSourceOrder(
+        current: events,
+        additions: additions,
+        liveIds: mergedLiveIds,
+      ),
+      cohortIds: cohortIds,
+    );
+    _replaceSessionEventOrder(ordered);
+    return ordered;
+  }
+
   List<GroupEventCardModel> _retainHydratedLiveEvents(
     List<GroupEventCardModel> pageEvents,
     List<String> liveIds,
@@ -452,7 +579,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     final retained = _retainedLiveEvents(liveIds);
     if (retained.isEmpty) return pageEvents;
 
-    final next = mergeAndPromoteLiveEvents(
+    final next = mergeLiveEventsPreservingSourceOrder(
       current: pageEvents,
       additions: retained,
       liveIds: <String>{...liveIds, for (final event in retained) event.id},

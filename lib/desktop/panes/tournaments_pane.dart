@@ -97,22 +97,13 @@ String _smartCollectionTitle(PremiumGamesType type) {
   };
 }
 
-final _desktopOrderedForYouEventsProvider = Provider.autoDispose<ForYouState>((
-  ref,
-) {
-  final state = ref.watch(forYouEventsProvider);
-  final liveFirst = ref.watch(tournamentLiveFirstProvider);
-  final liveGameEventIds = ref.watch(tournamentLiveGameEventIdsProvider);
-  return ForYouState(
-    events: orderTournamentEventsForDisplay(
-      state.events,
-      liveFirst: liveFirst,
-      liveGameEventIds: liveGameEventIds,
-    ),
-    isLoading: state.isLoading,
-    hasMore: state.hasMore,
-    error: state.error,
-  );
+/// The For You feed, rendered exactly as the provider published it.
+///
+/// Live first is applied by the query in `ForYouNotifier`, so there is nothing
+/// left to re-sort here. Kept as a named alias because several call sites read
+/// the feed and a single name documents that this pane never reorders rows.
+final _desktopForYouEventsProvider = Provider.autoDispose<ForYouState>((ref) {
+  return ref.watch(forYouEventsProvider);
 });
 
 /// Desktop tournaments pane.
@@ -142,11 +133,9 @@ class TournamentsPane extends HookConsumerWidget {
             ? forYouFilterState
             : currentPastFilterState;
     final activeFilterCount = _activeEventFilterCount(selectedFilterState);
-    final liveFirst = ref.watch(tournamentLiveFirstProvider);
-    final liveGameEventIds = ref.watch(tournamentLiveGameEventIdsProvider);
-    // Pulls live events the For You feed has not paged in yet into the feed
-    // ahead of any tap, so toggling Live first is a pure in-memory reorder
-    // instead of waiting on two round trips.
+    // Pulls live events the For You feed has not paged in yet into the feed,
+    // and asks for a fresh ranking when one of them is newly live. Ordering
+    // itself belongs to the feed providers' queries.
     ref.watch(tournamentLiveEventPrefetchProvider);
     final globalSearchQuery = ref.watch(desktopGlobalSearchQueryProvider);
     // Stable per-tournament-id GlobalKeys so we can `Scrollable.ensureVisible`
@@ -296,16 +285,10 @@ class TournamentsPane extends HookConsumerWidget {
                   )
                   : asyncTournaments.when(
                     data: (tournaments) {
-                      final displayTournaments =
-                          orderTournamentEventsForDisplay(
-                            tournaments,
-                            liveFirst:
-                                shouldShowTournamentLiveFirst(
-                                  selectedCategory,
-                                ) &&
-                                liveFirst,
-                            liveGameEventIds: liveGameEventIds,
-                          );
+                      // Rendered in provider order. Live first re-runs the
+                      // Current query and republishes a ranked list, so
+                      // re-sorting here would only fight it.
+                      final displayTournaments = tournaments;
                       return _TournamentEventGridKeyboardHost(
                         focusNode: listFocusNode,
                         tournaments: displayTournaments,
@@ -2625,7 +2608,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   List<String> _gameIdsForEventId(String eventId) {
-    final events = ref.read(_desktopOrderedForYouEventsProvider).events;
+    final events = ref.read(_desktopForYouEventsProvider).events;
     for (final event in events) {
       if (event.id == eventId) return _gameIdsFor(event);
     }
@@ -2649,9 +2632,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       }
     });
     if (!visible) {
-      _syncSelectionWithEvents(
-        ref.read(_desktopOrderedForYouEventsProvider).events,
-      );
+      _syncSelectionWithEvents(ref.read(_desktopForYouEventsProvider).events);
       _persistNavigationBookmark();
     }
   }
@@ -2804,7 +2785,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     // from the highlighted event or board.
     if (event is KeyRepeatEvent) return true;
     if (event is! KeyDownEvent) return false;
-    final events = ref.read(_desktopOrderedForYouEventsProvider).events;
+    final events = ref.read(_desktopForYouEventsProvider).events;
     final result = _handleKeyboard(event, events);
     if (result == KeyEventResult.handled) return true;
     // A selection host must never fall back to raw pixel scrolling. That can
@@ -3129,10 +3110,10 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     // the build phase. Without this, calling `_syncSelectionWithEvents`
     // inside `build()` would assert if any downstream codepath ever
     // triggered `setState`.
-    ref.listen<ForYouState>(_desktopOrderedForYouEventsProvider, (prev, next) {
+    ref.listen<ForYouState>(_desktopForYouEventsProvider, (prev, next) {
       _syncSelectionWithEvents(next.events);
     });
-    final state = ref.watch(_desktopOrderedForYouEventsProvider);
+    final state = ref.watch(_desktopForYouEventsProvider);
     final viewMode = ref.watch(gamesListViewModeProvider);
     final streamingEnabled = ref.watch(
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),

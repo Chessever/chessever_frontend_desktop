@@ -246,6 +246,30 @@ class GroupBroadcastRepository extends BaseRepository {
     });
   }
 
+  /// Server-ranked live events, used as the ordering source for Live first.
+  ///
+  /// Live first is a query, not a client-side reshuffle: this asks the same
+  /// `get_for_you_group_broadcasts` RPC that ranks the normal feed for the
+  /// `live` status slice, so the promoted cohort arrives already ordered by
+  /// the server's ranking and under the user's own format / Elo filters.
+  /// Returning [GroupBroadcast] rather than bare ids means an event the feed
+  /// has not paged in yet can be placed without a second round trip.
+  Future<List<GroupBroadcast>> getLiveFirstGroupBroadcasts({
+    int limit = 60,
+    List<String>? timeControlFilters,
+    int? minElo,
+    int? maxElo,
+  }) {
+    return getForYouGroupBroadcasts(
+      limit: limit,
+      offset: 0,
+      timeControlFilters: timeControlFilters,
+      minElo: minElo,
+      maxElo: maxElo,
+      statusFilters: const <String>['live'],
+    );
+  }
+
   Future<List<GroupBroadcast>> getUpcomingGroupBroadcasts({
     int? limit,
     int? offset,

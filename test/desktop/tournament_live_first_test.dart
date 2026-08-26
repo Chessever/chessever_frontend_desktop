@@ -7,6 +7,7 @@ import 'package:chessever/desktop/widgets/tournament_live_first_toggle.dart';
 import 'package:chessever/providers/group_event_category.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
+import 'package:chessever/screens/group_event/providers/live_event_feed.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -31,16 +32,52 @@ void main() {
 
     expect(toggleIndex, greaterThanOrEqualTo(0));
     expect(layoutIndex, greaterThan(toggleIndex));
-    expect(source, contains('_desktopOrderedForYouEventsProvider'));
-    expect(source, contains('tournamentLiveGameEventIdsProvider'));
+    expect(source, contains('_desktopForYouEventsProvider'));
+    // The pane renders whatever the feed providers published. Re-sorting here
+    // would be a second, contradictory source of truth for row order, and it
+    // could only ever move rows already paged in.
+    expect(source, isNot(contains('orderTournamentEventsForDisplay')));
+    expect(source, isNot(contains('orderEventsByLiveCohort')));
+    expect(source, isNot(contains('liveGameEventIds:')));
+  });
+
+  test('live-first ordering is driven by a query, not by the widget layer', () {
+    final repositorySource =
+        File(
+          'lib/repository/supabase/group_broadcast/group_tour_repository.dart',
+        ).readAsStringSync();
+    final forYouSource =
+        File('lib/providers/for_you_games_provider.dart').readAsStringSync();
+    final currentSource =
+        File(
+          'lib/screens/group_event/providers/group_event_screen_provider.dart',
+        ).readAsStringSync();
+    final stateSource =
+        File('lib/desktop/state/tournament_live_first.dart').readAsStringSync();
+
+    // The ranked live slice is a real Supabase call on the same RPC that ranks
+    // the feed, so the promoted cohort arrives in the server's own order.
     expect(
-      RegExp(r'orderTournamentEventsForDisplay\(').allMatches(source).length,
-      greaterThanOrEqualTo(2),
+      repositorySource,
+      contains('Future<List<GroupBroadcast>> getLiveFirstGroupBroadcasts('),
     );
-    expect(
-      RegExp(r'liveGameEventIds:').allMatches(source).length,
-      greaterThanOrEqualTo(2),
-    );
+    expect(repositorySource, contains("statusFilters: const <String>['live']"));
+
+    // Both feeds run that query and publish the result; neither reorders at
+    // paint time.
+    expect(forYouSource, contains('getLiveFirstGroupBroadcasts('));
+    expect(currentSource, contains('getLiveFirstGroupBroadcasts('));
+    expect(forYouSource, contains('orderEventsByLiveCohort('));
+    expect(currentSource, contains('orderEventsByLiveCohort('));
+
+    // Flipping the preference refetches in the new mode rather than resorting
+    // the list that is already on screen.
+    expect(forYouSource, contains('Future<void> setLiveFirst('));
+    expect(forYouSource, contains('await refresh();'));
+    expect(currentSource, contains('ref.watch(liveFirstOrderingProvider)'));
+
+    // And the display-time projection is gone for good.
+    expect(stateSource, isNot(contains('orderTournamentEventsForDisplay')));
   });
 
   test('Live first reuses the Live filter IDs and Live collection window', () {
@@ -51,9 +88,15 @@ void main() {
           'lib/repository/supabase/game/game_repository.dart',
         ).readAsStringSync();
 
+    final repositorySource =
+        File(
+          'lib/repository/supabase/group_broadcast/group_tour_repository.dart',
+        ).readAsStringSync();
+
     expect(source, contains('configuredLiveGroupBroadcastIdsProvider'));
     expect(source, contains('forYouLiveFilterEventIdsProvider'));
-    expect(source, contains("statusFilters: const ['live']"));
+    expect(source, contains('getLiveFirstGroupBroadcasts('));
+    expect(repositorySource, contains("statusFilters: const <String>['live']"));
     expect(source, contains('liveFirstGameActivityWindow'));
     expect(gamesSource, contains("'live'"));
     expect(gamesSource, contains("order('last_move_time'"));
@@ -81,6 +124,10 @@ void main() {
         File('lib/desktop/panes/tournaments_pane.dart').readAsStringSync();
     final forYouSource =
         File('lib/providers/for_you_games_provider.dart').readAsStringSync();
+    final currentSource =
+        File(
+          'lib/screens/group_event/providers/group_event_screen_provider.dart',
+        ).readAsStringSync();
 
     expect(stateSource, contains('tournamentLiveEventPrefetchProvider'));
     expect(stateSource, contains('hydrateEvents(liveIds)'));
@@ -104,6 +151,10 @@ void main() {
       contains('_prefetchTopGameSnapshots(additions, replace: false)'),
     );
     expect(forYouSource, contains('_hydratingEventIds'));
+    expect(forYouSource, contains('mergeLiveEventsPreservingSourceOrder'));
+    expect(currentSource, contains('mergeLiveEventsPreservingSourceOrder'));
+    expect(forYouSource, isNot(contains('mergeAndPromoteLiveEvents')));
+    expect(currentSource, isNot(contains('mergeAndPromoteLiveEvents')));
   });
 
   test('desktop chrome tooltips never install a long-press recognizer', () {
@@ -233,7 +284,10 @@ void main() {
       _event('completed', TourEventCategory.completed),
     ];
 
-    final ordered = orderTournamentEventsForDisplay(events, liveFirst: true);
+    final ordered = orderEventsByLiveCohort(
+      events: events,
+      cohortIds: const ['live-a', 'live-b'],
+    );
 
     expect(ordered.map((event) => event.id), [
       'live-a',
@@ -251,6 +305,27 @@ void main() {
     ]);
   });
 
+  test('the cohort ranking from the server decides the promoted order', () {
+    final events = [
+      _event('quiet-ongoing', TourEventCategory.ongoing),
+      _event('live-low-rank', TourEventCategory.live),
+      _event('live-top-rank', TourEventCategory.live),
+    ];
+
+    // The server ranked `live-top-rank` first even though the page happened
+    // to carry `live-low-rank` earlier. The query wins, not the page order.
+    final ordered = orderEventsByLiveCohort(
+      events: events,
+      cohortIds: const ['live-top-rank', 'live-low-rank'],
+    );
+
+    expect(ordered.map((event) => event.id), [
+      'live-top-rank',
+      'live-low-rank',
+      'quiet-ongoing',
+    ]);
+  });
+
   test(
     'live-first promotes events with live games without reordering either cohort',
     () {
@@ -262,10 +337,9 @@ void main() {
         _event('live-badge', TourEventCategory.live),
       ];
 
-      final ordered = orderTournamentEventsForDisplay(
-        events,
-        liveFirst: true,
-        liveGameEventIds: const {'live-from-games'},
+      final ordered = orderEventsByLiveCohort(
+        events: events,
+        cohortIds: const ['live-from-games', 'live-badge'],
       );
 
       expect(ordered.map((event) => event.id), [
@@ -346,10 +420,9 @@ void main() {
         configuredIds: const ['live-from-filter'],
         liveFilterIds: const ['live-from-filter'],
       );
-      final ordered = orderTournamentEventsForDisplay(
-        events,
-        liveFirst: true,
-        liveGameEventIds: liveIds,
+      final ordered = orderEventsByLiveCohort(
+        events: events,
+        cohortIds: liveIds,
       );
 
       expect(liveFirstGameActivityWindow, const Duration(hours: 8));
@@ -368,12 +441,72 @@ void main() {
       _event('upcoming', TourEventCategory.upcoming),
     ];
 
-    final ordered = orderTournamentEventsForDisplay(events, liveFirst: false);
+    // Off means the cohort query is never run, so there is no cohort to rank
+    // by and the server's canonical page order stands. A live badge on its
+    // own must not promote anything.
+    final ordered = orderEventsByLiveCohort(
+      events: events,
+      cohortIds: const <String>[],
+    );
 
     expect(ordered.map((event) => event.id), [
       'favorite-ongoing',
       'live',
       'upcoming',
+    ]);
+  });
+
+  test('hydrated source returns to personalized order after on then off', () {
+    final source = [
+      _event('personalized-a', TourEventCategory.ongoing),
+      _event('live-b', TourEventCategory.live),
+      _event('personalized-c', TourEventCategory.ongoing),
+    ];
+    final hydrated = mergeLiveEventsPreservingSourceOrder(
+      current: source,
+      additions: [_event('live-d', TourEventCategory.upcoming)],
+      liveIds: const ['live-b', 'live-d'],
+    );
+
+    // Off → on → off. Each step is what a fetch in that mode produces: no
+    // cohort query while off, the server's ranked cohort while on. Nothing
+    // client-side has to remember the personalized order for the last step to
+    // match the first.
+    final initialOff = orderEventsByLiveCohort(
+      events: hydrated,
+      cohortIds: const <String>[],
+    );
+    final enabled = orderEventsByLiveCohort(
+      events: hydrated,
+      cohortIds: const ['live-b', 'live-d'],
+    );
+    final disabledAgain = orderEventsByLiveCohort(
+      events: hydrated,
+      cohortIds: const <String>[],
+    );
+
+    expect(initialOff.map((event) => event.id), [
+      'personalized-a',
+      'live-b',
+      'personalized-c',
+      'live-d',
+    ]);
+    expect(enabled.map((event) => event.id), [
+      'live-b',
+      'live-d',
+      'personalized-a',
+      'personalized-c',
+    ]);
+    expect(disabledAgain.map((event) => event.id), [
+      'personalized-a',
+      'live-b',
+      'personalized-c',
+      'live-d',
+    ]);
+    expect(source.map((event) => event.id), [
+      'personalized-a',
+      'live-b',
+      'personalized-c',
     ]);
   });
 }
