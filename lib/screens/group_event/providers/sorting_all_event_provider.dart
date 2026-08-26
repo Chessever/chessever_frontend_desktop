@@ -9,6 +9,29 @@ final tournamentSortingServiceProvider =
       return TournamentSortingService(ref);
     });
 
+/// The house rule for "strongest event first", by average rating.
+///
+/// Events above 3200 are engine / AI fields rather than human ones, so they
+/// sort to the bottom instead of dominating the top. Everything else is
+/// highest average rating first, with the title breaking ties so equal-rated
+/// events keep a stable order between rebuilds.
+///
+/// Shared so every list that claims to rank by rating ranks the same way —
+/// the Current/For You sorts here, and the Live-first cohort in
+/// `orderEventsByLiveCohort`.
+int compareGroupEventsByRating(GroupEventCardModel a, GroupEventCardModel b) {
+  final isHighEloA = a.maxAvgElo > 3200;
+  final isHighEloB = b.maxAvgElo > 3200;
+
+  if (isHighEloA && !isHighEloB) return 1;
+  if (!isHighEloA && isHighEloB) return -1;
+
+  final eloComparison = b.maxAvgElo.compareTo(a.maxAvgElo);
+  if (eloComparison != 0) return eloComparison;
+
+  return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+}
+
 class TournamentSortingService {
   final Ref ref;
 
@@ -20,21 +43,7 @@ class TournamentSortingService {
   }) {
     final filteredList = tours.toList();
 
-    filteredList.sort((a, b) {
-      final isHighEloA = a.maxAvgElo > 3200;
-      final isHighEloB = b.maxAvgElo > 3200;
-
-      // If one has high ELO and the other doesn't, put high ELO at the end
-      if (isHighEloA && !isHighEloB) return 1;
-      if (!isHighEloA && isHighEloB) return -1;
-
-      // If both are high ELO or both are normal ELO, sort by ELO descending
-      final eloComparison = b.maxAvgElo.compareTo(a.maxAvgElo);
-      if (eloComparison != 0) return eloComparison;
-
-      // FINAL PRIORITY: Sort by title if everything else is equal
-      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
-    });
+    filteredList.sort(compareGroupEventsByRating);
 
     // Apply favorite sorting (favorited events on top)
     return _applyFavoriteSorting(

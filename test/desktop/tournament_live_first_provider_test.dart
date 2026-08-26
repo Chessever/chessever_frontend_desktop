@@ -120,8 +120,9 @@ void main() {
         _broadcast(id: 'source-c', name: 'Source C', maxAvgElo: 2600),
       ];
       final liveD = _broadcast(id: 'live-d', name: 'Live D', maxAvgElo: 2550);
-      // The server ranks `live-d` above `live-b` even though the page carries
-      // `live-b` first. Live first must honour the ranking, not the page.
+      // The live slice comes back with `live-d` first, but `live-b` is the
+      // stronger field (2650 vs 2550). Cohort membership is the query's call;
+      // rank inside the cohort is by average rating, so `live-b` leads.
       final repository = _BroadcastRepository(
         catalog: <GroupBroadcast>[liveD],
         rankedLive: <GroupBroadcast>[liveD, sourceBroadcasts[1]],
@@ -187,7 +188,7 @@ void main() {
       subscription = listen();
 
       await _waitFor(
-        () => currentIds().length == 4 && currentIds().first == 'live-d',
+        () => currentIds().length == 4 && currentIds().first == 'live-b',
       );
       expect(
         repository.liveFirstQueryCount,
@@ -195,8 +196,8 @@ void main() {
         reason: 'flipping Live first must issue the ranking query',
       );
       expect(currentIds(), <String>[
-        'live-d',
         'live-b',
+        'live-d',
         'source-a',
         'source-c',
       ]);

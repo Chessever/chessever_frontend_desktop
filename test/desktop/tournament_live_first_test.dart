@@ -55,13 +55,21 @@ void main() {
     final stateSource =
         File('lib/desktop/state/tournament_live_first.dart').readAsStringSync();
 
-    // The ranked live slice is a real Supabase call on the same RPC that ranks
-    // the feed, so the promoted cohort arrives in the server's own order.
+    // Cohort membership is a real Supabase call on the same RPC that ranks the
+    // feed, restricted to the live slice.
     expect(
       repositorySource,
       contains('Future<List<GroupBroadcast>> getLiveFirstGroupBroadcasts('),
     );
     expect(repositorySource, contains("statusFilters: const <String>['live']"));
+
+    // Rank inside the cohort is the shared rating rule, so the two membership
+    // sources (ranked slice + realtime ids) cannot disagree about order.
+    final feedSource =
+        File(
+          'lib/screens/group_event/providers/live_event_feed.dart',
+        ).readAsStringSync();
+    expect(feedSource, contains('promoted.sort(compareGroupEventsByRating)'));
 
     // Both feeds run that query and publish the result; neither reorders at
     // paint time.
@@ -305,36 +313,73 @@ void main() {
     ]);
   });
 
-  test('the cohort ranking from the server decides the promoted order', () {
+  test('the strongest live event leads the promoted cohort', () {
     final events = [
-      _event('quiet-ongoing', TourEventCategory.ongoing),
-      _event('live-low-rank', TourEventCategory.live),
-      _event('live-top-rank', TourEventCategory.live),
+      _event('quiet-ongoing', TourEventCategory.ongoing, maxAvgElo: 2900),
+      _event('live-weak', TourEventCategory.live, maxAvgElo: 2400),
+      _event('live-strong', TourEventCategory.live, maxAvgElo: 2780),
     ];
 
-    // The server ranked `live-top-rank` first even though the page happened
-    // to carry `live-low-rank` earlier. The query wins, not the page order.
+    // Cohort ids arrive weakest-first — the realtime live-id stream has no
+    // ranking of its own. Average rating decides, not arrival order.
     final ordered = orderEventsByLiveCohort(
       events: events,
-      cohortIds: const ['live-top-rank', 'live-low-rank'],
+      cohortIds: const ['live-weak', 'live-strong'],
     );
 
     expect(ordered.map((event) => event.id), [
-      'live-top-rank',
-      'live-low-rank',
+      'live-strong',
+      'live-weak',
       'quiet-ongoing',
     ]);
   });
 
+  test('cohort rank follows the house rating rule, engine fields last', () {
+    final events = [
+      _event('live-engine', TourEventCategory.live, maxAvgElo: 3600),
+      _event('live-super', TourEventCategory.live, maxAvgElo: 2800),
+      _event('live-club', TourEventCategory.live, maxAvgElo: 2100),
+      _event('not-live', TourEventCategory.ongoing, maxAvgElo: 2950),
+    ];
+
+    final ordered = orderEventsByLiveCohort(
+      events: events,
+      cohortIds: const ['live-engine', 'live-super', 'live-club'],
+    );
+
+    // Above 3200 is an engine / AI field, so it sorts under the human events
+    // exactly as the Current and For You lists rank them.
+    expect(ordered.map((event) => event.id), [
+      'live-super',
+      'live-club',
+      'live-engine',
+      'not-live',
+    ]);
+  });
+
+  test('equal-rated live events keep a stable order by title', () {
+    final events = [
+      _event('zurich-open', TourEventCategory.live, maxAvgElo: 2600),
+      _event('amsterdam-open', TourEventCategory.live, maxAvgElo: 2600),
+    ];
+
+    final ordered = orderEventsByLiveCohort(
+      events: events,
+      cohortIds: const ['zurich-open', 'amsterdam-open'],
+    );
+
+    expect(ordered.map((event) => event.id), ['amsterdam-open', 'zurich-open']);
+  });
+
   test(
-    'live-first promotes events with live games without reordering either cohort',
+    'live-first ranks the cohort by rating and leaves the remainder alone',
     () {
       final events = [
         _event('favorite-ongoing', TourEventCategory.ongoing),
         _event('quiet-ongoing', TourEventCategory.ongoing),
-        _event('live-from-games', TourEventCategory.ongoing),
+        _event('live-from-games', TourEventCategory.ongoing, maxAvgElo: 2750),
         _event('upcoming', TourEventCategory.upcoming),
-        _event('live-badge', TourEventCategory.live),
+        _event('live-badge', TourEventCategory.live, maxAvgElo: 2500),
       ];
 
       final ordered = orderEventsByLiveCohort(
@@ -342,6 +387,8 @@ void main() {
         cohortIds: const ['live-from-games', 'live-badge'],
       );
 
+      // Promoted block is rating-ordered; everything below it keeps the page
+      // order the feed query returned.
       expect(ordered.map((event) => event.id), [
         'live-from-games',
         'live-badge',
@@ -541,12 +588,16 @@ class _DelayedTournamentLiveFirstStore implements TournamentLiveFirstStore {
   }
 }
 
-GroupEventCardModel _event(String id, TourEventCategory category) {
+GroupEventCardModel _event(
+  String id,
+  TourEventCategory category, {
+  int maxAvgElo = 2500,
+}) {
   return GroupEventCardModel(
     id: id,
     title: id,
     dates: '',
-    maxAvgElo: 2500,
+    maxAvgElo: maxAvgElo,
     timeUntilStart: '',
     tourEventCategory: category,
     timeControl: 'Standard',

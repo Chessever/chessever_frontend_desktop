@@ -503,13 +503,14 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     state = state.copyWith(events: next);
   }
 
-  /// Queries the server's ranked live slice and republishes the page with it.
+  /// Queries the live slice and republishes the page with it on top.
   ///
   /// The cohort query carries the same format / Elo filters as the page query,
   /// so the promoted rows are events this feed would rank anyway, and it
   /// returns whole broadcasts so a live event sitting below the paged window
-  /// can be placed without a second round trip. A failed ordering query keeps
-  /// the canonical page rather than blanking the feed.
+  /// can be placed without a second round trip. Inside the promoted block the
+  /// strongest event leads — see `orderEventsByLiveCohort`. A failed ordering
+  /// query keeps the canonical page rather than blanking the feed.
   Future<List<GroupEventCardModel>> _applyLiveFirstQuery(
     List<GroupEventCardModel> events, {
     required GroupBroadcastRepository repo,

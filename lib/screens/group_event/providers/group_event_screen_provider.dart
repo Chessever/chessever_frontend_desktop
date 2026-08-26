@@ -274,14 +274,15 @@ class _GroupEventScreenController
     }
   }
 
-  /// Ranks the live cohort first using the server's own ordering.
+  /// Puts the live cohort first, strongest live event on top.
   ///
-  /// The cohort comes from `get_for_you_group_broadcasts` restricted to the
-  /// `live` status — the same ranking the feed uses — so Live first is a query
-  /// result rather than a client-side reshuffle of what is on screen. The
-  /// realtime live-id set is appended behind it because it can know about an
-  /// event the ranked slice has not caught up to yet. A failed query leaves
-  /// the canonical order untouched.
+  /// Cohort membership comes from `get_for_you_group_broadcasts` restricted to
+  /// the `live` status, unioned with the realtime live-id set because that one
+  /// can know about an event the slice has not caught up to yet. Live first is
+  /// therefore a query result rather than a client-side reshuffle of what is on
+  /// screen. Rank inside the cohort is by average rating, so the union's two
+  /// sources cannot produce a different order depending on which one found the
+  /// event. A failed query leaves the canonical order untouched.
   Future<List<GroupEventCardModel>> _orderByLiveFirstQuery(
     List<GroupEventCardModel> events,
     List<String> liveIds,
