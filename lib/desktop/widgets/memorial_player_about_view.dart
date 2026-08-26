@@ -10,14 +10,24 @@ class MemorialPlayerAboutView extends ConsumerWidget {
     super.key,
     required this.sourceIdentity,
     required this.playerName,
+    required this.playerKey,
   });
 
   final String sourceIdentity;
   final String playerName;
+  final PlayerProfileKey playerKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final overview = ref.watch(memorialPlayerOverviewProvider(sourceIdentity));
+    final analytics = ref.watch(
+      twicPlayerStatsProvider(
+        TwicPlayerStatsRequest(
+          playerKey: playerKey,
+          scope: TwicStatsScope.allGames,
+        ),
+      ),
+    );
     return overview.when(
       data:
           (data) =>
@@ -28,6 +38,8 @@ class MemorialPlayerAboutView extends ConsumerWidget {
                   : _MemorialAboutContent(
                     overview: data,
                     fallbackName: playerName,
+                    analytics: analytics.valueOrNull,
+                    analyticsLoading: analytics.isLoading,
                   ),
       loading:
           () => const _MemorialAboutStatus(
@@ -46,10 +58,14 @@ class _MemorialAboutContent extends StatelessWidget {
   const _MemorialAboutContent({
     required this.overview,
     required this.fallbackName,
+    required this.analytics,
+    required this.analyticsLoading,
   });
 
   final MemorialPlayerOverview overview;
   final String fallbackName;
+  final PlayerAnalytics? analytics;
+  final bool analyticsLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -78,74 +94,163 @@ class _MemorialAboutContent extends StatelessWidget {
         alignment: Alignment.topLeft,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 980),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(28, 26, 28, 30),
-            decoration: BoxDecoration(
-              color: kBlack2Color,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Life & career',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: kWhiteColor,
-                    fontWeight: FontWeight.w700,
-                  ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (analytics != null || analyticsLoading) ...[
+                _PerformanceSummary(
+                  analytics: analytics,
+                  loading: analyticsLoading,
                 ),
-                const SizedBox(height: 22),
-                Wrap(
-                  spacing: 48,
-                  runSpacing: 18,
+                const SizedBox(height: 14),
+              ],
+              Container(
+                padding: const EdgeInsets.fromLTRB(28, 26, 28, 30),
+                decoration: BoxDecoration(
+                  color: kBlack2Color,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _LifeFact(
-                      label: 'Born',
-                      value: formatMemorialProfileDate(player.birthDate),
-                      detail: about?.birthPlace,
-                    ),
-                    _LifeFact(
-                      label: 'Died',
-                      value: formatMemorialProfileDate(player.deathDate),
-                      detail: about?.deathPlace,
-                    ),
-                    if (player.ratingClassical > 0)
-                      _LifeFact(
-                        label: 'Peak classical',
-                        value: player.ratingClassical.toString(),
+                    Text(
+                      'Life & career',
+                      style: Theme.of(
+                        context,
+                      ).textTheme.headlineSmall?.copyWith(
+                        color: kWhiteColor,
+                        fontWeight: FontWeight.w700,
                       ),
+                    ),
+                    const SizedBox(height: 22),
+                    Wrap(
+                      spacing: 48,
+                      runSpacing: 18,
+                      children: [
+                        _LifeFact(
+                          label: 'Born',
+                          value: formatMemorialProfileDate(player.birthDate),
+                          detail: about?.birthPlace,
+                        ),
+                        _LifeFact(
+                          label: 'Died',
+                          value: formatMemorialProfileDate(player.deathDate),
+                          detail: about?.deathPlace,
+                        ),
+                        if (player.ratingClassical > 0)
+                          _LifeFact(
+                            label: 'Peak classical',
+                            value: player.ratingClassical.toString(),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 30),
+                    for (var index = 0; index < summary.length; index++) ...[
+                      Text(
+                        summary[index],
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 15,
+                          height: 1.65,
+                        ),
+                      ),
+                      if (index != summary.length - 1)
+                        const SizedBox(height: 12),
+                    ],
+                    if (highlights.isNotEmpty) ...[
+                      const SizedBox(height: 32),
+                      const Text(
+                        'Career highlights',
+                        style: TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 15),
+                      for (final highlight in highlights)
+                        _CareerHighlight(highlight: highlight),
+                    ],
                   ],
                 ),
-                const SizedBox(height: 30),
-                for (var index = 0; index < summary.length; index++) ...[
-                  Text(
-                    summary[index],
-                    style: const TextStyle(
-                      color: kWhiteColor70,
-                      fontSize: 15,
-                      height: 1.65,
-                    ),
-                  ),
-                  if (index != summary.length - 1) const SizedBox(height: 12),
-                ],
-                if (highlights.isNotEmpty) ...[
-                  const SizedBox(height: 32),
-                  const Text(
-                    'Career highlights',
-                    style: TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 15),
-                  for (final highlight in highlights)
-                    _CareerHighlight(highlight: highlight),
-                ],
-              ],
-            ),
+              ),
+            ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _PerformanceSummary extends StatelessWidget {
+  const _PerformanceSummary({required this.analytics, required this.loading});
+
+  final PlayerAnalytics? analytics;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = analytics;
+    if (value == null && loading) {
+      return Container(
+        height: 112,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: kBlack2Color,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 1.5),
+        ),
+      );
+    }
+    if (value == null) return const SizedBox.shrink();
+
+    final stats = value.resultStats;
+    final topOpening =
+        value.openingStats.isEmpty ? null : value.openingStats.first;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(28, 24, 28, 26),
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Chess record',
+            style: TextStyle(
+              color: kWhiteColor,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 48,
+            runSpacing: 18,
+            children: [
+              _LifeFact(label: 'Games', value: stats.totalGames.toString()),
+              _LifeFact(label: 'Wins', value: stats.wins.toString()),
+              _LifeFact(label: 'Draws', value: stats.draws.toString()),
+              _LifeFact(label: 'Losses', value: stats.losses.toString()),
+              if (value.avgOpponentRating > 0)
+                _LifeFact(
+                  label: 'Average opponent',
+                  value: value.avgOpponentRating.toString(),
+                ),
+              if (topOpening != null)
+                _LifeFact(
+                  label: 'Most played opening',
+                  value: topOpening.eco,
+                  detail: topOpening.openingName,
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }

@@ -18,6 +18,7 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/opening_explorer_seed.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/utils/event_game_card_keyboard_navigation.dart';
 import 'package:chessever/desktop/utils/player_build_tree_filters.dart';
@@ -45,9 +46,12 @@ import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/repository/gamebase/memorial_tree_scope.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
+import 'package:chessever/screens/gamebase/models/models.dart';
+import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
@@ -217,6 +221,42 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     } finally {
       if (mounted) setState(() => _isBuildingTree = false);
     }
+  }
+
+  void _openMemorialOpeningTree({
+    required String sourceIdentity,
+    required String name,
+    required String federation,
+    required String? title,
+    required int? fideId,
+    required int? rating,
+  }) {
+    const initialFen =
+        'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    final player = GamebasePlayer(
+      id: memorialTreeScopeKey(sourceIdentity),
+      fideId: fideId != null && fideId > 0 ? fideId.toString() : '',
+      name: name,
+      gender: PlayerGender.male,
+      fed: federation,
+      title: title,
+      ratingClassical: rating,
+    );
+    ref.read(openingExplorerSeedProvider.notifier).state = OpeningExplorerSeed(
+      fen: initialFen,
+      player: player,
+      filters: GamebaseFilters(
+        playerIds: <String>[player.id],
+        selectedPlayers: <GamebasePlayer>[player],
+      ),
+    );
+    ref
+        .read(desktopTabsProvider.notifier)
+        .open(
+          TabKind.openingExplorer,
+          title: '${_Header._formatDisplayName(name)} tree',
+          reuseExisting: false,
+        );
   }
 
   Future<void> _openOrBuildPlayerWorkspace(int fideId) async {
@@ -420,6 +460,8 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
       ),
     );
     final hasFideId = effectiveFideId != null && effectiveFideId > 0;
+    final memorialIdentity = widget.args.memorialSourceIdentity?.trim();
+    final hasMemorialIdentity = memorialIdentity?.isNotEmpty == true;
 
     return Container(
       color: kBackgroundColor,
@@ -440,14 +482,23 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
             hasPlayerWorkspace: workspacePlayer != null,
             isBuildingProfile: _isBuildingProfile,
             isBuildingTree: _isBuildingTree,
-            hasBuildTree: hasFideId,
+            hasBuildTree: hasFideId || hasMemorialIdentity,
             onToggleFavorite: _toggleFavorite,
             onOpenPlayerWorkspace:
                 hasFideId
                     ? () => _openOrBuildPlayerWorkspace(effectiveFideId)
                     : null,
             onBuildTree:
-                effectiveFideId == null
+                hasMemorialIdentity
+                    ? () => _openMemorialOpeningTree(
+                      sourceIdentity: memorialIdentity!,
+                      name: effectiveName,
+                      federation: effectiveFederation ?? '',
+                      title: effectiveTitle,
+                      fideId: effectiveFideId,
+                      rating: ratings.classical,
+                    )
+                    : effectiveFideId == null
                     ? () {}
                     : () => _buildChessEverPlayerTree(effectiveFideId),
           ),
@@ -1901,6 +1952,7 @@ class _RightPane extends StatelessWidget {
                 MemorialPlayerAboutView(
                   sourceIdentity: memorialIdentity!,
                   playerName: playerName,
+                  playerKey: activeKey,
                 )
               else
                 _AboutBody(
@@ -3949,6 +4001,24 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
                   onClear: _clearSearch,
                 ),
               ),
+              if (!selectionMode) ...[
+                const SizedBox(width: 8),
+                DesktopHeaderActionButton(
+                  label: 'Save to Library',
+                  icon: Icons.library_add_outlined,
+                  tooltip: 'Choose games to save to your library',
+                  onPress: () {
+                    _selectedGameIds.clear();
+                    ref
+                        .read(
+                          playerGamesSelectionModeProvider(
+                            widget.activeKey,
+                          ).notifier,
+                        )
+                        .state = true;
+                  },
+                ),
+              ],
               const SizedBox(width: 8),
               _FilterButton(
                 hasActive: state.hasActiveFilters,

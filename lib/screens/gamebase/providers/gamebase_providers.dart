@@ -2,6 +2,7 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_filter_adapter.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/repository/gamebase/memorial_tree_scope.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
@@ -1455,6 +1456,8 @@ class PlayerOpeningTreeBuildController
 
   final Ref _ref;
   final String _playerId;
+  String? get _memorialSourceIdentity =>
+      memorialSourceIdentityFromTreeScope(_playerId);
   int _generation = 0;
   int? _gamesDownloadGeneration;
   bool _gamesDownloadRequested = false;
@@ -1523,6 +1526,10 @@ class PlayerOpeningTreeBuildController
     required List<MoveAggregate> moveAggregates,
     required PlayerOpeningTreeFilterCriteria filters,
   }) {
+    if (_memorialSourceIdentity != null) {
+      requestGamesDownload();
+      return;
+    }
     if (!mounted ||
         state.progress.status != PlayerOpeningTreeStatus.complete ||
         state.progress.gamesDownloadComplete ||
@@ -1568,11 +1575,19 @@ class PlayerOpeningTreeBuildController
     try {
       final repository = _ref.read(gamebaseRepositoryProvider);
       _log('build request player=$_playerId generation=$generation');
-      final buildResponse = await repository.startPlayerOpeningTreeBuild(
-        playerId: _playerId,
-        maxPly: _maxPly,
-        forceRebuild: false,
-      );
+      final memorialSourceIdentity = _memorialSourceIdentity;
+      final buildResponse =
+          memorialSourceIdentity == null
+              ? await repository.startPlayerOpeningTreeBuild(
+                playerId: _playerId,
+                maxPly: _maxPly,
+                forceRebuild: false,
+              )
+              : await repository.startMemorialOpeningTreeBuild(
+                sourceIdentity: memorialSourceIdentity,
+                maxPly: _maxPly,
+                forceRebuild: false,
+              );
       if (!mounted || generation != _generation) return;
 
       final buildData = _responseData(buildResponse);
@@ -1590,10 +1605,16 @@ class PlayerOpeningTreeBuildController
       var pollCount = 0;
       while (mounted && generation == _generation) {
         pollCount += 1;
-        final statusResponse = await repository.getPlayerOpeningTreeStatus(
-          playerId: _playerId,
-          treeId: treeId,
-        );
+        final statusResponse =
+            memorialSourceIdentity == null
+                ? await repository.getPlayerOpeningTreeStatus(
+                  playerId: _playerId,
+                  treeId: treeId,
+                )
+                : await repository.getMemorialOpeningTreeStatus(
+                  sourceIdentity: memorialSourceIdentity,
+                  treeId: treeId,
+                );
         if (!mounted || generation != _generation) return;
 
         final statusData = _responseData(statusResponse);
@@ -1611,10 +1632,16 @@ class PlayerOpeningTreeBuildController
           );
         }
 
-        final treeResponse = await repository.getPlayerOpeningTree(
-          playerId: _playerId,
-          treeId: treeId,
-        );
+        final treeResponse =
+            memorialSourceIdentity == null
+                ? await repository.getPlayerOpeningTree(
+                  playerId: _playerId,
+                  treeId: treeId,
+                )
+                : await repository.getMemorialOpeningTree(
+                  sourceIdentity: memorialSourceIdentity,
+                  treeId: treeId,
+                );
         if (!mounted || generation != _generation) return;
         if (treeResponse != null) {
           _log(
@@ -1681,15 +1708,24 @@ class PlayerOpeningTreeBuildController
 
     try {
       while (mounted && generation == _generation) {
-        final response = await _ref
-            .read(gamebaseRepositoryProvider)
-            .getPlayerGames(
-              playerId: _playerId,
-              color: 'all',
-              pageNumber: pageNumber,
-              pageSize: _pageSize,
-              includeData: true,
-            );
+        final repository = _ref.read(gamebaseRepositoryProvider);
+        final memorialSourceIdentity = _memorialSourceIdentity;
+        final response =
+            memorialSourceIdentity == null
+                ? await repository.getPlayerGames(
+                  playerId: _playerId,
+                  color: 'all',
+                  pageNumber: pageNumber,
+                  pageSize: _pageSize,
+                  includeData: true,
+                )
+                : await repository.getMemorialPlayerGames(
+                  sourceIdentity: memorialSourceIdentity,
+                  color: 'all',
+                  pageNumber: pageNumber,
+                  pageSize: 100,
+                  includeData: true,
+                );
         if (!mounted || generation != _generation) return;
 
         final pageRows = _rowsFromPlayerGamesResponse(response);

@@ -1759,12 +1759,14 @@ class GamebaseRepository {
     bool? isOnline,
     int pageNumber = 0,
     int pageSize = 100,
+    bool includeData = false,
   }) async {
     final queryParams = <String, dynamic>{
       'color': color,
       if (q != null && q.isNotEmpty) 'q': q,
       'pageNumber': pageNumber,
       'pageSize': pageSize,
+      if (includeData) 'includeData': true,
       if (timeControl != null) 'timeControl': timeControl,
       if (outcome != null) 'outcome': outcome,
       if (eco != null) 'eco': eco,
@@ -1835,6 +1837,50 @@ class GamebaseRepository {
     return Map<String, dynamic>.from(response.data);
   }
 
+  Future<Map<String, dynamic>> getMemorialPlayerStats({
+    required String sourceIdentity,
+    String? q,
+    String color = 'all',
+    String? timeControl,
+    String? outcome,
+    String? eco,
+    String? opening,
+    String? variation,
+    String? event,
+    String? site,
+    String? dateFrom,
+    String? dateTo,
+    String? opponentId,
+    int? ratingFrom,
+    int? ratingTo,
+    bool? isOnline,
+  }) async {
+    final queryParams = <String, dynamic>{
+      'color': color,
+      if (q != null && q.isNotEmpty) 'q': q,
+      if (timeControl != null) 'timeControl': timeControl,
+      if (outcome != null) 'outcome': outcome,
+      if (eco != null) 'eco': eco,
+      if (opening != null) 'opening': opening,
+      if (variation != null) 'variation': variation,
+      if (event != null) 'event': event,
+      if (site != null) 'site': site,
+      if (dateFrom != null) 'dateFrom': dateFrom,
+      if (dateTo != null) 'dateTo': dateTo,
+      if (opponentId != null) 'opponentId': opponentId,
+      if (ratingFrom != null) 'ratingFrom': ratingFrom,
+      if (ratingTo != null) 'ratingTo': ratingTo,
+      if (isOnline != null) 'isOnline': isOnline,
+    };
+    final response = await _dio.get(
+      '$_baseUrl/api/player/memorial/${Uri.encodeComponent(sourceIdentity)}'
+      '/stats',
+      queryParameters: queryParams,
+      options: _requestOptions(),
+    );
+    return Map<String, dynamic>.from(response.data);
+  }
+
   /// Start or reuse a backend-built player opening tree.
   ///
   /// Build Tree tabs always pass `forceRebuild: false`; the parameter remains
@@ -1879,6 +1925,20 @@ class GamebaseRepository {
     }
   }
 
+  Future<Map<String, dynamic>> startMemorialOpeningTreeBuild({
+    required String sourceIdentity,
+    int maxPly = 24,
+    bool forceRebuild = false,
+  }) async {
+    final response = await _dio.post(
+      '$_openingTreeBaseUrl/api/player/memorial/'
+      '${Uri.encodeComponent(sourceIdentity)}/opening-tree/build',
+      data: <String, dynamic>{'maxPly': maxPly, 'forceRebuild': forceRebuild},
+      options: _openingTreeRequestOptions(),
+    );
+    return Map<String, dynamic>.from(response.data);
+  }
+
   /// Poll the backend player opening tree build status.
   Future<Map<String, dynamic>> getPlayerOpeningTreeStatus({
     required String playerId,
@@ -1896,6 +1956,19 @@ class GamebaseRepository {
         'body=${_debugBody(response.data)}',
       );
     }
+    return Map<String, dynamic>.from(response.data);
+  }
+
+  Future<Map<String, dynamic>> getMemorialOpeningTreeStatus({
+    required String sourceIdentity,
+    required String treeId,
+  }) async {
+    final response = await _dio.get(
+      '$_openingTreeBaseUrl/api/player/memorial/'
+      '${Uri.encodeComponent(sourceIdentity)}/opening-tree/status',
+      queryParameters: <String, dynamic>{'treeId': treeId},
+      options: _openingTreeRequestOptions(),
+    );
     return Map<String, dynamic>.from(response.data);
   }
 
@@ -1930,6 +2003,25 @@ class GamebaseRepository {
           'type=${e.type} body=${_debugBody(e.response?.data)}',
         );
       }
+      if (e.response?.statusCode == 202) return null;
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getMemorialOpeningTree({
+    required String sourceIdentity,
+    required String treeId,
+  }) async {
+    try {
+      final response = await _dio.get(
+        '$_openingTreeBaseUrl/api/player/memorial/'
+        '${Uri.encodeComponent(sourceIdentity)}/opening-tree',
+        queryParameters: <String, dynamic>{'treeId': treeId},
+        options: _openingTreeRequestOptions(),
+      );
+      if (response.statusCode == 202) return null;
+      return Map<String, dynamic>.from(response.data);
+    } on DioException catch (e) {
       if (e.response?.statusCode == 202) return null;
       rethrow;
     }
