@@ -9,7 +9,7 @@ import 'package:chessever/providers/group_event_category.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
-import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
+import 'package:chessever/screens/group_event/providers/live_event_feed.dart';
 import 'package:chessever/screens/group_event/providers/live_group_broadcast_id_provider.dart';
 
 const String tournamentLiveFirstPreferenceKey =
@@ -43,15 +43,24 @@ final tournamentLiveFirstProvider =
     StateNotifierProvider<TournamentLiveFirstController, bool>((ref) {
       return TournamentLiveFirstController(
         ref.watch(tournamentLiveFirstStoreProvider),
+        // The feed providers own the queries, so the persisted desktop
+        // preference is mirrored down into the data layer instead of the
+        // providers reaching up into desktop state. Every write here ends in
+        // a refetch, which is what makes the toggle reversible: both
+        // directions publish an order the server returned.
+        onChanged:
+            (value) =>
+                ref.read(liveFirstOrderingProvider.notifier).state = value,
       );
     });
 
 class TournamentLiveFirstController extends StateNotifier<bool> {
-  TournamentLiveFirstController(this._store) : super(false) {
+  TournamentLiveFirstController(this._store, {this.onChanged}) : super(false) {
     restored = _restore();
   }
 
   final TournamentLiveFirstStore _store;
+  final void Function(bool value)? onChanged;
   late final Future<void> restored;
   bool _userChanged = false;
 
@@ -60,6 +69,7 @@ class TournamentLiveFirstController extends StateNotifier<bool> {
       final saved = await _store.read();
       if (!mounted || _userChanged || saved == null) return;
       state = saved;
+      onChanged?.call(saved);
     } catch (error) {
       debugPrint('Tournament Live first preference restore failed: $error');
     }
@@ -68,6 +78,7 @@ class TournamentLiveFirstController extends StateNotifier<bool> {
   Future<void> setEnabled(bool value) async {
     _userChanged = true;
     if (mounted) state = value;
+    onChanged?.call(value);
     try {
       await _store.write(value);
     } catch (error) {
@@ -133,20 +144,18 @@ final queriedLiveGameEventIdsProvider = AutoDisposeFutureProvider<Set<String>>((
   return ids;
 });
 
-/// Pre-loads live events the For You feed has not paged in yet.
+/// Pre-loads live events the For You feed has not paged in yet, and re-ranks
+/// when an event goes live that the last cohort query predates.
 ///
-/// `orderTournamentEventsForDisplay` can only promote events that are already
-/// in the list. The feed pages 20 at a time ordered by rating, and a live event
-/// frequently sits well below that window (a live club event can rank 25th),
-/// so reordering alone has nothing to move and Live first reads as a dead
-/// button.
+/// The feed pages 20 at a time ordered by rating, and a live event frequently
+/// sits well below that window (a live club event can rank 25th), so the row
+/// has to exist before anything can rank it. Hydration pulls it in and
+/// re-derives its live category; it never decides position.
 ///
-/// This deliberately does **not** wait for the toggle to be switched on. Doing
-/// the fetch on tap put two round trips (broadcast rows + top-game snapshots)
-/// between the click and the resort, so the promotion visibly trailed the
-/// button. Hydrating as soon as the live IDs are known makes the toggle a pure
-/// in-memory reorder that lands on the same frame as the tap. Hydration itself
-/// preserves source order so switching the preference off is reversible.
+/// Position is decided by a query. When Live first is on and an id shows up
+/// that the ranked cohort does not contain, `refreshLiveFirstOrder` asks
+/// Supabase again rather than promoting the card locally — so what the user
+/// sees is always an ordering the server produced.
 final tournamentLiveEventPrefetchProvider = Provider.autoDispose<void>((ref) {
   final liveIds = ref.watch(tournamentLiveGameEventIdsProvider);
   if (liveIds.isEmpty) return;
@@ -155,31 +164,33 @@ final tournamentLiveEventPrefetchProvider = Provider.autoDispose<void>((ref) {
   // Off the build phase: this provider is read during a widget build and
   // `hydrateEvents` publishes new feed state. Pass every live id, not only
   // missing ones, so an already-loaded upcoming row that just went live is
-  // recategorized without a restart. The display projection promotes it only
-  // while Live first is enabled.
-  Future.microtask(() => notifier.hydrateEvents(liveIds));
+  // recategorized without a restart.
+  Future.microtask(() async {
+    await notifier.hydrateEvents(liveIds);
+    await notifier.refreshLiveFirstOrder(liveIds);
+  });
 });
 
 /// The same event IDs the For You "Live" status filter returns.
-final forYouLiveFilterEventIdsProvider = AutoDisposeFutureProvider<Set<String>>((
-  ref,
-) async {
-  final refresh = Timer(_liveGameEventIdsRefreshInterval, ref.invalidateSelf);
-  ref.onDispose(refresh.cancel);
+final forYouLiveFilterEventIdsProvider = AutoDisposeFutureProvider<Set<String>>(
+  (ref) async {
+    final refresh = Timer(_liveGameEventIdsRefreshInterval, ref.invalidateSelf);
+    ref.onDispose(refresh.cancel);
 
-  try {
-    final broadcasts = await ref
-        .watch(groupBroadcastRepositoryProvider)
-        .getForYouGroupBroadcasts(limit: 100, statusFilters: const ['live']);
-    return {
-      for (final broadcast in broadcasts)
-        if (broadcast.id.isNotEmpty) broadcast.id,
-    };
-  } catch (error) {
-    debugPrint('Live-first For You live filter query failed: $error');
-    return const <String>{};
-  }
-});
+    try {
+      final broadcasts = await ref
+          .watch(groupBroadcastRepositoryProvider)
+          .getLiveFirstGroupBroadcasts(limit: 100);
+      return {
+        for (final broadcast in broadcasts)
+          if (broadcast.id.isNotEmpty) broadcast.id,
+      };
+    } catch (error) {
+      debugPrint('Live-first For You live filter query failed: $error');
+      return const <String>{};
+    }
+  },
+);
 
 /// Union of every signal the Live filter already trusts, plus live boards
 /// already painted on For You cards.
@@ -269,31 +280,10 @@ Set<String> liveEventIdsFromForYouSnapshots(
   return ids;
 }
 
-bool _eventHasLiveGames(
-  GroupEventCardModel event, {
-  required Set<String> liveGameEventIds,
-}) {
-  return liveGameEventIds.contains(event.id) ||
-      event.tourEventCategory == TourEventCategory.live;
-}
-
-/// Returns a display-only ordering without mutating the provider-owned list.
-///
-/// When [liveFirst] is enabled, events with live games are promoted as one
-/// stable cohort. The existing personalized order remains unchanged inside
-/// both the live and non-live cohorts.
-List<GroupEventCardModel> orderTournamentEventsForDisplay(
-  Iterable<GroupEventCardModel> events, {
-  required bool liveFirst,
-  Set<String> liveGameEventIds = const <String>{},
-}) {
-  final ordered = events.toList(growable: false);
-  if (!liveFirst) return ordered;
-
-  return <GroupEventCardModel>[
-    for (final event in ordered)
-      if (_eventHasLiveGames(event, liveGameEventIds: liveGameEventIds)) event,
-    for (final event in ordered)
-      if (!_eventHasLiveGames(event, liveGameEventIds: liveGameEventIds)) event,
-  ];
-}
+// Live-first ordering deliberately has no display-time counterpart here.
+// Sorting what is drawn hides a second, contradictory source of truth behind
+// the list the providers publish, and it can only ever move rows the feed has
+// already paged in. Ordering belongs to the query: see
+// `GroupBroadcastRepository.getLiveFirstGroupBroadcasts` for the ranked live
+// slice, and `orderEventsByLiveCohort` in `live_event_feed.dart` for the
+// data-layer pass the feed providers run over their own query results.

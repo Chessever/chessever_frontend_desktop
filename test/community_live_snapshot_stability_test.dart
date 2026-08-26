@@ -10,6 +10,7 @@ import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
+import 'package:chessever/screens/group_event/providers/live_event_feed.dart';
 import 'package:chessever/screens/group_event/providers/live_group_broadcast_id_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
@@ -52,6 +53,23 @@ class _SequencedBroadcastRepository implements GroupBroadcastRepository {
   final List<GroupBroadcast> catalog;
   int calls = 0;
   final List<List<String>> byIdRequests = <List<String>>[];
+
+  /// What the server returns for the ranked `live` slice, and how many times
+  /// it was actually asked. Live first is only query-driven if the count moves
+  /// when the preference flips.
+  List<GroupBroadcast> rankedLive = const <GroupBroadcast>[];
+  int liveFirstQueryCount = 0;
+
+  @override
+  Future<List<GroupBroadcast>> getLiveFirstGroupBroadcasts({
+    int limit = 60,
+    List<String>? timeControlFilters,
+    int? minElo,
+    int? maxElo,
+  }) async {
+    liveFirstQueryCount += 1;
+    return rankedLive;
+  }
 
   @override
   Future<List<GroupBroadcast>> getForYouGroupBroadcasts({
@@ -137,6 +155,90 @@ Future<void> _waitFor(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'For You Live first is a refetch, and turning it off is another',
+    () async {
+      final offPageLive = _broadcast(
+        id: 'titled-tuesday',
+        name: 'Titled Tuesday',
+        maxAvgElo: 2400,
+      );
+      final broadcasts = _SequencedBroadcastRepository(
+        <List<GroupBroadcast>>[
+          <GroupBroadcast>[
+            _broadcast(
+              id: 'starred-open',
+              name: 'Starred Open',
+              maxAvgElo: 2700,
+            ),
+            _broadcast(id: 'club-open', name: 'Club Open', maxAvgElo: 2600),
+          ],
+        ],
+        catalog: <GroupBroadcast>[offPageLive],
+      );
+      // The live event the user wants ranks 2400 — well below the paged window.
+      // Only a query can surface it; there is nothing on screen to reorder.
+      broadcasts.rankedLive = <GroupBroadcast>[offPageLive];
+
+      final container = ProviderContainer(
+        overrides: [
+          groupBroadcastRepositoryProvider.overrideWithValue(broadcasts),
+          gameRepositoryProvider.overrideWithValue(_EmptyGameRepository()),
+          favoriteEventsProvider.overrideWith(_EmptyFavoriteEventsNotifier.new),
+          favoritePlayersProviderNew.overrideWith(
+            _EmptyFavoritePlayersNotifier.new,
+          ),
+          liveGroupBroadcastIdsProvider.overrideWith(
+            (ref) => Stream<List<String>>.value(const <String>[]),
+          ),
+          liveRoundsIdProvider.overrideWith(
+            (ref) => const Stream<List<String>>.empty(),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final subscription = container.listen<ForYouState>(
+        forYouEventsProvider,
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+
+      List<String> feedIds() => container
+          .read(forYouEventsProvider)
+          .events
+          .map((event) => event.id)
+          .toList(growable: false);
+
+      await _waitFor(() => feedIds().length == 2);
+      expect(feedIds(), <String>['starred-open', 'club-open']);
+      expect(
+        broadcasts.liveFirstQueryCount,
+        0,
+        reason: 'the ranking query must not run while Live first is off',
+      );
+
+      container.read(liveFirstOrderingProvider.notifier).state = true;
+      await _waitFor(
+        () => feedIds().isNotEmpty && feedIds().first == 'titled-tuesday',
+      );
+      expect(broadcasts.liveFirstQueryCount, greaterThan(0));
+      expect(feedIds(), <String>[
+        'titled-tuesday',
+        'starred-open',
+        'club-open',
+      ]);
+
+      container.read(liveFirstOrderingProvider.notifier).state = false;
+      await _waitFor(
+        () => feedIds().isNotEmpty && feedIds().first == 'starred-open',
+      );
+      // Off refetches too, so the canonical ranking is the server's answer
+      // rather than a remembered client-side copy.
+      expect(feedIds(), <String>['starred-open', 'club-open']);
+    },
+  );
 
   test(
     'refresh does not swap Titled Tuesday siblings as mutable rankings change',

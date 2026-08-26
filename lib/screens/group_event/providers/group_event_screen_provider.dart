@@ -82,10 +82,18 @@ _GroupEventScreenController _buildGroupEventController(
     appliedFilter = ref.watch(currentPastAppliedFilterProvider);
   }
 
+  // Live first is watched, not read: flipping it rebuilds the controller and
+  // re-runs `loadTours`, so the order on screen is always the order the last
+  // query produced. Past is excluded — a finished event has no live cohort.
+  final liveFirst =
+      tourEventCategory != GroupEventCategory.past &&
+      ref.watch(liveFirstOrderingProvider);
+
   return _GroupEventScreenController(
     ref: ref,
     tourEventCategory: tourEventCategory,
     appliedFilter: appliedFilter,
+    liveFirst: liveFirst,
   );
 }
 
@@ -96,6 +104,7 @@ class _GroupEventScreenController
     required this.ref,
     required this.tourEventCategory,
     this.appliedFilter = defaultFilterPopupState,
+    this.liveFirst = false,
   }) : super(const AsyncValue.loading()) {
     loadTours();
     _listenToLiveIds();
@@ -107,6 +116,7 @@ class _GroupEventScreenController
   @override
   final GroupEventCategory tourEventCategory;
   final FilterPopupState appliedFilter;
+  final bool liveFirst;
   bool get isFetchingMore => _pastIsFetching;
 
   int _pastOffset = 50;
@@ -230,7 +240,23 @@ class _GroupEventScreenController
                   eventFavoritePlayersMap: eventFavoritePlayersMap,
                 );
 
-        state = AsyncValue.data(sortedTours);
+        if (!liveFirst) {
+          state = AsyncValue.data(sortedTours);
+          return;
+        }
+
+        // Live first outranks the favorite sort, so the re-sort has to be
+        // re-ranked by the same query before it is published. Publishing the
+        // favorite order first and correcting it afterwards would show the
+        // list jumping.
+        unawaited(() async {
+          final ordered = await _orderByLiveFirstQuery(
+            sortedTours,
+            ref.read(liveBroadcastIdsProvider),
+          );
+          if (!mounted) return;
+          state = AsyncValue.data(ordered);
+        }());
       });
     });
   }
@@ -246,6 +272,42 @@ class _GroupEventScreenController
     } catch (_) {
       return const <String>[];
     }
+  }
+
+  /// Ranks the live cohort first using the server's own ordering.
+  ///
+  /// The cohort comes from `get_for_you_group_broadcasts` restricted to the
+  /// `live` status — the same ranking the feed uses — so Live first is a query
+  /// result rather than a client-side reshuffle of what is on screen. The
+  /// realtime live-id set is appended behind it because it can know about an
+  /// event the ranked slice has not caught up to yet. A failed query leaves
+  /// the canonical order untouched.
+  Future<List<GroupEventCardModel>> _orderByLiveFirstQuery(
+    List<GroupEventCardModel> events,
+    List<String> liveIds,
+  ) async {
+    if (!liveFirst || events.isEmpty) return events;
+
+    var cohortIds = const <String>[];
+    try {
+      final ranked =
+          await ref
+              .read(groupBroadcastRepositoryProvider)
+              .getLiveFirstGroupBroadcasts();
+      cohortIds = <String>[
+        for (final broadcast in ranked)
+          if (broadcast.id.trim().isNotEmpty) broadcast.id.trim(),
+      ];
+    } catch (error, stackTrace) {
+      debugPrint('Live-first ordering query failed: $error\n$stackTrace');
+    }
+
+    final orderedCohort = <String>[
+      ...cohortIds,
+      ...liveIds.where((id) => id.trim().isNotEmpty),
+    ];
+    if (orderedCohort.isEmpty) return events;
+    return orderEventsByLiveCohort(events: events, cohortIds: orderedCohort);
   }
 
   Future<List<GroupBroadcast>> _appendMissingLiveBroadcasts(
@@ -298,11 +360,13 @@ class _GroupEventScreenController
                   GroupEventCardModel.fromGroupBroadcast(broadcast, liveIds),
             )
             .toList();
-    final next = mergeLiveEventsPreservingSourceOrder(
+    final merged = mergeLiveEventsPreservingSourceOrder(
       current: currentModels ?? const <GroupEventCardModel>[],
       additions: additions,
       liveIds: liveIds,
     );
+    final next = await _orderByLiveFirstQuery(merged, liveIds);
+    if (!mounted) return;
     if (liveEventFeedUnchanged(currentModels ?? const [], next)) return;
 
     state = AsyncValue.data(next);
@@ -400,7 +464,13 @@ class _GroupEventScreenController
               )
               : sortingService.sortAllTours(tourEventCardModel);
 
-      state = AsyncValue.data(sortedTours);
+      final orderedTours = await _orderByLiveFirstQuery(
+        sortedTours,
+        strictLiveIds,
+      );
+      if (!mounted) return;
+
+      state = AsyncValue.data(orderedTours);
     } catch (error, stackTrace) {
       state = AsyncValue.error(error, stackTrace);
     }
@@ -513,7 +583,13 @@ class _GroupEventScreenController
               )
               : sortingService.sortAllTours(tourEventCardModel);
 
-      state = AsyncValue.data(sortedTours);
+      final orderedTours = await _orderByLiveFirstQuery(
+        sortedTours,
+        strictLiveIds,
+      );
+      if (!mounted) return;
+
+      state = AsyncValue.data(orderedTours);
     } catch (err, stk) {
       state = AsyncValue.error(err, stk);
     }
