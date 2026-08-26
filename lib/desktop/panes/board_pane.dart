@@ -639,6 +639,52 @@ class BoardPane extends ConsumerWidget {
   }
 }
 
+/// Hosts the Board pane's panes, and steps aside when there is only one.
+///
+/// Picture-in-picture hides the games rail (via focus mode) and the analysis
+/// rail, so the Board is the only child left. `ResizableSplitView` requires at
+/// least two — it has nothing to divide otherwise — and asserts. That assert
+/// fires in debug and profile builds, which is every `flutter run`, so PiP was
+/// a red screen for anyone developing or testing against a non-release build.
+///
+/// Release builds strip asserts, so this was never a crash for shipped users;
+/// there the split simply rendered one child with no gutter. The single-child
+/// path is meaningless either way, so bypass the splitter instead of relaxing
+/// its invariant: a divider between one pane and nothing is not a thing, and
+/// the assert is worth keeping for every other caller.
+///
+/// The controller is left unattached while bypassed. That is safe by design —
+/// every `ResizableSplitViewController` method is a no-op until a view mounts
+/// — so the focus-mode `setFraction` and the board-size `setSize` calls simply
+/// do nothing in PiP, where there is no neighbour to redistribute into.
+class _BoardPaneSplitView extends StatelessWidget {
+  const _BoardPaneSplitView({
+    required this.controller,
+    required this.storageKey,
+    required this.children,
+  });
+
+  final ResizableSplitViewController controller;
+  final String? storageKey;
+  final List<SplitChild> children;
+
+  @override
+  Widget build(BuildContext context) {
+    // The Board child is unconditional today, so an empty list would mean the
+    // caller stopped building the board at all. Render nothing rather than
+    // handing an empty list to the splitter's own assert.
+    if (children.isEmpty) return const SizedBox.shrink();
+    if (children.length == 1) return children.single.child;
+
+    return ResizableSplitView(
+      axis: Axis.horizontal,
+      controller: controller,
+      storageKey: storageKey,
+      children: children,
+    );
+  }
+}
+
 class _BoardPaneContent extends HookConsumerWidget {
   const _BoardPaneContent({this.tabId});
 
@@ -4613,8 +4659,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           // is selected, but everywhere else we want the shell-level
           // shortcuts to be live.
           canRequestFocus: true,
-          child: ResizableSplitView(
-            axis: Axis.horizontal,
+          child: _BoardPaneSplitView(
             controller: mainSplitController,
             // Storage key flips between contextual and scratch modes so the
             // split view keeps independent persisted widths. Event and

@@ -15,6 +15,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/board_picture_in_picture_mode.dart';
+import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
@@ -1141,6 +1143,82 @@ void main() {
     }
     expect(railListenCount, 2);
   });
+
+  testWidgets(
+    'picture-in-picture renders the board without a one-child split',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(900, 620);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final activeUpdates = StreamController<Map<String, dynamic>?>.broadcast(
+        sync: true,
+      );
+      final railUpdates =
+          StreamController<Map<String, LiveGameUpdate>>.broadcast(sync: true);
+      addTearDown(activeUpdates.close);
+      addTearDown(railUpdates.close);
+
+      final initialMoveTime = DateTime.utc(2026, 7, 14, 18);
+      final sourceGame = _forYouSourceGame(initialMoveTime);
+      final game = TournamentGameSummary.fromGamesTourModel(sourceGame);
+      final args = BoardTabGameArgs(
+        gameId: game.id,
+        pgn: _livePgn,
+        label: 'White 1 - Black 1',
+        whiteName: game.whitePlayer,
+        blackName: game.blackPlayer,
+        tournamentTitle: 'Titled Tuesday',
+        fenSeed: _liveFen,
+        sourceGame: sourceGame,
+        viewSource: ChessboardView.forYou,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            boardPictureInPictureModeProvider.overrideWith((ref) => true),
+            boardTabGameArgsByTabIdProvider.overrideWith(
+              (ref) => <String, BoardTabGameArgs>{'pip': args},
+            ),
+            boardSettingsProviderNew.overrideWith(
+              _TestBoardSettingsNotifier.new,
+            ),
+            engineSettingsProviderNew.overrideWith(
+              _TestEngineSettingsNotifier.new,
+            ),
+            keyboardShortcutsProvider.overrideWith(
+              _TestKeyboardShortcutsNotifier.new,
+            ),
+            liveGameUpdateArrivalStreamProvider.overrideWith(
+              (ref, gameId) => _typedArrivals(activeUpdates.stream, gameId),
+            ),
+            gameUpdatesBatchStreamProvider.overrideWith(
+              (ref, key) => railUpdates.stream,
+            ),
+            dateTimeProvider.overrideWith(
+              (ref) => Stream<DateTime>.value(initialMoveTime),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: BoardPane(tabId: 'pip')),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(DesktopChessBoard), findsOneWidget);
+      // The exception check above only proves the debug-mode assert is gone.
+      // Release builds strip asserts, so pin the actual structural claim as
+      // well: PiP must not construct a splitter at all, in any build mode.
+      // Otherwise a later refactor could satisfy the assert by handing the
+      // splitter a filler pane and quietly reintroduce a dead gutter.
+      expect(find.byType(ResizableSplitView), findsNothing);
+    },
+  );
 }
 
 typedef _TickRebuildMetrics =
