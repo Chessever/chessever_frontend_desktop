@@ -49,16 +49,14 @@ bool liveEventFeedUnchanged(
   return true;
 }
 
-/// Inserts [additions] that aren't already in [current], refreshes live
-/// categories from [liveIds], and promotes events that just went live.
+/// Inserts [additions] that aren't already in [current] and refreshes live
+/// categories from [liveIds] without changing the provider-owned source order.
 ///
-/// Newly live rows (including ones that were already on the page as upcoming /
-/// ongoing) move to the front as a cohort. Events that were already live keep
-/// their relative order after that cohort, and everything else keeps its
-/// relative order. This is how a Titled Tuesday that starts while the home
-/// feed is open can appear without a restart, without shuffling siblings whose
-/// ranking merely jittered.
-List<GroupEventCardModel> mergeAndPromoteLiveEvents({
+/// Live-first is an optional presentation preference. Hydration must therefore
+/// preserve the normal personalized order so disabling that preference can
+/// immediately restore it. The display projection decides whether to promote
+/// the live cohort.
+List<GroupEventCardModel> mergeLiveEventsPreservingSourceOrder({
   required List<GroupEventCardModel> current,
   List<GroupEventCardModel> additions = const [],
   required Iterable<String> liveIds,
@@ -83,27 +81,5 @@ List<GroupEventCardModel> mergeAndPromoteLiveEvents({
     add(event);
   }
 
-  if (liveIdList.isEmpty) return merged;
-
-  final previouslyLiveIds = <String>{
-    for (final event in current)
-      if (event.tourEventCategory == TourEventCategory.live) event.id,
-  };
-
-  final newlyLive = <GroupEventCardModel>[];
-  final alreadyLive = <GroupEventCardModel>[];
-  final rest = <GroupEventCardModel>[];
-  for (final event in merged) {
-    if (event.tourEventCategory != TourEventCategory.live) {
-      rest.add(event);
-      continue;
-    }
-    if (previouslyLiveIds.contains(event.id)) {
-      alreadyLive.add(event);
-    } else {
-      newlyLive.add(event);
-    }
-  }
-
-  return [...newlyLive, ...alreadyLive, ...rest];
+  return merged;
 }

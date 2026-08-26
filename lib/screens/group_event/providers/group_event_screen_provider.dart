@@ -298,7 +298,7 @@ class _GroupEventScreenController
                   GroupEventCardModel.fromGroupBroadcast(broadcast, liveIds),
             )
             .toList();
-    final next = mergeAndPromoteLiveEvents(
+    final next = mergeLiveEventsPreservingSourceOrder(
       current: currentModels ?? const <GroupEventCardModel>[],
       additions: additions,
       liveIds: liveIds,

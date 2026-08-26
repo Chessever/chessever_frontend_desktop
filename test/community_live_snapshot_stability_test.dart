@@ -270,7 +270,7 @@ void main() {
   });
 
   test(
-    'a newly live event is appended and promoted without swapping siblings',
+    'a newly live event is appended without replacing personalized order',
     () async {
       final titledTuesday = _broadcast(
         id: 'titled-tuesday',
@@ -332,21 +332,21 @@ void main() {
       await _waitFor(
         () =>
             container.read(forYouEventsProvider).events.length == 3 &&
-            container.read(forYouEventsProvider).events.first.id ==
+            container.read(forYouEventsProvider).events.last.id ==
                 'titled-tuesday',
       );
       expect(
         container.read(forYouEventsProvider).events.map((event) => event.id),
-        <String>['titled-tuesday', 'starred-open', 'club-open'],
+        <String>['starred-open', 'club-open', 'titled-tuesday'],
       );
       expect(
-        container.read(forYouEventsProvider).events.first.tourEventCategory,
+        container.read(forYouEventsProvider).events.last.tourEventCategory,
         TourEventCategory.live,
       );
     },
   );
 
-  test('an already-loaded event is promoted when it goes live', () async {
+  test('an already-loaded live event keeps its source position', () async {
     final titledTuesday = _broadcast(
       id: 'titled-tuesday',
       name: 'Titled Tuesday',
@@ -398,17 +398,17 @@ void main() {
 
     liveUpdates.add(const <String>['titled-tuesday']);
 
-    await _waitFor(
-      () =>
-          container.read(forYouEventsProvider).events.first.id ==
-          'titled-tuesday',
-    );
+    await _waitFor(() {
+      final events = container.read(forYouEventsProvider).events;
+      return events.length == 2 &&
+          events[1].tourEventCategory == TourEventCategory.live;
+    });
     expect(
       container.read(forYouEventsProvider).events.map((event) => event.id),
-      <String>['titled-tuesday', 'starred-open'],
+      <String>['starred-open', 'titled-tuesday'],
     );
     expect(
-      container.read(forYouEventsProvider).events.first.tourEventCategory,
+      container.read(forYouEventsProvider).events[1].tourEventCategory,
       TourEventCategory.live,
     );
   });
@@ -468,7 +468,7 @@ void main() {
 
       expect(
         container.read(forYouEventsProvider).events.map((event) => event.id),
-        <String>['titled-tuesday', 'starred-open', 'club-open'],
+        <String>['starred-open', 'club-open', 'titled-tuesday'],
       );
       expect(
         container.read(forYouEventSnapshotProvider('titled-tuesday')).isLoading,

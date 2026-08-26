@@ -377,8 +377,8 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     unawaited(ref.read(errorLoggerProvider).logError(error, stackTrace));
   }
 
-  /// Loads events the paged feed has not fetched yet, by id, then promotes
-  /// anything that just went live.
+  /// Loads events the paged feed has not fetched yet and refreshes live status
+  /// without changing the normal personalized source order.
   ///
   /// For You pages 20 events at a time ordered by rating, so an event the user
   /// needs to see — a Titled Tuesday that starts while the tab is open — can
@@ -431,7 +431,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     ]);
     if (!mounted) return;
 
-    final next = mergeAndPromoteLiveEvents(
+    final next = mergeLiveEventsPreservingSourceOrder(
       current: state.events,
       additions: additions,
       liveIds: liveIds,
@@ -452,7 +452,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     final retained = _retainedLiveEvents(liveIds);
     if (retained.isEmpty) return pageEvents;
 
-    final next = mergeAndPromoteLiveEvents(
+    final next = mergeLiveEventsPreservingSourceOrder(
       current: pageEvents,
       additions: retained,
       liveIds: <String>{...liveIds, for (final event in retained) event.id},

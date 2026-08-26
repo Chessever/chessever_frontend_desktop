@@ -46,46 +46,52 @@ void main() {
     });
   });
 
-  group('mergeAndPromoteLiveEvents', () {
-    test('appends a newly live event and promotes it to the front', () {
+  group('mergeLiveEventsPreservingSourceOrder', () {
+    test('hydration preserves source order for reversible presentation', () {
       final current = [
         _event('starred', TourEventCategory.ongoing),
+        _event('loaded-live', TourEventCategory.live),
         _event('high-elo', TourEventCategory.ongoing),
       ];
 
-      final merged = mergeAndPromoteLiveEvents(
+      final merged = mergeLiveEventsPreservingSourceOrder(
         current: current,
         additions: [_event('titled-tuesday', TourEventCategory.upcoming)],
-        liveIds: const ['titled-tuesday'],
+        liveIds: const ['loaded-live', 'titled-tuesday'],
       );
 
       expect(merged.map((event) => event.id), [
-        'titled-tuesday',
         'starred',
+        'loaded-live',
+        'high-elo',
+        'titled-tuesday',
+      ]);
+      expect(merged.last.tourEventCategory, TourEventCategory.live);
+      expect(current.map((event) => event.id), [
+        'starred',
+        'loaded-live',
         'high-elo',
       ]);
-      expect(merged.first.tourEventCategory, TourEventCategory.live);
-      expect(current.map((event) => event.id), ['starred', 'high-elo']);
     });
 
-    test('promotes an already-loaded event that just went live', () {
+    test('refreshes an already-loaded event without moving it', () {
       final current = [
         _event('starred', TourEventCategory.ongoing),
         _event('titled-tuesday', TourEventCategory.upcoming),
         _event('club', TourEventCategory.ongoing),
       ];
 
-      final merged = mergeAndPromoteLiveEvents(
+      final merged = mergeLiveEventsPreservingSourceOrder(
         current: current,
         liveIds: const ['titled-tuesday'],
       );
 
       expect(merged.map((event) => event.id), [
-        'titled-tuesday',
         'starred',
+        'titled-tuesday',
         'club',
       ]);
-      expect(merged.first.tourEventCategory, TourEventCategory.live);
+      expect(merged[1].tourEventCategory, TourEventCategory.live);
     });
 
     test('does not swap siblings that were already live', () {
@@ -95,7 +101,7 @@ void main() {
         _event('club', TourEventCategory.ongoing),
       ];
 
-      final merged = mergeAndPromoteLiveEvents(
+      final merged = mergeLiveEventsPreservingSourceOrder(
         current: current,
         liveIds: const ['titled-tuesday-2', 'titled-tuesday-1'],
       );
@@ -107,25 +113,26 @@ void main() {
       ]);
     });
 
-    test('keeps already-live events after the newly live cohort', () {
+    test('appends unseen live events after the existing source rows', () {
       final current = [
         _event('already-live', TourEventCategory.live),
         _event('starred', TourEventCategory.ongoing),
         _event('club', TourEventCategory.ongoing),
       ];
 
-      final merged = mergeAndPromoteLiveEvents(
+      final merged = mergeLiveEventsPreservingSourceOrder(
         current: current,
         additions: [_event('titled-tuesday', TourEventCategory.upcoming)],
         liveIds: const ['already-live', 'titled-tuesday'],
       );
 
       expect(merged.map((event) => event.id), [
-        'titled-tuesday',
         'already-live',
         'starred',
         'club',
+        'titled-tuesday',
       ]);
+      expect(merged.last.tourEventCategory, TourEventCategory.live);
     });
   });
 }

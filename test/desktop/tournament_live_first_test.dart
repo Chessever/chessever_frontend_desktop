@@ -7,6 +7,7 @@ import 'package:chessever/desktop/widgets/tournament_live_first_toggle.dart';
 import 'package:chessever/providers/group_event_category.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
+import 'package:chessever/screens/group_event/providers/live_event_feed.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -81,6 +82,10 @@ void main() {
         File('lib/desktop/panes/tournaments_pane.dart').readAsStringSync();
     final forYouSource =
         File('lib/providers/for_you_games_provider.dart').readAsStringSync();
+    final currentSource =
+        File(
+          'lib/screens/group_event/providers/group_event_screen_provider.dart',
+        ).readAsStringSync();
 
     expect(stateSource, contains('tournamentLiveEventPrefetchProvider'));
     expect(stateSource, contains('hydrateEvents(liveIds)'));
@@ -104,6 +109,10 @@ void main() {
       contains('_prefetchTopGameSnapshots(additions, replace: false)'),
     );
     expect(forYouSource, contains('_hydratingEventIds'));
+    expect(forYouSource, contains('mergeLiveEventsPreservingSourceOrder'));
+    expect(currentSource, contains('mergeLiveEventsPreservingSourceOrder'));
+    expect(forYouSource, isNot(contains('mergeAndPromoteLiveEvents')));
+    expect(currentSource, isNot(contains('mergeAndPromoteLiveEvents')));
   });
 
   test('desktop chrome tooltips never install a long-press recognizer', () {
@@ -374,6 +383,58 @@ void main() {
       'favorite-ongoing',
       'live',
       'upcoming',
+    ]);
+  });
+
+  test('hydrated source returns to personalized order after on then off', () {
+    final source = [
+      _event('personalized-a', TourEventCategory.ongoing),
+      _event('live-b', TourEventCategory.live),
+      _event('personalized-c', TourEventCategory.ongoing),
+    ];
+    final hydrated = mergeLiveEventsPreservingSourceOrder(
+      current: source,
+      additions: [_event('live-d', TourEventCategory.upcoming)],
+      liveIds: const ['live-b', 'live-d'],
+    );
+
+    final initialOff = orderTournamentEventsForDisplay(
+      hydrated,
+      liveFirst: false,
+    );
+    final enabled = orderTournamentEventsForDisplay(
+      hydrated,
+      liveFirst: true,
+      liveGameEventIds: const {'live-b', 'live-d'},
+    );
+    final disabledAgain = orderTournamentEventsForDisplay(
+      hydrated,
+      liveFirst: false,
+      liveGameEventIds: const {'live-b', 'live-d'},
+    );
+
+    expect(initialOff.map((event) => event.id), [
+      'personalized-a',
+      'live-b',
+      'personalized-c',
+      'live-d',
+    ]);
+    expect(enabled.map((event) => event.id), [
+      'live-b',
+      'live-d',
+      'personalized-a',
+      'personalized-c',
+    ]);
+    expect(disabledAgain.map((event) => event.id), [
+      'personalized-a',
+      'live-b',
+      'personalized-c',
+      'live-d',
+    ]);
+    expect(source.map((event) => event.id), [
+      'personalized-a',
+      'live-b',
+      'personalized-c',
     ]);
   });
 }
