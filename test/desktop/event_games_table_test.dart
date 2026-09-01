@@ -9,6 +9,7 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
+import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
@@ -39,6 +40,167 @@ void main() {
       const <String>{'round-3', 'round-2', 'round-1'},
     );
   });
+
+  test('event rail promotes a generic round when its start time passes', () {
+    final roundThreeStarts = DateTime(2026, 9, 1, 12);
+    final catalog = <EventRailRoundMetadata>[
+      EventRailRoundMetadata(
+        id: 'round-1',
+        name: 'Round 1',
+        startsAt: roundThreeStarts.subtract(const Duration(hours: 2)),
+        createdAt: roundThreeStarts.subtract(const Duration(hours: 3)),
+      ),
+      EventRailRoundMetadata(
+        id: 'round-2',
+        name: 'Round 2',
+        startsAt: roundThreeStarts.subtract(const Duration(hours: 1)),
+        createdAt: roundThreeStarts.subtract(const Duration(hours: 2)),
+      ),
+      EventRailRoundMetadata(
+        id: 'round-3',
+        name: 'Round 3',
+        startsAt: roundThreeStarts,
+        createdAt: roundThreeStarts.subtract(const Duration(hours: 1)),
+      ),
+    ];
+
+    expect(
+      eventRailCatalogRoundTitlesForTesting(
+        roundCatalog: catalog,
+        now: roundThreeStarts.subtract(const Duration(seconds: 1)),
+      ),
+      ['Round 2', 'Round 1', 'Round 3'],
+    );
+    expect(
+      eventRailCatalogRoundTitlesForTesting(
+        roundCatalog: catalog,
+        now: roundThreeStarts,
+      ),
+      ['Round 3', 'Round 2', 'Round 1'],
+    );
+  });
+
+  test('event rail does not promote an upcoming round when its rows load', () {
+    final now = DateTime(2026, 9, 1, 11, 59);
+    final catalog = <EventRailRoundMetadata>[
+      EventRailRoundMetadata(
+        id: 'round-2',
+        name: 'Round 2',
+        startsAt: now.subtract(const Duration(hours: 1)),
+        createdAt: now.subtract(const Duration(hours: 2)),
+      ),
+      EventRailRoundMetadata(
+        id: 'round-3',
+        name: 'Round 3',
+        startsAt: now.add(const Duration(minutes: 1)),
+        createdAt: now.subtract(const Duration(hours: 1)),
+      ),
+    ];
+
+    expect(
+      eventRailCatalogRoundTitlesForTesting(
+        roundCatalog: catalog,
+        games: [
+          _summary(
+            id: 'round-3-board-1',
+            roundId: 'round-3',
+            roundName: 'Round 3',
+            roundLabel: 'R3',
+            status: GameStatus.ongoing,
+            lastMoveTime: now,
+          ),
+        ],
+        now: now,
+      ),
+      ['Round 2', 'Round 3'],
+    );
+  });
+
+  test('event rail schedules the nearest future round start', () {
+    final now = DateTime(2026, 9, 1, 11, 59);
+    final nextStart = now.add(const Duration(minutes: 1));
+
+    expect(
+      eventRailNextRoundAdvanceAtForTesting(
+        roundCatalog: <EventRailRoundMetadata>[
+          EventRailRoundMetadata(
+            id: 'round-2',
+            name: 'Round 2',
+            startsAt: now.subtract(const Duration(hours: 1)),
+            createdAt: now.subtract(const Duration(hours: 2)),
+          ),
+          EventRailRoundMetadata(
+            id: 'round-4',
+            name: 'Round 4',
+            startsAt: now.add(const Duration(minutes: 31)),
+            createdAt: now,
+          ),
+          EventRailRoundMetadata(
+            id: 'round-3',
+            name: 'Round 3',
+            startsAt: nextStart,
+            createdAt: now.subtract(const Duration(hours: 1)),
+          ),
+        ],
+        now: now,
+      ),
+      nextStart,
+    );
+  });
+
+  testWidgets(
+    'round advance timer follows catalog replacement and cancels on dispose',
+    (tester) async {
+      final now = DateTime(2026, 9, 1, 12);
+      var callbackCount = 0;
+      var selectedGameId = 'round-2-game';
+      String? selectionObservedAtAdvance;
+      final controller = EventRailRoundAdvanceController(
+        onAdvance: () {
+          callbackCount++;
+          selectionObservedAtAdvance = selectedGameId;
+        },
+      );
+
+      controller.update(<EventRailRoundMetadata>[
+        EventRailRoundMetadata(
+          id: 'round-3',
+          name: 'Round 3',
+          startsAt: now.add(const Duration(seconds: 1)),
+          createdAt: now,
+        ),
+      ], now: now);
+      controller.update(<EventRailRoundMetadata>[
+        EventRailRoundMetadata(
+          id: 'round-4',
+          name: 'Round 4',
+          startsAt: now.add(const Duration(seconds: 2)),
+          createdAt: now,
+        ),
+      ], now: now);
+
+      await tester.pump(const Duration(milliseconds: 1001));
+      expect(callbackCount, 0);
+      await tester.pump(const Duration(seconds: 1));
+      expect(callbackCount, 1);
+      expect(selectedGameId, 'round-2-game');
+      expect(selectionObservedAtAdvance, 'round-2-game');
+
+      selectedGameId = 'round-2-game';
+      controller.update(<EventRailRoundMetadata>[
+        EventRailRoundMetadata(
+          id: 'round-5',
+          name: 'Round 5',
+          startsAt: now.add(const Duration(seconds: 3)),
+          createdAt: now,
+        ),
+      ], now: now.add(const Duration(seconds: 2)));
+      controller.dispose();
+      await tester.pump(const Duration(seconds: 2));
+      expect(callbackCount, 1);
+      expect(selectedGameId, 'round-2-game');
+    },
+  );
 
   test('event rail summaries prefer canonical round start from game rows', () {
     final game = Games.fromJson({
