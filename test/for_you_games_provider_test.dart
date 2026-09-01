@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:chessever/providers/event_pin_refresh_provider.dart';
 import 'package:chessever/providers/for_you_games_provider.dart';
 import 'package:chessever/providers/for_you_games_logic.dart';
+import 'package:chessever/repository/api_utils/api_exceptions.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/round/round.dart';
@@ -14,6 +15,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/games_pin_pro
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:http/http.dart' show ClientException;
 
 class _FakeForYouPinStorage implements ForYouPinStorage {
   final Map<String, List<String>> pinsByTourId;
@@ -523,6 +525,57 @@ void main() {
       isTrue,
     );
   });
+
+  test(
+    'live-first network class is not a reportable unexpected Sentry error',
+    () {
+      final addressFailure = ClientException(
+        "Can't assign requested address",
+        Uri.parse(
+          'https://example.supabase.co/rest/v1/rpc/get_for_you_group_broadcasts',
+        ),
+      );
+
+      expect(
+        shouldReportForYouLiveFirstQueryFailure(addressFailure),
+        isFalse,
+      );
+      expect(
+        shouldReportForYouLiveFirstQueryFailure(
+          NetworkException('No internet connection'),
+        ),
+        isFalse,
+      );
+      expect(
+        shouldReportForYouLiveFirstQueryFailure(
+          const SocketException('Connection failed'),
+        ),
+        isFalse,
+      );
+      expect(
+        shouldReportForYouLiveFirstQueryFailure(
+          TimeoutException('Future not completed'),
+        ),
+        isFalse,
+      );
+      expect(
+        shouldReportForYouLiveFirstQueryFailure(Exception('rpc failed')),
+        isTrue,
+      );
+      expect(
+        shouldReportForYouLiveFirstQueryFailure(
+          StateError('unexpected repository state'),
+        ),
+        isTrue,
+      );
+      expect(
+        shouldReportForYouLiveFirstQueryFailure(
+          GenericApiException('Database error: permission denied'),
+        ),
+        isTrue,
+      );
+    },
+  );
 
   test('mergeLiveUpdatesIntoForYouSnapshot patches visible game rows', () {
     const afterE4 =

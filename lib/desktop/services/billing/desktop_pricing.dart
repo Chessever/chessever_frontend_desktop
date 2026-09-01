@@ -13,6 +13,22 @@ class DesktopTierPricing {
   final double annualAmount;
 
   double get annualMonthlyEquivalent => annualAmount / 12;
+
+  /// Same rounded percent the website shows on the Annual tab
+  /// (`Save 26%` for the current Stripe amounts).
+  int get annualSavingsPercent {
+    final yearlyIfMonthly = monthlyAmount * 12;
+    if (yearlyIfMonthly <= 0) return 0;
+    final saved = yearlyIfMonthly - annualAmount;
+    if (saved <= 0) return 0;
+    return ((saved / yearlyIfMonthly) * 100).round();
+  }
+
+  String get annualPlanLabel {
+    final percent = annualSavingsPercent;
+    if (percent <= 0) return 'Annual';
+    return 'Annual · Save $percent%';
+  }
 }
 
 @immutable

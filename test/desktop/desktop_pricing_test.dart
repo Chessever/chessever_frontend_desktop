@@ -14,6 +14,17 @@ void main() {
       expect(DesktopPricing.priceForTier(3).annualAmount, 31.99);
     });
 
+    test('labels annual savings as a percent, matching the website', () {
+      expect(DesktopPricing.priceForTier(1).annualSavingsPercent, 24);
+      expect(DesktopPricing.priceForTier(1).annualPlanLabel, 'Annual · Save 24%');
+
+      expect(DesktopPricing.priceForTier(2).annualSavingsPercent, 26);
+      expect(DesktopPricing.priceForTier(2).annualPlanLabel, 'Annual · Save 26%');
+
+      expect(DesktopPricing.priceForTier(3).annualSavingsPercent, 41);
+      expect(DesktopPricing.priceForTier(3).annualPlanLabel, 'Annual · Save 41%');
+    });
+
     test('maps countries to the same tier examples used by web pricing', () {
       expect(DesktopPricing.priceForCountry('US').tier, 1);
       expect(DesktopPricing.priceForCountry('TR').tier, 2);

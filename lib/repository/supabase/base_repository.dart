@@ -1,5 +1,3 @@
-import 'dart:async';
-import 'dart:io';
 import 'package:chessever/repository/api_utils/api_exceptions.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -13,12 +11,8 @@ abstract class BaseRepository {
       return await apiCall();
     } on PostgrestException catch (e) {
       throw _handlePostgrestException(e);
-    } on SocketException {
-      throw NetworkException('No internet connection');
-    } on TimeoutException {
-      throw NetworkException('Request timeout');
     } catch (e) {
-      throw GenericApiException('Unexpected error: ${e.toString()}');
+      throw exceptionFromApiCallFailure(e);
     }
   }
 

@@ -103,6 +103,7 @@ class _DesktopSubscriptionViewState
           const SizedBox(height: 24),
           _IntervalToggle(
             value: _interval,
+            annualLabel: pricing?.annualPlanLabel ?? 'Annual',
             onChanged: (v) => setState(() => _interval = v),
           ),
           const SizedBox(height: 16),
@@ -561,8 +562,13 @@ class _FeatureList extends StatelessWidget {
 }
 
 class _IntervalToggle extends StatelessWidget {
-  const _IntervalToggle({required this.value, required this.onChanged});
+  const _IntervalToggle({
+    required this.value,
+    required this.annualLabel,
+    required this.onChanged,
+  });
   final String value;
+  final String annualLabel;
   final ValueChanged<String> onChanged;
 
   @override
@@ -571,15 +577,15 @@ class _IntervalToggle extends StatelessWidget {
       expand: true,
       selected: value,
       onChanged: onChanged,
-      tabs: const [
-        DesktopSegmentedTab(
+      tabs: [
+        const DesktopSegmentedTab(
           value: 'month',
           label: 'Monthly',
           icon: Icons.calendar_view_month_rounded,
         ),
         DesktopSegmentedTab(
           value: 'year',
-          label: 'Annual · 2 months free',
+          label: annualLabel,
           icon: Icons.calendar_today_rounded,
         ),
       ],

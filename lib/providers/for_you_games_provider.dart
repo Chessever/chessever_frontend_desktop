@@ -6,6 +6,7 @@ import 'package:chessever/providers/event_pin_refresh_provider.dart';
 import 'package:chessever/providers/favorite_events_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/for_you_games_logic.dart';
+import 'package:chessever/repository/api_utils/api_exceptions.dart';
 import 'package:chessever/repository/favorites/models/favorite_player.dart';
 import 'package:chessever/repository/local_storage/tournament/games/pin_games_local_storage.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
@@ -534,7 +535,9 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       );
     } catch (error, stackTrace) {
       debugPrint('[ForYou] Live-first ordering query failed: $error');
-      _logErrorToSentry(error, stackTrace);
+      if (shouldReportForYouLiveFirstQueryFailure(error)) {
+        _logErrorToSentry(error, stackTrace);
+      }
       return events;
     }
     if (!mounted) return events;
@@ -1014,6 +1017,11 @@ bool isLiveRefreshingForYouEvent(GroupEventCardModel event) {
 @visibleForTesting
 bool shouldReportForYouLiveTopGameRefreshFailure(Object error) {
   return error is! TimeoutException;
+}
+
+@visibleForTesting
+bool shouldReportForYouLiveFirstQueryFailure(Object error) {
+  return !isLocalNetworkFailure(error);
 }
 
 List<int> _favoriteFideIdsFrom(Iterable<FavoritePlayer> favorites) {
