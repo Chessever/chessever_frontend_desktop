@@ -388,6 +388,30 @@ bool shouldShowDesktopBoardEvalBar(EngineSettings settings) {
   return settings.showEngineAnalysis && settings.showEngineGauge;
 }
 
+@visibleForTesting
+class GameReportRevealState {
+  const GameReportRevealState({this.gameFingerprint, this.isVisible = false});
+
+  final String? gameFingerprint;
+  final bool isVisible;
+
+  GameReportRevealState activate(String fingerprint) {
+    if (gameFingerprint == fingerprint) return this;
+    return GameReportRevealState(gameFingerprint: fingerprint);
+  }
+
+  GameReportRevealState toggle() {
+    return GameReportRevealState(
+      gameFingerprint: gameFingerprint,
+      isVisible: !isVisible,
+    );
+  }
+
+  bool isVisibleFor(String fingerprint) {
+    return isVisible && gameFingerprint == fingerprint;
+  }
+}
+
 /// Whether the board notation ladder should paint the active-move highlight.
 ///
 /// Notation stays mounted in the right-rail stack when Explorer or Games is
@@ -835,19 +859,28 @@ class _BoardPaneContent extends HookConsumerWidget {
       () => GlobalKey(debugLabel: 'desktop-board-share-capture'),
       const [],
     );
-    final reportTabSelected = useState(false);
+    final currentReportFingerprint = gameReportFingerprint(chessGame.value);
+    final currentReportRevealKey =
+        '${activeTabId ?? 'board-default'}:$currentReportFingerprint';
+    final reportRevealState = useRef(const GameReportRevealState());
+    final reportRevealRevision = useState(0);
+    final activeReportReveal = reportRevealState.value.activate(
+      currentReportRevealKey,
+    );
+    reportRevealState.value = activeReportReveal;
     final reportRunning = useState(false);
     final gameReport = useState<GameAnalysisReport?>(null);
-    final gameReportVisible = allowGameAnalysis && reportTabSelected.value;
+    final gameReportVisible =
+        allowGameAnalysis &&
+        activeReportReveal.isVisibleFor(currentReportRevealKey);
     final runLiveBoardAnalysis = shouldRunLiveBoardAnalysis(
       isForeground: isForegroundTab,
       reportVisible: gameReportVisible,
       reportRunning: reportRunning.value,
     );
-    // Auto analysis may finish before the user asks to see it. Keep its
-    // classifications private until Game Analysis has been opened at least
-    // once for this game, then retain that choice for the tab session.
-    final openedReportFingerprints = useState<Set<String>>(<String>{});
+    // Auto analysis may finish before the user asks to see it. Keep the report
+    // private until Show Report is clicked for this game activation. Switching
+    // away and back requires another explicit reveal, even for the same game.
     // Controller for the outer board pane split — used so the in-pane
     // close button on the left games rail can collapse the rail itself.
     final mainSplitController = useMemoized<ResizableSplitViewController>(
@@ -3895,13 +3928,10 @@ class _BoardPaneContent extends HookConsumerWidget {
     final lichessAnnotations =
         annotationsAsync.valueOrNull ?? const <int, LichessMoveAnnotation>{};
     final completedReport = gameReport.value;
-    final currentReportFingerprint = gameReportFingerprint(chessGame.value);
     final reportMatchesGame =
         completedReport != null &&
         completedReport.fingerprint == currentReportFingerprint;
-    final reportOutputVisible = openedReportFingerprints.value.contains(
-      currentReportFingerprint,
-    );
+    final reportOutputVisible = gameReportVisible;
     final reportAnalyzedPlies = <int>{
       if (reportMatchesGame && reportOutputVisible)
         for (final move in completedReport.moves)
@@ -3931,9 +3961,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       reportAnalyzedPlies: reportAnalyzedPlies,
     );
 
-    // Resolve the on-board badge for the current ply. A generated report owns
-    // move quality (including a neutral/no-badge result); otherwise user NAGs
-    // precede the PGN's original NAG and then the Lichess annotation.
+    // Resolve the on-board badge for the current ply. A later user assessment
+    // overrides generated quality; otherwise the report owns source quality,
+    // including a neutral/no-badge result.
     // Only $1–$4 get the high-fidelity SVG; anything
     // else falls through to the Unicode-glyph badge.
     //
@@ -3951,8 +3981,8 @@ class _BoardPaneContent extends HookConsumerWidget {
               ? (userNagsForTab[cursor - 1] ?? const <int>[])
               : const <int>[];
       // Mainline annotations use the same zero-based half-move index as
-      // NotationDisplayToken.moveIndex. A generated report classification is
-      // authoritative for the ply and therefore owns the board badge too.
+      // NotationDisplayToken.moveIndex. Board and notation share the same
+      // user-over-report-over-source quality precedence.
       final annotationIndex =
           isOnMainline
               ? mainlineAnnotationIndexForPointer(pointer.value)
@@ -4969,14 +4999,11 @@ class _BoardPaneContent extends HookConsumerWidget {
                       showReport: allowGameAnalysis,
                       onToggleReport: () {
                         if (!allowGameAnalysis) return;
-                        final selectingReport = !reportTabSelected.value;
-                        if (selectingReport) {
-                          openedReportFingerprints.value = <String>{
-                            ...openedReportFingerprints.value,
-                            gameReportFingerprint(chessGame.value),
-                          };
-                        }
-                        reportTabSelected.value = selectingReport;
+                        reportRevealState.value =
+                            reportRevealState.value
+                                .activate(currentReportRevealKey)
+                                .toggle();
+                        reportRevealRevision.value++;
                       },
                       trailingActions: boardActionCluster,
                       showEngine: ref.watch(
@@ -5151,17 +5178,21 @@ ChessGame mergeUserMainlineNagsForGif(
         if (overlay.isEmpty) return game.mainline[index];
         final existing = game.mainline[index].nags ?? const <int>[];
         final overlayHasQuality = overlay.any(_isQualityNag);
-        final merged = <int>[
+        final mergedNags = <int>[
           ...overlay,
           ...existing.where(
             (nag) =>
                 !overlay.contains(nag) &&
-                !(overlayHasQuality && _isQualityNag(nag)),
+                !(overlayHasQuality &&
+                    (_isQualityNag(nag) ||
+                        isChesseverClassificationNag(nag) ||
+                        nag == kChesseverUserQualityOverrideNag)),
           ),
+          if (overlayHasQuality) kChesseverUserQualityOverrideNag,
         ];
         changed = true;
         return game.mainline[index].copyWith(
-          nags: List<int>.unmodifiable(merged),
+          nags: List<int>.unmodifiable(mergedNags),
         );
       })(),
   ];
@@ -5219,31 +5250,37 @@ resolveBoardMoveAssessment({
   required Iterable<int> pgnNags,
   required LichessMoveAnnotation? moveAnnotation,
 }) {
-  // NOTE (cross-app divergence, deliberate on both sides): when the reader has
-  // applied their own quality NAG to a ply our report also judged, desktop
-  // shows the report's badge (see "generated report assessment owns the
-  // on-board move badge") while mobile shows the reader's mark. Local state
-  // only — a pasted PGN renders identically on both — but the two apps answer
-  // the same question differently. Changing it is a product call, not a fix.
+  final user = userNags.toList(growable: false);
+  final userHasQuality = user.any(_isQualityNag);
+  final pgn = pgnNags.toList(growable: false);
+  final pgnHasUserQualityOverride =
+      pgn.contains(kChesseverUserQualityOverrideNag) && pgn.any(_isQualityNag);
+  // Generated analysis supersedes source quality marks, but a later explicit
+  // user assessment is authoritative until the user clears it.
   final reportOwnsMoveQuality =
-      moveAnnotation?.reportOwnsMoveQuality == true ||
-      moveAnnotation?.useClassificationIcon == true;
-  if (isOnMainline && moveAnnotation?.useClassificationIcon == true) {
+      !userHasQuality &&
+      !pgnHasUserQualityOverride &&
+      (moveAnnotation?.reportOwnsMoveQuality == true ||
+          moveAnnotation?.useClassificationIcon == true);
+  if (isOnMainline &&
+      reportOwnsMoveQuality &&
+      moveAnnotation?.useClassificationIcon == true) {
     return (annotation: moveAnnotation, glyph: null);
   }
 
   // User NAGs win over PGN NAGs of the same quality slot; otherwise both
   // contribute (for example user `!` plus PGN `±`).
-  final user = userNags
+  final visibleUserNags = user
       .where((nag) => !reportOwnsMoveQuality || !_isQualityNag(nag))
       .toList(growable: false);
   final mergedNags = <int>[
-    ...user,
-    ...pgnNags.where(
+    ...visibleUserNags,
+    ...pgn.where(
       (nag) =>
+          nag != kChesseverUserQualityOverrideNag &&
           (!reportOwnsMoveQuality || !_isQualityNag(nag)) &&
-          !user.contains(nag) &&
-          !(_isQualityNag(nag) && user.any(_isQualityNag)),
+          !visibleUserNags.contains(nag) &&
+          !(_isQualityNag(nag) && userHasQuality),
     ),
   ];
   if (mergedNags.isNotEmpty) {
@@ -6596,7 +6633,9 @@ ChessMove clearImportedMoveQualityAnnotation(ChessMove move) {
   if (clearedQualityNags.isEmpty) return move;
 
   final nextNags = existingNags
-      .where((nag) => !_isQualityNag(nag))
+      .where(
+        (nag) => !_isQualityNag(nag) && nag != kChesseverUserQualityOverrideNag,
+      )
       .toList(growable: false);
   final nextComments = <String>[];
   var commentsChanged = false;

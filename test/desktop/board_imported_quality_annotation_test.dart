@@ -1,6 +1,8 @@
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
+    show exportGameToPgn;
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
     hide mergeGameReportAnnotationsForGif;
 import 'package:chessever/services/lichess_move_annotations_service.dart';
@@ -14,7 +16,7 @@ void main() {
       san: 'e4',
       uci: 'e2e4',
       turn: ChessColor.white,
-      nags: const <int>[2, 18, 146],
+      nags: const <int>[2, 18, 146, 248],
       comments: const <String>[
         'Keep this prose [%c_effect b4;square;b4;type;Mistake;persistent;true] after it.',
         '[%clk 0:01:20][%c_effect c3;square;c3;type;Inaccuracy;persistent;true][%c_effect d4;square;d4;type;Book;persistent;true]',
@@ -41,9 +43,75 @@ void main() {
     // Evaluation-only user annotation keeps the imported quality annotation.
     expect(merged.mainline[0].nags, const <int>[16, 2]);
     // User quality replaces imported quality, while both evaluations survive.
-    expect(merged.mainline[1].nags, const <int>[4, 18]);
+    expect(merged.mainline[1].nags, const <int>[4, 18, 248]);
     expect(merged.mainline[2].nags, const <int>[10]);
   });
+
+  test(
+    'user quality override survives report PGN round-trip without stale metadata',
+    () {
+      final source = ChessGame.fromPgn(
+        'report-override',
+        r'1. e4 $2 $16 {Keep this prose.} e5 *',
+      );
+      final withReport = mergeGameReportAnnotationsForGif(source, const [
+        GameReportMove(
+          ply: 1,
+          san: 'e4',
+          uci: 'e2e4',
+          isWhite: true,
+          classification: GameMoveClassification.inaccuracy,
+          evaluation: GameReportLine(
+            moves: <String>['e2e4'],
+            depth: 18,
+            centipawns: 35,
+          ),
+        ),
+      ]);
+
+      final overridden = mergeUserMainlineNagsForGif(withReport, const {
+        0: <int>[4],
+      });
+
+      expect(overridden.mainline[0].nags, const <int>[4, 16, 248]);
+      expect(overridden.mainline[0].eval, '0.35');
+      expect(overridden.mainline[0].comments, const <String>[
+        'Keep this prose.',
+      ]);
+
+      final replacedOverride = mergeUserMainlineNagsForGif(overridden, const {
+        0: <int>[2],
+      });
+      expect(replacedOverride.mainline[0].nags, const <int>[2, 16, 248]);
+
+      final pgn = exportGameToPgn(overridden);
+      expect(pgn, isNot(contains(r'$244')));
+      expect(pgn, contains(r'$248'));
+      final reopened = ChessGame.fromPgn('reopened-report-override', pgn);
+      expect(reopened.mainline[0].nags, const <int>[4, 16, 248]);
+      expect(chesseverAnnotationsFromMainline(reopened), isEmpty);
+      expect(reopened.mainline[0].eval, '0.35');
+      expect(reopened.mainline[0].comments, contains('Keep this prose.'));
+
+      final rerun = mergeGameReportAnnotationsForGif(reopened, const [
+        GameReportMove(
+          ply: 1,
+          san: 'e4',
+          uci: 'e2e4',
+          isWhite: true,
+          classification: GameMoveClassification.inaccuracy,
+          evaluation: GameReportLine(
+            moves: <String>['e2e4'],
+            depth: 20,
+            centipawns: 40,
+          ),
+        ),
+      ]);
+      expect(rerun.mainline[0].nags, const <int>[4, 16, 248]);
+      expect(rerun.mainline[0].eval, '0.40');
+      expect(rerun.mainline[0].comments, contains('Keep this prose.'));
+    },
+  );
 
   test(
     'share/GIF PGN is hydrated with standard + ChessEver classification NAGs',
@@ -162,7 +230,7 @@ void main() {
     final legacy = ChessGame.fromPgn(
       'legacy',
       '1. e4 {[%chessever_annotation best_move]} '
-      'e5 {Sharp [%chessever_annotation blunder]} *',
+          'e5 {Sharp [%chessever_annotation blunder]} *',
     );
     expect(
       chesseverAnnotationsFromMainline(legacy)[0]?.type,
