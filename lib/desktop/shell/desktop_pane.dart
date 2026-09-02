@@ -83,6 +83,7 @@ DesktopPane? paneForTabKind(TabKind kind) {
       return DesktopPane.countrymen;
     case TabKind.settings:
       return DesktopPane.settings;
+    case TabKind.howToUse:
     case TabKind.watch:
       return null;
     case TabKind.openingExplorer:
