@@ -549,19 +549,37 @@ class EventRailGamesNotifier
       final newestLoadedIndex = startedStages.indexWhere(
         (stage) => stage.roundIds.any(loadedRoundIds.contains),
       );
-      if (newestLoadedIndex == 0) return const <Games>[];
-      final candidates =
-          newestLoadedIndex < 0
-              ? startedStages
-              : startedStages.take(newestLoadedIndex).toList(growable: false);
-      if (candidates.isEmpty) return const <Games>[];
-
-      final newest = await _findNewestStageWithGames(repository, candidates);
+      _EventRailNavigationStage? newest;
+      if (newestLoadedIndex > 0) {
+        newest = await _findNewestStageWithGames(
+          repository,
+          startedStages.take(newestLoadedIndex).toList(growable: false),
+        );
+      }
+      if (newest == null && newestLoadedIndex >= 0) {
+        newest = startedStages[newestLoadedIndex];
+      }
+      newest ??= await _findNewestStageWithGames(repository, startedStages);
       if (newest == null) return const <Games>[];
+
+      final newestRoundIds = newest.roundIds.toSet();
+      final loadedCount =
+          <String>{
+            for (final game in loadedGames)
+              if (newestRoundIds.contains(game.roundId.trim()) &&
+                  game.id.trim().isNotEmpty)
+                game.id.trim(),
+          }.length;
+      final serverCount = await repository.countEventRailGamesByRoundIds(
+        newest.roundIds,
+      );
+      if (serverCount <= loadedCount) return const <Games>[];
+      final offset =
+          (loadedCount ~/ kEventRailGamesPageSize) * kEventRailGamesPageSize;
       return repository.getEventRailGamesByRoundIds(
         newest.roundIds,
         limit: kEventRailGamesPageSize,
-        offset: 0,
+        offset: offset,
       );
     } catch (_) {
       // This probe only fills a newer round that lies outside retained pages.

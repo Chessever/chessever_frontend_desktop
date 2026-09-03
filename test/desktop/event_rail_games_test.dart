@@ -1942,7 +1942,7 @@ void main() {
     });
 
     test(
-      'safety refresh hydrates the newest numeric round despite bad schedule order',
+      'safety refresh follows the newest numeric round as boards arrive',
       () async {
         final roundEightGames = List<Games>.generate(
           kEventRailGamesPageSize,
@@ -1954,11 +1954,16 @@ void main() {
           growable: false,
         );
         final roundEight = roundEightGames.first;
-        final roundNine = _game(
-          id: 'round-9-board-1',
-          roundId: 'round-9',
-          boardNumber: 1,
+        final roundNineGames = List<Games>.generate(
+          70,
+          (index) => _game(
+            id: 'round-9-board-${index + 1}',
+            roundId: 'round-9',
+            boardNumber: index + 1,
+          ),
+          growable: false,
         );
+        final roundNine = roundNineGames.first;
         final repository = _FakeGameRepository(
           firstTourPage: roundEightGames,
           selectedRoundPage: roundEightGames,
@@ -2022,6 +2027,76 @@ void main() {
             ),
           ),
         );
+
+        repository
+          ..allRoundGames = <Games>[
+            ...roundEightGames,
+            ...roundNineGames.take(20),
+          ]
+          ..totalCount = kEventRailGamesPageSize + 20;
+        expect(
+          await container.read(provider.notifier).refreshLoadedMetadata(),
+          isTrue,
+        );
+        expect(
+          container
+              .read(provider)
+              .requireValue
+              .games
+              .where((game) => game.roundId == 'round-9'),
+          hasLength(20),
+        );
+
+        repository
+          ..allRoundGames = <Games>[...roundEightGames, ...roundNineGames]
+          ..totalCount = kEventRailGamesPageSize + roundNineGames.length;
+        expect(
+          await container.read(provider.notifier).refreshLoadedMetadata(),
+          isTrue,
+        );
+        expect(
+          container
+              .read(provider)
+              .requireValue
+              .games
+              .where((game) => game.roundId == 'round-9'),
+          hasLength(kEventRailGamesPageSize),
+        );
+
+        expect(
+          await container.read(provider.notifier).refreshLoadedMetadata(),
+          isTrue,
+        );
+        expect(
+          container
+              .read(provider)
+              .requireValue
+              .games
+              .where((game) => game.roundId == 'round-9'),
+          hasLength(roundNineGames.length),
+        );
+        expect(repository.roundIdsPageCalls, <_RoundIdsPageCall>[
+          const _RoundIdsPageCall(
+            ids: <String>['round-9'],
+            limit: kEventRailGamesPageSize,
+            offset: 0,
+          ),
+          const _RoundIdsPageCall(
+            ids: <String>['round-9'],
+            limit: kEventRailGamesPageSize,
+            offset: 0,
+          ),
+          const _RoundIdsPageCall(
+            ids: <String>['round-9'],
+            limit: kEventRailGamesPageSize,
+            offset: 0,
+          ),
+          const _RoundIdsPageCall(
+            ids: <String>['round-9'],
+            limit: kEventRailGamesPageSize,
+            offset: kEventRailGamesPageSize,
+          ),
+        ]);
       },
     );
 
