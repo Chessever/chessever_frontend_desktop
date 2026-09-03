@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' as io;
 import 'dart:math' as math;
 
 import 'package:chessground/chessground.dart' as cg;
@@ -51,7 +51,7 @@ import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
-import 'package:chessever/desktop/widgets/desktop_game_filter_dialog.dart';
+
 import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -74,12 +74,12 @@ export 'package:chessever/desktop/widgets/library/library_table_row_style.dart'
     show librarySelectedRowDecoration;
 import 'package:chessever/desktop/widgets/library/local_chess_files_view.dart';
 import 'package:chessever/desktop/widgets/library/local_game_player_cell.dart';
-import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
+
 import 'package:chessever/desktop/widgets/library/library_pgn_preview_panel.dart';
 import 'package:chessever/desktop/widgets/library/twic_filter_dialog.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
-import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
+
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
@@ -104,6 +104,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/number_format_utils.dart';
+import 'package:chessever/utils/pgn_multi_parser.dart';
 import 'package:chessever/utils/time_utils.dart';
 
 /// Desktop library: complete cloud navigation in the rail plus a mixed local
@@ -178,6 +179,72 @@ class LibraryPane extends HookConsumerWidget {
       localFullViewPath.value = null;
       if (ref.read(libraryImportBufferProvider) != null) {
         ref.read(libraryImportBufferProvider.notifier).clear();
+      }
+    }
+
+    Future<void> openClipboardPgnDatabase() async {
+      try {
+        final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+        if (!context.mounted) return;
+        final rawPgn = clipboard?.text;
+        if (rawPgn == null || rawPgn.trim().isEmpty) {
+          if (context.mounted) {
+            showDesktopToast(
+              context,
+              'Clipboard is empty — copy a PGN first.',
+              error: true,
+            );
+          }
+          return;
+        }
+
+        final parsed = await parsePgnsToChessGamesAsync(rawPgn);
+        if (!context.mounted) return;
+        if (parsed.isEmpty) {
+          if (context.mounted) {
+            showDesktopToast(
+              context,
+              'Clipboard does not contain a valid PGN.',
+              error: true,
+            );
+          }
+          return;
+        }
+
+        final directory = io.Directory(
+          p.join(io.Directory.systemTemp.path, 'chessever_clipboard_databases'),
+        );
+        await directory.create(recursive: true);
+        if (!context.mounted) return;
+        final file = io.File(
+          p.join(
+            directory.path,
+            'clipboard_${DateTime.now().microsecondsSinceEpoch}.pgn',
+          ),
+        );
+        await file.writeAsString(rawPgn, flush: true);
+        if (!context.mounted) return;
+
+        openDatabaseWorkspaceTab(
+          ref,
+          DatabaseWorkspaceArgs.local(
+            localPath: file.path,
+            title: 'Clipboard PGN',
+          ),
+        );
+      } catch (error, stackTrace) {
+        ErrorReporter.report(
+          error,
+          stackTrace: stackTrace,
+          tag: 'library.open_clipboard_database',
+        );
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Could not open the clipboard PGN.',
+            error: true,
+          );
+        }
       }
     }
 
@@ -403,6 +470,9 @@ class LibraryPane extends HookConsumerWidget {
                           )
                           : _MyDatabasesHomeView(
                             folders: allFolders,
+                            onPastePgn: () {
+                              unawaited(openClipboardPgnDatabase());
+                            },
                             currentFolderId: currentLibraryFolderId.value,
                             selectedFolderId: selectedFolderId.value,
                             selectedLocalPath: selectedLocalPath.value,
@@ -1465,6 +1535,7 @@ enum _LocalDatabaseBoardAction {
 class _MyDatabasesHomeView extends HookConsumerWidget {
   const _MyDatabasesHomeView({
     required this.folders,
+    required this.onPastePgn,
     required this.currentFolderId,
     required this.selectedFolderId,
     required this.selectedLocalPath,
@@ -1481,6 +1552,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
   });
 
   final List<LibraryFolder> folders;
+  final VoidCallback onPastePgn;
   final String? currentFolderId;
   final String? selectedFolderId;
   final String? selectedLocalPath;
@@ -1503,8 +1575,6 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
     final catalogSourceFilter = useState(
       LibraryDatabaseCatalogSourceFilter.all,
     );
-    final catalogView = useState(_DatabaseBoardView.list);
-    final homePreferences = ref.watch(myDatabasesFocusProvider);
     final localState = ref.watch(localChessLibraryProvider);
     final localSource = localState.source;
     final selectedFolder = folders.firstWhereOrNull(
@@ -1517,6 +1587,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
             : _LibraryDatabaseKind.cloud;
     final deleteProgress = useState<LocalChessScanProgress?>(null);
     final currentLocalGroupId = useState<String?>(null);
+    final selectedLocalGroupId = useState<String?>(null);
     final localEntries = ref.watch(localLibraryRegistryProvider).entries;
     final localGroups = _localLibraryEntryGroups(localEntries);
     final currentLocalGroup = localGroups.firstWhereOrNull(
@@ -1532,6 +1603,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
     useEffect(() {
       if (currentFolderId != null && currentLocalGroupId.value != null) {
         currentLocalGroupId.value = null;
+        selectedLocalGroupId.value = null;
       }
       return null;
     }, [currentFolderId]);
@@ -1540,18 +1612,12 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
       if (currentLocalGroupId.value != null && currentLocalGroup == null) {
         currentLocalGroupId.value = null;
       }
-      return null;
-    }, [currentLocalGroupId.value, localGroupIdsKey]);
-
-    useEffect(() {
-      if (homePreferences.loaded) {
-        catalogView.value =
-            homePreferences.listViewPreferred
-                ? _DatabaseBoardView.list
-                : _DatabaseBoardView.grid;
+      if (selectedLocalGroupId.value != null &&
+          !localGroups.any((group) => group.id == selectedLocalGroupId.value)) {
+        selectedLocalGroupId.value = null;
       }
       return null;
-    }, [homePreferences.loaded]);
+    }, [currentLocalGroupId.value, localGroupIdsKey]);
 
     return Stack(
       children: [
@@ -1560,6 +1626,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
           children: [
             _MyDatabasesHeader(
               folders: folders,
+              onPastePgn: onPastePgn,
               currentFolderId:
                   currentLocalGroup == null ? currentFolderId : null,
               localGroupLabel: currentLocalGroup?.label,
@@ -1575,37 +1642,9 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
               onImportPgnFiles: onImportPgnFiles,
               searchController: catalogSearchController,
               sourceFilter: catalogSourceFilter.value,
-              view: catalogView.value,
               onQueryChanged: (value) => catalogQuery.value = value,
               onSourceFilterChanged:
                   (value) => catalogSourceFilter.value = value,
-              onViewChanged: (value) {
-                catalogView.value = value;
-                unawaited(
-                  ref
-                      .read(myDatabasesFocusProvider.notifier)
-                      .setListViewPreferred(value == _DatabaseBoardView.list)
-                      .catchError((Object error) {
-                        if (kDebugMode) {
-                          debugPrint(
-                            'Library Home view preference persist failed: '
-                            '$error',
-                          );
-                        }
-                        if (!context.mounted) return;
-                        final restored = ref.read(myDatabasesFocusProvider);
-                        catalogView.value =
-                            restored.listViewPreferred
-                                ? _DatabaseBoardView.list
-                                : _DatabaseBoardView.grid;
-                        showDesktopToast(
-                          context,
-                          'Could not save the Library Home view.',
-                          error: true,
-                        );
-                      }),
-                );
-              },
               onNewDatabase: onNewDatabase,
             ),
             Expanded(
@@ -1621,6 +1660,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                       folders: folders,
                       currentFolderId: currentFolderId,
                       currentLocalGroupId: currentLocalGroupId.value,
+                      selectedLocalGroupId: selectedLocalGroupId.value,
                       localSource: localSource,
                       selectedFolderId: selectedFolderId,
                       selectedLocalPath: selectedLocalPath,
@@ -1629,14 +1669,18 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                       onSelectFolder: onSelectFolder,
                       onOpenFolder: onOpenFolder,
                       onOpenDatabase: onOpenDatabase,
-                      onCurrentLocalGroupChanged:
-                          (value) => currentLocalGroupId.value = value,
+                      onCurrentLocalGroupChanged: (value) {
+                        currentLocalGroupId.value = value;
+                        if (value != null) selectedLocalGroupId.value = value;
+                      },
+                      onSelectLocalGroup:
+                          (value) => selectedLocalGroupId.value = value,
                       onSelectLocalPath: onSelectLocalPath,
                       onOpenLocalPath: onOpenLocalPath,
                       onDropDatabase: onDropDatabase,
                       query: catalogQuery.value,
                       sourceFilter: catalogSourceFilter.value,
-                      view: catalogView.value,
+                      view: _DatabaseBoardView.list,
                     ),
                   ),
                   SplitChild(
@@ -1674,6 +1718,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
 class _MyDatabasesHeader extends StatelessWidget {
   const _MyDatabasesHeader({
     required this.folders,
+    required this.onPastePgn,
     required this.currentFolderId,
     required this.localGroupLabel,
     required this.onNavigate,
@@ -1683,13 +1728,12 @@ class _MyDatabasesHeader extends StatelessWidget {
     required this.onNewDatabase,
     required this.searchController,
     required this.sourceFilter,
-    required this.view,
     required this.onQueryChanged,
     required this.onSourceFilterChanged,
-    required this.onViewChanged,
   });
 
   final List<LibraryFolder> folders;
+  final VoidCallback onPastePgn;
   final String? currentFolderId;
   final String? localGroupLabel;
   final ValueChanged<String?> onNavigate;
@@ -1699,10 +1743,8 @@ class _MyDatabasesHeader extends StatelessWidget {
   final VoidCallback onNewDatabase;
   final TextEditingController searchController;
   final LibraryDatabaseCatalogSourceFilter sourceFilter;
-  final _DatabaseBoardView view;
   final ValueChanged<String> onQueryChanged;
   final ValueChanged<LibraryDatabaseCatalogSourceFilter> onSourceFilterChanged;
-  final ValueChanged<_DatabaseBoardView> onViewChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1723,7 +1765,7 @@ class _MyDatabasesHeader extends StatelessWidget {
       );
     }
 
-    final filtersAndView = Row(
+    final filters = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         filterButton(
@@ -1743,75 +1785,100 @@ class _MyDatabasesHeader extends StatelessWidget {
           Icons.computer_rounded,
           LibraryDatabaseCatalogSourceFilter.local,
         ),
-        const SizedBox(width: 8),
-        DesktopHeaderIconButton(
-          icon: Icons.view_list_rounded,
-          selected: view == _DatabaseBoardView.list,
-          tooltip: 'List view',
-          onPress: () => onViewChanged(_DatabaseBoardView.list),
-        ),
-        const SizedBox(width: 2),
-        DesktopHeaderIconButton(
-          icon: Icons.grid_view_rounded,
-          selected: view == _DatabaseBoardView.grid,
-          tooltip: 'Grid view',
-          onPress: () => onViewChanged(_DatabaseBoardView.grid),
-        ),
       ],
     );
+    final localLabel = localGroupLabel?.trim();
+    final cloudLabel =
+        currentFolderId == null
+            ? null
+            : folders
+                .firstWhereOrNull((folder) => folder.id == currentFolderId)
+                ?.name
+                .trim();
+    final locationLabel =
+        localLabel?.isNotEmpty == true
+            ? localLabel!
+            : cloudLabel?.isNotEmpty == true
+            ? cloudLabel!
+            : 'Library';
+    final insideFolder = locationLabel != 'Library';
 
-    return LibraryChromeBar(
-      icon: Icons.storage_rounded,
-      title: 'Library Home',
-      titleWidget: _LibraryFolderBreadcrumb(
-        folders: folders,
-        currentFolderId: currentFolderId,
-        localGroupLabel: localGroupLabel,
-        onNavigate: onNavigate,
-        onNavigateLocalRoot: onNavigateLocalRoot,
+    void navigateHome() {
+      onNavigateLocalRoot?.call();
+      onNavigate(null);
+    }
+
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: const BoxDecoration(
+        color: kBlack2Color,
+        border: Border(bottom: BorderSide(color: kDividerColor)),
       ),
-      meta:
-          currentFolderId == null &&
-                  (localGroupLabel == null || localGroupLabel!.trim().isEmpty)
-              ? 'Local & cloud'
-              : null,
-      trailing: LibraryActionsToolbar(
-        onNewFolder: onNewFolder,
-        onImportPgnFiles: onImportPgnFiles,
-        onNewDatabase: onNewDatabase,
-        showLabels: true,
-        buttonSize: 28,
-        iconSize: 14.5,
-        spacing: 4,
-        hitSize: 34,
-      ),
-      bottom: LayoutBuilder(
+      child: LayoutBuilder(
         builder: (context, constraints) {
-          final search = DesktopSearchField(
-            controller: searchController,
-            hintText: 'Search databases and folders',
-            maxWidth: double.infinity,
-            onChanged: onQueryChanged,
-            onClear: () => onQueryChanged(''),
-          );
-          if (constraints.maxWidth >= 690) {
-            return Row(
-              children: [
-                Expanded(child: search),
-                const SizedBox(width: 12),
-                filtersAndView,
+          final showActionLabels = constraints.maxWidth >= 1050;
+          return Row(
+            children: [
+              const SizedBox(
+                width: 28,
+                child: Icon(
+                  Icons.collections_bookmark_outlined,
+                  size: 17,
+                  color: kPrimaryColor,
+                ),
+              ),
+              const SizedBox(width: 4),
+              if (insideFolder) ...[
+                DesktopHeaderIconButton(
+                  icon: Icons.arrow_back_rounded,
+                  tooltip: 'Back to Library',
+                  onPress: navigateHome,
+                ),
+                const SizedBox(width: 4),
               ],
-            );
-          }
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                SizedBox(width: 260, child: search),
-                const SizedBox(width: 10),
-                filtersAndView,
-              ],
-            ),
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: insideFolder ? 180 : 80),
+                child: Text(
+                  locationLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              filters,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: DesktopSearchField(
+                    controller: searchController,
+                    hintText: 'Search library',
+                    maxWidth: 260,
+                    onChanged: onQueryChanged,
+                    onClear: () => onQueryChanged(''),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              LibraryActionsToolbar(
+                onNewFolder: onNewFolder,
+                onImportPgnFiles: onImportPgnFiles,
+                onNewDatabase: onNewDatabase,
+                onPastePgn: onPastePgn,
+                showLabels: showActionLabels,
+                compactLabels: true,
+                buttonSize: 28,
+                iconSize: 14.5,
+                spacing: 4,
+                hitSize: 34,
+              ),
+            ],
           );
         },
       ),
@@ -1824,6 +1891,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     required this.folders,
     required this.currentFolderId,
     required this.currentLocalGroupId,
+    required this.selectedLocalGroupId,
     required this.localSource,
     required this.selectedFolderId,
     required this.selectedLocalPath,
@@ -1833,6 +1901,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     required this.onOpenFolder,
     required this.onOpenDatabase,
     required this.onCurrentLocalGroupChanged,
+    required this.onSelectLocalGroup,
     required this.onSelectLocalPath,
     required this.onOpenLocalPath,
     required this.onDropDatabase,
@@ -1844,6 +1913,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
   final List<LibraryFolder> folders;
   final String? currentFolderId;
   final String? currentLocalGroupId;
+  final String? selectedLocalGroupId;
   final LocalChessSource? localSource;
   final String? selectedFolderId;
   final String? selectedLocalPath;
@@ -1853,6 +1923,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
   final ValueChanged<LibraryFolder> onOpenFolder;
   final ValueChanged<LibraryFolder> onOpenDatabase;
   final ValueChanged<String?> onCurrentLocalGroupChanged;
+  final ValueChanged<String?> onSelectLocalGroup;
   final ValueChanged<String> onSelectLocalPath;
   final ValueChanged<String> onOpenLocalPath;
   final Future<void> Function(LibraryDatabaseDragPayload payload)
@@ -2784,7 +2855,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             folder != null
                 ? folder.id == selectedFolderId && selectedLocalPath == null
                 : localGroup != null
-                ? currentLocalGroup?.id == localGroup.id
+                ? selectedLocalGroupId == localGroup.id
                 : selectedLocalPath == entry!.path ||
                     (localSource?.paths.contains(entry.path) == true &&
                         selectedLocalPath == localSource?.root.path),
@@ -2792,7 +2863,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             folder != null
                 ? () => onSelectFolder(folder)
                 : localGroup != null
-                ? () => onCurrentLocalGroupChanged(localGroup.id)
+                ? () => onSelectLocalGroup(localGroup.id)
                 : () => unawaited(previewLocalEntry(entry!)),
         onOpen:
             folder != null
@@ -2857,7 +2928,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             folder != null
                 ? folder.id == selectedFolderId && selectedLocalPath == null
                 : localGroup != null
-                ? currentLocalGroup?.id == localGroup.id
+                ? selectedLocalGroupId == localGroup.id
                 : selectedLocalPath == entry!.path ||
                     (localSource?.paths.contains(entry.path) == true &&
                         selectedLocalPath == localSource?.root.path),
@@ -2865,7 +2936,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             folder != null
                 ? () => onSelectFolder(folder)
                 : localGroup != null
-                ? () => onCurrentLocalGroupChanged(localGroup.id)
+                ? () => onSelectLocalGroup(localGroup.id)
                 : () => unawaited(previewLocalEntry(entry!)),
         onOpen:
             folder != null
@@ -3082,108 +3153,6 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           ),
         );
       },
-    );
-  }
-}
-
-class _LibraryFolderBreadcrumb extends StatelessWidget {
-  const _LibraryFolderBreadcrumb({
-    required this.folders,
-    required this.currentFolderId,
-    required this.localGroupLabel,
-    required this.onNavigate,
-    required this.onNavigateLocalRoot,
-  });
-
-  final List<LibraryFolder> folders;
-  final String? currentFolderId;
-  final String? localGroupLabel;
-  final ValueChanged<String?> onNavigate;
-  final VoidCallback? onNavigateLocalRoot;
-
-  @override
-  Widget build(BuildContext context) {
-    final path = libraryFolderPath(folders, currentFolderId);
-    final current = path.isEmpty ? null : path.last;
-    final localLabel = localGroupLabel?.trim();
-    return Semantics(
-      label: libraryMyDatabasesBreadcrumbText(
-        folders: folders,
-        currentFolderId: currentFolderId,
-        localGroupLabel: localGroupLabel,
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FButton(
-              style: FButtonStyle.ghost(),
-              onPress:
-                  currentFolderId == null && localLabel == null
-                      ? null
-                      : () {
-                        onNavigateLocalRoot?.call();
-                        onNavigate(null);
-                      },
-              child: const Text('Library Home'),
-            ),
-            if (localLabel != null && localLabel.isNotEmpty) ...[
-              const _LibraryBreadcrumbChevron(),
-              FButton(
-                style: FButtonStyle.ghost(),
-                onPress: null,
-                child: Text(
-                  localLabel,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-            for (final folder in path) ...[
-              const _LibraryBreadcrumbChevron(),
-              FButton(
-                style: FButtonStyle.ghost(),
-                onPress:
-                    folder.id == currentFolderId
-                        ? null
-                        : () => onNavigate(folder.id),
-                child: Text(
-                  folder.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color:
-                        folder.id == current?.id ? kWhiteColor : kWhiteColor70,
-                    fontWeight:
-                        folder.id == current?.id
-                            ? FontWeight.w700
-                            : FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _LibraryBreadcrumbChevron extends StatelessWidget {
-  const _LibraryBreadcrumbChevron();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 2),
-      child: Icon(
-        Icons.chevron_right_rounded,
-        color: kLightGreyColor,
-        size: 15,
-      ),
     );
   }
 }
@@ -4383,7 +4352,8 @@ class _ResizableDatabaseHeaderCellState
             cursor: SystemMouseCursors.resizeColumn,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onHorizontalDragStart: (_) => _dragWidth = widget.width,
+              onHorizontalDragStart:
+                  (_) => _dragWidth = context.size?.width ?? widget.width,
               onHorizontalDragUpdate: (details) {
                 _dragWidth += details.delta.dx;
                 widget.onChanged(_dragWidth);
@@ -4428,6 +4398,10 @@ Widget buildLibraryDatabaseCatalogRowForTest({
   required VoidCallback onSelect,
   required VoidCallback onOpen,
   required ValueChanged<Offset> onContextMenu,
+  LibraryDatabaseCatalogColumns columns = const LibraryDatabaseCatalogColumns(
+    showSource: true,
+    showLastOpened: true,
+  ),
 }) {
   return _DatabaseBoardRow(
     title: title,
@@ -4435,10 +4409,7 @@ Widget buildLibraryDatabaseCatalogRowForTest({
     source: 'Local',
     lastOpened: 'Never',
     iconKind: _DatabaseBoardIconKind.localDatabase,
-    columns: const LibraryDatabaseCatalogColumns(
-      showSource: true,
-      showLastOpened: true,
-    ),
+    columns: columns,
     pinned: false,
     selected: false,
     onSelect: onSelect,
@@ -4711,31 +4682,44 @@ class _DatabaseBoardColumnsLayout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 39,
-          child: Align(alignment: Alignment.centerLeft, child: leading),
-        ),
-        const SizedBox(width: 5),
-        SizedBox(width: columns.nameWidth, child: name),
-        const SizedBox(width: 12),
-        SizedBox(width: columns.gamesWidth, child: details),
-        if (columns.showSource) ...[
-          const SizedBox(width: 12),
-          SizedBox(width: columns.sourceWidth, child: source),
-        ],
-        if (columns.showLastOpened) ...[
-          const SizedBox(width: 12),
-          SizedBox(width: columns.lastOpenedWidth, child: lastOpened),
-        ],
-        const Spacer(),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 32,
-          child: Align(alignment: Alignment.centerRight, child: trailing),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final effective = libraryDatabaseCatalogColumns(
+          constraints.maxWidth + 20,
+          savedWidths: <String, double>{
+            'name': columns.nameWidth,
+            'games': columns.gamesWidth,
+            'source': columns.sourceWidth,
+            'lastOpened': columns.lastOpenedWidth,
+          },
+        );
+        return Row(
+          children: [
+            SizedBox(
+              width: 39,
+              child: Align(alignment: Alignment.centerLeft, child: leading),
+            ),
+            const SizedBox(width: 5),
+            SizedBox(width: effective.nameWidth, child: name),
+            const SizedBox(width: 12),
+            SizedBox(width: effective.gamesWidth, child: details),
+            if (effective.showSource) ...[
+              const SizedBox(width: 12),
+              SizedBox(width: effective.sourceWidth, child: source),
+            ],
+            if (effective.showLastOpened) ...[
+              const SizedBox(width: 12),
+              SizedBox(width: effective.lastOpenedWidth, child: lastOpened),
+            ],
+            const Spacer(),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 32,
+              child: Align(alignment: Alignment.centerRight, child: trailing),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -4967,11 +4951,6 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
               },
             ),
         child: _MiniDatabasePreviewFrame(
-          title: activeFolder.name,
-          subtitle:
-              analysesAsync.connectionState != ConnectionState.done
-                  ? 'Loading games…'
-                  : '${all.length} ${all.length == 1 ? 'game' : 'games'} · mini preview',
           child:
               analysesAsync.connectionState != ConnectionState.done
                   ? const Center(
@@ -5072,7 +5051,6 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
       return null;
     }, const <Object?>[]);
     final state = ref.watch(gamebaseDatabaseGamesPaginatedProvider);
-    final totalAsync = ref.watch(twicDatabaseTotalGamesProvider);
     final games = state.games;
     useEffect(() {
       if (games.isEmpty) {
@@ -5231,11 +5209,6 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
               },
             ),
         child: _MiniDatabasePreviewFrame(
-          title: 'ChessEver',
-          subtitle:
-              totalAsync.valueOrNull == null
-                  ? 'System database · mini preview'
-                  : '${formatCompactCount(totalAsync.valueOrNull!)} games · mini preview',
           child:
               games.isEmpty && state.isLoading
                   ? const Center(
@@ -5333,7 +5306,6 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final node = selectedNode;
     final scrollController = useScrollController();
-    final searchController = useTextEditingController();
     final query = useState<String>('');
     final gameFilter = useState<LocalChessGameFilter>(LocalChessGameFilter());
     final selectedIndex = useState<int>(0);
@@ -5342,10 +5314,8 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
     final selectionExtent = useState<int?>(null);
     final plyIndex = useState<int>(0);
     final shortcutsFocusNode = useFocusNode(debugLabel: 'library-mini-local');
-    // Clear the query/filters when the previewed database changes so a stale
-    // filter doesn't hide the next database's games.
+    // Reset the internal query scope when the previewed database changes.
     useEffect(() {
-      searchController.clear();
       query.value = '';
       gameFilter.value = LocalChessGameFilter();
       return null;
@@ -5374,11 +5344,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
     final localOpeningTreeIndex = selectedDatabase?.openingTreeIndex;
     final openableLocalTreeIndex =
         localOpeningTreeIndex?.isUsable == true ? localOpeningTreeIndex : null;
-    final treeBuildProgress = ref.watch(
-      localChessLibraryProvider.select(
-        (state) => state.treeBuildForPath(selectedDatabase?.path),
-      ),
-    );
+
     final games =
         selectedDatabase?.games ??
         switch (node) {
@@ -5676,14 +5642,6 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
       );
     }
 
-    void rebuildLocalTree() {
-      final database = selectedDatabase;
-      if (database == null) return;
-      ref
-          .read(localChessLibraryProvider.notifier)
-          .rebuildOpeningTree(database.path);
-    }
-
     return _databaseWorkspaceClipboardShortcuts(
       onCopy: copySelectedLocal,
       child: Focus(
@@ -5712,70 +5670,9 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
               },
             ),
         child: _MiniDatabasePreviewFrame(
-          title: databaseTitle,
-          treeBuildProgress: treeBuildProgress,
-          onOpenTree:
-              openableLocalTreeIndex == null
-                  ? null
-                  : () => _openLocalPreviewTree(
-                    ref,
-                    title: '$databaseTitle Tree',
-                    sourceLabel: databaseTitle,
-                    index: openableLocalTreeIndex,
-                  ),
-          onBuildTree:
-              selectedDatabase == null || openableLocalTreeIndex != null
-                  ? null
-                  : rebuildLocalTree,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 10, 16, 6),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: DesktopSearchField(
-                        controller: searchController,
-                        hintText:
-                            'Search this database — players, events, openings, ECO',
-                        onChanged: (value) => query.value = value,
-                        onClear: () => query.value = '',
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    DesktopGameFilterButton(
-                      key: const ValueKey<String>(
-                        'library-mini-preview-filter-button',
-                      ),
-                      filter: gameFilter.value.base,
-                      activeCountOverride: gameFilter.value.activeFilterCount,
-                      onPress: () async {
-                        final next = await showDesktopGameFilterDialog(
-                          context: context,
-                          currentFilter: gameFilter.value.base,
-                          showFormatFilter: true,
-                        );
-                        if (next == null || !context.mounted) return;
-                        gameFilter.value = gameFilter.value.applyingDialog(
-                          next,
-                        );
-                      },
-                    ),
-                    if (gameFilter.value.hasActiveFilters) ...[
-                      const SizedBox(width: 6),
-                      ClearDesktopGameFiltersButton(
-                        key: const ValueKey<String>(
-                          'library-mini-preview-clear-filters',
-                        ),
-                        onPress: () {
-                          gameFilter.value = LocalChessGameFilter();
-                        },
-                      ),
-                    ],
-                  ],
-                ),
-              ),
               Expanded(
                 child:
                     visibleGames.isEmpty && isLoadingPreviewPage
@@ -6115,51 +6012,12 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow>
 }
 
 class _MiniDatabasePreviewFrame extends StatelessWidget {
-  const _MiniDatabasePreviewFrame({
-    required this.title,
-    this.subtitle,
-    this.treeBuildProgress,
-    this.onOpenTree,
-    this.onBuildTree,
-    required this.child,
-  });
+  const _MiniDatabasePreviewFrame({required this.child});
 
-  final String title;
-  final String? subtitle;
-  final LocalChessTreeBuildProgress? treeBuildProgress;
-  final VoidCallback? onOpenTree;
-  final VoidCallback? onBuildTree;
   final Widget child;
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        LibraryChromeBar(
-          icon: Icons.preview_outlined,
-          title: title,
-          meta: subtitle,
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (onOpenTree != null ||
-                  onBuildTree != null ||
-                  treeBuildProgress != null) ...[
-                LocalTreeActionButton(
-                  progress: treeBuildProgress,
-                  onOpen: onOpenTree,
-                  onBuild: onBuildTree,
-                ),
-                const SizedBox(width: 6),
-              ],
-            ],
-          ),
-        ),
-        Expanded(child: child),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => child;
 }
 
 // Kept as the legacy direct-folder body while the Library home migrates to
@@ -8274,35 +8132,6 @@ String _short(String n) {
   if (t.contains(',')) return t.split(',').first.trim();
   final parts = t.split(RegExp(r'\s+'));
   return parts.length == 1 ? parts.first : parts.last;
-}
-
-const String _kLocalPreviewTreeStartingFen =
-    'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-
-void _openLocalPreviewTree(
-  WidgetRef ref, {
-  required String title,
-  required String sourceLabel,
-  required PlayerOpeningTreeIndex index,
-}) {
-  if (!index.isUsable) return;
-  final tabId = openBoardGameTab(
-    ref,
-    BoardTabGameArgs(
-      pgn: '',
-      label: title,
-      whiteName: '',
-      blackName: '',
-      fenSeed: _kLocalPreviewTreeStartingFen,
-      initialFen: _kLocalPreviewTreeStartingFen,
-      databaseTitle: sourceLabel,
-      localOpeningTreeIndex: index,
-      localOpeningTreeTitle: sourceLabel,
-      enableLocalOpeningTreePicker: true,
-    ),
-    reuseExisting: false,
-  );
-  ref.read(rightRailActivePageProvider(tabId).notifier).state = 1;
 }
 
 void _openLocalPreviewGame(
@@ -11070,8 +10899,9 @@ final localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
         ref.keepAlive();
         return cached;
       }
-      final type = await FileSystemEntity.type(path, followLinks: false);
-      if (type == FileSystemEntityType.file && looksLikeLocalChessFile(path)) {
+      final type = await io.FileSystemEntity.type(path, followLinks: false);
+      if (type == io.FileSystemEntityType.file &&
+          looksLikeLocalChessFile(path)) {
         final imported = await repository.importSingleFileSource(path: path);
         if (imported != null) {
           ref.keepAlive();

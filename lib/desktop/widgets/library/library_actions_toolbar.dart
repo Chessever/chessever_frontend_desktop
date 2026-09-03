@@ -24,6 +24,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
     required this.onNewFolder,
     required this.onImportPgnFiles,
     this.onNewDatabase,
+    this.onPastePgn,
     this.newFolderTooltip = 'New folder',
     this.disabledNewFolderTooltip,
     this.suggestedFolderId,
@@ -32,6 +33,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
     this.spacing = 6,
     this.hitSize,
     this.showLabels = false,
+    this.compactLabels = false,
     this.showNewFolderAction = true,
     this.showImportAction = true,
   });
@@ -54,6 +56,10 @@ class LibraryActionsToolbar extends ConsumerWidget {
   /// not stage games in the temporary Library import preview.
   final VoidCallback onImportPgnFiles;
 
+  /// Opens clipboard PGN content in its own database workspace tab. Legacy
+  /// folder headers can omit this and retain the inline import-buffer flow.
+  final VoidCallback? onPastePgn;
+
   /// When set, pasted games are pre-routed to this folder in the
   /// save-to-folder dialog (used when toolbar actions are invoked while
   /// a folder is selected in the sidebar).
@@ -74,6 +80,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
 
   /// Uses visible labels for the primary Library Home actions.
   final bool showLabels;
+  final bool compactLabels;
   final bool showNewFolderAction;
   final bool showImportAction;
 
@@ -118,7 +125,8 @@ class LibraryActionsToolbar extends ConsumerWidget {
           if (showImportAction) ...[
             _IconAction(
               tooltip: 'Import PGN file — pick .pgn files from disk',
-              label: showLabels ? 'Import PGN' : null,
+              label:
+                  showLabels ? (compactLabels ? 'Import' : 'Import PGN') : null,
               icon: Icons.file_upload_rounded,
               accent: const Color(0xFFFBBF24),
               buttonSize: buttonSize,
@@ -134,7 +142,8 @@ class LibraryActionsToolbar extends ConsumerWidget {
                   onNewFolder == null
                       ? disabledNewFolderTooltip ?? newFolderTooltip
                       : newFolderTooltip,
-              label: showLabels ? 'New folder' : null,
+              label:
+                  showLabels ? (compactLabels ? 'Folder' : 'New folder') : null,
               icon: Icons.create_new_folder_rounded,
               accent: const Color(0xFF60A5FA),
               buttonSize: buttonSize,
@@ -147,7 +156,10 @@ class LibraryActionsToolbar extends ConsumerWidget {
           if (onNewDatabase != null) ...[
             _IconAction(
               tooltip: 'Create a cloud database',
-              label: showLabels ? 'New database' : null,
+              label:
+                  showLabels
+                      ? (compactLabels ? 'Database' : 'New database')
+                      : null,
               icon: Icons.add_rounded,
               accent: const Color(0xFF38BDF8),
               buttonSize: buttonSize,
@@ -159,13 +171,20 @@ class LibraryActionsToolbar extends ConsumerWidget {
             SizedBox(width: spacing),
           ],
           _IconAction(
-            tooltip: 'Paste PGN from clipboard',
-            icon: Icons.content_paste_go_rounded,
+            tooltip: 'Paste PGN',
+            tooltipBelow: true,
+            label:
+                compactLabels
+                    ? 'Paste'
+                    : showLabels
+                    ? 'Paste PGN'
+                    : null,
+            icon: Icons.content_paste_rounded,
             accent: const Color(0xFF34D399),
             buttonSize: buttonSize,
             iconSize: iconSize,
             hitSize: hitSize,
-            onPress: handlePasteClipboard,
+            onPress: onPastePgn ?? handlePasteClipboard,
           ),
         ],
       ),
@@ -184,6 +203,7 @@ class _IconAction extends StatefulWidget {
     this.hitSize,
     required this.onPress,
     this.emphasized = false,
+    this.tooltipBelow = false,
   });
 
   final String tooltip;
@@ -195,6 +215,7 @@ class _IconAction extends StatefulWidget {
   final double? hitSize;
   final VoidCallback? onPress;
   final bool emphasized;
+  final bool tooltipBelow;
 
   @override
   State<_IconAction> createState() => _IconActionState();
@@ -236,6 +257,10 @@ class _IconActionState extends State<_IconAction>
             : widget.hitSize!;
     return DesktopTooltip(
       message: widget.tooltip,
+      tipAnchor:
+          widget.tooltipBelow ? Alignment.topRight : Alignment.bottomCenter,
+      childAnchor:
+          widget.tooltipBelow ? Alignment.bottomRight : Alignment.topCenter,
       child: MouseRegion(
         cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
         onEnter:
