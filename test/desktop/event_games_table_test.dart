@@ -41,44 +41,157 @@ void main() {
     );
   });
 
-  test('event rail promotes a generic round when its start time passes', () {
-    final roundThreeStarts = DateTime(2026, 9, 1, 12);
+  test('event rail promotes only a started round with games', () {
+    final now = DateTime(2026, 9, 1, 12);
     final catalog = <EventRailRoundMetadata>[
-      EventRailRoundMetadata(
-        id: 'round-1',
-        name: 'Round 1',
-        startsAt: roundThreeStarts.subtract(const Duration(hours: 2)),
-        createdAt: roundThreeStarts.subtract(const Duration(hours: 3)),
-      ),
-      EventRailRoundMetadata(
-        id: 'round-2',
-        name: 'Round 2',
-        startsAt: roundThreeStarts.subtract(const Duration(hours: 1)),
-        createdAt: roundThreeStarts.subtract(const Duration(hours: 2)),
-      ),
       EventRailRoundMetadata(
         id: 'round-3',
         name: 'Round 3',
-        startsAt: roundThreeStarts,
-        createdAt: roundThreeStarts.subtract(const Duration(hours: 1)),
+        startsAt: now.subtract(const Duration(hours: 2)),
+        createdAt: now.subtract(const Duration(hours: 3)),
+      ),
+      EventRailRoundMetadata(
+        id: 'round-4',
+        name: 'Round 4',
+        startsAt: now.subtract(const Duration(hours: 1)),
+        createdAt: now.subtract(const Duration(hours: 2)),
+      ),
+      EventRailRoundMetadata(
+        id: 'round-5',
+        name: 'Round 5',
+        // Some broadcast catalogs publish an elapsed placeholder time before
+        // any pairing from the round exists.
+        startsAt: now.subtract(const Duration(minutes: 30)),
+        createdAt: now.subtract(const Duration(hours: 1)),
+      ),
+      EventRailRoundMetadata(
+        id: 'round-6',
+        name: 'Round 6',
+        startsAt: now.subtract(const Duration(minutes: 15)),
+        createdAt: now,
       ),
     ];
 
-    expect(
-      eventRailCatalogRoundTitlesForTesting(
-        roundCatalog: catalog,
-        now: roundThreeStarts.subtract(const Duration(seconds: 1)),
-      ),
-      ['Round 2', 'Round 1', 'Round 3'],
+    final beforeRoundFive = eventRailCatalogRoundTitlesForTesting(
+      roundCatalog: catalog,
+      games: <TournamentGameSummary>[
+        _summary(
+          id: 'round-3-board-1',
+          roundId: 'round-3',
+          roundName: 'Round 3',
+          roundLabel: 'R3',
+          status: GameStatus.whiteWins,
+          lastMoveTime: now.subtract(const Duration(hours: 1)),
+        ),
+        _summary(
+          id: 'round-4-board-1',
+          roundId: 'round-4',
+          roundName: 'Round 4',
+          roundLabel: 'R4',
+          status: GameStatus.ongoing,
+          lastMoveTime: now,
+        ),
+      ],
+      now: now,
     );
-    expect(
-      eventRailCatalogRoundTitlesForTesting(
-        roundCatalog: catalog,
-        now: roundThreeStarts,
-      ),
-      ['Round 3', 'Round 2', 'Round 1'],
+    expect(beforeRoundFive.first, 'Round 4');
+    expect(beforeRoundFive.indexOf('Round 3'), 1);
+    expect(beforeRoundFive.indexOf('Round 5'), greaterThan(1));
+    expect(beforeRoundFive.indexOf('Round 6'), greaterThan(1));
+
+    final afterRoundFiveStarts = eventRailCatalogRoundTitlesForTesting(
+      roundCatalog: catalog,
+      games: <TournamentGameSummary>[
+        _summary(
+          id: 'round-4-board-1',
+          roundId: 'round-4',
+          roundName: 'Round 4',
+          roundLabel: 'R4',
+          status: GameStatus.whiteWins,
+          lastMoveTime: now.subtract(const Duration(minutes: 1)),
+        ),
+        _summary(
+          id: 'round-5-board-1',
+          roundId: 'round-5',
+          roundName: 'Round 5',
+          roundLabel: 'R5',
+          status: GameStatus.ongoing,
+          lastMoveTime: now,
+        ),
+      ],
+      now: now,
     );
+    expect(afterRoundFiveStarts.first, 'Round 5');
+    expect(afterRoundFiveStarts.indexOf('Round 4'), 1);
+    expect(afterRoundFiveStarts.indexOf('Round 6'), greaterThan(1));
   });
+
+  test(
+    'event rail keeps sequential rounds around the newest playable round',
+    () {
+      final now = DateTime(2026, 9, 3, 12);
+      final catalog = <EventRailRoundMetadata>[
+        for (var round = 1; round <= 11; round++)
+          EventRailRoundMetadata(
+            id: 'round-$round',
+            name: 'Round $round',
+            // The real broadcast published elapsed placeholders for every round.
+            startsAt: now.subtract(Duration(minutes: 12 - round)),
+            createdAt: now.subtract(Duration(minutes: 12 - round)),
+          ),
+      ];
+      TournamentGameSummary game(int round) => _summary(
+        id: 'round-$round-board-1',
+        roundId: 'round-$round',
+        roundName: 'Round $round',
+        roundLabel: 'R$round',
+        status: GameStatus.ongoing,
+        lastMoveTime: now,
+      );
+
+      expect(
+        eventRailCatalogRoundTitlesForTesting(
+          roundCatalog: catalog,
+          games: <TournamentGameSummary>[game(1), game(8)],
+          now: now,
+        ),
+        <String>[
+          'Round 8',
+          'Round 7',
+          'Round 6',
+          'Round 5',
+          'Round 4',
+          'Round 3',
+          'Round 2',
+          'Round 1',
+          'Round 11',
+          'Round 10',
+          'Round 9',
+        ],
+      );
+
+      expect(
+        eventRailCatalogRoundTitlesForTesting(
+          roundCatalog: catalog,
+          games: <TournamentGameSummary>[game(1), game(8), game(9)],
+          now: now,
+        ),
+        <String>[
+          'Round 9',
+          'Round 8',
+          'Round 7',
+          'Round 6',
+          'Round 5',
+          'Round 4',
+          'Round 3',
+          'Round 2',
+          'Round 1',
+          'Round 11',
+          'Round 10',
+        ],
+      );
+    },
+  );
 
   test('event rail does not promote an upcoming round when its rows load', () {
     final now = DateTime(2026, 9, 1, 11, 59);

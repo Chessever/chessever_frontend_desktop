@@ -1941,6 +1941,90 @@ void main() {
       ]);
     });
 
+    test(
+      'safety refresh hydrates the newest numeric round despite bad schedule order',
+      () async {
+        final roundEightGames = List<Games>.generate(
+          kEventRailGamesPageSize,
+          (index) => _game(
+            id: 'round-8-board-${index + 1}',
+            roundId: 'round-8',
+            boardNumber: index + 1,
+          ),
+          growable: false,
+        );
+        final roundEight = roundEightGames.first;
+        final roundNine = _game(
+          id: 'round-9-board-1',
+          roundId: 'round-9',
+          boardNumber: 1,
+        );
+        final repository = _FakeGameRepository(
+          firstTourPage: roundEightGames,
+          selectedRoundPage: roundEightGames,
+          selectedGame: roundEight,
+          totalCount: kEventRailGamesPageSize,
+          allRoundGames: roundEightGames,
+          roundCatalog: <EventRailRoundMetadata>[
+            for (var round = 8; round <= 11; round++)
+              EventRailRoundMetadata(
+                id: 'round-$round',
+                name: 'Round $round',
+                // The source can publish higher round numbers with timestamps
+                // older than the current round's timestamp.
+                startsAt: DateTime.utc(2026, 9, 3, 20 - round),
+                createdAt: DateTime.utc(2026, 9, 3, 20 - round),
+              ),
+          ],
+        );
+        final container = _container(repository);
+        addTearDown(container.dispose);
+
+        const key = BoardTabEventGamesKey(
+          tourId: 'tour-1',
+          selectedGameId: 'round-8-board-1',
+          selectedRoundId: 'round-8',
+          selectedBoardNumber: 1,
+        );
+        final provider = eventRailGamesProvider(_providerKey(key));
+        final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+          provider,
+          (_, __) {},
+          fireImmediately: true,
+        );
+        addTearDown(subscription.close);
+
+        final initial = await container.read(provider.future);
+        expect(
+          initial.games.map((game) => game.id),
+          isNot(contains(roundNine.id)),
+        );
+
+        repository
+          ..allRoundGames = <Games>[...roundEightGames, roundNine]
+          ..totalCount = kEventRailGamesPageSize + 1;
+
+        expect(
+          await container.read(provider.notifier).refreshLoadedMetadata(),
+          isTrue,
+        );
+
+        final refreshed = container.read(provider).requireValue;
+        expect(refreshed.games.map((game) => game.id), contains(roundNine.id));
+        expect(repository.roundCatalogCalls, <String>['tour-1']);
+        expect(
+          repository.roundIdsPageCalls,
+          contains(
+            const _RoundIdsPageCall(
+              ids: <String>['round-9'],
+              limit: kEventRailGamesPageSize,
+              offset: 0,
+            ),
+          ),
+        );
+      },
+    );
+
     test('clock-only metadata refresh publishes the trusted pair', () async {
       final initialMoveTime = DateTime.utc(2026, 8, 12, 12);
       final repository = _FakeGameRepository(

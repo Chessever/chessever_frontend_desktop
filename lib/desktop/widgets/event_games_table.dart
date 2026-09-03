@@ -3334,14 +3334,22 @@ String _catalogRoundKey(EventRailRoundMetadata round) =>
         ? 'round-id:${round.id.trim()}'
         : 'round-name:${round.name.trim().toLowerCase()}';
 
+int? _catalogGenericRoundNumber(EventRailRoundMetadata round) {
+  final match = RegExp(
+    r'^round\s+(\d+)$',
+    caseSensitive: false,
+  ).firstMatch(round.name.trim());
+  return match == null ? null : int.tryParse(match.group(1)!);
+}
+
 /// Builds one group per catalog round in an order independent from loaded rows.
 ///
-/// Started rounds come first and follow the shared tournament ordering contract:
-/// generic `Round N` labels advance numerically, while named stages use their
-/// schedule. Remaining upcoming rounds stay schedule-ascending. Loaded games
-/// only fill these catalog slots, so pagination cannot reshuffle the rail. A
-/// round with no rows yet is marked [_EventRoundGroup.catalogOnly] and renders
-/// as a collapsed heading.
+/// Started rounds come first and follow the shared tournament ordering contract.
+/// For sequential `Round N` catalogs, the newest playable round proves every
+/// lower number has also started, even when those older rows are outside the
+/// retained metadata window. Higher empty rounds stay below that started block.
+/// Named stages require their own loaded rows. A round with no rows yet is
+/// marked [_EventRoundGroup.catalogOnly] and renders as a collapsed heading.
 List<_EventRoundGroup> _catalogOrderedRoundGroups({
   required List<EventRailRoundMetadata> roundCatalog,
   required Map<String, List<TournamentGameSummary>> gamesByRoundKey,
@@ -3349,16 +3357,46 @@ List<_EventRoundGroup> _catalogOrderedRoundGroups({
 }) {
   final effectiveNow = now ?? DateTime.now();
   final seen = <String>{};
-  final started = <EventRailRoundMetadata>[];
-  final upcoming = <EventRailRoundMetadata>[];
+  final catalogRounds = <EventRailRoundMetadata>[];
+  final confirmedStartedKeys = <String>{};
   for (final round in roundCatalog) {
     if (round.id.trim().isEmpty) continue;
-    if (!seen.add(_catalogRoundKey(round))) continue;
+    final key = _catalogRoundKey(round);
+    if (!seen.add(key)) continue;
+    catalogRounds.add(round);
     final startsAt = round.startsAt;
-    if (startsAt != null && startsAt.isAfter(effectiveNow)) {
-      upcoming.add(round);
-    } else {
+    final hasGames = gamesByRoundKey[key]?.isNotEmpty == true;
+    if (hasGames && (startsAt == null || !startsAt.isAfter(effectiveNow))) {
+      confirmedStartedKeys.add(key);
+    }
+  }
+
+  final allGeneric = catalogRounds.every(
+    (round) => _catalogGenericRoundNumber(round) != null,
+  );
+  int? newestPlayableRoundNumber;
+  if (allGeneric) {
+    for (final round in catalogRounds) {
+      if (!confirmedStartedKeys.contains(_catalogRoundKey(round))) continue;
+      final number = _catalogGenericRoundNumber(round)!;
+      if (newestPlayableRoundNumber == null ||
+          number > newestPlayableRoundNumber) {
+        newestPlayableRoundNumber = number;
+      }
+    }
+  }
+
+  final started = <EventRailRoundMetadata>[];
+  final remaining = <EventRailRoundMetadata>[];
+  for (final round in catalogRounds) {
+    final startedSequentialRound =
+        newestPlayableRoundNumber != null &&
+        _catalogGenericRoundNumber(round)! <= newestPlayableRoundNumber;
+    if (startedSequentialRound ||
+        confirmedStartedKeys.contains(_catalogRoundKey(round))) {
       started.add(round);
+    } else {
+      remaining.add(round);
     }
   }
 
@@ -3398,12 +3436,20 @@ List<_EventRoundGroup> _catalogOrderedRoundGroups({
     isRoundFullyPlayed: (_) => false,
     now: effectiveNow,
   ).map((model) => startedById[model.id]!).toList(growable: false);
-  upcoming.sort((a, b) => byStart(a, b, true));
+  if (newestPlayableRoundNumber == null) {
+    remaining.sort((a, b) => byStart(a, b, true));
+  } else {
+    remaining.sort(
+      (a, b) => _catalogGenericRoundNumber(
+        b,
+      )!.compareTo(_catalogGenericRoundNumber(a)!),
+    );
+  }
 
   final ordered = <_EventRoundGroup>[];
   for (final round in <EventRailRoundMetadata>[
     ...orderedStarted,
-    ...upcoming,
+    ...remaining,
   ]) {
     final key = _catalogRoundKey(round);
     final rows = gamesByRoundKey[key] ?? const <TournamentGameSummary>[];

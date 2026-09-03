@@ -517,6 +517,82 @@ class EventRailGamesNotifier
     }
   }
 
+  Future<List<Games>> _loadNewestStartedRoundPage(
+    GameRepository repository,
+    List<EventRailRoundMetadata> catalog,
+    List<TournamentGameSummary> loadedGames,
+  ) async {
+    if (catalog.isEmpty) return const <Games>[];
+    try {
+      final now = DateTime.now();
+      final orderedStages = _orderedNavigationStages(catalog);
+      if (orderedStages.every(
+        (stage) => _eventRailGenericRoundNumber(stage.name) != null,
+      )) {
+        orderedStages.sort(
+          (a, b) => _eventRailGenericRoundNumber(
+            b.name,
+          )!.compareTo(_eventRailGenericRoundNumber(a.name)!),
+        );
+      }
+      final startedStages = orderedStages
+          .where(
+            (stage) => stage.startsAt == null || !stage.startsAt!.isAfter(now),
+          )
+          .toList(growable: false);
+      if (startedStages.isEmpty) return const <Games>[];
+
+      final loadedRoundIds = <String>{
+        for (final game in loadedGames)
+          if (game.roundId.trim().isNotEmpty) game.roundId.trim(),
+      };
+      final newestLoadedIndex = startedStages.indexWhere(
+        (stage) => stage.roundIds.any(loadedRoundIds.contains),
+      );
+      if (newestLoadedIndex == 0) return const <Games>[];
+      final candidates =
+          newestLoadedIndex < 0
+              ? startedStages
+              : startedStages.take(newestLoadedIndex).toList(growable: false);
+      if (candidates.isEmpty) return const <Games>[];
+
+      final newest = await _findNewestStageWithGames(repository, candidates);
+      if (newest == null) return const <Games>[];
+      return repository.getEventRailGamesByRoundIds(
+        newest.roundIds,
+        limit: kEventRailGamesPageSize,
+        offset: 0,
+      );
+    } catch (_) {
+      // This probe only fills a newer round that lies outside retained pages.
+      // A transient failure must not block the normal clock/result refresh.
+      return const <Games>[];
+    }
+  }
+
+  Future<_EventRailNavigationStage?> _findNewestStageWithGames(
+    GameRepository repository,
+    List<_EventRailNavigationStage> candidates,
+  ) async {
+    if (candidates.isEmpty) return null;
+    if (candidates.length == 1) {
+      final count = await repository.countEventRailGamesByRoundIds(
+        candidates.single.roundIds,
+      );
+      return count > 0 ? candidates.single : null;
+    }
+
+    final split = (candidates.length + 1) ~/ 2;
+    final newer = candidates.sublist(0, split);
+    final newerCount = await repository.countEventRailGamesByRoundIds(<String>[
+      for (final stage in newer) ...stage.roundIds,
+    ]);
+    if (newerCount > 0) {
+      return _findNewestStageWithGames(repository, newer);
+    }
+    return _findNewestStageWithGames(repository, candidates.sublist(split));
+  }
+
   Future<bool> _hydrateAdjacentStageMetadata(int delta) async {
     final repository = ref.read(gameRepositoryProvider);
     final tourId = _eventKey.tourId.trim();
@@ -855,6 +931,11 @@ class EventRailGamesNotifier
     var result = false;
     try {
       final repository = ref.read(gameRepositoryProvider);
+      final newestStartedRoundFuture = _loadNewestStartedRoundPage(
+        repository,
+        current.roundCatalog,
+        current.games,
+      );
       final canonicalFuture = repository.getEventRailGamesByTourId(
         tourId,
         limit: kEventRailGamesPageSize,
@@ -879,6 +960,7 @@ class EventRailGamesNotifier
       final canonicalGames = pages[0];
       final selectedRoundGames = pages[1];
       final sampledPageGames = pages[2];
+      final newestStartedRoundGames = await newestStartedRoundFuture;
       final fetchedTotalCount = await totalCountFuture;
       if (_disposed ||
           !_isActive ||
@@ -917,6 +999,7 @@ class EventRailGamesNotifier
         ...canonicalGames,
         ...selectedRoundGames,
         ...sampledPageGames,
+        ...newestStartedRoundGames,
       ]);
       final resetHasMore =
           pageCanContinue && (totalCount == null || nextOffset < totalCount);
@@ -938,6 +1021,11 @@ class EventRailGamesNotifier
                   ...sampledPageGames,
                 ],
               );
+      refreshedGames = _mergeMetadataPages(
+        newestStartedRoundGames,
+        const <Games>[],
+        existing: refreshedGames,
+      );
       if (gameSetChanged && !resetHasMore) {
         refreshedGames = _retainAuthoritativeRows(
           refreshedGames,
@@ -1162,6 +1250,14 @@ class _EventRailNavigationStage {
   final List<String> roundIds;
   final DateTime? startsAt;
   final DateTime? createdAt;
+}
+
+int? _eventRailGenericRoundNumber(String name) {
+  final match = RegExp(
+    r'^round\s+(\d+)$',
+    caseSensitive: false,
+  ).firstMatch(name.trim());
+  return match == null ? null : int.tryParse(match.group(1)!);
 }
 
 List<_EventRailNavigationStage> _orderedNavigationStages(
