@@ -23,6 +23,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
     super.key,
     required this.onNewFolder,
     required this.onImportPgnFiles,
+    this.onNewDatabase,
     this.newFolderTooltip = 'New folder',
     this.disabledNewFolderTooltip,
     this.suggestedFolderId,
@@ -30,12 +31,18 @@ class LibraryActionsToolbar extends ConsumerWidget {
     this.iconSize = 17,
     this.spacing = 6,
     this.hitSize,
+    this.showLabels = false,
+    this.showNewFolderAction = true,
+    this.showImportAction = true,
   });
 
   /// Opens the create-folder dialog. Routed through the pane so the call
   /// site can decide whether to lock the parent (when invoked from inside
   /// a folder context).
   final VoidCallback? onNewFolder;
+
+  /// Creates a cloud database. Local databases enter through Import PGN.
+  final VoidCallback? onNewDatabase;
 
   /// Tooltip shown for the create-folder action while it is enabled.
   final String newFolderTooltip;
@@ -64,6 +71,11 @@ class LibraryActionsToolbar extends ConsumerWidget {
   /// Optional pointer target size. When larger than [buttonSize], the
   /// visible button stays compact while the hit area remains comfortable.
   final double? hitSize;
+
+  /// Uses visible labels for the primary Library Home actions.
+  final bool showLabels;
+  final bool showNewFolderAction;
+  final bool showImportAction;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -103,29 +115,49 @@ class LibraryActionsToolbar extends ConsumerWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _IconAction(
-            tooltip:
-                onNewFolder == null
-                    ? disabledNewFolderTooltip ?? newFolderTooltip
-                    : newFolderTooltip,
-            icon: Icons.create_new_folder_rounded,
-            accent: const Color(0xFF60A5FA),
-            buttonSize: buttonSize,
-            iconSize: iconSize,
-            hitSize: hitSize,
-            onPress: onNewFolder,
-          ),
-          SizedBox(width: spacing),
-          _IconAction(
-            tooltip: 'Import PGN file — pick .pgn files from disk',
-            icon: Icons.file_upload_rounded,
-            accent: const Color(0xFFFBBF24),
-            buttonSize: buttonSize,
-            iconSize: iconSize,
-            hitSize: hitSize,
-            onPress: onImportPgnFiles,
-          ),
-          SizedBox(width: spacing),
+          if (showImportAction) ...[
+            _IconAction(
+              tooltip: 'Import PGN file — pick .pgn files from disk',
+              label: showLabels ? 'Import PGN' : null,
+              icon: Icons.file_upload_rounded,
+              accent: const Color(0xFFFBBF24),
+              buttonSize: buttonSize,
+              iconSize: iconSize,
+              hitSize: hitSize,
+              onPress: onImportPgnFiles,
+            ),
+            SizedBox(width: spacing),
+          ],
+          if (showNewFolderAction) ...[
+            _IconAction(
+              tooltip:
+                  onNewFolder == null
+                      ? disabledNewFolderTooltip ?? newFolderTooltip
+                      : newFolderTooltip,
+              label: showLabels ? 'New folder' : null,
+              icon: Icons.create_new_folder_rounded,
+              accent: const Color(0xFF60A5FA),
+              buttonSize: buttonSize,
+              iconSize: iconSize,
+              hitSize: hitSize,
+              onPress: onNewFolder,
+            ),
+            SizedBox(width: spacing),
+          ],
+          if (onNewDatabase != null) ...[
+            _IconAction(
+              tooltip: 'Create a cloud database',
+              label: showLabels ? 'New database' : null,
+              icon: Icons.add_rounded,
+              accent: const Color(0xFF38BDF8),
+              buttonSize: buttonSize,
+              iconSize: iconSize,
+              hitSize: hitSize,
+              emphasized: true,
+              onPress: onNewDatabase,
+            ),
+            SizedBox(width: spacing),
+          ],
           _IconAction(
             tooltip: 'Paste PGN from clipboard',
             icon: Icons.content_paste_go_rounded,
@@ -144,21 +176,25 @@ class LibraryActionsToolbar extends ConsumerWidget {
 class _IconAction extends StatefulWidget {
   const _IconAction({
     required this.tooltip,
+    this.label,
     required this.icon,
     required this.accent,
     required this.buttonSize,
     required this.iconSize,
     this.hitSize,
     required this.onPress,
+    this.emphasized = false,
   });
 
   final String tooltip;
+  final String? label;
   final IconData icon;
   final Color accent;
   final double buttonSize;
   final double iconSize;
   final double? hitSize;
   final VoidCallback? onPress;
+  final bool emphasized;
 
   @override
   State<_IconAction> createState() => _IconActionState();
@@ -174,7 +210,9 @@ class _IconActionState extends State<_IconAction>
     final enabled = widget.onPress != null;
     final borderColor =
         enabled
-            ? (_hovered
+            ? (widget.emphasized
+                ? widget.accent.withValues(alpha: _hovered ? 0.85 : 0.55)
+                : _hovered
                 ? widget.accent.withValues(alpha: 0.70)
                 : const Color(0xFF3F3F46))
             : const Color(0xFF27272A);
@@ -185,6 +223,8 @@ class _IconActionState extends State<_IconAction>
                 ? widget.accent.withValues(alpha: 0.22)
                 : (_hovered
                     ? widget.accent.withValues(alpha: 0.14)
+                    : widget.emphasized
+                    ? widget.accent.withValues(alpha: 0.10)
                     : const Color(0xFF18181B)));
     final iconColor =
         !enabled
@@ -220,14 +260,17 @@ class _IconActionState extends State<_IconAction>
                   : null,
           onTapCancel: () => setStateAfterPointerEvent(() => _pressed = false),
           child: SizedBox(
-            width: effectiveHitSize,
             height: effectiveHitSize,
             child: Center(
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 120),
                 curve: Curves.easeOutCubic,
-                width: widget.buttonSize,
+                constraints: BoxConstraints(minWidth: widget.buttonSize),
                 height: widget.buttonSize,
+                padding:
+                    widget.label == null
+                        ? EdgeInsets.zero
+                        : const EdgeInsets.symmetric(horizontal: 10),
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: background,
@@ -244,11 +287,32 @@ class _IconActionState extends State<_IconAction>
                           ]
                           : null,
                 ),
-                child: Icon(
-                  widget.icon,
-                  size: widget.iconSize,
-                  color: iconColor,
-                ),
+                child:
+                    widget.label == null
+                        ? Icon(
+                          widget.icon,
+                          size: widget.iconSize,
+                          color: iconColor,
+                        )
+                        : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              widget.icon,
+                              size: widget.iconSize,
+                              color: iconColor,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              widget.label!,
+                              style: TextStyle(
+                                color: iconColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
               ),
             ),
           ),

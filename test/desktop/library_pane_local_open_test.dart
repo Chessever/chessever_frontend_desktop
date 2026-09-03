@@ -129,6 +129,16 @@ void main() {
     expect(live.isIndexing, isFalse);
   });
 
+  testWidgets('Cloud Library rail renders the system database exactly once', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: buildLibraryFolderRailForTest())),
+    );
+
+    expect(find.text('ChessEver'), findsOneWidget);
+  });
+
   testWidgets(
     'folder rail remains usable when realtime folder sync times out',
     (tester) async {
@@ -153,10 +163,10 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text('Create one below, or import a PGN to get started.'),
+        find.text('Create a cloud folder or database from Library Home.'),
         findsOneWidget,
       );
-      expect(find.text('New folder'), findsOneWidget);
+      expect(find.text('New folder'), findsNothing);
     },
   );
 }

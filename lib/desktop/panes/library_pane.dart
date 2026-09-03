@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:chessground/chessground.dart' as cg;
 import 'package:collection/collection.dart';
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -51,9 +52,11 @@ import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_filter_dialog.dart';
+import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/list_keyboard_scroll.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
@@ -103,8 +106,8 @@ import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/number_format_utils.dart';
 import 'package:chessever/utils/time_utils.dart';
 
-/// Desktop library: persistent two-pane layout (folder rail + content) with
-/// the forui actions toolbar at the top.
+/// Desktop library: complete cloud navigation in the rail plus a mixed local
+/// and selected-cloud working catalog on Library Home.
 ///
 /// The redesign collapses what was previously two stacked search fields and
 /// a tall folder header with inline buttons into a single search inside the
@@ -134,9 +137,8 @@ class LibraryPane extends HookConsumerWidget {
       () => _hierarchical(subscribedFolders),
       [subscribedFolders],
     );
-    // The synthetic TWIC folder is always pinned at the top of the rail and
-    // is not part of any user-owned/subscribed list — `allFolders` includes
-    // it so dispatch and content lookups work uniformly.
+    // The synthetic TWIC database is part of the complete cloud navigator and
+    // is not part of any user-owned/subscribed list.
     final allFolders = useMemoized(
       () => [kTwicFolder, ...ownedSorted, ...subscribedSorted],
       [ownedSorted, subscribedSorted],
@@ -196,20 +198,40 @@ class LibraryPane extends HookConsumerWidget {
           title: localDatabaseWorkspaceTitle(source, workspacePath),
         ),
       );
+      unawaited(
+        ref
+            .read(myDatabasesFocusProvider.notifier)
+            .recordSuccessfulOpen(libraryLocalDatabasePinKey(path))
+            .catchError((Object error) {
+              if (kDebugMode) {
+                debugPrint('Library Home local recency persist failed: $error');
+              }
+            }),
+      );
     }
 
     void openCloudDatabase(LibraryFolder folder) {
       if (folder.id == kTwicBookId) {
         openDatabaseWorkspaceTab(ref, const DatabaseWorkspaceArgs.twic());
-        return;
+      } else {
+        openDatabaseWorkspaceTab(
+          ref,
+          DatabaseWorkspaceArgs.folder(
+            folderId: folder.id,
+            title: folder.name,
+            isSubscribed: folder.isSubscribed,
+          ),
+        );
       }
-      openDatabaseWorkspaceTab(
-        ref,
-        DatabaseWorkspaceArgs.folder(
-          folderId: folder.id,
-          title: folder.name,
-          isSubscribed: folder.isSubscribed,
-        ),
+      unawaited(
+        ref
+            .read(myDatabasesFocusProvider.notifier)
+            .recordSuccessfulOpen(libraryCloudDatabasePinKey(folder.id))
+            .catchError((Object error) {
+              if (kDebugMode) {
+                debugPrint('Library Home cloud recency persist failed: $error');
+              }
+            }),
       );
     }
 
@@ -268,14 +290,6 @@ class LibraryPane extends HookConsumerWidget {
           error: true,
         );
       }
-    }
-
-    Future<void> openLocalFiles() async {
-      final opened =
-          await ref.read(localChessLibraryProvider.notifier).pickFiles();
-      if (!opened) return;
-      final path = ref.read(localChessLibraryProvider).selectedPath;
-      if (path != null) openLocalFullView(path);
     }
 
     Future<void> addDatabaseDragShortcut(
@@ -341,7 +355,7 @@ class LibraryPane extends HookConsumerWidget {
                   minSize: 200,
                   maxSize: 420,
                   initialWeight: 0.20,
-                  label: 'Folders',
+                  label: 'Cloud Library',
                   collapsedIcon: Icons.view_sidebar_outlined,
                   child: _FolderRail(
                     ownedFolders: ownedSorted,
@@ -371,14 +385,6 @@ class LibraryPane extends HookConsumerWidget {
                           action: action,
                           allFolders: allFolders,
                         ),
-                    onCreateRoot:
-                        () => _onCreateFolder(
-                          context: context,
-                          ref: ref,
-                          folders: allFolders,
-                          lockedParent: null,
-                          allowKindSelection: true,
-                        ),
                     onCollapse: () => mainSplitController.collapse(0),
                   ),
                 ),
@@ -406,10 +412,16 @@ class LibraryPane extends HookConsumerWidget {
                             onNavigateToFolder: navigateToLibraryFolder,
                             onSelectLocalPath: activateLocalPath,
                             onOpenLocalPath: openLocalFullView,
-                            onOpenLocalFiles: openLocalFiles,
                             onImportPgnFiles: importLocalPgnFiles,
                             onDropDatabase: addDatabaseDragShortcut,
-                            onNewFolder: () {
+                            onNewFolder:
+                                () => _onCreateFolder(
+                                  context: context,
+                                  ref: ref,
+                                  folders: allFolders,
+                                  kind: LibraryFolderCreateKind.folder,
+                                ),
+                            onNewDatabase: () {
                               final currentFolder =
                                   currentLibraryFolderId.value == null
                                       ? null
@@ -422,8 +434,15 @@ class LibraryPane extends HookConsumerWidget {
                                 context: context,
                                 ref: ref,
                                 folders: allFolders,
-                                lockedParent: currentFolder,
-                                allowKindSelection: true,
+                                lockedParent:
+                                    currentFolder != null &&
+                                            !libraryFolderIsDatabase(
+                                              currentFolder,
+                                              allFolders,
+                                            )
+                                        ? currentFolder
+                                        : null,
+                                kind: LibraryFolderCreateKind.database,
                               );
                             },
                           ),
@@ -493,7 +512,7 @@ final _twicPreviewPgnProvider = FutureProvider.autoDispose
 }
 
 // =====================================================================
-// Folder rail (sectioned: My folders / Subscribed)
+// Cloud Library rail (complete synced cloud collection)
 // =====================================================================
 
 class _FolderRail extends StatelessWidget {
@@ -507,7 +526,6 @@ class _FolderRail extends StatelessWidget {
     required this.onSelect,
     required this.onOpen,
     required this.onAction,
-    required this.onCreateRoot,
     required this.onCollapse,
   });
 
@@ -521,7 +539,6 @@ class _FolderRail extends StatelessWidget {
   final ValueChanged<LibraryFolder> onOpen;
   final void Function(LibraryFolder folder, LibraryFolderAction action)
   onAction;
-  final VoidCallback onCreateRoot;
   final VoidCallback onCollapse;
 
   @override
@@ -533,8 +550,6 @@ class _FolderRail extends StatelessWidget {
         children: [
           _RailHeader(onCollapse: onCollapse),
           Expanded(child: _body()),
-          const Divider(height: 1, color: kDividerColor),
-          _RailFooter(onCreate: onCreateRoot),
         ],
       ),
     );
@@ -548,8 +563,16 @@ class _FolderRail extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 12),
       children: [
         if (error != null) _RailSyncWarning(error: error!),
+        const _RailGroupHeader(label: 'System', count: 1),
+        _PinnedSystemFolderRow(
+          folder: kTwicFolder,
+          selected: kTwicBookId == selectedId,
+          onTap: () => onSelect(kTwicBookId),
+          onOpen: () => onOpen(kTwicFolder),
+        ),
         if (ownedFolders.isNotEmpty) ...[
-          _RailGroupHeader(label: 'My folders', count: ownedFolders.length),
+          const SizedBox(height: 14),
+          _RailGroupHeader(label: 'Cloud folders', count: ownedFolders.length),
           for (final folder in ownedFolders)
             _FolderRow(
               folder: folder,
@@ -606,7 +629,6 @@ Widget buildLibraryFolderRailForTest({
       onSelect: (_) {},
       onOpen: (_) {},
       onAction: (_, _) {},
-      onCreateRoot: () {},
       onCollapse: () {},
     ),
   );
@@ -635,7 +657,7 @@ class _RailHeader extends StatelessWidget {
           const SizedBox(width: 8),
           const Expanded(
             child: Text(
-              'Library',
+              'Cloud Library',
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: kWhiteColor70,
@@ -665,10 +687,12 @@ class _PinnedSystemFolderRow extends StatefulWidget {
     required this.folder,
     required this.selected,
     required this.onTap,
+    required this.onOpen,
   });
   final LibraryFolder folder;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onOpen;
 
   @override
   State<_PinnedSystemFolderRow> createState() => _PinnedSystemFolderRowState();
@@ -703,6 +727,7 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
+            onDoubleTap: widget.onOpen,
             onTapDown: (_) => setStateAfterPointerEvent(() => _pressed = true),
             onTapUp: (_) => setStateAfterPointerEvent(() => _pressed = false),
             onTapCancel:
@@ -784,7 +809,7 @@ class _RailEmptyHint extends StatelessWidget {
           ),
           SizedBox(height: 6),
           Text(
-            'Create one below, or import a PGN to get started.',
+            'Create a cloud folder or database from Library Home.',
             style: TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
           ),
         ],
@@ -825,36 +850,6 @@ class _RailGroupHeader extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _RailFooter extends StatelessWidget {
-  const _RailFooter({required this.onCreate});
-  final VoidCallback onCreate;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-      child: DesktopTooltip(
-        message: 'Create a new folder',
-        child: SizedBox(
-          width: double.infinity,
-          child: FButton(
-            style: FButtonStyle.outline(),
-            onPress: onCreate,
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.add_rounded, size: 14),
-                SizedBox(width: 6),
-                Text('New folder'),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -985,6 +980,9 @@ class _FolderRowState extends ConsumerState<_FolderRow>
   Widget build(BuildContext context) {
     final chrome = _LibraryKindChrome.forKind(widget.iconKind);
     final isFolder = widget.iconKind == _DatabaseBoardIconKind.folder;
+    final focusState = ref.watch(myDatabasesFocusProvider);
+    final isShownOnLibraryHome =
+        !focusState.hiddenCloudFolderIds.contains(widget.folder.id);
     final fg =
         widget.selected
             ? chrome.accent
@@ -1007,10 +1005,10 @@ class _FolderRowState extends ConsumerState<_FolderRow>
           ),
       child: LibraryFolderContextMenu(
         folder: widget.folder,
-        canCreateChildren:
-            !widget.folder.isSubscribed &&
-            widget.iconKind == _DatabaseBoardIconKind.folder,
+        canCreateDatabase: !widget.folder.isSubscribed && isFolder,
         hasGames: true, // count is unknown at rail level; menu still useful.
+        includeLibraryHomeAction: !widget.folder.isPermanentLibraryFolder,
+        isShownOnLibraryHome: isShownOnLibraryHome,
         onAction: widget.onAction,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(8, 1, 8, 1),
@@ -1082,9 +1080,10 @@ class _FolderRowState extends ConsumerState<_FolderRow>
                                 ),
                                 border: Border.all(
                                   color: chrome.wellBorder.withValues(
-                                    alpha: widget.selected || _hovered
-                                        ? 0.85
-                                        : 0.45,
+                                    alpha:
+                                        widget.selected || _hovered
+                                            ? 0.85
+                                            : 0.45,
                                   ),
                                 ),
                               ),
@@ -1299,14 +1298,141 @@ class _SortConfig {
   }
 }
 
+enum LibraryDatabaseCatalogSource { cloud, local }
+
+enum LibraryDatabaseCatalogSourceFilter { all, cloud, local }
+
+@immutable
+class LibraryDatabaseCatalogColumns {
+  const LibraryDatabaseCatalogColumns({
+    required this.showSource,
+    required this.showLastOpened,
+    this.nameWidth = 320,
+    this.gamesWidth = 110,
+    this.sourceWidth = 82,
+    this.lastOpenedWidth = 108,
+  });
+
+  final bool showSource;
+  final bool showLastOpened;
+  final double nameWidth;
+  final double gamesWidth;
+  final double sourceWidth;
+  final double lastOpenedWidth;
+
+  @override
+  bool operator ==(Object other) {
+    return other is LibraryDatabaseCatalogColumns &&
+        showSource == other.showSource &&
+        showLastOpened == other.showLastOpened &&
+        nameWidth == other.nameWidth &&
+        gamesWidth == other.gamesWidth &&
+        sourceWidth == other.sourceWidth &&
+        lastOpenedWidth == other.lastOpenedWidth;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    showSource,
+    showLastOpened,
+    nameWidth,
+    gamesWidth,
+    sourceWidth,
+    lastOpenedWidth,
+  );
+}
+
+@visibleForTesting
+LibraryDatabaseCatalogColumns libraryDatabaseCatalogColumns(
+  double width, {
+  Map<String, double> savedWidths = const <String, double>{},
+}) {
+  double saved(String key, double fallback, double min, double max) {
+    return (savedWidths[key] ?? fallback).clamp(min, max).toDouble();
+  }
+
+  final showSource = width >= 560;
+  final showLastOpened = width >= 760;
+  final gamesWidth = saved('games', 110, 72, 190);
+  final sourceWidth = saved('source', 82, 70, 160);
+  final lastOpenedWidth = saved('lastOpened', 108, 88, 200);
+  final fixedWidth =
+      39 +
+      5 +
+      12 +
+      gamesWidth +
+      (showSource ? 12 + sourceWidth : 0) +
+      (showLastOpened ? 12 + lastOpenedWidth : 0) +
+      8 +
+      22;
+  final availableNameWidth = math.max(160.0, width - fixedWidth - 20);
+  return LibraryDatabaseCatalogColumns(
+    showSource: showSource,
+    showLastOpened: showLastOpened,
+    nameWidth: saved('name', availableNameWidth, 160, availableNameWidth),
+    gamesWidth: gamesWidth,
+    sourceWidth: sourceWidth,
+    lastOpenedWidth: lastOpenedWidth,
+  );
+}
+
+@visibleForTesting
+bool libraryDatabaseCatalogMatches({
+  required String title,
+  required String details,
+  required LibraryDatabaseCatalogSource source,
+  required LibraryDatabaseCatalogSourceFilter filter,
+  required String query,
+}) {
+  final matchesSource = switch (filter) {
+    LibraryDatabaseCatalogSourceFilter.all => true,
+    LibraryDatabaseCatalogSourceFilter.cloud =>
+      source == LibraryDatabaseCatalogSource.cloud,
+    LibraryDatabaseCatalogSourceFilter.local =>
+      source == LibraryDatabaseCatalogSource.local,
+  };
+  if (!matchesSource) return false;
+  final normalizedQuery = query.trim().toLowerCase();
+  if (normalizedQuery.isEmpty) return true;
+  return '$title $details'.toLowerCase().contains(normalizedQuery);
+}
+
+@visibleForTesting
+List<String> libraryCatalogReorderedKeys(
+  List<String> keys, {
+  required String draggedKey,
+  required String targetKey,
+}) {
+  final oldIndex = keys.indexOf(draggedKey);
+  final targetIndex = keys.indexOf(targetKey);
+  if (oldIndex < 0 || targetIndex < 0 || oldIndex == targetIndex) {
+    return List<String>.of(keys);
+  }
+  final reordered = List<String>.of(keys)..removeAt(oldIndex);
+  reordered.insert(targetIndex.clamp(0, reordered.length), draggedKey);
+  return reordered;
+}
+
 enum _LibraryDatabaseKind { cloud, local }
 
-enum _DatabaseBoardAction { preview, open, remove }
+enum _DatabaseBoardView { list, grid }
+
+enum _CloudDatabaseBoardAction { preview, open, pin, unpin, remove }
+
+enum _LocalGroupBoardAction {
+  open,
+  pin,
+  unpin,
+  removeFromLibraryHome,
+  deleteFromComputer,
+}
 
 enum _LocalDatabaseBoardAction {
   preview,
   open,
-  removeFromMyDatabases,
+  pin,
+  unpin,
+  removeFromLibraryHome,
   deleteFromComputer,
 }
 
@@ -1322,10 +1448,10 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
     required this.onNavigateToFolder,
     required this.onSelectLocalPath,
     required this.onOpenLocalPath,
-    required this.onOpenLocalFiles,
     required this.onImportPgnFiles,
     required this.onDropDatabase,
     required this.onNewFolder,
+    required this.onNewDatabase,
   });
 
   final List<LibraryFolder> folders;
@@ -1338,14 +1464,21 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
   final ValueChanged<String?> onNavigateToFolder;
   final ValueChanged<String> onSelectLocalPath;
   final ValueChanged<String> onOpenLocalPath;
-  final VoidCallback onOpenLocalFiles;
   final VoidCallback onImportPgnFiles;
   final Future<void> Function(LibraryDatabaseDragPayload payload)
   onDropDatabase;
   final VoidCallback onNewFolder;
+  final VoidCallback onNewDatabase;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final catalogSearchController = useTextEditingController();
+    final catalogQuery = useState('');
+    final catalogSourceFilter = useState(
+      LibraryDatabaseCatalogSourceFilter.all,
+    );
+    final catalogView = useState(_DatabaseBoardView.list);
+    final homePreferences = ref.watch(myDatabasesFocusProvider);
     final localState = ref.watch(localChessLibraryProvider);
     final localSource = localState.source;
     final selectedFolder = folders.firstWhereOrNull(
@@ -1364,18 +1497,6 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
       (group) => group.id == currentLocalGroupId.value,
     );
     final localGroupIdsKey = localGroups.map((group) => group.id).join('|');
-    final currentLocalGroupIsPlayerWorkspace =
-        currentLocalGroup != null &&
-        localLibraryGroupBelongsToPlayerWorkspace(
-          groupId: currentLocalGroup.id,
-          entries: currentLocalGroup.entries,
-        );
-    final disabledNewFolderTooltip =
-        currentLocalGroup == null
-            ? null
-            : (currentLocalGroupIsPlayerWorkspace
-                ? 'Player folders can contain databases only, not subfolders.'
-                : 'Local database groups cannot contain subfolders.');
 
     void setDeleteProgress(LocalChessScanProgress? progress) {
       if (!context.mounted) return;
@@ -1396,6 +1517,16 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
       return null;
     }, [currentLocalGroupId.value, localGroupIdsKey]);
 
+    useEffect(() {
+      if (homePreferences.loaded) {
+        catalogView.value =
+            homePreferences.listViewPreferred
+                ? _DatabaseBoardView.list
+                : _DatabaseBoardView.grid;
+      }
+      return null;
+    }, [homePreferences.loaded]);
+
     return Stack(
       children: [
         Column(
@@ -1414,11 +1545,42 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                   currentLocalGroup == null
                       ? null
                       : () => currentLocalGroupId.value = null,
-              onNewFolder:
-                  disabledNewFolderTooltip == null ? onNewFolder : null,
-              disabledNewFolderTooltip: disabledNewFolderTooltip,
-              onOpenLocalFiles: onOpenLocalFiles,
+              onNewFolder: onNewFolder,
               onImportPgnFiles: onImportPgnFiles,
+              searchController: catalogSearchController,
+              sourceFilter: catalogSourceFilter.value,
+              view: catalogView.value,
+              onQueryChanged: (value) => catalogQuery.value = value,
+              onSourceFilterChanged:
+                  (value) => catalogSourceFilter.value = value,
+              onViewChanged: (value) {
+                catalogView.value = value;
+                unawaited(
+                  ref
+                      .read(myDatabasesFocusProvider.notifier)
+                      .setListViewPreferred(value == _DatabaseBoardView.list)
+                      .catchError((Object error) {
+                        if (kDebugMode) {
+                          debugPrint(
+                            'Library Home view preference persist failed: '
+                            '$error',
+                          );
+                        }
+                        if (!context.mounted) return;
+                        final restored = ref.read(myDatabasesFocusProvider);
+                        catalogView.value =
+                            restored.listViewPreferred
+                                ? _DatabaseBoardView.list
+                                : _DatabaseBoardView.grid;
+                        showDesktopToast(
+                          context,
+                          'Could not save the Library Home view.',
+                          error: true,
+                        );
+                      }),
+                );
+              },
+              onNewDatabase: onNewDatabase,
             ),
             Expanded(
               child: ResizableSplitView(
@@ -1428,7 +1590,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                   SplitChild(
                     minSize: 124,
                     initialWeight: 0.24,
-                    label: 'My Databases',
+                    label: 'Library Home',
                     child: _MyDatabasesBoard(
                       folders: folders,
                       currentFolderId: currentFolderId,
@@ -1446,6 +1608,9 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                       onSelectLocalPath: onSelectLocalPath,
                       onOpenLocalPath: onOpenLocalPath,
                       onDropDatabase: onDropDatabase,
+                      query: catalogQuery.value,
+                      sourceFilter: catalogSourceFilter.value,
+                      view: catalogView.value,
                     ),
                   ),
                   SplitChild(
@@ -1488,9 +1653,14 @@ class _MyDatabasesHeader extends StatelessWidget {
     required this.onNavigate,
     required this.onNavigateLocalRoot,
     required this.onNewFolder,
-    required this.disabledNewFolderTooltip,
-    required this.onOpenLocalFiles,
     required this.onImportPgnFiles,
+    required this.onNewDatabase,
+    required this.searchController,
+    required this.sourceFilter,
+    required this.view,
+    required this.onQueryChanged,
+    required this.onSourceFilterChanged,
+    required this.onViewChanged,
   });
 
   final List<LibraryFolder> folders;
@@ -1499,15 +1669,74 @@ class _MyDatabasesHeader extends StatelessWidget {
   final ValueChanged<String?> onNavigate;
   final VoidCallback? onNavigateLocalRoot;
   final VoidCallback? onNewFolder;
-  final String? disabledNewFolderTooltip;
-  final VoidCallback onOpenLocalFiles;
   final VoidCallback onImportPgnFiles;
+  final VoidCallback onNewDatabase;
+  final TextEditingController searchController;
+  final LibraryDatabaseCatalogSourceFilter sourceFilter;
+  final _DatabaseBoardView view;
+  final ValueChanged<String> onQueryChanged;
+  final ValueChanged<LibraryDatabaseCatalogSourceFilter> onSourceFilterChanged;
+  final ValueChanged<_DatabaseBoardView> onViewChanged;
 
   @override
   Widget build(BuildContext context) {
+    Widget filterButton(
+      String label,
+      IconData icon,
+      LibraryDatabaseCatalogSourceFilter filter,
+    ) {
+      return DesktopToolbarPillButton(
+        label: label,
+        icon: icon,
+        height: 30,
+        tone:
+            sourceFilter == filter
+                ? DesktopToolbarPillTone.primary
+                : DesktopToolbarPillTone.neutral,
+        onPress: () => onSourceFilterChanged(filter),
+      );
+    }
+
+    final filtersAndView = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        filterButton(
+          'All',
+          Icons.all_inbox_rounded,
+          LibraryDatabaseCatalogSourceFilter.all,
+        ),
+        const SizedBox(width: 4),
+        filterButton(
+          'Cloud',
+          Icons.cloud_outlined,
+          LibraryDatabaseCatalogSourceFilter.cloud,
+        ),
+        const SizedBox(width: 4),
+        filterButton(
+          'Local',
+          Icons.computer_rounded,
+          LibraryDatabaseCatalogSourceFilter.local,
+        ),
+        const SizedBox(width: 8),
+        DesktopHeaderIconButton(
+          icon: Icons.view_list_rounded,
+          selected: view == _DatabaseBoardView.list,
+          tooltip: 'List view',
+          onPress: () => onViewChanged(_DatabaseBoardView.list),
+        ),
+        const SizedBox(width: 2),
+        DesktopHeaderIconButton(
+          icon: Icons.grid_view_rounded,
+          selected: view == _DatabaseBoardView.grid,
+          tooltip: 'Grid view',
+          onPress: () => onViewChanged(_DatabaseBoardView.grid),
+        ),
+      ],
+    );
+
     return LibraryChromeBar(
       icon: Icons.storage_rounded,
-      title: 'My Databases',
+      title: 'Library Home',
       titleWidget: _LibraryFolderBreadcrumb(
         folders: folders,
         currentFolderId: currentFolderId,
@@ -1522,12 +1751,43 @@ class _MyDatabasesHeader extends StatelessWidget {
               : null,
       trailing: LibraryActionsToolbar(
         onNewFolder: onNewFolder,
-        disabledNewFolderTooltip: disabledNewFolderTooltip,
         onImportPgnFiles: onImportPgnFiles,
+        onNewDatabase: onNewDatabase,
+        showLabels: true,
         buttonSize: 28,
         iconSize: 14.5,
         spacing: 4,
         hitSize: 34,
+      ),
+      bottom: LayoutBuilder(
+        builder: (context, constraints) {
+          final search = DesktopSearchField(
+            controller: searchController,
+            hintText: 'Search databases and folders',
+            maxWidth: double.infinity,
+            onChanged: onQueryChanged,
+            onClear: () => onQueryChanged(''),
+          );
+          if (constraints.maxWidth >= 690) {
+            return Row(
+              children: [
+                Expanded(child: search),
+                const SizedBox(width: 12),
+                filtersAndView,
+              ],
+            );
+          }
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                SizedBox(width: 260, child: search),
+                const SizedBox(width: 10),
+                filtersAndView,
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -1550,6 +1810,9 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     required this.onSelectLocalPath,
     required this.onOpenLocalPath,
     required this.onDropDatabase,
+    required this.query,
+    required this.sourceFilter,
+    required this.view,
   });
 
   final List<LibraryFolder> folders;
@@ -1568,6 +1831,9 @@ class _MyDatabasesBoard extends HookConsumerWidget {
   final ValueChanged<String> onOpenLocalPath;
   final Future<void> Function(LibraryDatabaseDragPayload payload)
   onDropDatabase;
+  final String query;
+  final LibraryDatabaseCatalogSourceFilter sourceFilter;
+  final _DatabaseBoardView view;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1598,8 +1864,9 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       ),
     );
     final counts = cloudCountsAsync.data ?? const <String, int>{};
-    final hiddenCloudFolderIds =
-        ref.watch(myDatabasesFocusProvider).hiddenCloudFolderIds;
+    final focusState = ref.watch(myDatabasesFocusProvider);
+    final hiddenCloudFolderIds = focusState.hiddenCloudFolderIds;
+    final pinnedDatabaseKeys = focusState.pinnedDatabaseKeys;
     final localEntries = ref.watch(localLibraryRegistryProvider).entries;
 
     int? localGameCount(LocalLibraryEntry entry) {
@@ -1640,6 +1907,16 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       folders: folders,
       parentId: currentLocalGroup == null ? currentFolderId : null,
       hiddenIds: hiddenCloudFolderIds,
+      pinnedIds:
+          currentFolderId == null && currentLocalGroup == null
+              ? <String>{
+                for (final folder in folders)
+                  if (pinnedDatabaseKeys.contains(
+                    libraryCloudDatabasePinKey(folder.id),
+                  ))
+                    folder.id,
+              }
+              : const <String>{},
     );
     final items = <_DatabaseBoardItem>[
       if (currentFolderId == null && currentLocalGroup == null)
@@ -1649,45 +1926,161 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         ),
       if (currentLocalGroup == null)
         for (final folder in visibleCloudFolders)
-          _DatabaseBoardItem.cloud(folder: folder, count: counts[folder.id]),
+          _DatabaseBoardItem.cloud(
+            folder: folder,
+            count: counts[folder.id],
+            userPinned: pinnedDatabaseKeys.contains(
+              libraryCloudDatabasePinKey(folder.id),
+            ),
+          ),
       if (currentFolderId == null && currentLocalGroup == null)
         for (final group in localGroups)
           _DatabaseBoardItem.localGroup(
             localGroup: group,
             count: group.gameCount,
+            userPinned: pinnedDatabaseKeys.contains('group:${group.id}'),
           ),
       if (currentFolderId == null)
         for (final entry in visibleLocalEntries)
-          _DatabaseBoardItem.local(entry: entry, count: localGameCount(entry)),
+          _DatabaseBoardItem.local(
+            entry: entry,
+            count: localGameCount(entry),
+            userPinned: pinnedDatabaseKeys.contains(
+              libraryLocalDatabasePinKey(entry.path),
+            ),
+          ),
     ];
-    items.sort((a, b) {
-      // Cloud databases (incl. TWIC) always sort ahead of local databases.
-      final aLocal = a.entry != null;
-      final bLocal = b.entry != null;
-      final aGroup = a.localGroup != null;
-      final bGroup = b.localGroup != null;
-      final aLocalish = aLocal || aGroup;
-      final bLocalish = bLocal || bGroup;
-      if (aLocalish != bLocalish) return aLocalish ? 1 : -1;
 
-      // Local order must stay stable across selection. `count` for a local
-      // entry is only resolvable for the currently-open database (it reads
-      // the active localSource), so sorting locals by count makes the list
-      // reshuffle every time the user picks a different database. Order them
-      // by name instead — a pure function of the registry entry.
-      if (aLocalish) {
-        if (currentLocalGroupIsPlayerWorkspace && aLocal && bLocal) {
-          return comparePlayerWorkspaceLibraryEntries(a.entry!, b.entry!);
-        }
-        return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    int persistedIndex(List<String> order, String key) {
+      final index = order.indexOf(key);
+      return index < 0 ? 1 << 30 : index;
+    }
+
+    int compareItems(_DatabaseBoardItem a, _DatabaseBoardItem b) {
+      final byPin = compareLibraryDatabaseCatalogPinState(
+        a.isPinned,
+        b.isPinned,
+      );
+      if (byPin != 0) return byPin;
+      if (currentFolderId == null && currentLocalGroup == null) {
+        final bySection = a
+            .sectionRank(folders)
+            .compareTo(b.sectionRank(folders));
+        if (bySection != 0) return bySection;
       }
-
-      final byCount = (b.count ?? 0).compareTo(a.count ?? 0);
-      if (byCount != 0) return byCount;
+      if (currentLocalGroupIsPlayerWorkspace &&
+          a.entry != null &&
+          b.entry != null) {
+        final playerOrder = comparePlayerWorkspaceLibraryEntries(
+          a.entry!,
+          b.entry!,
+        );
+        if (playerOrder != 0) return playerOrder;
+      }
+      final section = a.sectionRank(folders);
+      if (section == 0) {
+        if (a.isTwic != b.isTwic) return a.isTwic ? -1 : 1;
+        final aPermanent = a.folder?.isPermanentLibraryFolder ?? false;
+        final bPermanent = b.folder?.isPermanentLibraryFolder ?? false;
+        if (aPermanent != bPermanent) return aPermanent ? -1 : 1;
+        if (focusState.pinnedOrderCustomized) {
+          final byManualOrder = persistedIndex(
+            focusState.orderedPinnedDatabaseKeys,
+            a.stableKey,
+          ).compareTo(
+            persistedIndex(focusState.orderedPinnedDatabaseKeys, b.stableKey),
+          );
+          if (byManualOrder != 0) return byManualOrder;
+        }
+      } else if (section == 1) {
+        final folderOrder = focusState.orderedFolderKeys;
+        if (folderOrder.isNotEmpty) {
+          final byManualOrder = persistedIndex(
+            folderOrder,
+            a.stableKey,
+          ).compareTo(persistedIndex(folderOrder, b.stableKey));
+          if (byManualOrder != 0) return byManualOrder;
+        }
+      } else {
+        final aOpened = focusState.lastOpenedAtByItemKey[a.stableKey];
+        final bOpened = focusState.lastOpenedAtByItemKey[b.stableKey];
+        if (aOpened != null || bOpened != null) {
+          if (aOpened == null) return 1;
+          if (bOpened == null) return -1;
+          final byOpened = bOpened.compareTo(aOpened);
+          if (byOpened != 0) return byOpened;
+        }
+      }
+      final byGames = (b.count ?? -1).compareTo(a.count ?? -1);
+      if (byGames != 0) return byGames;
       if (a.isTwic) return -1;
       if (b.isTwic) return 1;
-      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
-    });
+      final byTitle = a.title.toLowerCase().compareTo(b.title.toLowerCase());
+      if (byTitle != 0) return byTitle;
+      return a.stableKey.compareTo(b.stableKey);
+    }
+
+    items.sort(compareItems);
+    final visibleItems = items
+        .where((item) {
+          final kind = item.iconKind(folders);
+          return libraryDatabaseCatalogMatches(
+            title: item.title,
+            details: '${item.catalogDetails(kind)} ${item.sourceLabel}',
+            source: item.catalogSource,
+            filter: sourceFilter,
+            query: query,
+          );
+        })
+        .toList(growable: false);
+
+    final reorderingEnabled =
+        currentFolderId == null &&
+        currentLocalGroup == null &&
+        query.trim().isEmpty &&
+        sourceFilter == LibraryDatabaseCatalogSourceFilter.all;
+
+    bool canReorderItem(_DatabaseBoardItem item) {
+      if (!reorderingEnabled) return false;
+      final section = item.sectionRank(folders);
+      return section == 1 || (section == 0 && item.userPinned);
+    }
+
+    Future<void> moveItemBefore(
+      String draggedKey,
+      _DatabaseBoardItem target,
+    ) async {
+      if (!canReorderItem(target) || draggedKey == target.stableKey) return;
+      final section = target.sectionRank(folders);
+      final keys = visibleItems
+          .where(
+            (item) =>
+                item.sectionRank(folders) == section && canReorderItem(item),
+          )
+          .map((item) => item.stableKey)
+          .toList(growable: false);
+      final reordered = libraryCatalogReorderedKeys(
+        keys,
+        draggedKey: draggedKey,
+        targetKey: target.stableKey,
+      );
+      if (listEquals(keys, reordered)) return;
+      try {
+        final notifier = ref.read(myDatabasesFocusProvider.notifier);
+        if (section == 0) {
+          await notifier.setPinnedDatabaseOrder(reordered);
+        } else {
+          await notifier.setFolderOrder(reordered);
+        }
+      } catch (error) {
+        if (!context.mounted) return;
+        showDesktopToast(
+          context,
+          'Could not save the Library Home order.',
+          error: true,
+        );
+      }
+    }
 
     Future<void> previewLocalEntry(LocalLibraryEntry entry) async {
       final opened = await ref
@@ -1826,6 +2219,9 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           },
         );
         await ref
+            .read(myDatabasesFocusProvider.notifier)
+            .unpinDatabase(libraryLocalDatabasePinKey(entry.path));
+        await ref
             .read(localLibraryRegistryProvider.notifier)
             .unregister(entry.path);
         clearOpenLocalSourceIfNeeded(<String>{entry.path});
@@ -1841,7 +2237,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         if (context.mounted) {
           showDesktopToast(
             context,
-            'Removed from My Databases. The original files were not deleted.',
+            'Removed from Library Home. The original files were not deleted.',
           );
         }
       } catch (e, st) {
@@ -1858,7 +2254,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         if (context.mounted) {
           showDesktopToast(
             context,
-            'Could not remove the database from My Databases. Please try again.',
+            'Could not remove the database from Library Home. Please try again.',
             error: true,
           );
         }
@@ -2013,33 +2409,72 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       await removeLocalGroup(group);
     }
 
+    Future<void> updateDatabasePin({
+      required String key,
+      required String title,
+      required bool pinned,
+    }) async {
+      final notifier = ref.read(myDatabasesFocusProvider.notifier);
+      try {
+        if (pinned) {
+          await notifier.pinDatabase(key);
+        } else {
+          await notifier.unpinDatabase(key);
+        }
+      } catch (_) {
+        if (!context.mounted) return;
+        showDesktopToast(
+          context,
+          pinned ? 'Could not pin "$title".' : 'Could not unpin "$title".',
+          error: true,
+        );
+        return;
+      }
+      if (!context.mounted) return;
+      showDesktopToast(
+        context,
+        pinned ? 'Pinned "$title".' : 'Unpinned "$title".',
+      );
+    }
+
     Future<void> showLocalContextMenu(
       LocalLibraryEntry entry,
       Offset position,
     ) async {
+      final pinKey = libraryLocalDatabasePinKey(entry.path);
+      final isPinned = pinnedDatabaseKeys.contains(pinKey);
       final picked = await showDesktopContextMenu<_LocalDatabaseBoardAction>(
         context: context,
         position: position,
         width: 260,
-        entries: const [
-          DesktopContextMenuItem(
+        entries: [
+          const DesktopContextMenuItem(
             value: _LocalDatabaseBoardAction.preview,
             icon: Icons.table_rows_outlined,
             label: 'Preview database',
           ),
-          DesktopContextMenuItem(
+          const DesktopContextMenuItem(
             value: _LocalDatabaseBoardAction.open,
             icon: Icons.open_in_new_rounded,
             label: 'Open full database',
           ),
-          DesktopContextMenuDivider(),
+          const DesktopContextMenuDivider(),
           DesktopContextMenuItem(
-            value: _LocalDatabaseBoardAction.removeFromMyDatabases,
-            icon: Icons.remove_circle_outline_rounded,
-            label: 'Remove from My Databases',
+            value:
+                isPinned
+                    ? _LocalDatabaseBoardAction.unpin
+                    : _LocalDatabaseBoardAction.pin,
+            icon: isPinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+            label: isPinned ? 'Unpin database' : 'Pin database',
           ),
-          DesktopContextMenuDivider(),
-          DesktopContextMenuItem(
+          const DesktopContextMenuDivider(),
+          const DesktopContextMenuItem(
+            value: _LocalDatabaseBoardAction.removeFromLibraryHome,
+            icon: Icons.remove_circle_outline_rounded,
+            label: 'Remove from Library Home',
+          ),
+          const DesktopContextMenuDivider(),
+          const DesktopContextMenuItem(
             value: _LocalDatabaseBoardAction.deleteFromComputer,
             icon: Icons.delete_forever_outlined,
             label: 'Delete from computer',
@@ -2053,10 +2488,58 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           await previewLocalEntry(entry);
         case _LocalDatabaseBoardAction.open:
           await openLocalEntry(entry);
-        case _LocalDatabaseBoardAction.removeFromMyDatabases:
+        case _LocalDatabaseBoardAction.pin:
+          await updateDatabasePin(
+            key: pinKey,
+            title: entry.displayName,
+            pinned: true,
+          );
+        case _LocalDatabaseBoardAction.unpin:
+          await updateDatabasePin(
+            key: pinKey,
+            title: entry.displayName,
+            pinned: false,
+          );
+        case _LocalDatabaseBoardAction.removeFromLibraryHome:
           await confirmRemoveLocalEntryFromMyDatabases(entry);
         case _LocalDatabaseBoardAction.deleteFromComputer:
           await confirmRemoveLocalEntry(entry);
+      }
+    }
+
+    Future<void> removeLocalGroupFromLibraryHome(
+      _LocalLibraryEntryGroup group,
+    ) async {
+      if (isDeletingLocalDatabase) return;
+      try {
+        await ref
+            .read(myDatabasesFocusProvider.notifier)
+            .unpinDatabase('group:${group.id}');
+        for (final entry in group.entries) {
+          await ref
+              .read(localLibraryRegistryProvider.notifier)
+              .unregister(entry.path);
+        }
+        clearOpenLocalSourceIfNeeded(
+          group.entries.map((entry) => entry.path).toSet(),
+        );
+        if (currentLocalGroupId == group.id) {
+          onCurrentLocalGroupChanged(null);
+        }
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Removed "${group.label}" from Library Home. Files were not deleted.',
+          );
+        }
+      } catch (error) {
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Could not remove "${group.label}" from Library Home.',
+            error: true,
+          );
+        }
       }
     }
 
@@ -2064,43 +2547,93 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       _LocalLibraryEntryGroup group,
       Offset position,
     ) async {
-      final picked = await showDesktopContextMenu<_DatabaseBoardAction>(
+      final pinKey = 'group:${group.id}';
+      final isPinned = pinnedDatabaseKeys.contains(pinKey);
+      final picked = await showDesktopContextMenu<_LocalGroupBoardAction>(
         context: context,
         position: position,
-        width: 230,
-        entries: const [
-          DesktopContextMenuItem(
-            value: _DatabaseBoardAction.open,
+        width: 260,
+        entries: [
+          const DesktopContextMenuItem(
+            value: _LocalGroupBoardAction.open,
             icon: Icons.folder_open_outlined,
             label: 'Open folder',
           ),
-          DesktopContextMenuDivider(),
+          const DesktopContextMenuDivider(),
           DesktopContextMenuItem(
-            value: _DatabaseBoardAction.remove,
-            icon: Icons.delete_outline_rounded,
-            label: 'Delete folder',
+            value:
+                isPinned
+                    ? _LocalGroupBoardAction.unpin
+                    : _LocalGroupBoardAction.pin,
+            icon: isPinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+            label: isPinned ? 'Unpin folder' : 'Pin folder',
+          ),
+          const DesktopContextMenuDivider(),
+          DesktopContextMenuItem(
+            value: _LocalGroupBoardAction.removeFromLibraryHome,
+            icon: Icons.remove_circle_outline_rounded,
+            label: 'Remove from Library Home',
+          ),
+          const DesktopContextMenuDivider(),
+          const DesktopContextMenuItem(
+            value: _LocalGroupBoardAction.deleteFromComputer,
+            icon: Icons.delete_forever_outlined,
+            label: 'Delete from computer',
             destructive: true,
           ),
         ],
       );
       if (picked == null || !context.mounted) return;
       switch (picked) {
-        case _DatabaseBoardAction.preview:
+        case _LocalGroupBoardAction.open:
           onCurrentLocalGroupChanged(group.id);
-        case _DatabaseBoardAction.open:
-          onCurrentLocalGroupChanged(group.id);
-        case _DatabaseBoardAction.remove:
+        case _LocalGroupBoardAction.pin:
+          await updateDatabasePin(
+            key: pinKey,
+            title: group.label,
+            pinned: true,
+          );
+        case _LocalGroupBoardAction.unpin:
+          await updateDatabasePin(
+            key: pinKey,
+            title: group.label,
+            pinned: false,
+          );
+        case _LocalGroupBoardAction.removeFromLibraryHome:
+          await removeLocalGroupFromLibraryHome(group);
+        case _LocalGroupBoardAction.deleteFromComputer:
           await confirmRemoveLocalGroup(group);
       }
     }
 
     Future<void> removeCloudFolderFromBoard(LibraryFolder folder) async {
-      if (folder.id == kTwicBookId) return;
-      await ref
-          .read(myDatabasesFocusProvider.notifier)
-          .hideCloudFolder(folder.id);
-      if (selectedFolderId == folder.id && selectedLocalPath == null) {
-        onSelectFolder(kTwicFolder);
+      if (!libraryCanRemoveCloudFolderFromBoard(folder)) return;
+      try {
+        await ref
+            .read(myDatabasesFocusProvider.notifier)
+            .hideCloudFolder(folder.id);
+        if (selectedFolderId == folder.id && selectedLocalPath == null) {
+          onSelectFolder(kTwicFolder);
+        }
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Removed "${folder.name}" from Library Home.',
+          );
+        }
+      } catch (error, stackTrace) {
+        ErrorReporter.report(
+          error,
+          stackTrace: stackTrace,
+          tag: 'library.remove_database_from_home',
+        );
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Could not remove "${folder.name}" from Library Home.',
+            error: true,
+          );
+        }
       }
     }
 
@@ -2109,49 +2642,94 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       Offset position,
     ) async {
       if (folder.id == kTwicBookId) return;
-      final picked = await showDesktopContextMenu<_DatabaseBoardAction>(
+      final pinKey = libraryCloudDatabasePinKey(folder.id);
+      final isPinned = pinnedDatabaseKeys.contains(pinKey);
+      final canChangePin = !folder.isPermanentLibraryFolder;
+      final canRemove = libraryCanRemoveCloudFolderFromBoard(folder);
+      final picked = await showDesktopContextMenu<_CloudDatabaseBoardAction>(
         context: context,
         position: position,
-        width: 230,
+        width: 260,
         entries: [
           const DesktopContextMenuItem(
-            value: _DatabaseBoardAction.preview,
+            value: _CloudDatabaseBoardAction.preview,
             icon: Icons.table_rows_outlined,
             label: 'Preview database',
           ),
           const DesktopContextMenuItem(
-            value: _DatabaseBoardAction.open,
+            value: _CloudDatabaseBoardAction.open,
             icon: Icons.open_in_new_rounded,
             label: 'Open full database',
           ),
-          const DesktopContextMenuDivider(),
-          const DesktopContextMenuItem(
-            value: _DatabaseBoardAction.remove,
-            icon: Icons.delete_outline_rounded,
-            label: 'Remove from My Databases',
-            destructive: true,
-          ),
+          if (canChangePin) ...[
+            const DesktopContextMenuDivider(),
+            DesktopContextMenuItem(
+              value:
+                  isPinned
+                      ? _CloudDatabaseBoardAction.unpin
+                      : _CloudDatabaseBoardAction.pin,
+              icon: isPinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+              label: isPinned ? 'Unpin database' : 'Pin database',
+            ),
+          ],
+          if (canRemove) ...[
+            const DesktopContextMenuDivider(),
+            const DesktopContextMenuItem(
+              value: _CloudDatabaseBoardAction.remove,
+              icon: Icons.delete_outline_rounded,
+              label: 'Remove from Library Home',
+            ),
+          ],
         ],
       );
       if (picked == null || !context.mounted) return;
       switch (picked) {
-        case _DatabaseBoardAction.preview:
+        case _CloudDatabaseBoardAction.preview:
           onSelectFolder(folder);
-        case _DatabaseBoardAction.open:
+        case _CloudDatabaseBoardAction.open:
           onOpenDatabase(folder);
-        case _DatabaseBoardAction.remove:
+        case _CloudDatabaseBoardAction.pin:
+          await updateDatabasePin(
+            key: pinKey,
+            title: folder.name,
+            pinned: true,
+          );
+        case _CloudDatabaseBoardAction.unpin:
+          await updateDatabasePin(
+            key: pinKey,
+            title: folder.name,
+            pinned: false,
+          );
+        case _CloudDatabaseBoardAction.remove:
           await removeCloudFolderFromBoard(folder);
       }
     }
 
     void showCloudFolderContextMenu(LibraryFolder folder, Offset position) {
+      final pinKey = libraryCloudDatabasePinKey(folder.id);
       showLibraryFolderActionsMenu(
         context: context,
         anchor: position,
         folder: folder,
-        canCreateChildren: !folder.isSubscribed,
+        canCreateDatabase:
+            !folder.isSubscribed &&
+            !libraryFolderIsDatabase(
+              folder,
+              folders,
+              gameCount: counts[folder.id],
+            ),
         hasGames: (counts[folder.id] ?? 0) > 0,
-        includeShowOnMyDatabases: false,
+        includeLibraryHomeAction: true,
+        isShownOnLibraryHome: true,
+        isPinned: pinnedDatabaseKeys.contains(pinKey),
+        onPinnedChanged:
+            (pinned) => unawaited(
+              updateDatabasePin(
+                key: pinKey,
+                title: folder.name,
+                pinned: pinned,
+              ),
+            ),
         onAction:
             (action) => unawaited(
               _onFolderAction(
@@ -2175,6 +2753,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         title: item.title,
         subtitle: item.subtitleForKind(iconKind),
         iconKind: iconKind,
+        pinned: item.isPinned,
         selected:
             folder != null
                 ? folder.id == selectedFolderId && selectedLocalPath == null
@@ -2230,6 +2809,84 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       );
     }
 
+    Widget buildBoardRow(
+      _DatabaseBoardItem item,
+      LibraryDatabaseCatalogColumns columns,
+    ) {
+      final folder = item.folder;
+      final entry = item.entry;
+      final localGroup = item.localGroup;
+      final iconKind = item.iconKind(folders);
+      final isFolder = iconKind == _DatabaseBoardIconKind.folder;
+      final lastOpened = focusState.lastOpenedAtByItemKey[item.stableKey];
+      final row = _DatabaseBoardRow(
+        title: item.title,
+        details: item.catalogDetails(iconKind),
+        source: item.sourceLabel,
+        lastOpened: lastOpened == null ? 'Never' : _relativeTime(lastOpened),
+        iconKind: iconKind,
+        columns: columns,
+        pinned: item.isPinned,
+        selected:
+            folder != null
+                ? folder.id == selectedFolderId && selectedLocalPath == null
+                : localGroup != null
+                ? currentLocalGroup?.id == localGroup.id
+                : selectedLocalPath == entry!.path ||
+                    (localSource?.paths.contains(entry.path) == true &&
+                        selectedLocalPath == localSource?.root.path),
+        onSelect:
+            folder != null
+                ? () => onSelectFolder(folder)
+                : localGroup != null
+                ? () => onCurrentLocalGroupChanged(localGroup.id)
+                : () => unawaited(previewLocalEntry(entry!)),
+        onOpen:
+            folder != null
+                ? () {
+                  if (isFolder) {
+                    onOpenFolder(folder);
+                  } else {
+                    onOpenDatabase(folder);
+                  }
+                }
+                : localGroup != null
+                ? () => onCurrentLocalGroupChanged(localGroup.id)
+                : () => unawaited(openLocalEntry(entry!)),
+        onContextMenu:
+            folder != null
+                ? (folder.id == kTwicBookId
+                    ? null
+                    : isFolder
+                    ? (position) => showCloudFolderContextMenu(folder, position)
+                    : (position) =>
+                        unawaited(showCloudContextMenu(folder, position)))
+                : localGroup != null
+                ? (position) =>
+                    unawaited(showLocalGroupContextMenu(localGroup, position))
+                : (position) =>
+                    unawaited(showLocalContextMenu(entry!, position)),
+        reorderKey: canReorderItem(item) ? item.stableKey : null,
+        onMoveBefore:
+            canReorderItem(item)
+                ? (draggedKey) => unawaited(moveItemBefore(draggedKey, item))
+                : null,
+      );
+      if (folder == null) return row;
+      return FolderDropTarget(
+        enabled: isWritableLibraryFolder(folder),
+        folderName: folder.name,
+        onAcceptPaths:
+            (paths) => quickImportPathsToFolder(
+              context: context,
+              ref: ref,
+              folder: folder,
+              paths: paths,
+            ),
+        child: row,
+      );
+    }
+
     return DragTarget<LibraryDatabaseDragPayload>(
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (details) => onDropDatabase(details.data),
@@ -2247,30 +2904,155 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                     ),
                   )
                   : null,
-          child: ListView(
-            physics: const DesktopScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-            children: [
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [for (final item in items) buildBoardTile(item)],
-              ),
-              if (items.isEmpty)
-                Padding(
-                  padding: EdgeInsets.only(top: 36),
-                  child: _LibraryEmpty(
-                    icon: Icons.folder_open_outlined,
-                    title: 'This folder is empty',
-                    message:
-                        currentLocalGroup == null
-                            ? 'Create a subfolder or import PGN files here.'
-                            : (currentLocalGroupIsPlayerWorkspace
-                                ? 'Import PGN files or add player sources from Players. Player folders cannot contain subfolders.'
-                                : 'Import PGN files here. Local database groups cannot contain subfolders.'),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = libraryDatabaseCatalogColumns(
+                constraints.maxWidth,
+                savedWidths: focusState.catalogColumnWidths,
+              );
+              final filteredOut = items.isNotEmpty && visibleItems.isEmpty;
+              final empty = _LibraryEmpty(
+                icon:
+                    filteredOut
+                        ? Icons.search_off_rounded
+                        : Icons.folder_open_outlined,
+                title:
+                    filteredOut
+                        ? 'No matching databases'
+                        : 'This section is empty',
+                message:
+                    filteredOut
+                        ? 'Try another search or source filter.'
+                        : currentLocalGroup == null
+                        ? 'Import PGN files or create a cloud database.'
+                        : (currentLocalGroupIsPlayerWorkspace
+                            ? 'Import PGN files or add player sources from Players.'
+                            : 'Import PGN files here.'),
+              );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child:
+                        view == _DatabaseBoardView.grid
+                            ? ListView(
+                              physics: const DesktopScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(14, 0, 14, 16),
+                              children: [
+                                if (visibleItems.isNotEmpty)
+                                  Wrap(
+                                    spacing: 10,
+                                    runSpacing: 10,
+                                    children: [
+                                      for (final item in visibleItems)
+                                        buildBoardTile(item),
+                                    ],
+                                  )
+                                else
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 28),
+                                    child: empty,
+                                  ),
+                              ],
+                            )
+                            : Container(
+                              margin: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                              clipBehavior: Clip.antiAlias,
+                              decoration: BoxDecoration(
+                                color: kBlack2Color,
+                                borderRadius: BorderRadius.circular(9),
+                                border: Border.all(color: kDividerColor),
+                              ),
+                              child: Column(
+                                children: [
+                                  _DatabaseBoardListHeader(
+                                    columns: columns,
+                                    onColumnWidthChanged: (key, width) {
+                                      unawaited(
+                                        ref
+                                            .read(
+                                              myDatabasesFocusProvider.notifier,
+                                            )
+                                            .setCatalogColumnWidth(key, width)
+                                            .catchError((Object error) {
+                                              if (kDebugMode) {
+                                                debugPrint(
+                                                  'Library Home column width '
+                                                  'persist failed: $error',
+                                                );
+                                              }
+                                            }),
+                                      );
+                                    },
+                                    onResetWidths: () {
+                                      unawaited(
+                                        ref
+                                            .read(
+                                              myDatabasesFocusProvider.notifier,
+                                            )
+                                            .resetCatalogColumnWidths()
+                                            .catchError((Object error) {
+                                              if (kDebugMode) {
+                                                debugPrint(
+                                                  'Library Home column reset '
+                                                  'failed: $error',
+                                                );
+                                              }
+                                            }),
+                                      );
+                                    },
+                                  ),
+                                  Expanded(
+                                    child:
+                                        visibleItems.isEmpty
+                                            ? Center(child: empty)
+                                            : ListView.builder(
+                                              physics:
+                                                  const DesktopScrollPhysics(),
+                                              itemCount: visibleItems.length,
+                                              itemBuilder: (context, index) {
+                                                final item =
+                                                    visibleItems[index];
+                                                final previous =
+                                                    index == 0
+                                                        ? null
+                                                        : visibleItems[index -
+                                                            1];
+                                                final section = item
+                                                    .sectionLabel(folders);
+                                                final showSection =
+                                                    currentFolderId == null &&
+                                                    currentLocalGroup == null &&
+                                                    (previous == null ||
+                                                        previous.sectionLabel(
+                                                              folders,
+                                                            ) !=
+                                                            section);
+                                                return Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment
+                                                          .stretch,
+                                                  children: [
+                                                    if (showSection)
+                                                      _DatabaseBoardSectionLabel(
+                                                        label: section,
+                                                      ),
+                                                    buildBoardRow(
+                                                      item,
+                                                      columns,
+                                                    ),
+                                                  ],
+                                                );
+                                              },
+                                            ),
+                                  ),
+                                ],
+                              ),
+                            ),
                   ),
-                ),
-            ],
+                ],
+              );
+            },
           ),
         );
       },
@@ -2318,7 +3100,7 @@ class _LibraryFolderBreadcrumb extends StatelessWidget {
                         onNavigateLocalRoot?.call();
                         onNavigate(null);
                       },
-              child: const Text('My Databases'),
+              child: const Text('Library Home'),
             ),
             if (localLabel != null && localLabel.isNotEmpty) ...[
               const _LibraryBreadcrumbChevron(),
@@ -2614,7 +3396,7 @@ class _ConfirmRemoveLocalDatabaseDialog extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'This removes the database from My Databases only. The original '
+              'This removes the database from Library Home only. The original '
               'files stay on your computer and can be added again later.\n\n'
               '${entry.path}',
               style: const TextStyle(
@@ -2743,17 +3525,24 @@ class _ConfirmDeleteLocalFolderDialog extends StatelessWidget {
 }
 
 class _DatabaseBoardItem {
-  const _DatabaseBoardItem.cloud({required this.folder, required this.count})
-    : entry = null,
-      localGroup = null;
+  const _DatabaseBoardItem.cloud({
+    required this.folder,
+    required this.count,
+    this.userPinned = false,
+  }) : entry = null,
+       localGroup = null;
 
-  const _DatabaseBoardItem.local({required this.entry, required this.count})
-    : folder = null,
-      localGroup = null;
+  const _DatabaseBoardItem.local({
+    required this.entry,
+    required this.count,
+    this.userPinned = false,
+  }) : folder = null,
+       localGroup = null;
 
   const _DatabaseBoardItem.localGroup({
     required this.localGroup,
     required this.count,
+    this.userPinned = false,
   }) : folder = null,
        entry = null;
 
@@ -2761,10 +3550,70 @@ class _DatabaseBoardItem {
   final LocalLibraryEntry? entry;
   final _LocalLibraryEntryGroup? localGroup;
   final int? count;
+  final bool userPinned;
 
   bool get isTwic => folder?.id == kTwicBookId;
 
+  bool get isPinned =>
+      userPinned || isTwic || (folder?.isPermanentLibraryFolder ?? false);
+
+  String get stableKey {
+    final cloudFolder = folder;
+    if (cloudFolder != null) return 'cloud:${cloudFolder.id}';
+    final localEntry = entry;
+    if (localEntry != null) return libraryLocalDatabasePinKey(localEntry.path);
+    return 'group:${localGroup!.id}';
+  }
+
+  LibraryDatabaseCatalogSource get catalogSource {
+    return folder == null
+        ? LibraryDatabaseCatalogSource.local
+        : LibraryDatabaseCatalogSource.cloud;
+  }
+
+  String get sourceLabel {
+    return catalogSource == LibraryDatabaseCatalogSource.cloud
+        ? 'Cloud'
+        : 'Local';
+  }
+
   String get title => folder?.name ?? localGroup?.label ?? entry!.displayName;
+
+  String catalogDetails(_DatabaseBoardIconKind kind) {
+    final group = localGroup;
+    if (group != null) {
+      final databaseCount = group.entries.length;
+      final databaseLabel = databaseCount == 1 ? 'database' : 'databases';
+      final games = count;
+      if (games == null) return '$databaseCount $databaseLabel';
+      return '$databaseCount $databaseLabel · '
+          '${formatCompactCount(games)} ${games == 1 ? 'game' : 'games'}';
+    }
+    final games = count;
+    final gamesLabel =
+        games == null
+            ? (entry == null ? '' : 'Not indexed')
+            : '${formatCompactCount(games)} ${games == 1 ? 'game' : 'games'}';
+    if (kind == _DatabaseBoardIconKind.subscribedDatabase &&
+        gamesLabel.isNotEmpty) {
+      return '$gamesLabel · read-only';
+    }
+    return gamesLabel;
+  }
+
+  int sectionRank(List<LibraryFolder> folders) {
+    if (isPinned) return 0;
+    if (iconKind(folders) == _DatabaseBoardIconKind.folder) return 1;
+    return 2;
+  }
+
+  String sectionLabel(List<LibraryFolder> folders) {
+    return switch (sectionRank(folders)) {
+      0 => 'Pinned',
+      1 => 'Folders',
+      _ => 'Databases',
+    };
+  }
 
   String? get subtitle {
     final group = localGroup;
@@ -2918,6 +3767,11 @@ _DatabaseBoardIconKind _cloudFolderIconKind(
 
 bool _isLibraryDatabase(LibraryFolder folder, List<LibraryFolder> folders) {
   return libraryFolderIsDatabase(folder, folders);
+}
+
+@visibleForTesting
+bool libraryCanRemoveCloudFolderFromBoard(LibraryFolder folder) {
+  return folder.id != kTwicBookId && !folder.isPermanentLibraryFolder;
 }
 
 bool libraryFolderIsDatabase(
@@ -3209,6 +4063,7 @@ class _DatabaseBoardTile extends StatefulWidget {
   const _DatabaseBoardTile({
     required this.title,
     required this.iconKind,
+    required this.pinned,
     required this.selected,
     required this.onSelect,
     required this.onOpen,
@@ -3219,6 +4074,7 @@ class _DatabaseBoardTile extends StatefulWidget {
   final String title;
   final String? subtitle;
   final _DatabaseBoardIconKind iconKind;
+  final bool pinned;
   final bool selected;
   final VoidCallback onSelect;
   final VoidCallback onOpen;
@@ -3355,6 +4211,14 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
                                       ),
                                     ),
                                   ),
+                                  if (widget.pinned) ...[
+                                    const SizedBox(width: 5),
+                                    Icon(
+                                      Icons.push_pin_rounded,
+                                      size: 13,
+                                      color: chrome.accent,
+                                    ),
+                                  ],
                                 ],
                               ),
                               if (widget.subtitle != null) ...[
@@ -3382,6 +4246,490 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _DatabaseBoardListHeader extends StatelessWidget {
+  const _DatabaseBoardListHeader({
+    required this.columns,
+    required this.onColumnWidthChanged,
+    required this.onResetWidths,
+  });
+
+  final LibraryDatabaseCatalogColumns columns;
+  final void Function(String key, double width) onColumnWidthChanged;
+  final VoidCallback onResetWidths;
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(
+      color: kLightGreyColor,
+      fontSize: 10.5,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.25,
+    );
+    return Container(
+      height: 29,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: kBlack3Color.withValues(alpha: 0.52),
+        border: const Border(bottom: BorderSide(color: kDividerColor)),
+      ),
+      child: _DatabaseBoardColumnsLayout(
+        columns: columns,
+        leading: const SizedBox.shrink(),
+        name: _ResizableDatabaseHeaderCell(
+          label: 'NAME',
+          width: columns.nameWidth,
+          style: style,
+          onChanged: (width) => onColumnWidthChanged('name', width),
+        ),
+        details: _ResizableDatabaseHeaderCell(
+          label: 'GAMES',
+          width: columns.gamesWidth,
+          style: style,
+          onChanged: (width) => onColumnWidthChanged('games', width),
+        ),
+        source: _ResizableDatabaseHeaderCell(
+          label: 'SOURCE',
+          width: columns.sourceWidth,
+          style: style,
+          onChanged: (width) => onColumnWidthChanged('source', width),
+        ),
+        lastOpened: _ResizableDatabaseHeaderCell(
+          label: 'LAST OPENED',
+          width: columns.lastOpenedWidth,
+          style: style,
+          onChanged: (width) => onColumnWidthChanged('lastOpened', width),
+        ),
+        trailing: DesktopHeaderIconButton(
+          icon: Icons.restart_alt_rounded,
+          tooltip: 'Reset column widths',
+          onPress: onResetWidths,
+        ),
+      ),
+    );
+  }
+}
+
+class _ResizableDatabaseHeaderCell extends StatefulWidget {
+  const _ResizableDatabaseHeaderCell({
+    required this.label,
+    required this.width,
+    required this.style,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double width;
+  final TextStyle style;
+  final ValueChanged<double> onChanged;
+
+  @override
+  State<_ResizableDatabaseHeaderCell> createState() =>
+      _ResizableDatabaseHeaderCellState();
+}
+
+class _ResizableDatabaseHeaderCellState
+    extends State<_ResizableDatabaseHeaderCell> {
+  late double _dragWidth = widget.width;
+
+  @override
+  void didUpdateWidget(covariant _ResizableDatabaseHeaderCell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.width != widget.width) _dragWidth = widget.width;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(widget.label, style: widget.style),
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: MouseRegion(
+            cursor: SystemMouseCursors.resizeColumn,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragStart: (_) => _dragWidth = widget.width,
+              onHorizontalDragUpdate: (details) {
+                _dragWidth += details.delta.dx;
+                widget.onChanged(_dragWidth);
+              },
+              child: const SizedBox(width: 7, height: double.infinity),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DatabaseBoardSectionLabel extends StatelessWidget {
+  const _DatabaseBoardSectionLabel({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 25,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      color: kBlackColor.withValues(alpha: 0.34),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: kWhiteColor.withValues(alpha: 0.52),
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.2,
+        ),
+      ),
+    );
+  }
+}
+
+@visibleForTesting
+Widget buildLibraryDatabaseCatalogRowForTest({
+  required String title,
+  required VoidCallback onSelect,
+  required VoidCallback onOpen,
+  required ValueChanged<Offset> onContextMenu,
+}) {
+  return _DatabaseBoardRow(
+    title: title,
+    details: '1 game',
+    source: 'Local',
+    lastOpened: 'Never',
+    iconKind: _DatabaseBoardIconKind.localDatabase,
+    columns: const LibraryDatabaseCatalogColumns(
+      showSource: true,
+      showLastOpened: true,
+    ),
+    pinned: false,
+    selected: false,
+    onSelect: onSelect,
+    onOpen: onOpen,
+    onContextMenu: onContextMenu,
+  );
+}
+
+class _DatabaseBoardRow extends StatefulWidget {
+  const _DatabaseBoardRow({
+    required this.title,
+    required this.details,
+    required this.source,
+    required this.lastOpened,
+    required this.iconKind,
+    required this.columns,
+    required this.pinned,
+    required this.selected,
+    required this.onSelect,
+    required this.onOpen,
+    this.onContextMenu,
+    this.reorderKey,
+    this.onMoveBefore,
+  });
+
+  final String title;
+  final String details;
+  final String source;
+  final String lastOpened;
+  final _DatabaseBoardIconKind iconKind;
+  final LibraryDatabaseCatalogColumns columns;
+  final bool pinned;
+  final bool selected;
+  final VoidCallback onSelect;
+  final VoidCallback onOpen;
+  final ValueChanged<Offset>? onContextMenu;
+  final String? reorderKey;
+  final ValueChanged<String>? onMoveBefore;
+
+  @override
+  State<_DatabaseBoardRow> createState() => _DatabaseBoardRowState();
+}
+
+class _DatabaseBoardRowState extends State<_DatabaseBoardRow>
+    with DeferredPointerStateMixin<_DatabaseBoardRow> {
+  final FocusNode _focusNode = FocusNode(debugLabel: 'library-database-row');
+  bool _hovered = false;
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _select() {
+    _focusNode.requestFocus();
+    widget.onSelect();
+  }
+
+  void _open() {
+    _focusNode.requestFocus();
+    widget.onOpen();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chrome = _LibraryKindChrome.forKind(widget.iconKind);
+    final isFolder = widget.iconKind == _DatabaseBoardIconKind.folder;
+    final titleColor = widget.selected ? kPrimaryColor : kWhiteColor;
+    final row = Semantics(
+      button: true,
+      selected: widget.selected,
+      label:
+          '${widget.title}, ${widget.details}, ${widget.source}, '
+          '${widget.lastOpened}',
+      child: Focus(
+        focusNode: _focusNode,
+        canRequestFocus: true,
+        onKeyEvent: (_, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          if (event.logicalKey == LogicalKeyboardKey.enter ||
+              event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+            _open();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: ClickCursor(
+          child: MouseRegion(
+            onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+            onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _select,
+              onDoubleTap: _open,
+              onSecondaryTapUp:
+                  widget.onContextMenu == null
+                      ? null
+                      : (details) {
+                        _select();
+                        widget.onContextMenu!(details.globalPosition);
+                      },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 100),
+                height: 42,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color:
+                      widget.selected
+                          ? kPrimaryColor.withValues(alpha: 0.075)
+                          : (_hovered
+                              ? kBlack3Color.withValues(alpha: 0.72)
+                              : Colors.transparent),
+                  border: Border(
+                    left: BorderSide(
+                      color:
+                          widget.selected ? kPrimaryColor : Colors.transparent,
+                      width: 2,
+                    ),
+                    bottom: BorderSide(
+                      color: kDividerColor.withValues(alpha: 0.72),
+                    ),
+                  ),
+                ),
+                child: _DatabaseBoardColumnsLayout(
+                  columns: widget.columns,
+                  leading: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      AnimatedOpacity(
+                        duration: const Duration(milliseconds: 90),
+                        opacity: _hovered && widget.reorderKey != null ? 0 : 1,
+                        child: Container(
+                          width: 27,
+                          height: 27,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: chrome.wellFill,
+                            borderRadius: BorderRadius.circular(
+                              isFolder ? 6 : 8,
+                            ),
+                            border: Border.all(color: chrome.wellBorder),
+                          ),
+                          child: _DatabaseBoardIcon(
+                            kind: widget.iconKind,
+                            color: chrome.accent,
+                            size: 15,
+                          ),
+                        ),
+                      ),
+                      if (_hovered && widget.reorderKey != null)
+                        Draggable<String>(
+                          data: widget.reorderKey!,
+                          feedback: const Material(
+                            color: Colors.transparent,
+                            child: Icon(
+                              Icons.drag_indicator_rounded,
+                              size: 18,
+                              color: kPrimaryColor,
+                            ),
+                          ),
+                          childWhenDragging: const SizedBox(
+                            width: 27,
+                            height: 27,
+                          ),
+                          child: DesktopTooltip(
+                            message: 'Drag to reorder',
+                            child: MouseRegion(
+                              cursor: SystemMouseCursors.grab,
+                              child: const SizedBox(
+                                key: ValueKey<String>(
+                                  'library-home-reorder-handle',
+                                ),
+                                width: 27,
+                                height: 27,
+                                child: Icon(
+                                  Icons.drag_indicator_rounded,
+                                  size: 17,
+                                  color: kWhiteColor70,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  name: Text(
+                    widget.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: titleColor,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  details: _DatabaseBoardMutedCell(widget.details),
+                  source: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        widget.source == 'Cloud'
+                            ? Icons.cloud_outlined
+                            : Icons.computer_rounded,
+                        size: 12.5,
+                        color: kLightGreyColor,
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(child: _DatabaseBoardMutedCell(widget.source)),
+                    ],
+                  ),
+                  lastOpened: _DatabaseBoardMutedCell(widget.lastOpened),
+                  trailing: Icon(
+                    widget.pinned
+                        ? Icons.push_pin_rounded
+                        : isFolder
+                        ? Icons.chevron_right_rounded
+                        : Icons.more_horiz_rounded,
+                    size: 16,
+                    color: widget.pinned ? chrome.accent : kLightGreyColor,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final reorderKey = widget.reorderKey;
+    final onMoveBefore = widget.onMoveBefore;
+    if (reorderKey == null || onMoveBefore == null) return row;
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (details) => details.data != reorderKey,
+      onAcceptWithDetails: (details) => onMoveBefore(details.data),
+      builder: (context, candidates, rejected) {
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            border:
+                candidates.isEmpty
+                    ? null
+                    : const Border(
+                      top: BorderSide(color: kPrimaryColor, width: 2),
+                    ),
+          ),
+          child: row,
+        );
+      },
+    );
+  }
+}
+
+class _DatabaseBoardColumnsLayout extends StatelessWidget {
+  const _DatabaseBoardColumnsLayout({
+    required this.columns,
+    required this.leading,
+    required this.name,
+    required this.details,
+    required this.source,
+    required this.lastOpened,
+    required this.trailing,
+  });
+
+  final LibraryDatabaseCatalogColumns columns;
+  final Widget leading;
+  final Widget name;
+  final Widget details;
+  final Widget source;
+  final Widget lastOpened;
+  final Widget trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 39,
+          child: Align(alignment: Alignment.centerLeft, child: leading),
+        ),
+        const SizedBox(width: 5),
+        SizedBox(width: columns.nameWidth, child: name),
+        const SizedBox(width: 12),
+        SizedBox(width: columns.gamesWidth, child: details),
+        if (columns.showSource) ...[
+          const SizedBox(width: 12),
+          SizedBox(width: columns.sourceWidth, child: source),
+        ],
+        if (columns.showLastOpened) ...[
+          const SizedBox(width: 12),
+          SizedBox(width: columns.lastOpenedWidth, child: lastOpened),
+        ],
+        const Spacer(),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 22,
+          child: Align(alignment: Alignment.centerRight, child: trailing),
+        ),
+      ],
+    );
+  }
+}
+
+class _DatabaseBoardMutedCell extends StatelessWidget {
+  const _DatabaseBoardMutedCell(this.value);
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      value,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: kLightGreyColor,
+        fontSize: 11.5,
+        fontWeight: FontWeight.w600,
+        fontFeatures: [FontFeature.tabularFigures()],
       ),
     );
   }
@@ -5082,9 +6430,12 @@ class _FolderContentView extends HookConsumerWidget {
                       // before it dispatches this action. Resolve the scope
                       // at dispatch time so right-clicking an unselected row
                       // never copies a stale multi-selection.
-                      final currentSelectedAnalyses = filtered
-                          .where((item) => selectedIds.value.contains(item.id))
-                          .toList();
+                      final currentSelectedAnalyses =
+                          filtered
+                              .where(
+                                (item) => selectedIds.value.contains(item.id),
+                              )
+                              .toList();
                       if (currentSelectedAnalyses.length <= 1) {
                         _onGameAction(
                           context: context,
@@ -5267,7 +6618,9 @@ class _FolderHeader extends StatelessWidget {
                 (folder.isSubscribed || folder.id == kTwicBookId)
                     ? null
                     : folder.id,
-            onNewFolder: onNewFolder,
+            onNewFolder: null,
+            onNewDatabase: onNewFolder,
+            showNewFolderAction: false,
             onImportPgnFiles: onOpenLocalFiles,
             buttonSize: 28,
             iconSize: 14.5,
@@ -5366,8 +6719,9 @@ class _OverflowMenuButtonState extends State<_OverflowMenuButton>
       context: context,
       anchor: pos,
       folder: widget.folder,
-      canCreateChildren: widget.canCreateSubfolder,
+      canCreateDatabase: widget.canCreateSubfolder,
       hasGames: widget.hasGames,
+      includeLibraryHomeAction: false,
       onAction: widget.onAction,
     );
   }
@@ -7408,7 +8762,7 @@ Future<void> _onCreateFolder({
   }
 }
 
-Future<void> _showFolderOnMyDatabases({
+Future<void> _showFolderOnLibraryHome({
   required BuildContext context,
   required WidgetRef ref,
   required LibraryFolder folder,
@@ -7417,12 +8771,58 @@ Future<void> _showFolderOnMyDatabases({
   final focus = ref.read(myDatabasesFocusProvider);
   final isHidden = focus.hiddenCloudFolderIds.contains(folder.id);
   if (!isHidden) {
-    _toast(context, '"${folder.name}" is already shown on My Databases.');
+    _toast(context, '"${folder.name}" is already shown on Library Home.');
     return;
   }
-  await ref.read(myDatabasesFocusProvider.notifier).showCloudFolder(folder.id);
-  if (!context.mounted) return;
-  _toast(context, 'Showing "${folder.name}" on My Databases.');
+  try {
+    await ref
+        .read(myDatabasesFocusProvider.notifier)
+        .showCloudFolder(folder.id);
+    if (!context.mounted) return;
+    _toast(context, 'Showing "${folder.name}" on Library Home.');
+  } catch (error, stackTrace) {
+    ErrorReporter.report(
+      error,
+      stackTrace: stackTrace,
+      tag: 'library.show_on_home',
+    );
+    if (!context.mounted) return;
+    _toast(
+      context,
+      'Could not show "${folder.name}" on Library Home.',
+      error: true,
+    );
+  }
+}
+
+Future<void> _removeFolderFromLibraryHome({
+  required BuildContext context,
+  required WidgetRef ref,
+  required LibraryFolder folder,
+}) async {
+  if (!libraryCanRemoveCloudFolderFromBoard(folder)) return;
+  try {
+    await ref
+        .read(myDatabasesFocusProvider.notifier)
+        .hideCloudFolder(folder.id);
+    if (!context.mounted) return;
+    _toast(
+      context,
+      'Removed "${folder.name}" from Library Home. Cloud data was not deleted.',
+    );
+  } catch (error, stackTrace) {
+    ErrorReporter.report(
+      error,
+      stackTrace: stackTrace,
+      tag: 'library.remove_from_home',
+    );
+    if (!context.mounted) return;
+    _toast(
+      context,
+      'Could not remove "${folder.name}" from Library Home.',
+      error: true,
+    );
+  }
 }
 
 Future<void> _onFolderAction({
@@ -7433,8 +8833,14 @@ Future<void> _onFolderAction({
   required List<LibraryFolder> allFolders,
 }) async {
   switch (action) {
-    case LibraryFolderAction.showOnMyDatabases:
-      await _showFolderOnMyDatabases(
+    case LibraryFolderAction.showOnLibraryHome:
+      await _showFolderOnLibraryHome(
+        context: context,
+        ref: ref,
+        folder: folder,
+      );
+    case LibraryFolderAction.removeFromLibraryHome:
+      await _removeFolderFromLibraryHome(
         context: context,
         ref: ref,
         folder: folder,
@@ -7448,13 +8854,6 @@ Future<void> _onFolderAction({
       );
     case LibraryFolderAction.rename:
       await _onRename(context: context, ref: ref, folder: folder);
-    case LibraryFolderAction.newSubfolder:
-      await _onCreateFolder(
-        context: context,
-        ref: ref,
-        folders: allFolders,
-        lockedParent: folder,
-      );
     case LibraryFolderAction.newDatabase:
       await _onCreateFolder(
         context: context,
@@ -7512,7 +8911,7 @@ Future<void> _onDelete({
     ref.invalidate(libraryFoldersStreamProvider);
     ref.invalidate(subscribedBooksProvider);
     if (!context.mounted) return;
-    _toast(context, 'Folder "${folder.name}" deleted');
+    _toast(context, 'Folder "${folder.name}" deleted from Cloud');
   } catch (e, st) {
     ErrorReporter.report(e, stackTrace: st, tag: 'library.delete_folder');
     if (!context.mounted) return;
@@ -8324,31 +9723,31 @@ class _TwicContentToolbar extends StatelessWidget {
                     const Icon(Icons.tune_rounded, size: 12),
                     const SizedBox(width: 5),
                     const Text('Filters', style: TextStyle(fontSize: 12)),
-                  if (filterCount > 0) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 1,
-                      ),
-                      decoration: BoxDecoration(
-                        color: kBlackColor.withValues(alpha: 0.25),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        '$filterCount',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          fontFeatures: [FontFeature.tabularFigures()],
+                    if (filterCount > 0) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: kBlackColor.withValues(alpha: 0.25),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '$filterCount',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
-          ),
             if (onClearFilters != null) ...[
               const SizedBox(width: 6),
               DesktopTooltip(
@@ -9970,10 +11369,7 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
     ]) {
       final effectiveOwnership =
           ownership ??
-          captureActiveDatabaseWorkspacePasteOwnership(
-            ref: ref,
-            tabId: tabId,
-          );
+          captureActiveDatabaseWorkspacePasteOwnership(ref: ref, tabId: tabId);
       if (effectiveOwnership == null) return;
       if (args.isSubscribed) {
         showDesktopToast(context, '"${args.title}" is read-only.', error: true);
@@ -10130,11 +11526,8 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
       ref: ref,
       tabId: tabId,
       onPaste:
-          (_) => showDesktopToast(
-            context,
-            'ChessEver is read-only.',
-            error: true,
-          ),
+          (_) =>
+              showDesktopToast(context, 'ChessEver is read-only.', error: true),
     );
 
     useEffect(() {
@@ -11206,10 +12599,7 @@ _PreviewPlayerLine _previewPlayerLineFromValues({
   final visibleWhite = desktopTablePlayerValue(white);
   final visibleBlack = desktopTablePlayerValue(black);
   if (visibleWhite.isNotEmpty || visibleBlack.isNotEmpty) {
-    return _PreviewPlayerLine(
-      white: visibleWhite,
-      black: visibleBlack,
-    );
+    return _PreviewPlayerLine(white: visibleWhite, black: visibleBlack);
   }
   final parts = fallbackTitle.split(
     RegExp(r'\s+v(?:s\.?|\.)\s+', caseSensitive: false),
@@ -11301,7 +12691,9 @@ String _previewMetadataLine({
 }) {
   final visibleEvent = desktopTableDisplayValue(event);
   final title =
-      visibleEvent.isEmpty ? _previewMetadataTitle(fallbackTitle) : visibleEvent;
+      visibleEvent.isEmpty
+          ? _previewMetadataTitle(fallbackTitle)
+          : visibleEvent;
   final visibleDate = _displayGameDate(date);
   return <String>[
     if (title.isNotEmpty) title,
@@ -11709,12 +13101,14 @@ List<LibraryFolder> libraryVisibleCloudFolders({
   required List<LibraryFolder> folders,
   required String? parentId,
   Set<String> hiddenIds = const <String>{},
+  Set<String> pinnedIds = const <String>{},
 }) {
   final visible = folders
       .where(
         (folder) =>
             folder.id != kTwicBookId &&
-            folder.parentId == parentId &&
+            (folder.parentId == parentId ||
+                (parentId == null && pinnedIds.contains(folder.id))) &&
             !hiddenIds.contains(folder.id),
       )
       .toList(growable: false);
@@ -11753,7 +13147,7 @@ String libraryMyDatabasesBreadcrumbText({
   String? localGroupLabel,
 }) {
   final localLabel = localGroupLabel?.trim();
-  final segments = <String>['My Databases'];
+  final segments = <String>['Library Home'];
   if (localLabel != null && localLabel.isNotEmpty) {
     segments.add(localLabel);
   } else {
