@@ -1343,6 +1343,22 @@ class LibraryDatabaseCatalogColumns {
 }
 
 @visibleForTesting
+double libraryDatabaseCatalogRequiredWidth(
+  LibraryDatabaseCatalogColumns columns,
+) {
+  return 39 +
+      5 +
+      columns.nameWidth +
+      12 +
+      columns.gamesWidth +
+      (columns.showSource ? 12 + columns.sourceWidth : 0) +
+      (columns.showLastOpened ? 12 + columns.lastOpenedWidth : 0) +
+      8 +
+      32 +
+      20;
+}
+
+@visibleForTesting
 LibraryDatabaseCatalogColumns libraryDatabaseCatalogColumns(
   double width, {
   Map<String, double> savedWidths = const <String, double>{},
@@ -1351,21 +1367,31 @@ LibraryDatabaseCatalogColumns libraryDatabaseCatalogColumns(
     return (savedWidths[key] ?? fallback).clamp(min, max).toDouble();
   }
 
-  final showSource = width >= 560;
-  final showLastOpened = width >= 760;
+  var showSource = width >= 560;
+  var showLastOpened = width >= 760;
   final gamesWidth = saved('games', 110, 72, 190);
   final sourceWidth = saved('source', 82, 70, 160);
   final lastOpenedWidth = saved('lastOpened', 108, 88, 200);
-  final fixedWidth =
-      39 +
-      5 +
-      12 +
-      gamesWidth +
-      (showSource ? 12 + sourceWidth : 0) +
-      (showLastOpened ? 12 + lastOpenedWidth : 0) +
-      8 +
-      22;
-  final availableNameWidth = math.max(160.0, width - fixedWidth - 20);
+
+  double fixedWidth() {
+    return 39 +
+        5 +
+        12 +
+        gamesWidth +
+        (showSource ? 12 + sourceWidth : 0) +
+        (showLastOpened ? 12 + lastOpenedWidth : 0) +
+        8 +
+        32 +
+        20;
+  }
+
+  if (showLastOpened && fixedWidth() + 160 > width) {
+    showLastOpened = false;
+  }
+  if (showSource && fixedWidth() + 160 > width) {
+    showSource = false;
+  }
+  final availableNameWidth = math.max(160.0, width - fixedWidth());
   return LibraryDatabaseCatalogColumns(
     showSource: showSource,
     showLastOpened: showLastOpened,
@@ -2907,7 +2933,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final columns = libraryDatabaseCatalogColumns(
-                constraints.maxWidth,
+                math.max(0, constraints.maxWidth - 28),
                 savedWidths: focusState.catalogColumnWidths,
               );
               final filteredOut = items.isNotEmpty && visibleItems.isEmpty;
@@ -4706,7 +4732,7 @@ class _DatabaseBoardColumnsLayout extends StatelessWidget {
         const Spacer(),
         const SizedBox(width: 8),
         SizedBox(
-          width: 22,
+          width: 32,
           child: Align(alignment: Alignment.centerRight, child: trailing),
         ),
       ],

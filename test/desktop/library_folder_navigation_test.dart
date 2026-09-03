@@ -59,6 +59,20 @@ void main() {
       );
       expect(resized.nameWidth, 240);
       expect(resized.gamesWidth, 90);
+
+      final constrained = libraryDatabaseCatalogColumns(
+        620,
+        savedWidths: const {
+          'name': 520,
+          'games': 190,
+          'source': 160,
+          'lastOpened': 200,
+        },
+      );
+      expect(
+        libraryDatabaseCatalogRequiredWidth(constrained),
+        lessThanOrEqualTo(620),
+      );
     });
 
     test('catalog drag target supports moving to either end', () {
