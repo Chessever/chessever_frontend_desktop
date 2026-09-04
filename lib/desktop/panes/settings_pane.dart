@@ -8,6 +8,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/chat/botvinnik_provider.dart';
+import 'package:chessever/chat/botvinnik_icon.dart';
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
@@ -200,6 +202,8 @@ class SettingsPane extends HookConsumerWidget {
             const _BoardSettingsSection(),
             const SizedBox(height: 16),
             const _NotificationsSection(),
+            const SizedBox(height: 16),
+            const _BotvinnikSection(),
             const SizedBox(height: 16),
             const KeyboardShortcutsSection(),
             const SizedBox(height: 16),
@@ -649,6 +653,68 @@ class _NotificationsSection extends ConsumerWidget {
         title: 'Open notification preferences',
         subtitle: 'Push alerts and per-event notification preferences.',
         onTap: () => tabs.open(TabKind.notificationSettings),
+      ),
+    );
+  }
+}
+
+class _BotvinnikSection extends ConsumerWidget {
+  const _BotvinnikSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final enabledState = ref.watch(botvinnikEnabledProvider);
+    final enabled = enabledState.valueOrNull ?? true;
+    final quota = ref.watch(botvinnikQuotaProvider).valueOrNull;
+
+    return _Card(
+      title: 'Botvinnik',
+      icon: Icons.smart_toy_outlined,
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: kPrimaryColor.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            alignment: Alignment.center,
+            child: const BotvinnikIcon(size: 25, color: kPrimaryColor),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Chess assistant',
+                  style: TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  quota == null
+                      ? 'Show Botvinnik throughout the desktop app.'
+                      : '${quota.remaining} of ${quota.limit} messages left',
+                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          FSwitch(
+            value: enabled,
+            enabled: !enabledState.isLoading,
+            onChange:
+                (value) => ref
+                    .read(botvinnikEnabledProvider.notifier)
+                    .setEnabled(value),
+          ),
+        ],
       ),
     );
   }

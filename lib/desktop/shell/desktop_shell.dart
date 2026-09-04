@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/chat/botvinnik_chat_button.dart';
+import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/panes/desktop_whats_new_home_pane.dart';
@@ -92,6 +94,19 @@ class DesktopShell extends HookConsumerWidget {
     final tabsState = ref.watch(desktopTabsProvider);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
     final boardArgsByTabId = ref.watch(boardTabGameArgsByTabIdProvider);
+    final activeTournament = ref.watch(activeTournamentProvider);
+    final playerProfilesByTabId = ref.watch(playerProfileByTabIdProvider);
+    final playerScoreCardsByTabId = ref.watch(playerScoreCardByTabIdProvider);
+    final activeTabId = tabsState.activeId;
+    final chatScreenContext = _chatContextForDesktopTab(
+      tab: tabsState.active,
+      tournament: activeTournament,
+      boardArgs: activeTabId == null ? null : boardArgsByTabId[activeTabId],
+      playerProfile:
+          activeTabId == null ? null : playerProfilesByTabId[activeTabId],
+      playerScoreCard:
+          activeTabId == null ? null : playerScoreCardsByTabId[activeTabId],
+    );
     final activeSidebarPane = sidebarPaneForActiveTab(
       tabsState.active,
       boardArgsByTabId: boardArgsByTabId,
@@ -790,6 +805,13 @@ class DesktopShell extends HookConsumerWidget {
                         ),
                       ),
                     ),
+                    Positioned(
+                      right: 20,
+                      bottom: 20,
+                      child: BotvinnikChatButton(
+                        screenContext: chatScreenContext,
+                      ),
+                    ),
                     if (isLocalPgnLoading)
                       _DesktopPgnLoadingOverlay(progress: localPgnProgress),
                   ],
@@ -801,6 +823,59 @@ class DesktopShell extends HookConsumerWidget {
       },
     );
   }
+}
+
+ChatScreenContext _chatContextForDesktopTab({
+  required DesktopTab? tab,
+  required GroupEventCardModel? tournament,
+  required BoardTabGameArgs? boardArgs,
+  required PlayerProfileArgs? playerProfile,
+  required PlayerStandingModel? playerScoreCard,
+}) {
+  if (tab?.kind == TabKind.tournamentDetail && tournament != null) {
+    return ChatScreenContext(
+      screen: 'tournament',
+      eventId: tournament.id,
+      eventName: tournament.title,
+    );
+  }
+
+  if (tab?.kind == TabKind.board && boardArgs?.gameId != null) {
+    return ChatScreenContext(
+      screen: 'game',
+      eventId: boardArgs?.eventBroadcastId,
+      eventName:
+          boardArgs?.tournamentTitle.trim().isEmpty ?? true
+              ? null
+              : boardArgs?.tournamentTitle,
+      gameId: boardArgs?.gameId,
+      gameLabel: boardArgs?.label,
+    );
+  }
+
+  if (tab?.kind == TabKind.playerProfile && playerProfile != null) {
+    return ChatScreenContext(
+      screen: 'player',
+      playerId:
+          playerProfile.fideId?.toString() ??
+          playerProfile.gamebasePlayerId ??
+          playerProfile.memorialRouteId,
+      playerName: playerProfile.playerName,
+    );
+  }
+
+  if (tab?.kind == TabKind.playerScoreCard && playerScoreCard != null) {
+    return ChatScreenContext(
+      screen: 'player',
+      playerId:
+          playerScoreCard.fideId?.toString() ??
+          playerScoreCard.gamebasePlayerId ??
+          playerScoreCard.memorialRouteId,
+      playerName: playerScoreCard.name,
+    );
+  }
+
+  return const ChatScreenContext(screen: 'home');
 }
 
 class _DesktopPgnLoadingOverlay extends StatelessWidget {

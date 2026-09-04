@@ -52,6 +52,8 @@ class DeepLinkService {
   final _appLinks = AppLinks();
   StreamSubscription<Uri>? _subscription;
   bool _isInitialized = false;
+  GlobalKey<NavigatorState>? _routerNavigatorKey;
+  WidgetRef? _routerRef;
 
   // Guards to prevent duplicate/concurrent navigation
   bool _isNavigating = false;
@@ -80,12 +82,50 @@ class DeepLinkService {
   /// wait instead of racing the navigator.
   static Future<void> awaitAppReady() => _appReadyCompleter.future;
 
+  /// Opens an in-app game reference using the same resolver as a shared link.
+  bool openGameFromApp(String gameId) {
+    final navigatorKey = _routerNavigatorKey;
+    final ref = _routerRef;
+    final normalizedId = gameId.trim();
+    if (navigatorKey == null || ref == null || normalizedId.isEmpty) {
+      return false;
+    }
+    unawaited(_navigateToGame(normalizedId, navigatorKey, ref));
+    return true;
+  }
+
+  /// Opens an event, tournament, or round reference from an in-app surface.
+  bool openEventFromApp({String? eventId, String? tourId, String? roundId}) {
+    final navigatorKey = _routerNavigatorKey;
+    final ref = _routerRef;
+    final normalizedEventId = eventId?.trim();
+    final normalizedTourId = tourId?.trim();
+    final normalizedRoundId = roundId?.trim();
+    final hasIdentifier =
+        (normalizedEventId?.isNotEmpty ?? false) ||
+        (normalizedTourId?.isNotEmpty ?? false) ||
+        (normalizedRoundId?.isNotEmpty ?? false);
+    if (navigatorKey == null || ref == null || !hasIdentifier) return false;
+    unawaited(
+      _navigateToEvent(
+        normalizedEventId,
+        navigatorKey,
+        ref,
+        tourId: normalizedTourId,
+        roundId: normalizedRoundId,
+      ),
+    );
+    return true;
+  }
+
   /// Initialize the deep link service
   /// Should be called once after app startup when auth state is ready
   Future<void> initialize(
     GlobalKey<NavigatorState> navigatorKey,
     WidgetRef ref,
   ) async {
+    _routerNavigatorKey = navigatorKey;
+    _routerRef = ref;
     if (_isInitialized) return;
     _isInitialized = true;
 
@@ -1050,9 +1090,7 @@ class DeepLinkService {
             .getToursByIds([lookupId])
             .timeout(_fetchTimeout);
         if (tours.isNotEmpty) {
-          if (resolvedTourId == null) {
-            resolvedTourId = tours.first.id;
-          }
+          resolvedTourId ??= tours.first.id;
           final tourGroupId = _asNonEmptyString(tours.first.groupBroadcastId);
           if (tourGroupId != null) {
             resolvedGroupBroadcastId = tourGroupId;
@@ -1084,6 +1122,8 @@ class DeepLinkService {
     _isNavigating = false;
     _lastHandledGameId = null;
     _lastHandledTime = null;
+    _routerNavigatorKey = null;
+    _routerRef = null;
     _appReadyCompleter = Completer<void>();
   }
 
