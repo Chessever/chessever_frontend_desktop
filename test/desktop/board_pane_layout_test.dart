@@ -301,15 +301,63 @@ void main() {
     expect(merged[2]?.comment, 'Lichess: Strong knight retreat.');
   });
 
-  test('generated report assessment owns the on-board move badge', () {
+  test('user quality assessment overrides the generated report badge', () {
     final resolved = resolveBoardMoveAssessment(
       isOnMainline: true,
-      userNags: const <int>[2],
+      userNags: const <int>[4],
       pgnNags: const <int>[6, 16],
       moveAnnotation: const LichessMoveAnnotation(
-        type: LichessMoveAnnotationType.blunder,
+        type: LichessMoveAnnotationType.inaccuracy,
         comment: '',
         useClassificationIcon: true,
+        reportOwnsMoveQuality: true,
+      ),
+    );
+
+    expect(resolved.annotation?.type, LichessMoveAnnotationType.blunder);
+    expect(resolved.glyph, isNull);
+  });
+
+  test('report reveal resets whenever another game is activated', () {
+    var state = const GameReportRevealState();
+
+    state = state.activate('game-a').toggle();
+    expect(state.isVisibleFor('game-a'), isTrue);
+
+    state = state.activate('game-b');
+    expect(state.isVisibleFor('game-b'), isFalse);
+
+    state = state.activate('game-a');
+    expect(state.isVisibleFor('game-a'), isFalse);
+  });
+
+  test('clearing user quality reveals the cached report assessment', () {
+    final resolved = resolveBoardMoveAssessment(
+      isOnMainline: true,
+      userNags: const <int>[],
+      pgnNags: const <int>[6, 16],
+      moveAnnotation: const LichessMoveAnnotation(
+        type: LichessMoveAnnotationType.inaccuracy,
+        comment: '',
+        useClassificationIcon: true,
+        reportOwnsMoveQuality: true,
+      ),
+    );
+
+    expect(resolved.annotation?.type, LichessMoveAnnotationType.inaccuracy);
+    expect(resolved.glyph, isNull);
+  });
+
+  test('reopened user quality marker overrides cached report assessment', () {
+    final resolved = resolveBoardMoveAssessment(
+      isOnMainline: true,
+      userNags: const <int>[],
+      pgnNags: const <int>[4, 16, 248],
+      moveAnnotation: const LichessMoveAnnotation(
+        type: LichessMoveAnnotationType.inaccuracy,
+        comment: '',
+        useClassificationIcon: true,
+        reportOwnsMoveQuality: true,
       ),
     );
 
@@ -318,7 +366,7 @@ void main() {
   });
 
   test(
-    'neutral generated report owns quality while retaining incoming commentary',
+    'neutral report yields to user quality while suppressing source quality',
     () {
       final merged = mergeReportMoveAnnotations(
         lichessAnnotations: const <int, LichessMoveAnnotation>{
@@ -334,14 +382,23 @@ void main() {
       expect(merged[2]?.reportOwnsMoveQuality, isTrue);
       expect(merged[2]?.comment, 'Lichess: Keep this explanation.');
 
-      final resolved = resolveBoardMoveAssessment(
+      final userResolved = resolveBoardMoveAssessment(
         isOnMainline: true,
         userNags: const <int>[2],
         pgnNags: const <int>[6],
         moveAnnotation: merged[2],
       );
-      expect(resolved.annotation, isNull);
-      expect(resolved.glyph, isNull);
+      expect(userResolved.annotation?.type, LichessMoveAnnotationType.mistake);
+      expect(userResolved.glyph, isNull);
+
+      final sourceResolved = resolveBoardMoveAssessment(
+        isOnMainline: true,
+        userNags: const <int>[],
+        pgnNags: const <int>[6],
+        moveAnnotation: merged[2],
+      );
+      expect(sourceResolved.annotation, isNull);
+      expect(sourceResolved.glyph, isNull);
     },
   );
 

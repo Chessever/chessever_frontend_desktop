@@ -8,6 +8,13 @@ import 'package:chessever/services/lichess_move_annotations_service.dart';
 /// A completed Game Analysis report owns that question and replaces them.
 const moveVerdictNags = <int>{1, 2, 3, 4, 5, 6};
 
+/// Marks a standard quality NAG as a later ChessEver user override.
+///
+/// The paired `$1`–`$6` remains portable for other PGN readers. This marker
+/// preserves edit provenance so a background report cannot reclaim the move
+/// after Save/Copy/Share and reopen.
+const kChesseverUserQualityOverrideNag = 248;
+
 /// ChessEver's classification NAG block: `$240`–`$247`, one code per report
 /// class, written **beside** the standard quality NAG rather than instead of it.
 ///
@@ -37,7 +44,9 @@ final Map<int, GameMoveClassification> _classificationByNag = {
 
 /// The `$240`–`$247` code carrying [classification], or null when unclassified.
 int? chesseverClassificationNag(GameMoveClassification? classification) =>
-    classification == null ? null : kChesseverClassificationNags[classification];
+    classification == null
+        ? null
+        : kChesseverClassificationNags[classification];
 
 /// Inverse of [chesseverClassificationNag].
 GameMoveClassification? classificationForChesseverNag(int nag) =>
@@ -185,15 +194,21 @@ LichessMoveAnnotationType? annotationTypeFromChesseverToken(String? raw) {
   final normalized = token.toLowerCase().replaceAll(RegExp(r'[\s-]+'), '_');
   return switch (normalized) {
     'brilliant' => LichessMoveAnnotationType.brilliant,
-    'good' || 'good_move' || 'great' || 'great_move' =>
-      LichessMoveAnnotationType.goodMove,
+    'good' ||
+    'good_move' ||
+    'great' ||
+    'great_move' => LichessMoveAnnotationType.goodMove,
     'best' || 'best_move' || 'top_move' => LichessMoveAnnotationType.bestMove,
-    'missed_win' || 'missedwin' || 'miss' => LichessMoveAnnotationType.missedWin,
+    'missed_win' ||
+    'missedwin' ||
+    'miss' => LichessMoveAnnotationType.missedWin,
     'inaccuracy' || 'dubious' => LichessMoveAnnotationType.inaccuracy,
     'mistake' => LichessMoveAnnotationType.mistake,
     'blunder' => LichessMoveAnnotationType.blunder,
     'book' || 'book_move' => LichessMoveAnnotationType.bookMove,
-    'forced' || 'forced_move' || 'only_move' => LichessMoveAnnotationType.forced,
+    'forced' ||
+    'forced_move' ||
+    'only_move' => LichessMoveAnnotationType.forced,
     _ => null,
   };
 }
@@ -358,6 +373,10 @@ ChessGame mergeGameReportAnnotationsForExport(
               comment.replaceAll(_chesseverAnnotationDirective, '').trim(),
         ];
 
+        final existingNags = move.nags ?? const <int>[];
+        final hasUserQualityOverride =
+            existingNags.contains(kChesseverUserQualityOverrideNag) &&
+            existingNags.any((nag) => nag >= 1 && nag <= 7);
         final classic = classicGlyphForClassification(
           reportMove.classification,
         );
@@ -365,21 +384,23 @@ ChessGame mergeGameReportAnnotationsForExport(
         final chesseverNag = chesseverClassificationNag(
           reportMove.classification,
         );
-        final existingNags = move.nags ?? const <int>[];
         // Strip both what the report displaces (imported $1–$6) and any earlier
         // ChessEver code, so a re-run never stacks two classifications.
-        final nags =
-            existingNags
-                .where(
-                  (nag) =>
-                      !moveVerdictNags.contains(nag) &&
-                      !isChesseverClassificationNag(nag),
-                )
-                .toList(growable: true);
-        if (reportNag != null && !nags.contains(reportNag)) {
+        final nags = existingNags
+            .where(
+              (nag) =>
+                  (hasUserQualityOverride || !moveVerdictNags.contains(nag)) &&
+                  !isChesseverClassificationNag(nag),
+            )
+            .toList(growable: true);
+        if (!hasUserQualityOverride &&
+            reportNag != null &&
+            !nags.contains(reportNag)) {
           nags.add(reportNag);
         }
-        if (chesseverNag != null && !nags.contains(chesseverNag)) {
+        if (!hasUserQualityOverride &&
+            chesseverNag != null &&
+            !nags.contains(chesseverNag)) {
           nags.add(chesseverNag);
         }
 
@@ -414,5 +435,7 @@ String exportGamePgnWithReport(
   ChessGame game,
   List<GameReportMove> reportMoves,
 ) {
-  return exportGameToPgn(mergeGameReportAnnotationsForExport(game, reportMoves));
+  return exportGameToPgn(
+    mergeGameReportAnnotationsForExport(game, reportMoves),
+  );
 }
