@@ -27,6 +27,7 @@ import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
+import 'package:chessever/desktop/services/desktop_how_to_use_onboarding.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart'
     show LocalChessScanProgress, localChessDatabaseDisplayNameForPaths;
@@ -63,6 +64,7 @@ import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
+import 'package:chessever/providers/app_version_provider.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
@@ -128,6 +130,8 @@ class DesktopShell extends HookConsumerWidget {
     final tabPageStorageBucket = useMemoized(PageStorageBucket.new);
     final feedbackScreenshotKey = useMemoized(GlobalKey.new);
     final closeConfirmationOpen = useRef<bool>(false);
+    final howToUseDismissed = useRef<bool>(false);
+    final appVersion = ref.watch(appVersionProvider).valueOrNull;
 
     useEffect(() {
       var disposed = false;
@@ -139,6 +143,27 @@ class DesktopShell extends HookConsumerWidget {
       });
       return () => disposed = true;
     }, const []);
+
+    useEffect(() {
+      final currentVersion = appVersion?.trim();
+      if (currentVersion == null || currentVersion.isEmpty) {
+        return null;
+      }
+      var active = true;
+      unawaited(
+        maybeAutoOpenDesktopHowToUse(
+          tabs: tabsNotifier,
+          currentVersion: currentVersion,
+          loadDismissedVersion:
+              () => AppDatabase.instance.getString(
+                desktopHowToUseDismissedVersionKey,
+              ),
+          isStillActive: () => active,
+          wasDismissed: () => howToUseDismissed.value,
+        ),
+      );
+      return () => active = false;
+    }, [appVersion]);
 
     void setSidebarExpandedPreference(bool expanded) {
       sidebarPreferenceTouched.value = true;
@@ -153,6 +178,26 @@ class DesktopShell extends HookConsumerWidget {
     // args don't accumulate forever.
     ref.listen<DesktopTabsState>(desktopTabsProvider, (prev, next) {
       if (prev == null) return;
+      if (didCloseDesktopHowToUse(prev, next)) {
+        howToUseDismissed.value = true;
+        unawaited(() async {
+          try {
+            final currentVersion = await ref.read(appVersionProvider.future);
+            await persistDesktopHowToUseDismissalIfClosed(
+              previous: prev,
+              next: next,
+              currentVersion: currentVersion,
+              persistDismissedVersion:
+                  (version) => AppDatabase.instance.setString(
+                    desktopHowToUseDismissedVersionKey,
+                    version,
+                  ),
+            );
+          } catch (_) {
+            // Onboarding persistence must never interrupt normal tab closing.
+          }
+        }());
+      }
       final liveIds = <String>{for (final t in next.tabs) t.id};
       for (final t in prev.tabs) {
         if (!liveIds.contains(t.id)) {
@@ -710,6 +755,8 @@ class DesktopShell extends HookConsumerWidget {
                                 autoCollapsed: autoCollapsed,
                                 onToggleExpanded: toggleSidebar,
                                 onSearch: () => unawaited(openCommandPalette()),
+                                onHowToUse:
+                                    () => tabsNotifier.open(TabKind.howToUse),
                                 onSelect: handleSidebarSelect,
                                 feedbackScreenshotKey: feedbackScreenshotKey,
                               ),
@@ -911,14 +958,22 @@ class _DesktopTabStack extends StatelessWidget {
         for (final tab in tabs)
           KeyedSubtree(
             key: ValueKey<String>('desktop-tab:${tab.id}:${tab.kind.name}'),
-            child: PaneKeyboardScroll(child: resolveDesktopTabContent(tab)),
+            child: PaneKeyboardScroll(
+              child: resolveDesktopTabContent(
+                tab,
+                feedbackScreenshotKey: feedbackScreenshotKey,
+              ),
+            ),
           ),
       ],
     );
   }
 }
 
-Widget resolveDesktopTabContent(DesktopTab? tab) {
+Widget resolveDesktopTabContent(
+  DesktopTab? tab, {
+  GlobalKey? feedbackScreenshotKey,
+}) {
   if (tab == null) {
     return const PlaceholderPane(
       title: 'No tab',
@@ -950,6 +1005,10 @@ Widget resolveDesktopTabContent(DesktopTab? tab) {
       return const CountrymenPane();
     case TabKind.settings:
       return const SettingsPane();
+    case TabKind.howToUse:
+      return DesktopWhatsNewHomePane(
+        feedbackScreenshotKey: feedbackScreenshotKey ?? GlobalKey(),
+      );
     case TabKind.openingExplorer:
       // Desktop-native master/detail layout — board on the left,
       // move-stats table in the middle, persistent filter panel on the

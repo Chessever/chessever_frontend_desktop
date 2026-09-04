@@ -1360,8 +1360,9 @@ class _LineBlock extends StatelessWidget {
               depth == 0 &&
               isMainlineRoot &&
               whitePointer != null &&
-              (userNags[whitePointer.last] ?? const <int>[]).any(
-                (n) => n >= 1 && n <= 7,
+              _hasUserQualityOverride(
+                baseNags: whiteMove?.nags ?? const <int>[],
+                userNags: userNags[whitePointer.last] ?? const <int>[],
               ),
           blackNags:
               (depth == 0 && isMainlineRoot && blackPointer != null)
@@ -1380,8 +1381,9 @@ class _LineBlock extends StatelessWidget {
               depth == 0 &&
               isMainlineRoot &&
               blackPointer != null &&
-              (userNags[blackPointer.last] ?? const <int>[]).any(
-                (n) => n >= 1 && n <= 7,
+              _hasUserQualityOverride(
+                baseNags: blackMove?.nags ?? const <int>[],
+                userNags: userNags[blackPointer.last] ?? const <int>[],
               ),
           onSetUserQualityNag:
               (depth == 0 && isMainlineRoot) ? onSetUserQualityNag : null,
@@ -2043,8 +2045,9 @@ class _InlineNotationBlock extends StatelessWidget {
         annotation: isMainlineMove ? lichessAnnotations[pointer.last] : null,
         userHasQualityNag:
             isMainlineMove &&
-            (userNags[pointer.last] ?? const <int>[]).any(
-              (n) => n >= 1 && n <= 7,
+            _hasUserQualityOverride(
+              baseNags: move.nags ?? const <int>[],
+              userNags: userNags[pointer.last] ?? const <int>[],
             ),
         onSetUserQualityNag: isMainlineMove ? onSetUserQualityNag : null,
         onToggleUserNag: isMainlineMove ? onToggleUserNag : null,
@@ -3720,6 +3723,7 @@ class _LadderChipState extends State<_LadderChip>
     final children = <Widget>[
       if (widget.compact) sanText else Flexible(child: sanText),
       if (!annotationsHidden &&
+          !widget.userHasQualityNag &&
           widget.annotation?.useClassificationIcon == true) ...[
         const SizedBox(width: 4),
         _NotationClassificationIcon(annotation: widget.annotation!),
@@ -4376,15 +4380,20 @@ List<int> _mergedMainlineNagsFor({
   required Map<int, List<int>> userNags,
 }) {
   final lichess = lichessAnnotations[ply];
-  final reportOwnsMoveQuality =
-      lichess?.reportOwnsMoveQuality == true ||
-      lichess?.useClassificationIcon == true;
-  final lichessNag =
-      lichess == null || reportOwnsMoveQuality
-          ? null
-          : _nagForLichessAnnotation(lichess.type);
   final user = userNags[ply] ?? const <int>[];
   final userHasQuality = user.any((n) => n >= 1 && n <= 7);
+  final baseHasUserQualityOverride =
+      baseNags.contains(kChesseverUserQualityOverrideNag) &&
+      baseNags.any((n) => n >= 1 && n <= 7);
+  final reportOwnsMoveQuality =
+      !userHasQuality &&
+      !baseHasUserQualityOverride &&
+      (lichess?.reportOwnsMoveQuality == true ||
+          lichess?.useClassificationIcon == true);
+  final lichessNag =
+      lichess == null || reportOwnsMoveQuality || baseHasUserQualityOverride
+          ? null
+          : _nagForLichessAnnotation(lichess.type);
   final out = <int>[];
   final seen = <int>{};
 
@@ -4394,12 +4403,27 @@ List<int> _mergedMainlineNagsFor({
     }
   }
 
-  addAll(baseNags.where((nag) => !reportOwnsMoveQuality || nag < 1 || nag > 7));
+  addAll(
+    baseNags.where(
+      (nag) =>
+          nag != kChesseverUserQualityOverrideNag &&
+          (!(reportOwnsMoveQuality || userHasQuality) || nag < 1 || nag > 7),
+    ),
+  );
   if (lichessNag != null && !userHasQuality) {
     addAll(<int>[lichessNag]);
   }
-  addAll(user.where((nag) => !reportOwnsMoveQuality || nag < 1 || nag > 7));
+  addAll(user);
   return out;
+}
+
+bool _hasUserQualityOverride({
+  required Iterable<int> baseNags,
+  required Iterable<int> userNags,
+}) {
+  if (userNags.any((n) => n >= 1 && n <= 7)) return true;
+  return baseNags.contains(kChesseverUserQualityOverrideNag) &&
+      baseNags.any((n) => n >= 1 && n <= 7);
 }
 
 int? _nagForLichessAnnotation(LichessMoveAnnotationType type) => switch (type) {

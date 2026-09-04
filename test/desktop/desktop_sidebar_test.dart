@@ -147,10 +147,11 @@ void main() {
     expect(labels[labels.indexOf('Play') + 1], 'Search');
   });
 
-  test('Feedback entry appears directly under Search', () {
+  test('How to use and Feedback appear directly under Search', () {
     final labels = debugDesktopSidebarLabelsInOrder();
 
-    expect(labels[labels.indexOf('Search') + 1], 'Feedback');
+    expect(labels[labels.indexOf('Search') + 1], 'How to use');
+    expect(labels[labels.indexOf('How to use') + 1], 'Feedback');
     expect(labels, isNot(contains('Feedback / Report issue')));
     expect(labels, isNot(contains('Tournaments')));
   });
@@ -161,5 +162,9 @@ void main() {
 
   test('Feedback entry is an action, not a pane route', () {
     expect(debugDesktopSidebarPaneForLabel('Feedback'), isNull);
+  });
+
+  test('How to use entry is an action, not a pane route', () {
+    expect(debugDesktopSidebarPaneForLabel('How to use'), isNull);
   });
 }

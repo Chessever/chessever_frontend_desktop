@@ -192,36 +192,85 @@ void main() {
     expect(find.byType(MoveHoverPreview), findsNothing);
   });
 
-  testWidgets(
-    'generated report assessment replaces prior move quality evaluations',
-    (tester) async {
-      final game = _sampleGameWithMainlineNags(<int>[6, 16]);
+  testWidgets('user quality assessment replaces the generated report icon', (
+    tester,
+  ) async {
+    final game = _sampleGameWithMainlineNags(<int>[6, 16]);
 
-      await tester.pumpWidget(
-        _host(
-          game: game,
-          activePointer: const <int>[2],
-          onJump: (_) {},
-          lichessAnnotations: const <int, LichessMoveAnnotation>{
-            2: LichessMoveAnnotation(
-              type: LichessMoveAnnotationType.blunder,
-              comment: '',
-              useClassificationIcon: true,
-            ),
-          },
-          userNags: const <int, List<int>>{
-            2: <int>[2],
-          },
-        ),
-      );
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      _host(
+        game: game,
+        activePointer: const <int>[2],
+        onJump: (_) {},
+        lichessAnnotations: const <int, LichessMoveAnnotation>{
+          2: LichessMoveAnnotation(
+            type: LichessMoveAnnotationType.inaccuracy,
+            comment: '',
+            useClassificationIcon: true,
+            reportOwnsMoveQuality: true,
+          ),
+        },
+        userNags: const <int, List<int>>{
+          2: <int>[4],
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.text('?!'), findsNothing);
-      expect(find.text('?'), findsNothing);
-      expect(find.text('±'), findsOneWidget);
-      expect(find.byType(SvgPicture), findsOneWidget);
-    },
-  );
+    expect(find.text('?!'), findsNothing);
+    expect(find.text('?'), findsNothing);
+    expect(find.text('??'), findsOneWidget);
+    expect(find.text('±'), findsOneWidget);
+    expect(find.byType(SvgPicture), findsNothing);
+
+    await tester.pumpWidget(
+      _host(
+        game: game,
+        activePointer: const <int>[2],
+        onJump: (_) {},
+        lichessAnnotations: const <int, LichessMoveAnnotation>{
+          2: LichessMoveAnnotation(
+            type: LichessMoveAnnotationType.inaccuracy,
+            comment: '',
+            useClassificationIcon: true,
+            reportOwnsMoveQuality: true,
+          ),
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('??'), findsNothing);
+    expect(find.text('±'), findsOneWidget);
+    expect(find.byType(SvgPicture), findsOneWidget);
+  });
+
+  testWidgets('reopened user quality marker still overrides report icon', (
+    tester,
+  ) async {
+    final game = _sampleGameWithMainlineNags(<int>[4, 16, 248]);
+
+    await tester.pumpWidget(
+      _host(
+        game: game,
+        activePointer: const <int>[2],
+        onJump: (_) {},
+        lichessAnnotations: const <int, LichessMoveAnnotation>{
+          2: LichessMoveAnnotation(
+            type: LichessMoveAnnotationType.inaccuracy,
+            comment: '',
+            useClassificationIcon: true,
+            reportOwnsMoveQuality: true,
+          ),
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('??'), findsOneWidget);
+    expect(find.text('±'), findsOneWidget);
+    expect(find.byType(SvgPicture), findsNothing);
+  });
 
   testWidgets(
     'neutral generated report assessment clears prior quality evaluations',

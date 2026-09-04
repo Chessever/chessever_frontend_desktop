@@ -16,6 +16,31 @@ void main() {
       expect(tabs.state.active?.title, 'Events');
     });
 
+    test('opens a closable How to use tab with the requested label', () {
+      final tabs = DesktopTabsNotifier();
+
+      final tabId = tabs.open(TabKind.howToUse);
+      final tab = tabs.state.tabs.singleWhere((tab) => tab.id == tabId);
+
+      expect(tab.title, 'How to use');
+      expect(tab.closable, isTrue);
+      expect(tabs.state.activeId, tabId);
+    });
+
+    test(
+      'How to use stays open when another route replaces the active view',
+      () {
+        final tabs = DesktopTabsNotifier();
+        final howToUseTabId = tabs.open(TabKind.howToUse);
+
+        final libraryTabId = tabs.navigateActive(TabKind.library);
+
+        expect(libraryTabId, isNot(howToUseTabId));
+        expect(tabs.state.tabs.any((tab) => tab.id == howToUseTabId), isTrue);
+        expect(tabs.state.active?.kind, TabKind.library);
+      },
+    );
+
     test('opens background tabs without changing the active tab', () {
       final tabs = DesktopTabsNotifier();
 
