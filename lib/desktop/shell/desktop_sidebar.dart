@@ -35,6 +35,7 @@ class DesktopSidebar extends StatelessWidget {
     required this.feedbackScreenshotKey,
     required this.onToggleExpanded,
     required this.onSearch,
+    required this.onHowToUse,
     this.expanded = true,
     this.autoCollapsed = false,
   });
@@ -48,6 +49,7 @@ class DesktopSidebar extends StatelessWidget {
   final GlobalKey feedbackScreenshotKey;
   final VoidCallback onToggleExpanded;
   final VoidCallback onSearch;
+  final VoidCallback onHowToUse;
   final bool expanded;
   final bool autoCollapsed;
 
@@ -104,6 +106,12 @@ class DesktopSidebar extends StatelessWidget {
                 expanded: expanded,
                 selected: false,
                 onTap: ({required bool inNewTab}) => onSearch(),
+              ),
+              _SidebarItem(
+                entry: _howToUseEntry,
+                expanded: expanded,
+                selected: false,
+                onTap: ({required bool inNewTab}) => onHowToUse(),
               ),
               _SidebarItem(
                 entry: _feedbackEntry,
@@ -540,6 +548,11 @@ const _NavEntry _feedbackEntry = _NavEntry(
   icon: Icons.feedback_outlined,
 );
 
+const _NavEntry _howToUseEntry = _NavEntry(
+  label: 'How to use',
+  icon: Icons.help_outline,
+);
+
 const _NavEntry _settingsEntry = _NavEntry(
   pane: DesktopPane.settings,
   label: 'Settings',
@@ -565,6 +578,7 @@ List<String> debugDesktopSidebarLabelsInOrder() {
     labels.add(entry.label);
     if (entry.pane == DesktopPane.play) {
       labels.add(_searchEntry.label);
+      labels.add(_howToUseEntry.label);
       labels.add(_feedbackEntry.label);
     }
   }

@@ -24,6 +24,7 @@ enum TabKind {
   calendar,
   countrymen,
   settings,
+  howToUse,
   openingExplorer,
   boardEditor,
   watch,
@@ -86,6 +87,8 @@ extension TabKindLabel on TabKind {
         return 'Countrymen';
       case TabKind.settings:
         return 'Settings';
+      case TabKind.howToUse:
+        return 'How to use';
       case TabKind.openingExplorer:
         return 'Opening Explorer';
       case TabKind.boardEditor:
@@ -245,6 +248,8 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
         ),
       );
 
+  DesktopTabsState get currentState => state;
+
   static int _idCounter = 0;
   static String _nextId() => 'tab-${_idCounter++}';
 
@@ -350,6 +355,9 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       return open(kind, title: route.title, subtitle: route.subtitle);
     }
     final old = state.tabs[idx];
+    if (old.kind == TabKind.howToUse && kind != TabKind.howToUse) {
+      return open(kind, title: route.title, subtitle: route.subtitle);
+    }
     if (old.route == route) {
       // Already showing this route — nothing to do.
       return activeId;

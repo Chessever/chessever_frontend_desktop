@@ -1485,6 +1485,8 @@ IconData _iconFor(TabKind kind) {
       return Icons.public_outlined;
     case TabKind.settings:
       return Icons.settings_outlined;
+    case TabKind.howToUse:
+      return Icons.help_outline_rounded;
     case TabKind.openingExplorer:
       return Icons.menu_book_outlined;
     case TabKind.boardEditor:
