@@ -7,6 +7,93 @@ import 'package:chessever/repository/library/models/library_folder.dart';
 
 void main() {
   group('Library folder navigation helpers', () {
+    test('database catalog filtering is case-insensitive and source-aware', () {
+      expect(
+        libraryDatabaseCatalogMatches(
+          title: 'ChessEver Master Database',
+          details: '7.0M games',
+          source: LibraryDatabaseCatalogSource.cloud,
+          filter: LibraryDatabaseCatalogSourceFilter.all,
+          query: 'master',
+        ),
+        isTrue,
+      );
+      expect(
+        libraryDatabaseCatalogMatches(
+          title: 'Students',
+          details: '4 databases · 82 games',
+          source: LibraryDatabaseCatalogSource.local,
+          filter: LibraryDatabaseCatalogSourceFilter.cloud,
+          query: '',
+        ),
+        isFalse,
+      );
+      expect(
+        libraryDatabaseCatalogMatches(
+          title: 'Sicilian preparation',
+          details: '1,240 games',
+          source: LibraryDatabaseCatalogSource.local,
+          filter: LibraryDatabaseCatalogSourceFilter.local,
+          query: '1,240',
+        ),
+        isTrue,
+      );
+    });
+
+    test('database catalog progressively hides low-priority columns', () {
+      final wide = libraryDatabaseCatalogColumns(980);
+      expect(wide.showSource, isTrue);
+      expect(wide.showLastOpened, isTrue);
+
+      final medium = libraryDatabaseCatalogColumns(680);
+      expect(medium.showSource, isTrue);
+      expect(medium.showLastOpened, isFalse);
+
+      final narrow = libraryDatabaseCatalogColumns(520);
+      expect(narrow.showSource, isFalse);
+      expect(narrow.showLastOpened, isFalse);
+
+      final resized = libraryDatabaseCatalogColumns(
+        980,
+        savedWidths: const {'name': 240, 'games': 90},
+      );
+      expect(resized.nameWidth, 240);
+      expect(resized.gamesWidth, 90);
+
+      final constrained = libraryDatabaseCatalogColumns(
+        620,
+        savedWidths: const {
+          'name': 520,
+          'games': 190,
+          'source': 160,
+          'lastOpened': 200,
+        },
+      );
+      expect(
+        libraryDatabaseCatalogRequiredWidth(constrained),
+        lessThanOrEqualTo(620),
+      );
+    });
+
+    test('catalog drag target supports moving to either end', () {
+      expect(
+        libraryCatalogReorderedKeys(
+          const <String>['a', 'b', 'c'],
+          draggedKey: 'a',
+          targetKey: 'c',
+        ),
+        <String>['b', 'c', 'a'],
+      );
+      expect(
+        libraryCatalogReorderedKeys(
+          const <String>['a', 'b', 'c'],
+          draggedKey: 'c',
+          targetKey: 'a',
+        ),
+        <String>['c', 'a', 'b'],
+      );
+    });
+
     test('shows only direct children of the current folder', () {
       final folders = [
         _folder(id: 'root-a', name: 'Root A', orderIndex: 2),
@@ -57,7 +144,7 @@ void main() {
           folders: folders,
           currentFolderId: 'e4',
         ),
-        'My Databases › ChessBase › Openings › 1.e4',
+        'Library Home › ChessBase › Openings › 1.e4',
       );
       expect(
         libraryMyDatabasesBreadcrumbText(
@@ -65,7 +152,7 @@ void main() {
           currentFolderId: 'e4',
           localGroupLabel: 'Player sources',
         ),
-        'My Databases › Player sources',
+        'Library Home › Player sources',
       );
     });
 
@@ -94,6 +181,22 @@ void main() {
       },
     );
 
+    test('root catalog also exposes pinned descendant databases', () {
+      final folders = [
+        _folder(id: 'parent', name: 'Parent'),
+        _folder(id: 'database', name: 'Database', parentId: 'parent'),
+      ];
+
+      expect(
+        libraryVisibleCloudFolders(
+          folders: folders,
+          parentId: null,
+          pinnedIds: const <String>{'database'},
+        ).map((folder) => folder.id),
+        containsAll(<String>['parent', 'database']),
+      );
+    });
+
     test('treats legacy liked games as a database, not a folder', () {
       final folders = [
         _folder(id: 'liked', name: 'Liked games', icon: 'folder_container'),
@@ -103,8 +206,13 @@ void main() {
     });
 
     test('identifies permanent built-in library folders by name', () {
+      final liked = _folder(id: 'liked', name: 'Liked Games');
+      expect(liked.isPermanentLibraryFolder, isTrue);
+      expect(libraryCanRemoveCloudFolderFromBoard(liked), isFalse);
       expect(
-        _folder(id: 'liked', name: 'Liked Games').isPermanentLibraryFolder,
+        libraryCanRemoveCloudFolderFromBoard(
+          _folder(id: 'prep', name: 'Opening Prep'),
+        ),
         isTrue,
       );
       expect(isPermanentLibraryFolderName(' my database '), isTrue);
@@ -268,10 +376,8 @@ void main() {
         localLibraryEntryIsPlayerWorkspaceCombined(legacyCombined),
         isTrue,
       );
-      final legacyEntries = <LocalLibraryEntry>[
-        entries[1],
-        legacyCombined,
-      ]..sort(comparePlayerWorkspaceLibraryEntries);
+      final legacyEntries = <LocalLibraryEntry>[entries[1], legacyCombined]
+        ..sort(comparePlayerWorkspaceLibraryEntries);
       expect(legacyEntries.first, legacyCombined);
     });
   });

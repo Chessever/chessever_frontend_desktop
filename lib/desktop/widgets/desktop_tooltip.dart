@@ -18,11 +18,15 @@ class DesktopTooltip extends StatelessWidget {
     required this.message,
     required this.child,
     this.hoverEnterDuration = const Duration(milliseconds: 350),
+    this.tipAnchor = Alignment.bottomCenter,
+    this.childAnchor = Alignment.topCenter,
   });
 
   final String message;
   final Widget child;
   final Duration hoverEnterDuration;
+  final AlignmentGeometry tipAnchor;
+  final AlignmentGeometry childAnchor;
 
   @override
   Widget build(BuildContext context) {
@@ -31,6 +35,8 @@ class DesktopTooltip extends StatelessWidget {
       data: FThemes.zinc.dark,
       child: FTooltip(
         hoverEnterDuration: hoverEnterDuration,
+        tipAnchor: tipAnchor,
+        childAnchor: childAnchor,
         // Desktop chrome is mouse-driven, and FTooltip's long-press support
         // wraps the child in an ancestor `GestureDetector(onLongPressStart:)`.
         // That recognizer shares the gesture arena with the button's own tap
