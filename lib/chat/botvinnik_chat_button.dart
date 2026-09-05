@@ -54,12 +54,18 @@ FBaseButtonStyle Function(FButtonStyle style) _floatingButtonStyle() {
   return FButtonStyle.outline(
     (style) => style.copyWith(
       decoration: FWidgetStateMap({
-        WidgetState.disabled: const BoxDecoration(color: Colors.transparent),
-        WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-          color: kPrimaryColor.withValues(alpha: 0.10),
+        WidgetState.disabled: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.16),
           borderRadius: BorderRadius.circular(12),
         ),
-        WidgetState.any: const BoxDecoration(color: Colors.transparent),
+        WidgetState.hovered | WidgetState.pressed: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.36),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        WidgetState.any: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.24),
+          borderRadius: BorderRadius.circular(12),
+        ),
       }),
       iconContentStyle:
           (content) => content.copyWith(padding: const EdgeInsets.all(2)),
