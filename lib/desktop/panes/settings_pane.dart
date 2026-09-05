@@ -665,7 +665,6 @@ class _BotvinnikSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final enabledState = ref.watch(botvinnikEnabledProvider);
     final enabled = enabledState.valueOrNull ?? true;
-    final quota = ref.watch(botvinnikQuotaProvider).valueOrNull;
 
     return _Card(
       title: 'Botvinnik',
@@ -696,11 +695,9 @@ class _BotvinnikSection extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  quota == null
-                      ? 'Show Botvinnik throughout the desktop app.'
-                      : '${quota.remaining} of ${quota.limit} messages left',
-                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+                const Text(
+                  'Show Botvinnik throughout the desktop app.',
+                  style: TextStyle(color: kWhiteColor70, fontSize: 12),
                 ),
               ],
             ),
