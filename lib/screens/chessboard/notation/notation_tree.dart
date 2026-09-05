@@ -298,22 +298,14 @@ void _appendLineToPgnNode(PgnNode<PgnNodeData> parent, ChessLine line) {
   final headMove = line.first;
   final headNode = PgnChildNode<PgnNodeData>(_toPgnNodeData(headMove));
   parent.children.add(headNode);
-  _appendChildrenToPgnNode(headNode, line, moveIndex: 0);
-}
-
-void _appendChildrenToPgnNode(
-  PgnNode<PgnNodeData> parent,
-  ChessLine line, {
-  required int moveIndex,
-}) {
-  final move = line[moveIndex];
-
-  if (moveIndex + 1 < line.length) {
-    _appendLineToPgnNode(parent, line.sublist(moveIndex + 1));
-  }
-
-  for (final variation in move.variations ?? const <ChessLine>[]) {
-    _appendLineToPgnNode(parent, variation);
+  // Populate the principal continuation before alternative children.
+  _appendLineToPgnNode(headNode, line.sublist(1));
+  for (final variation in headMove.variations ?? const <ChessLine>[]) {
+    if (variation.isEmpty) continue;
+    _appendLineToPgnNode(
+      variation.first.turn == headMove.turn ? parent : headNode,
+      variation,
+    );
   }
 }
 
@@ -332,10 +324,18 @@ PgnNodeData _toPgnNodeData(ChessMove move) {
   if (tags.isNotEmpty) comments.add(tags.join(' '));
 
   for (final comment in move.comments ?? const <String>[]) {
-    if (comment.startsWith('[%clk') || comment.startsWith('[%eval')) {
-      continue;
-    }
-    comments.add(comment);
+    // Strip only the machine values already emitted above, never the prose or
+    // graphic/source directives that happen to share their comment block.
+    final remaining = comment.replaceAllMapped(
+      RegExp(r'\[%(clk|eval)\s+[^\]]+\]'),
+      (match) =>
+          (match.group(1) == 'clk'
+                  ? (move.clockTime?.isNotEmpty ?? false)
+                  : (move.eval?.isNotEmpty ?? false))
+              ? ''
+              : match.group(0)!,
+    ).trim();
+    if (remaining.isNotEmpty) comments.add(remaining);
   }
 
   return PgnNodeData(
