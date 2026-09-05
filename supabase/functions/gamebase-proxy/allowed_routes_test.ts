@@ -46,3 +46,10 @@ Deno.test("keeps existing regular-player routes available", () => {
     true,
   );
 });
+
+Deno.test("allows player win-streak reads only", () => {
+  assertEquals(isAllowedGamebaseProxyRoute("GET", "/api/streaks"), true);
+  assertEquals(isAllowedGamebaseProxyRoute("GET", "/api/streaks/1503014"), true);
+  assertEquals(isAllowedGamebaseProxyRoute("POST", "/api/streaks/ingest"), false);
+  assertEquals(isAllowedGamebaseProxyRoute("GET", "/api/streaks/ingest/x"), false);
+});
