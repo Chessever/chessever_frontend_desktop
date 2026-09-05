@@ -2298,8 +2298,28 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
     }
 
-    final variationForkDismissSignal = useState(0);
+    final variationForkDismissSignal = useMemoized(() => ValueNotifier(0));
+    final variationForkAcceptSignal = useMemoized(() => ValueNotifier(0));
     final variationForkChooserOpen = useRef(false);
+
+    useEffect(() {
+      return () {
+        if (variationForkChooserOpen.value) {
+          variationForkDismissSignal.value += 1;
+          variationForkChooserOpen.value = false;
+        }
+        variationForkDismissSignal.dispose();
+        variationForkAcceptSignal.dispose();
+      };
+    }, const []);
+
+    useEffect(() {
+      return () {
+        if (variationForkChooserOpen.value) {
+          variationForkDismissSignal.value += 1;
+        }
+      };
+    }, [isForegroundTab, chessGame.value, pointer.value]);
 
     void dismissVariationForkChooser() {
       if (!variationForkChooserOpen.value) return;
@@ -2314,8 +2334,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     // plain `goNext` so background traversal never blocks on a dialog.
     Future<void> goNextInteractive() async {
       if (variationForkChooserOpen.value) {
-        dismissVariationForkChooser();
-        goNext();
+        variationForkAcceptSignal.value += 1;
         return;
       }
       final currentPointer = pointer.value;
@@ -2336,8 +2355,13 @@ class _BoardPaneContent extends HookConsumerWidget {
         options: options,
         targetContext: rightRailAnalysisKey.currentContext,
         dismissSignal: variationForkDismissSignal,
+        acceptSignal: variationForkAcceptSignal,
       ).whenComplete(() => variationForkChooserOpen.value = false);
-      if (picked == null || !context.mounted) return;
+      if (picked == null ||
+          !context.mounted ||
+          !_pointersEqual(pointer.value, currentPointer)) {
+        return;
+      }
       // Re-validate after the await: the broadcast feed may have shifted
       // the tree, in which case the saved pointer is stale and we fall
       // back to a plain step so the key press still feels live.

@@ -3,10 +3,73 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('toolbar click accepts the highlighted variation', (
+    tester,
+  ) async {
+    final accept = ValueNotifier(0);
+    final dismiss = ValueNotifier(0);
+    List<int>? picked;
+    final options =
+        resolveVariationForkOptions(
+          game: _gameWithFork(mainline: _line(2), variations: [_line(2)]),
+          next: const [0],
+        )!;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          boardSettingsProviderNew.overrideWith(
+            () => _TestBoardSettingsNotifier(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) {
+                ResponsiveHelper.init(context);
+                return Column(
+                  children: [
+                    TextButton(
+                      onPressed: () async {
+                        picked = await showVariationForkChooser(
+                          context: context,
+                          options: options,
+                          acceptSignal: accept,
+                          dismissSignal: dismiss,
+                        );
+                      },
+                      child: const Text('open'),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () => accept.value++,
+                      child: const Text('next'),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    await tester.tap(find.text('next'));
+    await tester.pumpAndSettle();
+    expect(picked, options[1].pointer);
+    expect(find.text('Continue with'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    accept.dispose();
+    dismiss.dispose();
+  });
+
   group('resolveVariationForkOptions', () {
     test(
       'renders mainline and variation continuations as one-line previews',
@@ -167,14 +230,16 @@ void main() {
                       Expanded(
                         key: notationKey,
                         child: Builder(
-                          builder: (notationContext) => TextButton(
-                            onPressed: () => showVariationForkChooser(
-                              context: rootContext,
-                              options: options,
-                              targetContext: notationContext,
-                            ),
-                            child: const Text('open'),
-                          ),
+                          builder:
+                              (notationContext) => TextButton(
+                                onPressed:
+                                    () => showVariationForkChooser(
+                                      context: rootContext,
+                                      options: options,
+                                      targetContext: notationContext,
+                                    ),
+                                child: const Text('open'),
+                              ),
                         ),
                       ),
                     ],
@@ -192,12 +257,7 @@ void main() {
       final barriers = tester.widgetList<ModalBarrier>(
         find.byType(ModalBarrier),
       );
-      expect(
-        barriers.any(
-          (barrier) => barrier.color == null || barrier.color!.a == 0,
-        ),
-        true,
-      );
+      expect(barriers, isEmpty);
 
       final notationRect = tester.getRect(find.byKey(notationKey));
       final popupRect = tester.getRect(find.text('Continue with'));
@@ -238,14 +298,16 @@ void main() {
           child: MaterialApp(
             home: Scaffold(
               body: Builder(
-                builder: (rootContext) => TextButton(
-                  onPressed: () => showVariationForkChooser(
-                    context: rootContext,
-                    options: options,
-                    dismissSignal: dismissSignal,
-                  ),
-                  child: const Text('open'),
-                ),
+                builder:
+                    (rootContext) => TextButton(
+                      onPressed:
+                          () => showVariationForkChooser(
+                            context: rootContext,
+                            options: options,
+                            dismissSignal: dismissSignal,
+                          ),
+                      child: const Text('open'),
+                    ),
               ),
             ),
           ),
