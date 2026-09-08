@@ -864,8 +864,7 @@ class _UpdatesSection extends HookConsumerWidget {
       pillColor = kGreenColor;
       description =
           lastCheckedAt.value == null
-              ? 'ChessEver checks for updates automatically once an hour. You can '
-                  'also check manually below.'
+              ? 'No new version available.'
               : 'No new version available as of '
                   '${_formatLastChecked(lastCheckedAt.value!)}.';
     }
