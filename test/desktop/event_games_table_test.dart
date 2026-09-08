@@ -623,6 +623,142 @@ void main() {
     },
   );
 
+  test(
+    'live-first ordering restores finished boards to canonical positions',
+    () {
+      final now = DateTime.now();
+      TournamentGameSummary board(int number, {required GameStatus status}) =>
+          _summary(
+            id: 'dynamic-board-$number',
+            roundLabel: 'Round 11',
+            boardNumber: number,
+            status: status,
+            hasStarted: true,
+            lastMoveTime: now,
+          );
+
+      final board45Finished = orderEventRailGamesForDisplay([
+        board(45, status: GameStatus.draw),
+        board(44, status: GameStatus.ongoing),
+        board(43, status: GameStatus.ongoing),
+        board(42, status: GameStatus.draw),
+        board(1, status: GameStatus.draw),
+      ], liveFirst: true);
+      expect(board45Finished.map((game) => game.boardNumber), [
+        43,
+        44,
+        1,
+        42,
+        45,
+      ]);
+
+      final allFinished = orderEventRailGamesForDisplay([
+        for (final number in [45, 44, 43, 42, 1])
+          board(number, status: GameStatus.draw),
+      ], liveFirst: true);
+      expect(allFinished.map((game) => game.boardNumber), [1, 42, 43, 44, 45]);
+    },
+  );
+
+  testWidgets(
+    'event rail replaces repeated title with Games and Standings tabs',
+    (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          BoardTabGameArgs(
+            gameId: 'rail-tab-game',
+            pgn: '1. e4 e5 *',
+            label: 'Rail tab game',
+            whiteName: 'White',
+            blackName: 'Black',
+            tournamentTitle: 'Repeated Event Title',
+            eventGames: [
+              _summary(
+                id: 'rail-tab-game',
+                roundLabel: 'Round 11',
+                boardNumber: 45,
+                status: GameStatus.ongoing,
+                hasStarted: true,
+                lastMoveTime: DateTime.now(),
+              ),
+            ],
+            gameListSelectedId: 'rail-tab-game',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Games'), findsOneWidget);
+      expect(find.text('Standings'), findsOneWidget);
+      expect(find.text('Repeated Event Title'), findsNothing);
+      expect(
+        find.byKey(const Key('event-rail-live-first-toggle')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Standings'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.text('No standings published yet.'), findsOneWidget);
+      expect(find.text('Round 11'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'live-first toggle keeps live boards above finished board order',
+    (tester) async {
+      final now = DateTime.now();
+      TournamentGameSummary board(int number, {required GameStatus status}) =>
+          _summary(
+            id: 'board-$number',
+            roundLabel: 'Round 11',
+            boardNumber: number,
+            whitePlayer: 'White $number',
+            blackPlayer: 'Black $number',
+            status: status,
+            hasStarted: true,
+            lastMoveTime: now,
+          );
+
+      await tester.pumpWidget(
+        _wrap(
+          BoardTabGameArgs(
+            gameId: 'board-43',
+            pgn: '1. e4 e5 *',
+            label: 'Board 43',
+            whiteName: 'White 43',
+            blackName: 'Black 43',
+            tournamentTitle: 'Event',
+            eventGames: [
+              board(45, status: GameStatus.draw),
+              board(44, status: GameStatus.ongoing),
+              board(43, status: GameStatus.ongoing),
+              board(42, status: GameStatus.draw),
+              board(1, status: GameStatus.draw),
+            ],
+            gameListSelectedId: 'board-43',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('event-rail-live-first-toggle')));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final orderedWhites = <String>[
+        'White 43',
+        'White 44',
+        'White 1',
+        'White 42',
+        'White 45',
+      ];
+      final yPositions = [
+        for (final name in orderedWhites) tester.getCenter(find.text(name)).dy,
+      ];
+      expect(yPositions, orderedEquals(yPositions.toList()..sort()));
+    },
+  );
+
   testWidgets('event rail stacks players and replaces LIVE with both clocks', (
     tester,
   ) async {
@@ -2207,7 +2343,9 @@ void main() {
     },
   );
 
-  testWidgets('event games keep the board and round column', (tester) async {
+  testWidgets('event games omit the repeated title and board column', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _wrap(
         BoardTabGameArgs(
@@ -2224,7 +2362,9 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Event'), findsOneWidget);
+    expect(find.text('Event'), findsNothing);
+    expect(find.text('Games'), findsOneWidget);
+    expect(find.text('Standings'), findsOneWidget);
     expect(find.text('EVENT GAMES'), findsNothing);
     expect(find.text('BD'), findsNothing);
     expect(find.text('R5'), findsNothing);
@@ -2623,7 +2763,7 @@ void main() {
     expect(args.pgn, '1. e4 e5 *');
   });
 
-  testWidgets('selected event game gets a quiet tint and primary edge', (
+  testWidgets('selected event game keeps its quiet primary gradient edge', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -2644,10 +2784,11 @@ void main() {
 
     final table = tester.widget<Table>(find.byType(Table));
     final selectedDecoration = table.children[0].decoration as BoxDecoration;
-    expect(selectedDecoration.color, kPrimaryColor.withValues(alpha: 0.11));
-    final border = selectedDecoration.border! as Border;
-    expect(border.left.color, kPrimaryColor);
-    expect(border.left.width, 2);
+    expect(selectedDecoration.color, isNull);
+    final gradient = selectedDecoration.gradient! as LinearGradient;
+    expect(gradient.colors.first, kPrimaryColor);
+    expect(gradient.colors.last, kPrimaryColor.withValues(alpha: 0.11));
+    expect(gradient.stops, const <double>[0, 0.007, 0.007, 1]);
     expect(selectedDecoration.boxShadow, isNull);
   });
 
@@ -2865,7 +3006,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Loading…'), findsOneWidget);
+    expect(find.text('Loading…'), findsNothing);
     expect(find.byType(AnimatedBuilder), findsWidgets);
   });
 
@@ -2922,7 +3063,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 220));
 
       expect(find.text('EVENT GAMES'), findsNothing);
-      expect(find.text('Tournament context'), findsOneWidget);
+      expect(find.text('Tournament context'), findsNothing);
+      expect(find.text('Games'), findsOneWidget);
+      expect(find.text('Standings'), findsOneWidget);
       expect(find.text('Event White'), findsOneWidget);
       expect(find.text('Route Two'), findsNothing);
     },

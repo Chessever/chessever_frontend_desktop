@@ -416,6 +416,7 @@ class TournamentStandingsView extends HookConsumerWidget {
     this.tournamentTitle = '',
     this.photoResolver,
     this.gameOpener,
+    this.compact = false,
   });
 
   final String tabId;
@@ -423,11 +424,29 @@ class TournamentStandingsView extends HookConsumerWidget {
   final String tournamentTitle;
   final StandingsPhotoResolver? photoResolver;
   final StandingsGameOpener? gameOpener;
+  final bool compact;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final standings = ref.watch(playerTourStandingsSnapshotProvider);
     final openGeneration = useRef(0);
+    if (compact) {
+      final tourId = tournamentId.trim();
+      final compactStandings =
+          tourId.isEmpty
+              ? const AsyncValue<List<PlayerStandingModel>>.data(
+                <PlayerStandingModel>[],
+              )
+              : ref.watch(tournamentRosterStandingsProvider(tourId));
+      return _CompactTournamentStandings(
+        standings: compactStandings,
+        photoResolver:
+            photoResolver ??
+            (fideId) => FidePhotoService.getPhotoUrlOrNull(fideId),
+        onOpenScoreCard: (player) => _openScoreCard(ref, player),
+      );
+    }
+
+    final standings = ref.watch(playerTourStandingsSnapshotProvider);
     final standingsScope = standings.valueOrNull;
     final officialRosterByTourId =
         <String, AsyncValue<List<PlayerStandingModel>>>{
@@ -716,6 +735,220 @@ List<PlayerStandingModel> _mergeOfficialRosterRows(
   return byIdentity.values.toList(growable: false);
 }
 
+class _CompactTournamentStandings extends StatelessWidget {
+  const _CompactTournamentStandings({
+    required this.standings,
+    required this.photoResolver,
+    required this.onOpenScoreCard,
+  });
+
+  final AsyncValue<List<PlayerStandingModel>> standings;
+  final StandingsPhotoResolver photoResolver;
+  final ValueChanged<PlayerStandingModel> onOpenScoreCard;
+
+  @override
+  Widget build(BuildContext context) {
+    return standings.when(
+      skipLoadingOnRefresh: true,
+      skipLoadingOnReload: true,
+      data: (players) {
+        if (players.isEmpty) return const _Empty();
+        return ListView.separated(
+          key: const PageStorageKey<String>('event-rail-standings'),
+          physics: const DesktopScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(8, 2, 8, 10),
+          itemCount: players.length,
+          separatorBuilder:
+              (_, __) => const Divider(color: kDividerColor, height: 1),
+          itemBuilder: (context, index) {
+            final player = players[index];
+            return _CompactStandingRow(
+              player: player,
+              rank: player.overallRank ?? index + 1,
+              photoResolver: photoResolver,
+              onOpen: () => onOpenScoreCard(player),
+            );
+          },
+        );
+      },
+      loading:
+          () => const Center(
+            child: SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+              ),
+            ),
+          ),
+      error:
+          (_, __) => const Center(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Text(
+                'Could not load standings.',
+                style: TextStyle(color: kRedColor, fontSize: 12),
+              ),
+            ),
+          ),
+    );
+  }
+}
+
+class _CompactStandingRow extends StatefulWidget {
+  const _CompactStandingRow({
+    required this.player,
+    required this.rank,
+    required this.photoResolver,
+    required this.onOpen,
+  });
+
+  final PlayerStandingModel player;
+  final int rank;
+  final StandingsPhotoResolver photoResolver;
+  final VoidCallback onOpen;
+
+  @override
+  State<_CompactStandingRow> createState() => _CompactStandingRowState();
+}
+
+class _CompactStandingRowState extends State<_CompactStandingRow> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final player = widget.player;
+    final playerKey = _standingWidgetKey(player);
+    final rating = player.score > 0 ? player.score.toString() : '';
+    final points = _compactStandingsPoints(player.matchScore);
+    final active = _hovered || _focused;
+
+    return Semantics(
+      button: true,
+      label: 'Open ${player.name} score card',
+      child: Focus(
+        onFocusChange: (focused) => setState(() => _focused = focused),
+        onKeyEvent: (node, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          if (event.logicalKey == LogicalKeyboardKey.enter ||
+              event.logicalKey == LogicalKeyboardKey.space) {
+            widget.onOpen();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: ClickCursor(
+          child: MouseRegion(
+            onEnter: (_) => setState(() => _hovered = true),
+            onExit: (_) => setState(() => _hovered = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onOpen,
+              child: AnimatedContainer(
+                key: Key('event-rail-standing-$playerKey'),
+                duration: const Duration(milliseconds: 100),
+                height: 44,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                decoration: BoxDecoration(
+                  color: active ? kBlack3Color : Colors.transparent,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 24,
+                      child: Text(
+                        '${widget.rank}',
+                        style: const TextStyle(
+                          color: kLightGreyColor,
+                          fontSize: 11.5,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                    _StandingsPlayerAvatar(
+                      key: Key('event-rail-standing-avatar-$playerKey'),
+                      player: player,
+                      photoResolver: widget.photoResolver,
+                      size: 28,
+                    ),
+                    const SizedBox(width: 7),
+                    SizedBox(
+                      width: 18,
+                      height: 12,
+                      child:
+                          player.countryCode.trim().isEmpty
+                              ? const SizedBox.shrink()
+                              : FederationFlag(
+                                federation: player.countryCode,
+                                width: 18,
+                                height: 12,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                    ),
+                    const SizedBox(width: 6),
+                    if ((player.title ?? '').isNotEmpty) ...[
+                      Text(
+                        player.title!,
+                        style: const TextStyle(
+                          color: kPrimaryColor,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                    ],
+                    Expanded(
+                      child: Text(
+                        player.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (rating.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        rating,
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 10.5,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 28,
+                      child: Text(
+                        points,
+                        key: Key('event-rail-standing-points-$playerKey'),
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Empty extends StatelessWidget {
   const _Empty();
 
@@ -971,12 +1204,12 @@ class _StandingsPlayerAvatar extends StatelessWidget {
     super.key,
     required this.player,
     required this.photoResolver,
+    this.size = 40,
   });
-
-  static const size = 40.0;
 
   final PlayerStandingModel player;
   final StandingsPhotoResolver photoResolver;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
@@ -999,12 +1232,17 @@ class _StandingsPlayerAvatar extends StatelessWidget {
                     height: size,
                     fit: BoxFit.cover,
                     placeholder:
-                        (_, __) => _StandingsAvatarFallback(initials: initials),
+                        (_, __) => _StandingsAvatarFallback(
+                          initials: initials,
+                          size: size,
+                        ),
                     errorWidget:
-                        (_, __, ___) =>
-                            _StandingsAvatarFallback(initials: initials),
+                        (_, __, ___) => _StandingsAvatarFallback(
+                          initials: initials,
+                          size: size,
+                        ),
                   )
-                  : _StandingsAvatarFallback(initials: initials),
+                  : _StandingsAvatarFallback(initials: initials, size: size),
         );
       },
     );
@@ -1012,15 +1250,16 @@ class _StandingsPlayerAvatar extends StatelessWidget {
 }
 
 class _StandingsAvatarFallback extends StatelessWidget {
-  const _StandingsAvatarFallback({required this.initials});
+  const _StandingsAvatarFallback({required this.initials, required this.size});
 
   final String initials;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: _StandingsPlayerAvatar.size,
-      height: _StandingsPlayerAvatar.size,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: kBlack3Color,
         border: Border.all(color: kDividerColor),
@@ -1104,6 +1343,13 @@ class _StandingsRoundResult extends StatelessWidget {
       ),
     );
   }
+}
+
+String _compactStandingsPoints(String? matchScore) {
+  final formatted = _standingsPoints(matchScore);
+  if (!formatted.endsWith('.5')) return formatted;
+  final whole = formatted.substring(0, formatted.length - 2);
+  return whole == '0' ? '½' : '$whole½';
 }
 
 String _standingsPoints(String? matchScore) {
