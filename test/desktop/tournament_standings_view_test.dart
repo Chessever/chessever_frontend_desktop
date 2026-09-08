@@ -421,6 +421,64 @@ void main() {
     },
   );
 
+  testWidgets(
+    'compact event rail standings keep identity rating and points in 44px rows',
+    (tester) async {
+      const player = PlayerStandingModel(
+        countryCode: 'USA',
+        title: 'GM',
+        name: 'Nakamura, Hikaru',
+        score: 2800,
+        scoreChange: 0,
+        matchScore: '9.5 / 11',
+        fideId: 2016192,
+        overallRank: 2,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tournamentRosterStandingsProvider(
+              'event-1',
+            ).overrideWith((ref) => Stream.value(const [player])),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 360,
+                height: 300,
+                child: TournamentStandingsView(
+                  tabId: 'compact-tab',
+                  tournamentId: 'event-1',
+                  compact: true,
+                  photoResolver: (_) async => null,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Nakamura, Hikaru'), findsOneWidget);
+      expect(find.text('2800'), findsOneWidget);
+      expect(find.text('9½'), findsOneWidget);
+      expect(
+        tester
+            .getSize(find.byKey(const Key('event-rail-standing-2016192')))
+            .height,
+        44,
+      );
+      expect(
+        tester.getSize(
+          find.byKey(const Key('event-rail-standing-avatar-2016192')),
+        ),
+        const Size.square(28),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('renders refreshed official roster rows from getTourPlayers', (
     tester,
   ) async {

@@ -26,6 +26,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/widgets/tournament_standings_view.dart';
 import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
@@ -92,6 +93,16 @@ Set<String> eventRailExpandedRoundIdsAfterNavigation({
 
 final _gameRailTabProvider = StateProvider.autoDispose
     .family<_GameRailTab?, String>((ref, tabId) => null);
+
+enum _BoardEventRailView { games, standings }
+
+final _boardEventRailViewProvider = StateProvider.autoDispose
+    .family<_BoardEventRailView, String>(
+      (ref, tabId) => _BoardEventRailView.games,
+    );
+
+final _eventRailLiveFirstProvider = StateProvider.autoDispose
+    .family<bool, String>((ref, tabId) => false);
 
 @visibleForTesting
 final eventRailNowProviderForTesting = Provider<DateTime Function()>(
@@ -1547,6 +1558,18 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     // the event rail waits for the catalog before painting its schedule. Once
     // hydrated, only a scheduled round-start boundary may advance that order.
     final isEventRail = resolved.kind == _GameListKind.event;
+    final requestedEventView = ref.watch(
+      _boardEventRailViewProvider(activeTabId),
+    );
+    final eventView =
+        isEventRail ? requestedEventView : _BoardEventRailView.games;
+    final liveFirst =
+        isEventRail && ref.watch(_eventRailLiveFirstProvider(activeTabId));
+    final standingsTourId = _eventRailStandingsTourId(
+      activeArgs: effectiveArgs,
+      games: resolved.games,
+      keyedTourId: eventTourId,
+    );
     final eventRoundCatalog =
         eventRailValue?.roundCatalog ?? const <EventRailRoundMetadata>[];
     _scheduleRoundAdvance(
@@ -1614,7 +1637,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               // dropped 8, 6, 3, 2 and 1.
               roundCatalog: eventRoundCatalog,
             );
-    final showBoardColumn = resolved.kind == _GameListKind.event;
     final expansionKeys = <String, _EventRoundExpansionKey>{
       for (final group in roundGroups)
         group.id: _eventRoundExpansionKey(
@@ -1659,7 +1681,14 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         resolved.kind == _GameListKind.database
             ? resolved.games
             : visibleRoundGroups
-                .expand((round) => round.games)
+                .expand(
+                  (round) => round.displaySegments.expand(
+                    (segment) => orderEventRailGamesForDisplay(
+                      segment.games,
+                      liveFirst: liveFirst,
+                    ),
+                  ),
+                )
                 .toList(growable: false);
     final selectedGameId = resolved.selectedGameId;
     final activeSelectionId = _highlightedGameId ?? selectedGameId;
@@ -1701,7 +1730,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             // its expansion state) flipped this signature while the user was
             // scrolling, which re-fired the scroll-to-selection animation and
             // threw the viewport back to the selected game.
-            : [resolved.kind.index, activeSelectionId ?? ''].join('|');
+            : [
+              resolved.kind.index,
+              activeSelectionId ?? '',
+              liveFirst,
+            ].join('|');
     if (resolved.kind == _GameListKind.database) {
       _scheduleDatabaseSelectedScroll(
         orderedGames: orderedGames,
@@ -1788,49 +1821,74 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: DesktopTooltip(
-                            message:
+                    if (isEventRail)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _BoardEventRailTabs(
+                              selected: eventView,
+                              onChanged:
+                                  (view) =>
+                                      ref
+                                          .read(
+                                            _boardEventRailViewProvider(
+                                              activeTabId,
+                                            ).notifier,
+                                          )
+                                          .state = view,
+                            ),
+                          ),
+                          if (widget.onClose != null) ...[
+                            const SizedBox(width: 8),
+                            _GameRailCloseButton(onClose: widget.onClose!),
+                          ],
+                        ],
+                      )
+                    else
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: DesktopTooltip(
+                              message:
+                                  resolved.title.isNotEmpty
+                                      ? resolved.title
+                                      : _railHeading(resolved.kind),
+                              child: Text(
                                 resolved.title.isNotEmpty
                                     ? resolved.title
                                     : _railHeading(resolved.kind),
-                            child: Text(
-                              resolved.title.isNotEmpty
-                                  ? resolved.title
-                                  : _railHeading(resolved.kind),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: kWhiteColor,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
-                                height: 1.15,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: kWhiteColor,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1.15,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        if (countText.isNotEmpty) ...[
-                          const SizedBox(width: 8),
-                          Text(
-                            countText,
-                            style: const TextStyle(
-                              color: kWhiteColor70,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              fontFeatures: [FontFeature.tabularFigures()],
+                          if (countText.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              countText,
+                              style: const TextStyle(
+                                color: kWhiteColor70,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                fontFeatures: [FontFeature.tabularFigures()],
+                              ),
                             ),
-                          ),
+                          ],
+                          if (widget.onClose != null) ...[
+                            const SizedBox(width: 8),
+                            _GameRailCloseButton(onClose: widget.onClose!),
+                          ],
                         ],
-                        if (widget.onClose != null) ...[
-                          const SizedBox(width: 8),
-                          _GameRailCloseButton(onClose: widget.onClose!),
-                        ],
-                      ],
-                    ),
-                    if (rail.hasTabs) ...[
+                      ),
+                    if (rail.hasTabs &&
+                        eventView == _BoardEventRailView.games) ...[
                       const SizedBox(height: 8),
                       DesktopSegmentedTabs<_GameRailTab>(
                         expand: true,
@@ -1861,7 +1919,14 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               ),
               Expanded(
                 child:
-                    resolved.kind == _GameListKind.database
+                    eventView == _BoardEventRailView.standings
+                        ? TournamentStandingsView(
+                          tabId: activeTabId,
+                          tournamentId: standingsTourId,
+                          tournamentTitle: resolved.title,
+                          compact: true,
+                        )
+                        : resolved.kind == _GameListKind.database
                         ? _DatabaseGamesList(
                           controller: _scrollController,
                           games: orderedGames,
@@ -1907,7 +1972,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                           orderedGames: orderedGames,
                           resolved: resolved,
                           effectiveArgs: effectiveArgs,
-                          showBoardColumn: showBoardColumn,
+                          showBoardColumn: false,
+                          liveFirst: liveFirst,
                           activeContinuation: activeContinuation,
                           isEventRail: isEventRail,
                           expandedRoundScope: expandedRoundScope,
@@ -1947,6 +2013,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     required _ResolvedEventGames resolved,
     required BoardTabGameArgs? effectiveArgs,
     required bool showBoardColumn,
+    required bool liveFirst,
     required BoardTabGamesContinuation? activeContinuation,
     required bool isEventRail,
     required String expandedRoundScope,
@@ -1963,13 +2030,24 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             : _rowKeyFor(_highlightedGameId ?? selectedGameId!);
     final items = <Widget>[];
     const rowChunkSize = 24;
-    for (final group in roundGroups) {
+    for (var groupIndex = 0; groupIndex < roundGroups.length; groupIndex++) {
+      final group = roundGroups[groupIndex];
       final expansionKey = expansionKeys[group.id]!;
       final expanded = expandedByGroup[group.id] == true;
       items.add(
         _EventRoundHeaderItem(
           group: group,
           expanded: expanded,
+          liveFirst: liveFirst,
+          onLiveFirstToggle:
+              isEventRail && groupIndex == 0
+                  ? () =>
+                      ref
+                          .read(
+                            _eventRailLiveFirstProvider(widget.tabId).notifier,
+                          )
+                          .state = !liveFirst
+                  : null,
           onToggle: () {
             if (isEventRail) {
               final nextExpandedRoundIds = <String>{...expandedRoundIds};
@@ -2005,13 +2083,17 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               ),
             );
           }
+          final segmentGames = orderEventRailGamesForDisplay(
+            segment.games,
+            liveFirst: liveFirst,
+          );
           for (
             var start = 0;
-            start < segment.games.length;
+            start < segmentGames.length;
             start += rowChunkSize
           ) {
-            final end = math.min(start + rowChunkSize, segment.games.length);
-            final chunk = segment.games.sublist(start, end);
+            final end = math.min(start + rowChunkSize, segmentGames.length);
+            final chunk = segmentGames.sublist(start, end);
             items.add(
               Padding(
                 padding: EdgeInsets.only(top: start == 0 ? 5 : 0),
@@ -2672,6 +2754,33 @@ List<TournamentGameSummary> _fallbackGamesForKind(
     _GameListKind.source => args.routeGames,
     _GameListKind.database => args.databaseGames,
   };
+}
+
+String _eventRailStandingsTourId({
+  required BoardTabGameArgs? activeArgs,
+  required Iterable<TournamentGameSummary> games,
+  String? keyedTourId,
+}) {
+  final keyed = keyedTourId?.trim() ?? '';
+  if (keyed.isNotEmpty) return keyed;
+
+  final sourceTourId = activeArgs?.sourceGame?.tourId.trim() ?? '';
+  if (sourceTourId.isNotEmpty) return sourceTourId;
+
+  final selectedId = _selectedGameIdForArgs(activeArgs);
+  if (selectedId != null) {
+    for (final game in games) {
+      if (game.id == selectedId && game.tourId.trim().isNotEmpty) {
+        return game.tourId.trim();
+      }
+    }
+  }
+
+  for (final game in games) {
+    final tourId = game.tourId.trim();
+    if (tourId.isNotEmpty) return tourId;
+  }
+  return '';
 }
 
 String? _selectedGameIdForArgs(BoardTabGameArgs? args) {
@@ -4119,6 +4228,30 @@ DateTime? _earliestDateTime(Iterable<DateTime> dates) {
   return earliest;
 }
 
+@visibleForTesting
+List<TournamentGameSummary> orderEventRailGamesForDisplay(
+  Iterable<TournamentGameSummary> games, {
+  required bool liveFirst,
+}) {
+  final ordered = games.toList(growable: false)..sort((a, b) {
+    if (liveFirst) {
+      final aLive = _isActualLiveGame(
+        status: a.status,
+        hasStarted: a.hasStarted,
+        lastMoveTime: a.lastMoveTime,
+      );
+      final bLive = _isActualLiveGame(
+        status: b.status,
+        hasStarted: b.hasStarted,
+        lastMoveTime: b.lastMoveTime,
+      );
+      if (aLive != bLive) return aLive ? -1 : 1;
+    }
+    return _compareEventGamesInRound(a, b);
+  });
+  return ordered;
+}
+
 int _compareEventGamesInRound(
   TournamentGameSummary a,
   TournamentGameSummary b,
@@ -5305,15 +5438,154 @@ class _OwnedScrollControllersState extends State<_OwnedScrollControllers> {
   }
 }
 
+class _BoardEventRailTabs extends StatelessWidget {
+  const _BoardEventRailTabs({required this.selected, required this.onChanged});
+
+  final _BoardEventRailView selected;
+  final ValueChanged<_BoardEventRailView> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 34,
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: kDividerColor)),
+      ),
+      child: Row(
+        children: [
+          for (final view in _BoardEventRailView.values)
+            Expanded(
+              child: _BoardEventRailTab(
+                view: view,
+                selected: selected == view,
+                onPressed: () => onChanged(view),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BoardEventRailTab extends StatefulWidget {
+  const _BoardEventRailTab({
+    required this.view,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final _BoardEventRailView view;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  State<_BoardEventRailTab> createState() => _BoardEventRailTabState();
+}
+
+class _BoardEventRailTabState extends State<_BoardEventRailTab> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  String get _label => switch (widget.view) {
+    _BoardEventRailView.games => 'Games',
+    _BoardEventRailView.standings => 'Standings',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final active = widget.selected || _hovered || _focused;
+    return Semantics(
+      button: true,
+      selected: widget.selected,
+      label: _label,
+      child: Focus(
+        onFocusChange: (focused) => setState(() => _focused = focused),
+        onKeyEvent: (node, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          if (event.logicalKey == LogicalKeyboardKey.enter ||
+              event.logicalKey == LogicalKeyboardKey.space) {
+            widget.onPressed();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: ClickCursor(
+          child: MouseRegion(
+            onEnter: (_) => setState(() => _hovered = true),
+            onExit: (_) => setState(() => _hovered = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onPressed,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Positioned.fill(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 100),
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      decoration: BoxDecoration(
+                        color:
+                            _hovered
+                                ? kBlack3Color
+                                : widget.selected
+                                ? kPrimaryColor.withValues(alpha: 0.08)
+                                : Colors.transparent,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    _label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: active ? kWhiteColor : kWhiteColor70,
+                      fontSize: 12,
+                      fontWeight:
+                          widget.selected ? FontWeight.w800 : FontWeight.w600,
+                    ),
+                  ),
+                  Positioned(
+                    left: 10,
+                    right: 10,
+                    bottom: 0,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 100),
+                      height: 2,
+                      decoration: BoxDecoration(
+                        color:
+                            widget.selected
+                                ? kPrimaryColor
+                                : Colors.transparent,
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(2),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _EventRoundHeaderItem extends StatelessWidget {
   const _EventRoundHeaderItem({
     required this.group,
     required this.expanded,
+    required this.liveFirst,
+    this.onLiveFirstToggle,
     required this.onToggle,
   });
 
   final _EventRoundGroup group;
   final bool expanded;
+  final bool liveFirst;
+  final VoidCallback? onLiveFirstToggle;
   final VoidCallback onToggle;
 
   @override
@@ -5321,6 +5593,8 @@ class _EventRoundHeaderItem extends StatelessWidget {
     return _EventRoundHeader(
       group: group,
       expanded: expanded,
+      liveFirst: liveFirst,
+      onLiveFirstToggle: onLiveFirstToggle,
       onToggle: onToggle,
     );
   }
@@ -5516,11 +5790,15 @@ class _EventRoundHeader extends StatefulWidget {
   const _EventRoundHeader({
     required this.group,
     required this.expanded,
+    required this.liveFirst,
+    this.onLiveFirstToggle,
     required this.onToggle,
   });
 
   final _EventRoundGroup group;
   final bool expanded;
+  final bool liveFirst;
+  final VoidCallback? onLiveFirstToggle;
   final VoidCallback onToggle;
 
   @override
@@ -5600,6 +5878,57 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
                         color: kLightGreyColor,
                         fontSize: 9.5,
                         fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                  if (widget.onLiveFirstToggle != null) ...[
+                    const SizedBox(width: 6),
+                    DesktopTooltip(
+                      message:
+                          widget.liveFirst
+                              ? 'Restore board order'
+                              : 'Live games first',
+                      child: Semantics(
+                        button: true,
+                        toggled: widget.liveFirst,
+                        label:
+                            widget.liveFirst
+                                ? 'Restore board order'
+                                : 'Live games first',
+                        child: ClickCursor(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: widget.onLiveFirstToggle,
+                            child: Container(
+                              key: const Key('event-rail-live-first-toggle'),
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                color:
+                                    widget.liveFirst
+                                        ? kPrimaryColor.withValues(alpha: 0.12)
+                                        : Colors.transparent,
+                                borderRadius: BorderRadius.circular(7),
+                                border: Border.all(
+                                  color:
+                                      widget.liveFirst
+                                          ? kPrimaryColor.withValues(
+                                            alpha: 0.42,
+                                          )
+                                          : kDividerColor,
+                                ),
+                              ),
+                              child: Icon(
+                                Icons.sensors_rounded,
+                                size: 16,
+                                color:
+                                    widget.liveFirst
+                                        ? kPrimaryColor
+                                        : kWhiteColor70,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ],
