@@ -25,6 +25,9 @@ const allowedRoutes: AllowedRoute[] = [
   { method: "GET", pattern: /^\/api\/player\/[^/]+\/opening-tree$/ },
 
   { method: "GET", pattern: /^\/api\/miniatures$/ },
+  // Player win streaks (read-only leaderboard + per-player detail).
+  { method: "GET", pattern: /^\/api\/streaks$/ },
+  { method: "GET", pattern: /^\/api\/streaks\/[^/]+$/ },
   { method: "GET", pattern: /^\/api\/game\/[^/]+$/ },
   { method: "GET", pattern: /^\/api\/eval$/ },
   { method: "GET", pattern: /^\/api\/search$/ },

@@ -37,6 +37,7 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/cloud_library_refresh.dart';
+import 'package:chessever/screens/library/providers/library_cloud_changes_provider.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/library_import_buffer.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
@@ -1934,6 +1935,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final cloudRevision = ref.watch(libraryCloudRevisionProvider);
     final cloudCountsAsync = useFuture(
       useMemoized(
         () async {
@@ -1957,6 +1959,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           folders
               .map((f) => '${f.id}:${f.updatedAt.millisecondsSinceEpoch}')
               .join('|'),
+          cloudRevision,
         ],
       ),
     );
@@ -4780,6 +4783,7 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
       return null;
     }, [activeFolder.id]);
     final cloudRefreshNonce = ref.watch(cloudLibraryRefreshNonceProvider);
+    final cloudRevision = ref.watch(libraryCloudRevisionProvider);
 
     final analysesAsync = useFuture(
       useMemoized(
@@ -4794,7 +4798,12 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
                 : ref
                     .read(libraryRepositoryProvider)
                     .getSavedAnalyses(folderId: activeFolder.id),
-        [activeFolder.id, activeFolder.isSubscribed, cloudRefreshNonce],
+        [
+          activeFolder.id,
+          activeFolder.isSubscribed,
+          cloudRefreshNonce,
+          cloudRevision,
+        ],
       ),
     );
     final all = analysesAsync.data ?? const <SavedAnalysis>[];
@@ -6084,6 +6093,7 @@ class _FolderContentView extends HookConsumerWidget {
     // (delete) without invalidating any folder-level provider.
     final refreshNonce = useState(0);
     final cloudRefreshNonce = ref.watch(cloudLibraryRefreshNonceProvider);
+    final cloudRevision = ref.watch(libraryCloudRevisionProvider);
     final analysesAsync = useFuture(
       useMemoized(
         () =>
@@ -6102,6 +6112,7 @@ class _FolderContentView extends HookConsumerWidget {
           activeFolder.isSubscribed,
           refreshNonce.value,
           cloudRefreshNonce,
+          cloudRevision,
         ],
       ),
     );
@@ -11051,6 +11062,7 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
     final selectionExtent = useState<int?>(null);
     final refreshNonce = useState<int>(0);
     final cloudRefreshNonce = ref.watch(cloudLibraryRefreshNonceProvider);
+    final cloudRevision = ref.watch(libraryCloudRevisionProvider);
     final plyIndex = useState<int>(0);
     final listScrollController = useScrollController();
     final shortcutsFocusNode = useFocusNode(
@@ -11075,6 +11087,7 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
           args.isSubscribed,
           refreshNonce.value,
           cloudRefreshNonce,
+          cloudRevision,
         ],
       ),
     );

@@ -25,6 +25,10 @@ final _namespacedCanonicalIdPattern = RegExp(
   r'^[A-Za-z0-9][A-Za-z0-9._-]*:[^\s/?#]+$',
 );
 
+/// ChessEver Direct fallback game id (`<8-char round id>-<base36 hash>`).
+/// Stored in `games.id`, so it deep-links exactly like a UUID.
+final _directGameIdPattern = RegExp(r'^[A-Za-z0-9]{8}-[A-Za-z0-9]+$');
+
 /// Portable PGN tags for ChessEver's canonical public routes. Keeping them in
 /// the PGN lets a copied or saved broadcast game retain links back to the app
 /// without leaking the upstream broadcast provider's URLs.
@@ -402,7 +406,8 @@ bool _isResolvableSharedGameId(String id) {
   final trimmed = id.trim();
   return _uuidPattern.hasMatch(trimmed) ||
       _lichessShortIdPattern.hasMatch(trimmed) ||
-      _namespacedCanonicalIdPattern.hasMatch(trimmed);
+      _namespacedCanonicalIdPattern.hasMatch(trimmed) ||
+      _directGameIdPattern.hasMatch(trimmed);
 }
 
 String _slugify(String input) {

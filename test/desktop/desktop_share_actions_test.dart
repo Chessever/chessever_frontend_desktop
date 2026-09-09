@@ -154,6 +154,21 @@ void main() {
       },
     );
 
+    test('shares a ChessEver Direct game id passed without a model', () {
+      // `<8-char round id>-<base36 hash>` minted by the broadcasting backend
+      // for self-streamed boards without a stable external id.
+      final url = buildDesktopGameShareUrl(
+        gameId: 'AbCd1234-1x2y3z',
+        tourSlug: 'smart-event',
+        roundSlug: 'A00',
+      );
+
+      expect(
+        url,
+        'https://chessever.com/games/AbCd1234-1x2y3z?tour=smart-event&round=A00',
+      );
+    });
+
     test('keeps a local Gamebase PGN on the Gamebase fallback path', () async {
       var supabaseCalls = 0;
       var gamebaseCalls = 0;
