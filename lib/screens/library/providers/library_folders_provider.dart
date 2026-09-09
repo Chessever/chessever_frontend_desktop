@@ -1,8 +1,16 @@
-import 'package:chessever/desktop/services/error_reporter.dart';
+import 'dart:async';
+
+import 'package:chessever/screens/library/providers/library_auth_provider.dart';
+import 'package:chessever/screens/library/providers/library_cloud_changes_provider.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/shared_book_preview.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+export 'library_auth_provider.dart';
 
 /// Special TWIC book identifier — not a real Supabase folder.
 const kTwicBookId = '__twic__';
@@ -19,40 +27,119 @@ final kTwicFolder = LibraryFolder(
   updatedAt: DateTime(2000),
 );
 
-/// Folder-stream error signatures already sent to Sentry this session, so a
-/// realtime reconnect loop (common on Windows when the websocket times out)
-/// doesn't flood Sentry with the identical "could not load folders" error.
-final _reportedFolderStreamErrors = <String>{};
+typedef LibraryFolderStreamFactory = Stream<List<LibraryFolder>> Function();
 
-void _reportFolderStreamError(Object error, StackTrace stackTrace) {
-  final signature = '${error.runtimeType}: $error';
-  if (!_reportedFolderStreamErrors.add(signature)) return;
-  ErrorReporter.report(
-    error,
-    stackTrace: stackTrace,
-    tag: 'library.folders.subscribe',
-  );
-}
+final libraryFolderStreamFactoryProvider =
+    Provider.autoDispose<LibraryFolderStreamFactory>((ref) {
+      final repository = ref.watch(libraryRepositoryProvider);
+      return repository.subscribeFolders;
+    });
 
 final libraryFoldersStreamProvider =
     StreamProvider.autoDispose<List<LibraryFolder>>((ref) {
-      final repository = ref.watch(libraryRepositoryProvider);
-      // The folder list comes from a Supabase Realtime subscription. When that
-      // websocket times out (notably on Windows) the error is handled
-      // gracefully in the UI, so it never reached Sentry. Capture it here, then
-      // re-propagate so the UI still degrades gracefully.
-      return repository.subscribeFolders().handleError((
-        Object error,
-        StackTrace stackTrace,
-      ) {
-        _reportFolderStreamError(error, stackTrace);
-        throw error;
+      // Shared-file intents can reach the PGN preview while Supabase is still
+      // restoring the session. Watching auth makes this provider restart as
+      // soon as the user becomes available instead of keeping the first
+      // unauthenticated stream error for the lifetime of the sheet.
+      final userId = ref.watch(libraryFolderAuthenticatedUserIdProvider);
+      if (userId == null) return const Stream<List<LibraryFolder>>.empty();
+
+      final streamFactory = ref.watch(libraryFolderStreamFactoryProvider);
+      final controller = StreamController<List<LibraryFolder>>();
+      var disposed = false;
+      var hasData = false;
+      var recovering = false;
+      var streamFailed = false;
+      var reportedError = false;
+
+      void showError(Object error, StackTrace stackTrace, String stage) {
+        if (disposed) return;
+        hasData = false;
+        controller.addError(error, stackTrace);
+        if (reportedError) return;
+        reportedError = true;
+        unawaited(_reportFolderLoadError(error, stackTrace, userId, stage));
+      }
+
+      Future<void> loadSnapshot() async {
+        if (disposed || hasData || recovering) return;
+        recovering = true;
+        try {
+          final folders = await ref
+              .read(libraryRepositoryProvider)
+              .getFolders()
+              .timeout(const Duration(seconds: 10));
+          // A live update or an auth change may have won the race with HTTP.
+          if (disposed || hasData) return;
+          hasData = true;
+          reportedError = false;
+          controller.add(folders);
+        } catch (error, stackTrace) {
+          if (!disposed && !hasData) {
+            showError(error, stackTrace, 'http_fallback');
+          }
+        } finally {
+          recovering = false;
+        }
+      }
+
+      final subscription = streamFactory().listen(
+        (folders) {
+          if (disposed) return;
+          hasData = true;
+          reportedError = false;
+          controller.add(folders);
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          streamFailed = true;
+          if (error is RealtimeSubscribeException) {
+            // The SDK combines HTTP results and websocket status in one
+            // stream. A failed websocket does not make a loaded destination
+            // unusable. Keep it, or fetch once over HTTP if none arrived yet.
+            // Leave the subscription alive so SDK reconnects still update us.
+            unawaited(loadSnapshot());
+          } else {
+            showError(error, stackTrace, 'stream');
+          }
+        },
+        onDone: () {
+          if (!streamFailed) unawaited(loadSnapshot());
+        },
+      );
+      ref.onDispose(() {
+        disposed = true;
+        unawaited(subscription.cancel());
+        unawaited(controller.close());
       });
+      return controller.stream;
     });
+
+Future<void> _reportFolderLoadError(
+  Object error,
+  StackTrace stackTrace,
+  String userId,
+  String stage,
+) async {
+  try {
+    await Sentry.captureException(
+      error,
+      stackTrace: stackTrace,
+      withScope: (scope) {
+        scope.setUser(SentryUser(id: userId));
+        scope.setTag('area', 'library_destinations');
+        scope.setTag('source', 'library.folders.subscribe');
+        scope.setTag('stage', stage);
+      },
+    ).timeout(const Duration(seconds: 2));
+  } catch (_) {
+    // Telemetry must never prevent loading or retrying the destination list.
+  }
+}
 
 /// Analysis count per folder for subtitle display
 final folderAnalysisCountProvider = FutureProvider.autoDispose
     .family<int, String>((ref, folderId) async {
+      ref.watch(libraryCloudRevisionProvider);
       final repository = ref.watch(libraryRepositoryProvider);
       return repository.getAnalysisCountInFolder(folderId);
     });

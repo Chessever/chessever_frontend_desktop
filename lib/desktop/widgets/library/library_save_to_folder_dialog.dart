@@ -911,12 +911,26 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                       error:
                           (e, _) => Padding(
                             padding: const EdgeInsets.all(20),
-                            child: Text(
-                              'Could not load folders: $e',
-                              style: const TextStyle(
-                                color: kRedColor,
-                                fontSize: 12,
-                              ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Could not load folders.',
+                                  style: TextStyle(
+                                    color: kRedColor,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                DesktopDialogButton(
+                                  label: 'Retry',
+                                  onPress:
+                                      () => ref.invalidate(
+                                        libraryFoldersStreamProvider,
+                                      ),
+                                ),
+                              ],
                             ),
                           ),
                     ),
