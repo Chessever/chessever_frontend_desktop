@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -192,39 +194,44 @@ String _formatLineSan(List<ChessMove> moves) {
   return buf.toString();
 }
 
-/// Show the variation fork chooser as a modeless popup with the same
-/// fade/lift/scale spring used by the inline move hover preview, so the
-/// in-game-view chrome reads as a single motion language.
+/// Show the variation fork chooser without blocking the move toolbar.
 ///
 /// Returns the picked pointer, or `null` if the user dismissed without
-/// choosing (Esc, barrier tap).
+/// choosing (Esc or owner navigation).
 Future<ChessMovePointer?> showVariationForkChooser({
   required BuildContext context,
   required List<VariationForkOption> options,
   BuildContext? targetContext,
   ValueListenable<int>? dismissSignal,
+  ValueListenable<int>? acceptSignal,
 }) {
   final targetRect = notationSideChooserTargetRect(targetContext);
-  return showGeneralDialog<ChessMovePointer>(
-    context: context,
-    barrierDismissible: true,
-    barrierColor: Colors.transparent,
-    barrierLabel: 'Variation chooser',
-    transitionDuration: const Duration(milliseconds: 220),
-    pageBuilder:
-        (context, _, __) => _NotationSideChooserFrame(
+  final result = Completer<ChessMovePointer?>();
+  late final OverlayEntry entry;
+  late final VoidCallback dismiss;
+  void complete(ChessMovePointer? pointer) {
+    if (result.isCompleted) return;
+    dismissSignal?.removeListener(dismiss);
+    result.complete(pointer);
+    entry.remove();
+    entry.dispose();
+  }
+
+  entry = OverlayEntry(
+    builder:
+        (context) => _NotationSideChooserFrame(
           targetRect: targetRect,
           child: _ForkChooserDialog(
             options: options,
-            dismissSignal: dismissSignal,
+            acceptSignal: acceptSignal,
+            onComplete: complete,
           ),
         ),
-    transitionBuilder: (context, anim, __, child) {
-      // Drive the same opacity + Y-lift + scale as MoveHoverPreview by
-      // running motor's hover spring against the dialog's primary anim.
-      return _ForkChooserMotion(animation: anim, child: child);
-    },
   );
+  Overlay.of(context, rootOverlay: true).insert(entry);
+  dismiss = () => complete(null);
+  dismissSignal?.addListener(dismiss);
+  return result.future;
 }
 
 enum GameContinuationAction { insertMoves, openGame }
@@ -368,7 +375,11 @@ class _ForkChooserMotion extends StatelessWidget {
           opacity: t.clamp(0, 1),
           child: Transform.translate(
             offset: Offset(0, (1 - t) * 6),
-            child: Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+            child: Transform.scale(
+              scale: scale,
+              filterQuality: FilterQuality.medium,
+              child: child,
+            ),
           ),
         );
       },
@@ -585,7 +596,11 @@ class _GameContinuationOptionRowState
       motion: DesktopMotion.hover,
       builder: (context, t, child) {
         final scale = 0.985 + 0.015 * t;
-        return Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child);
+        return Transform.scale(
+          scale: scale,
+          filterQuality: FilterQuality.medium,
+          child: child,
+        );
       },
       child: ClickCursor(
         child: MouseRegion(
@@ -668,10 +683,15 @@ class _GameContinuationOptionRowState
 }
 
 class _ForkChooserDialog extends ConsumerStatefulWidget {
-  const _ForkChooserDialog({required this.options, this.dismissSignal});
+  const _ForkChooserDialog({
+    required this.options,
+    required this.onComplete,
+    this.acceptSignal,
+  });
 
   final List<VariationForkOption> options;
-  final ValueListenable<int>? dismissSignal;
+  final ValueListenable<int>? acceptSignal;
+  final ValueChanged<ChessMovePointer?> onComplete;
 
   @override
   ConsumerState<_ForkChooserDialog> createState() => _ForkChooserDialogState();
@@ -684,7 +704,7 @@ class _ForkChooserDialogState extends ConsumerState<_ForkChooserDialog> {
   @override
   void initState() {
     super.initState();
-    widget.dismissSignal?.addListener(_handleExternalDismiss);
+    widget.acceptSignal?.addListener(_handleExternalAccept);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _focusNode.requestFocus();
@@ -694,26 +714,22 @@ class _ForkChooserDialogState extends ConsumerState<_ForkChooserDialog> {
   @override
   void didUpdateWidget(covariant _ForkChooserDialog oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.dismissSignal == widget.dismissSignal) return;
-    oldWidget.dismissSignal?.removeListener(_handleExternalDismiss);
-    widget.dismissSignal?.addListener(_handleExternalDismiss);
+    oldWidget.acceptSignal?.removeListener(_handleExternalAccept);
+    widget.acceptSignal?.addListener(_handleExternalAccept);
   }
 
   @override
   void dispose() {
-    widget.dismissSignal?.removeListener(_handleExternalDismiss);
+    widget.acceptSignal?.removeListener(_handleExternalAccept);
     _focusNode.dispose();
     super.dispose();
   }
 
-  void _handleExternalDismiss() {
-    if (!mounted) return;
-    Navigator.of(context).maybePop();
-  }
+  void _handleExternalAccept() => _pick(_focused);
 
   void _pick(int index) {
     if (index < 0 || index >= widget.options.length) return;
-    Navigator.of(context).pop<ChessMovePointer>(widget.options[index].pointer);
+    widget.onComplete(widget.options[index].pointer);
   }
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
@@ -735,7 +751,7 @@ class _ForkChooserDialogState extends ConsumerState<_ForkChooserDialog> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowLeft) {
-      Navigator.of(context).pop();
+      widget.onComplete(null);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.enter ||
@@ -744,7 +760,7 @@ class _ForkChooserDialogState extends ConsumerState<_ForkChooserDialog> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.escape) {
-      Navigator.of(context).pop();
+      widget.onComplete(null);
       return KeyEventResult.handled;
     }
     // Number keys 1..9 pick directly.
@@ -946,7 +962,11 @@ class _ForkOptionRowState extends State<_ForkOptionRow> {
       motion: DesktopMotion.hover,
       builder: (context, t, child) {
         final scale = 0.99 + 0.01 * t;
-        return Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child);
+        return Transform.scale(
+          scale: scale,
+          filterQuality: FilterQuality.medium,
+          child: child,
+        );
       },
       child: ClickCursor(
         child: MouseRegion(

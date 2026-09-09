@@ -159,6 +159,11 @@ class ChessGame {
     final startingPosition = PgnGame.startingPosition(pgnGame.headers);
 
     final mainline = _parsePgnNodes(pgnGame.moves.children, startingPosition);
+    if (mainline.isNotEmpty && pgnGame.comments.isNotEmpty) {
+      mainline[0] = mainline[0].copyWith(
+        comments: [...pgnGame.comments, ...?mainline[0].comments],
+      );
+    }
 
     return ChessGame(
       gameId: gameId,
@@ -177,7 +182,22 @@ class ChessGame {
     final mainlineNode = siblings.first;
     if (mainlineNode is! PgnChildNode) return const [];
 
-    return _parsePgnLineFromChild(mainlineNode, position);
+    final line = _parsePgnLineFromChild(mainlineNode, position);
+    if (line.isEmpty) return line;
+    // Root siblings are alternatives to the first move, not continuations
+    // after it. The model represents these as same-turn RAVs on that move.
+    final rootVariations = <ChessLine>[
+      for (final sibling in siblings.skip(1))
+        if (sibling is PgnChildNode<PgnNodeData>)
+          _parsePgnLineFromChild(sibling, position),
+    ].where((variation) => variation.isNotEmpty).toList();
+    if (rootVariations.isNotEmpty) {
+      line[0] = line[0].copyWith(
+        variations: [...rootVariations, ...?line[0].variations],
+        overrideVariations: true,
+      );
+    }
+    return line;
   }
 
   static List<ChessMove> _parsePgnLineFromChild(
@@ -220,7 +240,9 @@ class ChessGame {
       turn: position.turn == Side.black ? ChessColor.black : ChessColor.white,
       clockTime: clockTime,
       eval: eval,
-      comments: data.comments,
+      comments: data.startingComments == null
+          ? data.comments
+          : [...data.startingComments!, ...?data.comments],
       nags: data.nags,
       variations: variations.isNotEmpty ? variations : null,
     );

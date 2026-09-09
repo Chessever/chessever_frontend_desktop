@@ -22,6 +22,7 @@ import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_clipboard.dart';
 import 'package:chessever/desktop/services/board_pgn_paste.dart';
+import 'package:chessever/desktop/services/board_pgn_insertion.dart';
 import 'package:chessever/desktop/services/board_opening_metadata.dart';
 import 'package:chessever/desktop/services/board_tab_pgn_resolver.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
@@ -2289,8 +2290,28 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
     }
 
-    final variationForkDismissSignal = useState(0);
+    final variationForkDismissSignal = useMemoized(() => ValueNotifier(0));
+    final variationForkAcceptSignal = useMemoized(() => ValueNotifier(0));
     final variationForkChooserOpen = useRef(false);
+
+    useEffect(() {
+      return () {
+        if (variationForkChooserOpen.value) {
+          variationForkDismissSignal.value += 1;
+          variationForkChooserOpen.value = false;
+        }
+        variationForkDismissSignal.dispose();
+        variationForkAcceptSignal.dispose();
+      };
+    }, const []);
+
+    useEffect(() {
+      return () {
+        if (variationForkChooserOpen.value) {
+          variationForkDismissSignal.value += 1;
+        }
+      };
+    }, [isForegroundTab, chessGame.value, pointer.value]);
 
     void dismissVariationForkChooser() {
       if (!variationForkChooserOpen.value) return;
@@ -2305,8 +2326,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     // plain `goNext` so background traversal never blocks on a dialog.
     Future<void> goNextInteractive() async {
       if (variationForkChooserOpen.value) {
-        dismissVariationForkChooser();
-        goNext();
+        variationForkAcceptSignal.value += 1;
         return;
       }
       final currentPointer = pointer.value;
@@ -2327,8 +2347,13 @@ class _BoardPaneContent extends HookConsumerWidget {
         options: options,
         targetContext: rightRailAnalysisKey.currentContext,
         dismissSignal: variationForkDismissSignal,
+        acceptSignal: variationForkAcceptSignal,
       ).whenComplete(() => variationForkChooserOpen.value = false);
-      if (picked == null || !context.mounted) return;
+      if (picked == null ||
+          !context.mounted ||
+          !_pointersEqual(pointer.value, currentPointer)) {
+        return;
+      }
       // Re-validate after the await: the broadcast feed may have shifted
       // the tree, in which case the saved pointer is stale and we fall
       // back to a plain step so the key press still feels live.
@@ -3743,20 +3768,39 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     void insertGamePgn(BoardGameInsertRequest request) {
-      final ucis = _continuationFromPgnAfterFen(request.pgn, position.fen);
-      if (ucis.isEmpty) {
+      final insertion = insertBoardPgn(
+        game: chessGame.value,
+        activePath: _pathFromPointer(chessGame.value, pointer.value),
+        pgn: request.pgn,
+        sourceLabel: request.sourceLabel,
+      );
+      if (insertion == null) {
         showToast(
-          'Game does not continue from the current position.',
+          'Invalid PGN or no continuation from the current line.',
           error: true,
         );
         return;
       }
-      playUciLine(
-        ExplorerContinuationInsertion(
-          ucis: ucis,
-          sourceLabel: request.sourceLabel,
-        ),
+      final landing = _pointerForUciPath(
+        insertion.game,
+        insertion.landingPath,
       );
+      if (landing == null) {
+        showToast('Could not insert the complete game.', error: true);
+        return;
+      }
+      // Publish the validated tree in one edit; do not replay UCIs, which loses
+      // annotations and can partially mutate the board before an illegal move.
+      pushUndoSnapshot();
+      autoReplay.value = false;
+      explorerPreviewUci.value = null;
+      explorerPreviewLine.value = const <String>[];
+      explorerPreviewLineStep.value = 0;
+      explorerPreviewLineAutoplay.value = true;
+      explorerPreviewSoundKey.value = null;
+      chessGame.value = insertion.game;
+      pointer.value = landing;
+      dirtySinceLoad.value = true;
       showToast('Game inserted as variation');
     }
 
@@ -6792,35 +6836,6 @@ String? _insertedLineSourceComment(String? sourceLabel) {
 /// Tack `plies=N` onto a structured `key=value|...` source label without
 /// disturbing existing fields. Returns the input unchanged for plain (legacy)
 /// labels so old call-sites keep their flat string formatting.
-List<String> _continuationFromPgnAfterFen(String pgn, String fen) {
-  try {
-    final game = ChessGame.fromPgn('insert-game', pgn);
-    final target = _fenPositionKey(fen);
-    final allUcis = [for (final move in game.mainline) move.uci];
-    if (allUcis.isEmpty) return const <String>[];
-
-    Position position = Chess.fromSetup(
-      Setup.parseFen(game.startingFen),
-      ignoreImpossibleCheck: true,
-    );
-    if (_fenPositionKey(position.fen) == target) {
-      return List<String>.unmodifiable(allUcis);
-    }
-
-    for (var i = 0; i < allUcis.length; i++) {
-      final move = Move.parse(allUcis[i]);
-      if (move == null || !position.isLegal(move)) break;
-      position = position.playUnchecked(move);
-      if (_fenPositionKey(position.fen) == target) {
-        return List<String>.unmodifiable(allUcis.skip(i + 1));
-      }
-    }
-  } catch (_) {
-    return const <String>[];
-  }
-  return const <String>[];
-}
-
 String? _withInsertionPlies(String? sourceLabel, int plies) {
   if (sourceLabel == null) return null;
   final trimmed = sourceLabel.trim();
