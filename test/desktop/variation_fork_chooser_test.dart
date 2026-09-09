@@ -257,7 +257,9 @@ void main() {
       final barriers = tester.widgetList<ModalBarrier>(
         find.byType(ModalBarrier),
       );
-      expect(barriers, isEmpty);
+      // The Navigator route itself contributes one non-dismissible barrier;
+      // the chooser must not add a (dismissible) dialog barrier of its own.
+      expect(barriers.where((barrier) => barrier.dismissible), isEmpty);
 
       final notationRect = tester.getRect(find.byKey(notationKey));
       final popupRect = tester.getRect(find.text('Continue with'));
