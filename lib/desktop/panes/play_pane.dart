@@ -16,6 +16,7 @@ import 'package:chessever/desktop/services/play/engine_installer.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
 import 'package:chessever/desktop/services/play/play_profile_repository.dart';
 import 'package:chessever/desktop/services/play/play_strength.dart';
+import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/state/play_setup.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
@@ -1413,5 +1414,8 @@ void _startGame(
   ref
       .read(playSessionArgsByTabIdProvider.notifier)
       .update((m) => <String, PlaySessionArgs>{...m, tabId: args});
+  // Fresh game, fresh ink: a previous game's drawings must not bleed into
+  // identical positions (the starting position above all).
+  ref.read(boardAnnotationsProvider(tabId).notifier).clear();
   ref.read(playSetupProvider.notifier).clearStartingSeed();
 }

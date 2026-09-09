@@ -183,6 +183,18 @@ final boardAnnotationsProvider = StateNotifierProvider.family<
   return BoardAnnotationsNotifier();
 });
 
+/// Normalized FEN key identifying a position for annotation storage: piece
+/// placement, side to move, castling rights and en-passant square. Clocks
+/// and move counters are excluded so the same position reached with
+/// different counters (or behind a transient premove overlay) shares its
+/// ink. Write and read paths must use the same key or drawings leak across
+/// positions or vanish behind counter-only FEN differences.
+String annotationPositionKey(String fen) {
+  final parts = fen.trim().split(RegExp(r'\s+'));
+  if (parts.length < 4) return fen.trim();
+  return parts.take(4).join(' ');
+}
+
 /// Picks an [AnnotationColor] from a Flutter pointer event's modifier set
 /// (or any source that knows shift/alt/ctrl bools). Mirrors Lichess.
 AnnotationColor pickAnnotationColor({

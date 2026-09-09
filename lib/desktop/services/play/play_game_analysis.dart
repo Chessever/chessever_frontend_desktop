@@ -15,6 +15,7 @@ import 'package:chessever/desktop/services/tournament_server/tournament_models.d
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
+import 'package:chessever/utils/pgn_clock_utils.dart';
 
 enum PlayGameSource {
   singlePlay('single_play'),
@@ -396,7 +397,11 @@ class PlayGameAnalyzer {
   }) async {
     final playedAt = DateTime.now();
     final opening = classifyOpening(session.startingFen, session.history);
-    final mainline = _buildMainline(session.startingFen, session.history);
+    final mainline = _buildMainline(
+      session.startingFen,
+      session.history,
+      clocksMillis: session.clockAfterMoveMillis,
+    );
     final result = _resultForOutcome(session.outcome);
     final humanColor = session.humanSide == Side.white ? 'white' : 'black';
     final bot = session.botIdentity;
@@ -1126,17 +1131,28 @@ List<_PositionSample> _samplePositions(
   return [for (final index in selected.toList()..sort()) all[index]];
 }
 
-List<ChessMove> _buildMainline(String startingFen, List<String> movesUci) {
+List<ChessMove> _buildMainline(
+  String startingFen,
+  List<String> movesUci, {
+  List<int?>? clocksMillis,
+}) {
   final moves = <ChessMove>[];
   var position = Position.setupPosition(
     Rule.chess,
     Setup.parseFen(startingFen),
   );
-  for (final uci in movesUci) {
-    final move = NormalMove.fromUci(uci);
+  for (var i = 0; i < movesUci.length; i++) {
+    final move = NormalMove.fromUci(movesUci[i]);
     if (!position.isLegal(move)) break;
     final san = position.makeSan(move).$2;
     final next = position.play(move);
+    // Per-move remaining clocks (session snapshots, aligned with [movesUci])
+    // become `[%clk]` tags so saved Play games reopen with clocks in the
+    // Board pane's player headers. Tournament batches pass none.
+    final clockMillis =
+        clocksMillis != null && i < clocksMillis.length
+            ? clocksMillis[i]
+            : null;
     moves.add(
       ChessMove(
         num: position.fullmoves,
@@ -1144,6 +1160,10 @@ List<ChessMove> _buildMainline(String startingFen, List<String> movesUci) {
         san: san,
         uci: move.uci,
         turn: position.turn == Side.white ? ChessColor.white : ChessColor.black,
+        clockTime:
+            clockMillis == null
+                ? null
+                : formatPgnClockFromMillis(clockMillis),
       ),
     );
     position = next;

@@ -71,6 +71,7 @@ import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/desktop/widgets/board_annotation_layer.dart';
+import 'package:chessever/desktop/widgets/board_resize_handle.dart';
 import 'package:chessever/desktop/widgets/board_wheel_navigation.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
@@ -133,6 +134,11 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+
+// The corner grip and its drag maths now live with the Play pane's board too.
+// Re-exported so existing board-pane callers and tests keep their entry point.
+export 'package:chessever/desktop/widgets/board_resize_handle.dart'
+    show desktopBoardResizeDragDelta;
 
 /// First-use proportions for contextual games: games, board, analysis.
 /// [ResizableSplitView] restores the unchanged persisted context key over
@@ -368,11 +374,11 @@ BoardPlayerHeaderMetadata resolveBoardPlayerHeaderMetadata({
 }
 
 const _boardSizePreferenceKey = 'desktop_board_size_px_v1';
-const _defaultDesktopBoardSize = 760.0;
-const _minDesktopBoardSize = 300.0;
-const _maxDesktopBoardSize = 1200.0;
+const _defaultDesktopBoardSize = kDesktopBoardDefaultSize;
+const _minDesktopBoardSize = kDesktopBoardMinSize;
+const _maxDesktopBoardSize = kDesktopBoardMaxSize;
 const _focusButtonSize = 32.0;
-const _resizeHandleSize = 22.0;
+const _resizeHandleSize = kDesktopBoardResizeHandleSize;
 const _boardFocusBoardWeight = 0.60;
 const _boardFocusRightPaneWeight = 0.40;
 const _boardAreaPadding = 16.0;
@@ -546,21 +552,6 @@ bool shouldPlaySoundForBoardMove({
   bool suppressSound = false,
 }) {
   return soundGateAllows && !suppressSound;
-}
-
-@visibleForTesting
-double desktopBoardResizeDragDelta(Offset offset) {
-  // Use the dominant magnitude for the bottom-right grip. When axes disagree
-  // (right+up or left+down), horizontal intent wins so rightward grow-drags
-  // cannot be cancelled by upward pointer drift.
-  if (offset.dx == 0) return offset.dy;
-  if (offset.dy == 0) return offset.dx;
-  final magnitude = math.max(offset.dx.abs(), offset.dy.abs());
-  final horizontalSign = offset.dx.isNegative ? -1.0 : 1.0;
-  if (offset.dx.isNegative != offset.dy.isNegative) {
-    return magnitude * horizontalSign;
-  }
-  return magnitude * (offset.dy.isNegative ? -1.0 : 1.0);
 }
 
 @visibleForTesting
@@ -8264,7 +8255,7 @@ class _BoardArea extends ConsumerWidget {
           final resizeHandle =
               pictureInPicture
                   ? null
-                  : _BoardResizeHandle(
+                  : BoardResizeHandle(
                     boardSize: boardSize,
                     minSize: math.min(
                       _minDesktopBoardSize,
@@ -8557,134 +8548,6 @@ class _BoardMoreActionsButtonState extends State<_BoardMoreActionsButton> {
         ),
       ),
     );
-  }
-}
-
-class _BoardResizeHandle extends StatefulWidget {
-  const _BoardResizeHandle({
-    required this.boardSize,
-    required this.minSize,
-    required this.maxSize,
-    required this.onResize,
-    required this.onResizeEnd,
-    required this.onReset,
-  });
-
-  final double boardSize;
-  final double minSize;
-  final double maxSize;
-  final ValueChanged<double> onResize;
-  final VoidCallback onResizeEnd;
-  final VoidCallback onReset;
-
-  @override
-  State<_BoardResizeHandle> createState() => _BoardResizeHandleState();
-}
-
-class _BoardResizeHandleState extends State<_BoardResizeHandle> {
-  Offset? _dragStart;
-  double? _sizeStart;
-  bool _active = false;
-
-  void _begin(DragStartDetails details) {
-    _dragStart = details.globalPosition;
-    _sizeStart = widget.boardSize;
-    setState(() => _active = true);
-  }
-
-  void _update(DragUpdateDetails details) {
-    final start = _dragStart;
-    final sizeStart = _sizeStart;
-    if (start == null || sizeStart == null) return;
-    final offset = details.globalPosition - start;
-    final delta = desktopBoardResizeDragDelta(offset);
-    final rawSize = sizeStart + delta;
-    widget.onResize(rawSize.clamp(widget.minSize, widget.maxSize).toDouble());
-  }
-
-  void _end() {
-    if (!_active) return;
-    _dragStart = null;
-    _sizeStart = null;
-    setState(() => _active = false);
-    widget.onResizeEnd();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final handle = MouseRegion(
-      cursor: SystemMouseCursors.resizeUpLeftDownRight,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: _begin,
-        onPanUpdate: _update,
-        onPanEnd: (_) => _end(),
-        onPanCancel: _end,
-        onDoubleTap: widget.onReset,
-        child: AnimatedContainer(
-          key: const ValueKey<String>('desktop-board-resize-handle'),
-          duration: const Duration(milliseconds: 120),
-          width: _resizeHandleSize,
-          height: _resizeHandleSize,
-          decoration: BoxDecoration(
-            color:
-                _active
-                    ? kPrimaryColor.withValues(alpha: 0.94)
-                    : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: _active ? kPrimaryColor : Colors.transparent,
-            ),
-            boxShadow:
-                _active
-                    ? [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.35),
-                        blurRadius: 14,
-                        offset: const Offset(0, 4),
-                      ),
-                    ]
-                    : null,
-          ),
-          child: CustomPaint(
-            painter: _ResizeGripPainter(
-              color: _active ? kBackgroundColor : kWhiteColor70,
-            ),
-          ),
-        ),
-      ),
-    );
-    return DesktopTooltip(
-      message: 'Drag to resize board. Double-click to reset.',
-      child: handle,
-    );
-  }
-}
-
-class _ResizeGripPainter extends CustomPainter {
-  const _ResizeGripPainter({required this.color});
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint =
-        Paint()
-          ..color = color.withValues(alpha: 0.82)
-          ..strokeWidth = 1.4
-          ..strokeCap = StrokeCap.round;
-    for (final inset in <double>[7, 11, 15]) {
-      canvas.drawLine(
-        Offset(size.width - inset, size.height - 4),
-        Offset(size.width - 4, size.height - inset),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ResizeGripPainter oldDelegate) {
-    return oldDelegate.color != color;
   }
 }
 

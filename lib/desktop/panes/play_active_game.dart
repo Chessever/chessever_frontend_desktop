@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:chessground/chessground.dart' as cg;
 import 'package:country_flags/country_flags.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:fast_immutable_collections/fast_immutable_collections.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
@@ -26,23 +28,48 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/state/play_setup.dart';
 import 'package:chessever/desktop/widgets/board_annotation_layer.dart';
+import 'package:chessever/desktop/widgets/board_resize_handle.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
 import 'package:chessever/desktop/widgets/move_navigation_bar.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
+import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/audio_player_service.dart';
+import 'package:chessever/utils/pgn_clock_utils.dart';
 
-/// Active play-vs-bot view: board centered, clocks on each side, move list +
-/// game controls on the right. Reads [playSessionProviderFor] for the live
+/// Board-size preference for the Play pane, stored separately from the Board
+/// pane's key: the size that feels right for analysing is not necessarily the
+/// size that feels right for playing.
+const _playBoardSizePreferenceKey = 'desktop_play_board_size_px_v1';
+
+/// Fixed chrome around the play board. Both player rows get the same height
+/// and the same trailing reserve, so the two clocks share a right edge and
+/// the resize grip never lands on top of the bottom one.
+const _playHeaderHeight = 52.0;
+const _playHeaderGap = 10.0;
+const _playBoardPadding = 16.0;
+const _playHeaderTrailingReserve = kDesktopBoardResizeHandleSize + 10.0;
+
+const _playSplitStorageKey = 'play_pane.active_game.v1';
+const _playBoardInitialWeight = 0.64;
+const _playPanelInitialWeight = 0.36;
+
+/// Active play-vs-bot view: board on the left, move list + game controls in a
+/// resizable panel on the right. Reads [playSessionProviderFor] for the live
 /// state of the owning tab — each Play tab carries its own session, so this
 /// view is parameterised by [tabId].
+///
+/// The layout mirrors the Board (watching) pane: a [ResizableSplitView] with a
+/// draggable gutter and a persisted width, plus a corner grip on the board
+/// itself that sets an explicit board size and grows the column to fit it.
 class PlayActiveGameView extends ConsumerStatefulWidget {
   const PlayActiveGameView({super.key, required this.tabId});
 
@@ -53,8 +80,71 @@ class PlayActiveGameView extends ConsumerStatefulWidget {
 }
 
 class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
+  final _splitController = ResizableSplitViewController();
   int? _reviewPly;
   int? _lastHistoryLength;
+  double? _boardSizePreference;
+  int? _lastPersistedBoardSize;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadBoardSizePreference());
+  }
+
+  Future<void> _loadBoardSizePreference() async {
+    // A prefs read that fails just means "no stored size" — the board still
+    // has a sane default, so never let it take the pane down with it.
+    int? stored;
+    try {
+      stored = await AppDatabase.instance.getInt(_playBoardSizePreferenceKey);
+    } catch (_) {
+      return;
+    }
+    if (!mounted || stored == null) return;
+    final clamped =
+        stored
+            .clamp(kDesktopBoardMinSize.round(), kDesktopBoardMaxSize.round())
+            .toDouble();
+    setState(() {
+      _boardSizePreference = clamped;
+      _lastPersistedBoardSize = clamped.round();
+    });
+  }
+
+  void _setBoardSize(double size) {
+    final clamped =
+        size.clamp(kDesktopBoardMinSize, kDesktopBoardMaxSize).toDouble();
+    if (_boardSizePreference == clamped) return;
+    setState(() => _boardSizePreference = clamped);
+    // A grow-drag is bounded by the column width until the column itself
+    // grows, so hand the split view the width the board now needs. The side
+    // panel surrenders the difference down to its own minimum.
+    _splitController.setSize(0, clamped + (_playBoardPadding * 2) + 16);
+  }
+
+  void _persistBoardSize() {
+    final size = _boardSizePreference;
+    if (size == null) return;
+    final rounded = size.round();
+    if (_lastPersistedBoardSize == rounded) return;
+    _lastPersistedBoardSize = rounded;
+    unawaited(
+      AppDatabase.instance
+          .setInt(_playBoardSizePreferenceKey, rounded)
+          .catchError((_) {}),
+    );
+  }
+
+  void _resetBoardSize() {
+    _lastPersistedBoardSize = null;
+    setState(() => _boardSizePreference = null);
+    unawaited(
+      AppDatabase.instance
+          .remove(_playBoardSizePreferenceKey)
+          .catchError((_) {}),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -101,42 +191,49 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
       },
       child: Focus(
         autofocus: true,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final boardSize = _resolvePlayBoardSize(constraints);
-            return Padding(
-              padding: const EdgeInsets.all(24),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 5,
-                    child: Center(
-                      child: SizedBox.square(
-                        dimension: boardSize,
-                        child: _BoardWithIdentities(
-                          state: state,
-                          tabId: widget.tabId,
-                          reviewPly: reviewPly,
-                          onReviewPlyChanged: goToPly,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    flex: 3,
-                    child: _GameSidePanel(
-                      state: state,
-                      tabId: widget.tabId,
-                      reviewPly: reviewPly,
-                      onReviewPlyChanged: goToPly,
-                    ),
-                  ),
-                ],
+        child: ResizableSplitView(
+          axis: Axis.horizontal,
+          controller: _splitController,
+          storageKey: _playSplitStorageKey,
+          children: [
+            SplitChild(
+              minSize: 320,
+              initialWeight: _playBoardInitialWeight,
+              label: 'Board',
+              collapsedIcon: Icons.grid_on_rounded,
+              dismissible: false,
+              child: _PlayBoardColumn(
+                state: state,
+                tabId: widget.tabId,
+                reviewPly: reviewPly,
+                onReviewPlyChanged: goToPly,
+                boardSizePreference: _boardSizePreference,
+                onBoardSizeChanged: _setBoardSize,
+                onBoardSizeChangeEnd: _persistBoardSize,
+                onBoardSizeReset: _resetBoardSize,
               ),
-            );
-          },
+            ),
+            SplitChild(
+              minSize: 260,
+              initialWeight: _playPanelInitialWeight,
+              label: 'Game',
+              collapsedIcon: Icons.format_list_numbered_rounded,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  8,
+                  _playBoardPadding,
+                  _playBoardPadding,
+                  _playBoardPadding,
+                ),
+                child: _GameSidePanel(
+                  state: state,
+                  tabId: widget.tabId,
+                  reviewPly: reviewPly,
+                  onReviewPlyChanged: goToPly,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -201,15 +298,6 @@ class PlaySessionLifecycleListener extends ConsumerWidget {
       AudioPlayerService.instance.playSound(SfxType.move);
     }
   }
-}
-
-double _resolvePlayBoardSize(BoxConstraints c) {
-  // Board fills the available square, capped so it doesn't dwarf the
-  // side panel on wide monitors. Constraint-driven so panes can stack on
-  // narrow windows without manual breakpoints.
-  final available = c.maxHeight - 48;
-  final widthBudget = (c.maxWidth - 64) * (5 / 8);
-  return [available, widthBudget, 720.0].reduce((a, b) => a < b ? a : b);
 }
 
 void _publishTournamentProgress(
@@ -393,6 +481,9 @@ void _clearPlaySession(ProviderContainer container, String tabId) {
     return <String, PlaySessionArgs>{...m}..remove(tabId);
   });
   container.invalidate(playSessionProviderFor(tabId));
+  // Same as _leavePlaySession: a discarded session must not leak its
+  // drawings into the next game hosted by this tab.
+  container.read(boardAnnotationsProvider(tabId).notifier).clear();
   container.read(playSetupProvider.notifier).clearStartingSeed();
 }
 
@@ -525,18 +616,71 @@ void debugFinishPlaySession(
   _finishPlaySession(container, state, tabId, recordGame: false);
 }
 
-class _BoardWithIdentities extends ConsumerWidget {
-  const _BoardWithIdentities({
+/// Resolves the play board's square and the bounds its resize grip may drag
+/// between, given the space the split view's board column has handed over
+/// (already inside [_playBoardPadding]).
+///
+/// [growLimit] is deliberately bound by the vertical budget alone: horizontal
+/// room can always be won back by growing the column through the split view,
+/// so clamping a grow-drag to the current width would make the grip no-op at
+/// the column edge.
+@visibleForTesting
+({double boardSize, double minBoardSize, double growLimit})
+computePlayBoardMetrics({
+  required double width,
+  required double height,
+  double? boardSizePreference,
+}) {
+  final vLimit = math.max(
+    0.0,
+    height - (_playHeaderHeight * 2) - (_playHeaderGap * 2),
+  );
+  final maxBoardSize = math.max(0.0, math.min(width, vLimit));
+  final minBoardSize = math.min(kDesktopBoardMinSize, maxBoardSize);
+  final defaultSize = math.min(maxBoardSize, kDesktopBoardDefaultSize);
+  final boardSize =
+      maxBoardSize <= 0
+          ? 0.0
+          : (boardSizePreference ?? defaultSize)
+              .clamp(
+                minBoardSize,
+                math.min(maxBoardSize, kDesktopBoardMaxSize),
+              )
+              .toDouble();
+  return (
+    boardSize: boardSize,
+    minBoardSize: minBoardSize,
+    growLimit: math.max(minBoardSize, math.min(vLimit, kDesktopBoardMaxSize)),
+  );
+}
+
+/// The board, its two player rows, the corner resize grip and the move-nav
+/// cluster underneath — everything that lives in the split view's left child.
+///
+/// Sizing mirrors the Board pane: the player rows are fixed chrome, the board
+/// claims the largest square that fits what is left, and an explicit
+/// [boardSizePreference] (set by the corner grip) overrides that default
+/// within the shared min/max bounds.
+class _PlayBoardColumn extends ConsumerWidget {
+  const _PlayBoardColumn({
     required this.state,
     required this.tabId,
     required this.reviewPly,
     required this.onReviewPlyChanged,
+    required this.boardSizePreference,
+    required this.onBoardSizeChanged,
+    required this.onBoardSizeChangeEnd,
+    required this.onBoardSizeReset,
   });
 
   final PlaySessionState state;
   final String tabId;
   final int? reviewPly;
   final ValueChanged<int> onReviewPlyChanged;
+  final double? boardSizePreference;
+  final ValueChanged<double> onBoardSizeChanged;
+  final VoidCallback onBoardSizeChangeEnd;
+  final VoidCallback onBoardSizeReset;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -545,55 +689,109 @@ class _BoardWithIdentities extends ConsumerWidget {
     final bottomSide = orientation;
     final totalPlies = state.history.length;
     final currentPly = reviewPly ?? totalPlies;
-    final notationGame = _playNotationGame(state);
+    // Same preference the Board pane reads, so the move-nav cluster appears
+    // (or stays out of the board's way) identically in both places. Arrow
+    // keys, Home and End navigate regardless of this row.
+    final showMoveNavigation = ref.watch(
+      boardSettingsProviderNew.select(
+        (s) =>
+            s.valueOrNull?.showMoveNavigation ??
+            const BoardSettingsNew().showMoveNavigation,
+      ),
+    );
+
     return Column(
       children: [
-        _PlayerRow(
-          state: state,
-          side: topSide,
-          alignment: MainAxisAlignment.start,
-        ),
-        const SizedBox(height: 10),
         Expanded(
-          child: _BoardInteractive(
-            state: state,
-            tabId: tabId,
-            reviewPly: reviewPly,
-            onReviewPlyChanged: onReviewPlyChanged,
+          child: Padding(
+            padding: const EdgeInsets.all(_playBoardPadding),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // Player rows eat fixed vertical space; the board takes the
+                // square of whatever is left, bounded by the column width.
+                final metrics = computePlayBoardMetrics(
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
+                  boardSizePreference: boardSizePreference,
+                );
+                final boardSize = metrics.boardSize;
+                if (boardSize <= 0) return const SizedBox.shrink();
+
+                return Center(
+                  child: SizedBox(
+                    width: boardSize,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              height: _playHeaderHeight,
+                              child: _PlayerRow(state: state, side: topSide),
+                            ),
+                            const SizedBox(height: _playHeaderGap),
+                            SizedBox(
+                              width: boardSize,
+                              height: boardSize,
+                              child: _BoardInteractive(
+                                state: state,
+                                tabId: tabId,
+                                reviewPly: reviewPly,
+                                onReviewPlyChanged: onReviewPlyChanged,
+                              ),
+                            ),
+                            const SizedBox(height: _playHeaderGap),
+                            SizedBox(
+                              height: _playHeaderHeight,
+                              child: _PlayerRow(state: state, side: bottomSide),
+                            ),
+                          ],
+                        ),
+                        Positioned(
+                          right: 0,
+                          bottom:
+                              (_playHeaderHeight -
+                                  kDesktopBoardResizeHandleSize) /
+                              2,
+                          child: BoardResizeHandle(
+                            boardSize: boardSize,
+                            minSize: metrics.minBoardSize,
+                            maxSize: metrics.growLimit,
+                            onResize: onBoardSizeChanged,
+                            onResizeEnd: onBoardSizeChangeEnd,
+                            onReset: onBoardSizeReset,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
         ),
-        const SizedBox(height: 8),
-        MoveNavigationBar(
-          canGoBack: currentPly > 0,
-          canGoForward: currentPly < totalPlies,
-          onFirst: () => onReviewPlyChanged(0),
-          onPrevious: () => onReviewPlyChanged(currentPly - 1),
-          onNext: () => onReviewPlyChanged(currentPly + 1),
-          onLast: () => onReviewPlyChanged(totalPlies),
-          showFlipBoard: false,
-          moveLabel: _playMoveLabel(notationGame, currentPly),
-        ),
-        const SizedBox(height: 10),
-        _PlayerRow(
-          state: state,
-          side: bottomSide,
-          alignment: MainAxisAlignment.start,
-        ),
+        if (showMoveNavigation)
+          MoveNavigationBar(
+            canGoBack: currentPly > 0,
+            canGoForward: currentPly < totalPlies,
+            onFirst: () => onReviewPlyChanged(0),
+            onPrevious: () => onReviewPlyChanged(currentPly - 1),
+            onNext: () => onReviewPlyChanged(currentPly + 1),
+            onLast: () => onReviewPlyChanged(totalPlies),
+            showFlipBoard: false,
+            moveLabel: _playMoveLabel(_playNotationGame(state), currentPly),
+          ),
       ],
     );
   }
 }
 
 class _PlayerRow extends ConsumerWidget {
-  const _PlayerRow({
-    required this.state,
-    required this.side,
-    required this.alignment,
-  });
+  const _PlayerRow({required this.state, required this.side});
 
   final PlaySessionState state;
   final Side side;
-  final MainAxisAlignment alignment;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -626,7 +824,6 @@ class _PlayerRow extends ConsumerWidget {
             ? _humanEloDelta(state: state, profile: profile, score: score)
             : null;
     return Row(
-      mainAxisAlignment: alignment,
       children: [
         if (isHuman)
           DesktopUserProfileButton(
@@ -707,6 +904,9 @@ class _PlayerRow extends ConsumerWidget {
           const SizedBox(width: 12),
         ],
         _ClockChip(millis: clockMs, active: isActive),
+        // Both rows reserve the grip's slot so the two clocks share one right
+        // edge; only the bottom row actually carries the grip.
+        const SizedBox(width: _playHeaderTrailingReserve),
       ],
     );
   }
@@ -912,6 +1112,10 @@ class _ClockChip extends StatelessWidget {
           color: fg,
           fontSize: 22,
           fontWeight: FontWeight.w700,
+          // Pinned line height so the chip's box is deterministic — it has to
+          // fit inside the fixed-height player row, and the digits have to sit
+          // optically centered in it.
+          height: 1.1,
           fontFeatures: const [FontFeature.tabularFigures()],
         ),
       ),
@@ -953,14 +1157,21 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
                 ? cg.PlayerSide.white
                 : cg.PlayerSide.black);
     final annotations = ref.watch(boardAnnotationsProvider(widget.tabId));
+    // Position-keyed ink, exactly like the watching board: drawings live
+    // under the game position that was displayed when drawn — never the
+    // transient virtual premove board — so queueing/clearing premoves can't
+    // hide or resurrect them, and every move/navigation step shows only its
+    // own position's shapes.
+    final positionKey = annotationPositionKey(review.position.fen);
+    final positionShapes = annotations.shapesForPosition(positionKey);
     final premoveShapes =
         isLiveTip
             ? _premoveShapes(state.premoves)
             : const ISet<cg.Shape>.empty();
     final mergedShapes =
-        annotations.shapes.isEmpty
+        positionShapes.isEmpty
             ? premoveShapes
-            : premoveShapes.addAll(annotations.shapes);
+            : premoveShapes.addAll(positionShapes);
     // Render the post-premove (virtual) board so chessground sees pieces at
     // their queued destinations. Without this, the user can only stack one
     // premove per piece — chessground would still see the original FEN and
@@ -973,20 +1184,32 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
     return LayoutBuilder(
       builder: (context, c) {
         final size = c.maxWidth < c.maxHeight ? c.maxWidth : c.maxHeight;
-        return GestureDetector(
+        // Left-click anywhere on the board square clears this position's
+        // drawings (Lichess / Chess.com convention, same as the watching
+        // board). A Listener stays out of the gesture arena, so piece
+        // selection, drags and the right-click handlers below are unaffected.
+        return Listener(
           behavior: HitTestBehavior.opaque,
-          // Use onSecondaryTapUp so plain right-drag (arrow draw via
-          // BoardAnnotationLayer) doesn't also fire premove-clear. Tap-up
-          // only fires when no drag occurred.
-          onSecondaryTapUp:
-              isLiveTip && state.premoves.isNotEmpty
-                  ? (_) => notifier.clearPremoves()
-                  : null,
-          child: BoardAnnotationLayer(
-            tabId: widget.tabId,
-            size: size,
-            orientation: orientation,
-            positionKey: boardFen,
+          onPointerDown: (event) {
+            if (event.buttons & kPrimaryMouseButton == 0) return;
+            ref
+                .read(boardAnnotationsProvider(widget.tabId).notifier)
+                .clear(positionKey: positionKey);
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            // Use onSecondaryTapUp so plain right-drag (arrow draw via
+            // BoardAnnotationLayer) doesn't also fire premove-clear. Tap-up
+            // only fires when no drag occurred.
+            onSecondaryTapUp:
+                isLiveTip && state.premoves.isNotEmpty
+                    ? (_) => notifier.clearPremoves()
+                    : null,
+            child: BoardAnnotationLayer(
+              tabId: widget.tabId,
+              size: size,
+              orientation: orientation,
+              positionKey: positionKey,
             child: DesktopChessBoard(
               size: size,
               fen: boardFen,
@@ -1054,7 +1277,8 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
               },
             ),
           ),
-        );
+        ),
+      );
       },
     );
   }
@@ -1281,11 +1505,18 @@ ChessGame _playNotationGame(PlaySessionState state) {
   var position = startingPosition;
   final mainline = <ChessMove>[];
 
-  for (final uci in state.history) {
-    final move = Move.parse(uci);
+  for (var i = 0; i < state.history.length; i++) {
+    final move = Move.parse(state.history[i]);
     if (move == null || !position.isLegal(move)) break;
     final san = position.makeSan(move).$2;
     final next = position.playUnchecked(move);
+    // The mover's remaining clock becomes the move's `[%clk]` tag, so the
+    // finished-game Board tab shows clocks in its player headers exactly
+    // like a watched broadcast game. Seeded prefix moves carry null.
+    final clockMillis =
+        i < state.clockAfterMoveMillis.length
+            ? state.clockAfterMoveMillis[i]
+            : null;
     mainline.add(
       ChessMove(
         num: position.fullmoves,
@@ -1293,6 +1524,10 @@ ChessGame _playNotationGame(PlaySessionState state) {
         san: san,
         uci: move.uci,
         turn: position.turn == Side.black ? ChessColor.black : ChessColor.white,
+        clockTime:
+            clockMillis == null
+                ? null
+                : formatPgnClockFromMillis(clockMillis),
       ),
     );
     position = next;
@@ -1661,6 +1896,9 @@ void _leavePlaySession(
     return <String, PlaySessionArgs>{...m}..remove(tabId);
   });
   ref.invalidate(playSessionProviderFor(tabId));
+  // The tab's game is gone: drop its ink so the next game's identical
+  // positions (the starting position above all) start clean.
+  ref.read(boardAnnotationsProvider(tabId).notifier).clear();
   ref.read(playSetupProvider.notifier).clearStartingSeed();
 }
 

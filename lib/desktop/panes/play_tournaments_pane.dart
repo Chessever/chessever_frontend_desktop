@@ -23,6 +23,7 @@ import 'package:chessever/desktop/services/tournament_server/eco_library.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_resource_assessor.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_server.dart';
+import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
@@ -1494,6 +1495,9 @@ bool _startHumanTournamentGame(
   });
   if (replacesExistingSession) {
     ref.invalidate(playSessionProviderFor(activeTabId));
+    // A different game takes over this tab: drop the old game's ink so its
+    // drawings can't bleed into identical positions of the new game.
+    ref.read(boardAnnotationsProvider(activeTabId).notifier).clear();
   }
   return true;
 }

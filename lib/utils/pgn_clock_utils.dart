@@ -71,6 +71,17 @@ String formatPgnClockForDisplay(String clock) {
   return trimmed;
 }
 
+/// Formats a millisecond clock reading as a PGN `[%clk]` payload
+/// (`H:MM:SS`, floored to the second) — the same shape Lichess and broadcast
+/// feeds emit. Accepted by [pgnClockRegex] and [formatPgnClockForDisplay].
+String formatPgnClockFromMillis(int millis) {
+  final totalSeconds = millis <= 0 ? 0 : millis ~/ 1000;
+  final hours = totalSeconds ~/ 3600;
+  final minutes = ((totalSeconds % 3600) ~/ 60).toString().padLeft(2, '0');
+  final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+  return '$hours:$minutes:$seconds';
+}
+
 String formatClockDisplayFromSeconds(int totalSeconds) {
   if (totalSeconds <= 0) return '00:00';
 

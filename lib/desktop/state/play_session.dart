@@ -73,6 +73,7 @@ class PlaySessionState {
     required this.position,
     required this.startingFen,
     required this.history,
+    this.clockAfterMoveMillis = const [],
     required this.whiteMillis,
     required this.blackMillis,
     required this.lastClockTick,
@@ -97,6 +98,16 @@ class PlaySessionState {
   /// [position] so a rejected or truncated seed cannot desync the bot from
   /// the board; history remains the visible notation and persistence source.
   final List<String> history;
+
+  /// Mover's remaining clock (millis) immediately after each move in
+  /// [history], in the same order — the value the play-board clock chip
+  /// displayed when the move landed (post-increment, ticker-accurate to
+  /// ~100ms). `null` marks seeded prefix moves (Play-from-here lines) whose
+  /// clocks predate this session and are therefore unknown.
+  ///
+  /// Exported as PGN `[%clk]` tags so a finished Play game shows clocks in
+  /// the Board pane's player headers exactly like a watched broadcast game.
+  final List<int?> clockAfterMoveMillis;
 
   final int whiteMillis;
   final int blackMillis;
@@ -132,6 +143,7 @@ class PlaySessionState {
   PlaySessionState copyWith({
     Position? position,
     List<String>? history,
+    List<int?>? clockAfterMoveMillis,
     int? whiteMillis,
     int? blackMillis,
     DateTime? lastClockTick,
@@ -155,6 +167,7 @@ class PlaySessionState {
       position: position ?? this.position,
       startingFen: startingFen,
       history: history ?? this.history,
+      clockAfterMoveMillis: clockAfterMoveMillis ?? this.clockAfterMoveMillis,
       whiteMillis: whiteMillis ?? this.whiteMillis,
       blackMillis: blackMillis ?? this.blackMillis,
       lastClockTick:
@@ -267,6 +280,10 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
       position: replay.position,
       startingFen: startingFen,
       history: replay.history,
+      // Seeded prefix moves predate the session clocks — their remaining
+      // times are unknown, so pad with nulls to keep the list aligned with
+      // [history]. Moves actually played below append real snapshots.
+      clockAfterMoveMillis: List<int?>.filled(replay.history.length, null),
       whiteMillis: config.whiteBaseSeconds * 1000,
       blackMillis: config.effectiveBlackBaseSeconds * 1000,
       lastClockTick: clockStartsNow ? DateTime.now() : null,
@@ -462,6 +479,10 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
     state = state.copyWith(
       position: next,
       history: [...state.history, move.uci],
+      clockAfterMoveMillis: [
+        ...state.clockAfterMoveMillis,
+        mover == Side.white ? wMs : bMs,
+      ],
       lastMove: move is NormalMove ? move : null,
       whiteMillis: wMs,
       blackMillis: bMs,
@@ -518,6 +539,10 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
     state = state.copyWith(
       position: next,
       history: [...state.history, move.uci],
+      clockAfterMoveMillis: [
+        ...state.clockAfterMoveMillis,
+        mover == Side.white ? wMs : bMs,
+      ],
       lastMove: move is NormalMove ? move : null,
       whiteMillis: wMs,
       blackMillis: bMs,
