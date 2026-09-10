@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -405,6 +406,10 @@ TournamentGameLocalPgnSource? _localPgnSourceFromPositionRow(
     sourceIndex: sourceIndex,
     sourceFileGameCount: sourceFileGameCount,
     pgnFingerprint: (row['pgnHash']?.toString() ?? '').trim(),
+    recordRevision:
+        (row['pgn']?.toString().trim().isNotEmpty ?? false)
+            ? localPgnRecordRevision(row['pgn'].toString())
+            : '',
     title: title,
   );
 }

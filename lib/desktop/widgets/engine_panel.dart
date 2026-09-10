@@ -58,6 +58,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.onJumpToPly,
     this.onReportRunningChanged,
     this.onReportChanged,
+    this.reportResetRevision = 0,
     this.reportVisible = false,
     this.isForegroundTab = true,
     this.autoAnalysisAllowed = true,
@@ -85,6 +86,11 @@ class EnginePanel extends ConsumerStatefulWidget {
   final ValueChanged<int>? onJumpToPly;
   final ValueChanged<bool>? onReportRunningChanged;
   final ValueChanged<GameAnalysisReport?>? onReportChanged;
+
+  /// Increment to cancel and discard the current report without changing the
+  /// game fingerprint. The cleared game is not auto-analyzed again until its
+  /// mainline changes or the user explicitly requests a report.
+  final int reportResetRevision;
 
   /// Whether the session-scoped game-analysis report is currently shown.
   /// Fully independent of the engine on/off state — closing the engine lines
@@ -150,7 +156,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       unawaited(_reportController.cancel());
     }
     final nextFingerprint = _fingerprint(widget.game);
-    if (_gameFingerprint != nextFingerprint) {
+    if (oldWidget.reportResetRevision != widget.reportResetRevision) {
+      _gameFingerprint = nextFingerprint;
+      _autoStartedFingerprint = nextFingerprint;
+      _reportController.invalidate();
+    } else if (_gameFingerprint != nextFingerprint) {
       _gameFingerprint = nextFingerprint;
       _autoStartedFingerprint = null;
       _reportController.invalidate();

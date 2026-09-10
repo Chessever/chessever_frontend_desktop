@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:chessever/desktop/services/retained_local_pgn.dart';
 import 'package:chessever/desktop/widgets/desktop_game_points.dart';
 import 'package:chessever/utils/awarded_points.dart';
 
@@ -2320,6 +2321,14 @@ Future<void> navigateActiveEventGame(
   final activeTabId = ref.read(desktopTabsProvider).activeId;
   if (activeTabId == null) return;
 
+  final ownerContainer = ProviderScope.containerOf(context, listen: false);
+  var leftOwner = false;
+  final ownership = ownerContainer.listen(desktopTabsProvider, (
+    previous,
+    next,
+  ) {
+    if (next.activeId != activeTabId) leftOwner = true;
+  });
   final previous = _eventNavigationTailByTabId[activeTabId];
   final turn = Completer<void>();
   final tail = turn.future;
@@ -2328,8 +2337,9 @@ Future<void> navigateActiveEventGame(
     if (previous != null) await previous;
     // A queued repeat belongs to the tab that was active when the user pressed
     // the key. Do not mutate a retained background tab after focus moved.
-    if (ref.read(desktopTabsProvider).activeId != activeTabId ||
-        !context.mounted) {
+    if (leftOwner ||
+        !context.mounted ||
+        ownerContainer.read(desktopTabsProvider).activeId != activeTabId) {
       return;
     }
     await _navigateActiveEventGameNow(
@@ -2340,6 +2350,7 @@ Future<void> navigateActiveEventGame(
       liveOnly: liveOnly,
     );
   } finally {
+    ownership.close();
     if (!turn.isCompleted) turn.complete();
     if (identical(_eventNavigationTailByTabId[activeTabId], tail)) {
       _eventNavigationTailByTabId.remove(activeTabId);
@@ -4551,6 +4562,8 @@ GameRepository? _tryReadGameRepositoryForEventOpen({
   }
 }
 
+final _railOpenRequestByContainer = Expando<Object>();
+
 Future<void> _openEventGame({
   required WidgetRef ref,
   BuildContext? context,
@@ -4563,6 +4576,35 @@ Future<void> _openEventGame({
   bool inNewTab = false,
   bool inNewWindow = false,
 }) async {
+  final ownerContext = context ?? ref.context;
+  final ownerContainer =
+      container ?? ProviderScope.containerOf(ownerContext, listen: false);
+  final request = Object();
+  if (!inNewTab && !inNewWindow) {
+    _railOpenRequestByContainer[ownerContainer] = request;
+  }
+  final ownerTabs = ownerContainer.read(desktopTabsProvider);
+  final ownerArgs =
+      ownerContainer.read(boardTabGameArgsByTabIdProvider)[ownerTabs.activeId];
+  final ownerSession =
+      ownerContainer.read(boardPaneSessionByTabIdProvider)[ownerTabs.activeId];
+  bool stillOwnsOpen() =>
+      ownerContext.mounted &&
+      (kind != _GameListKind.database ||
+          inNewTab ||
+          inNewWindow ||
+          (identical(_railOpenRequestByContainer[ownerContainer], request) &&
+              identical(ownerContainer.read(desktopTabsProvider), ownerTabs) &&
+              identical(
+                ownerContainer.read(boardPaneSessionByTabIdProvider)[ownerTabs
+                    .activeId],
+                ownerSession,
+              ) &&
+              identical(
+                ownerContainer.read(boardTabGameArgsByTabIdProvider)[ownerTabs
+                    .activeId],
+                ownerArgs,
+              )));
   final GameRepository? gameRepository =
       kind == _GameListKind.database
           ? null
@@ -4576,18 +4618,35 @@ Future<void> _openEventGame({
     ref: ref,
     context: context,
     nextGame: game,
-    inNewTab: inNewTab,
+    inNewTab: inNewTab || inNewWindow,
   )) {
     return;
+  }
+  if (!stillOwnsOpen()) return;
+
+  TournamentGameSummary localGame = game;
+  if (kind == _GameListKind.database && game.localPgnSource != null) {
+    try {
+      localGame = await ownerContainer.read(retainedLocalPgnHydratorProvider)(
+        game,
+      );
+    } catch (error) {
+      if (stillOwnsOpen() && context != null && context.mounted) {
+        showDesktopToast(context, error.toString(), error: true);
+      }
+      return; // Never fall back to the stale inline PGN or a remote id.
+    }
+    if (!stillOwnsOpen()) return;
   }
 
   final openSeed =
       gameRepository == null
-          ? _EventGameOpenSeed(game: game)
+          ? _EventGameOpenSeed(game: localGame)
           : await _resolveEventGameOpenSeed(
             gameRepository: gameRepository,
             game: game,
           );
+  if (!stillOwnsOpen()) return;
   final openGame = openSeed.game;
   final openEventGames = _replaceEventSummary(eventGames, openGame);
 
@@ -4625,6 +4684,12 @@ Future<void> _openEventGame({
       databaseGames: openEventGames,
       databaseGamesPagination: activeArgs?.databaseGamesPagination,
       databaseGamesContinuation: activeArgs?.databaseGamesContinuation,
+      localOpeningTreeIndex: activeArgs?.localOpeningTreeIndex,
+      localOpeningTreeTitle: activeArgs?.localOpeningTreeTitle ?? '',
+      enableLocalOpeningTreePicker:
+          activeArgs?.enableLocalOpeningTreePicker ?? false,
+      hideLocalOpeningTreePicker:
+          activeArgs?.hideLocalOpeningTreePicker ?? false,
       gameListSelectedId: openGame.id,
       librarySaveOrigin: localPgnSaveOrigin,
     );
@@ -4634,8 +4699,8 @@ Future<void> _openEventGame({
       return;
     }
 
-    openBoardGameTab(
-      ref,
+    openBoardGameTabFromContainer(
+      ownerContainer,
       args,
       focus: true,
       reuseExisting: false,
@@ -4780,6 +4845,7 @@ BoardTabLibrarySaveOrigin? _localPgnSaveOriginForSummary(
     sourceIndex: source.sourceIndex,
     sourceFileGameCount: source.sourceFileGameCount,
     sourcePgnFingerprint: source.pgnFingerprint,
+    sourceRecordRevision: source.recordRevision,
     title: source.title,
   );
 }
@@ -5535,25 +5601,7 @@ class _BoardEventRailTabState extends State<_BoardEventRailTab> {
                       color: active ? kWhiteColor : kWhiteColor70,
                       fontSize: 12,
                       fontWeight:
-                          widget.selected ? FontWeight.w800 : FontWeight.w600,
-                    ),
-                  ),
-                  Positioned(
-                    left: 10,
-                    right: 10,
-                    bottom: 0,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 100),
-                      height: 2,
-                      decoration: BoxDecoration(
-                        color:
-                            widget.selected
-                                ? kPrimaryColor
-                                : Colors.transparent,
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(2),
-                        ),
-                      ),
+                          widget.selected ? FontWeight.w700 : FontWeight.w600,
                     ),
                   ),
                 ],
@@ -5806,9 +5854,9 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
   Widget build(BuildContext context) {
     final group = widget.group;
     final subtitle =
-        group.status != RoundStatus.upcoming || group.startsAt == null
+        group.startsAt == null
             ? ''
-            : DateFormat('MMM d · HH:mm').format(group.startsAt!.toLocal());
+            : DateFormat('d MMM yyyy HH:mm').format(group.startsAt!.toLocal());
 
     return ClickCursor(
       child: MouseRegion(

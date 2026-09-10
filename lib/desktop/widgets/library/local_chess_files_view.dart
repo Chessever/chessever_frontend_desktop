@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -1537,6 +1538,17 @@ class _LocalGamesTable extends HookConsumerWidget {
       final target = database;
       final gamesToDelete = scope ?? currentSelectedGames();
       if (target == null || gamesToDelete.isEmpty) return;
+      final localLibrary = ref.read(localChessLibraryProvider.notifier);
+      // Capture selection identity before the asynchronous confirmation.
+      final revisions = <int, String>{};
+      try {
+        for (final game in gamesToDelete) {
+          revisions[game.indexInFile] = game.recordRevision;
+        }
+      } catch (error) {
+        if (context.mounted) showDesktopToast(context, '$error', error: true);
+        return;
+      }
       final confirmed = await showLocalPgnDeleteGamesConfirmation(
         context,
         count: gamesToDelete.length,
@@ -1548,16 +1560,14 @@ class _LocalGamesTable extends HookConsumerWidget {
           repository: ref.read(localChessDatabaseRepositoryProvider),
           filePath: target.path,
           indexesInFile: gamesToDelete.map((game) => game.indexInFile).toSet(),
+          expectedRecordRevisions: revisions,
+          expectedFileGameCount: gamesToDelete.first.fileGameCount,
         );
+        // Invalidate every session snapshot even if this view closed meanwhile.
+        await localLibrary.refreshSavedFile(target.path);
         if (!context.mounted) return;
         if (onRefresh != null) {
           await onRefresh!();
-        } else {
-          final notifier = ref.read(localChessLibraryProvider.notifier);
-          final refreshed = await notifier.refreshFile(target.path);
-          if (!refreshed) {
-            await notifier.refresh();
-          }
         }
         if (!context.mounted) return;
         ref.read(localChessLibraryProvider.notifier).selectPath(target.path);
@@ -1567,6 +1577,15 @@ class _LocalGamesTable extends HookConsumerWidget {
         showDesktopToast(
           context,
           'Deleted $removed ${removed == 1 ? 'game' : 'games'} from ${target.name}.',
+        );
+      } on LocalChessPgnSavedCacheRefreshException catch (e) {
+        await localLibrary.refreshSavedFile(target.path, warning: e.toString());
+        if (!context.mounted) return;
+        selectedIds.value = <String>{};
+        selectedId.value = null;
+        showDesktopToast(
+          context,
+          'Games deleted. The database cache needs refresh.',
         );
       } catch (e) {
         if (!context.mounted) return;
@@ -3041,8 +3060,9 @@ BoardTabGameArgs _boardArgsForLocalGame(
     return value > 0 ? value : null;
   }
 
+  final pgn = localGame.rawPgn;
   return BoardTabGameArgs(
-    pgn: localGame.rawPgn,
+    pgn: pgn,
     label: localGame.title,
     whiteName: s('White'),
     blackName: s('Black'),
@@ -3068,6 +3088,7 @@ BoardTabGameArgs _boardArgsForLocalGame(
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
       sourcePgnFingerprint: localGame.pgnFingerprint,
+      sourceRecordRevision: localPgnRecordRevision(pgn),
       title: localGame.title,
     ),
   );
@@ -3141,6 +3162,7 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
       pgnFingerprint: localGame.pgnFingerprint,
+      recordRevision: localPgnRecordRevision(pgn),
       title: localGame.title,
     ),
   );

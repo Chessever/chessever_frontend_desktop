@@ -5,6 +5,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:country_picker/country_picker.dart';
@@ -565,7 +567,16 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
                 reuseExisting: false,
                 focus: true,
               );
+  payload.restoreBoardSession(container, tabId);
   _restoreDetachedTabMetadata(container, tabId, payload);
+  final transferId = payload.detachTransferId;
+  if (transferId != null && !payload.pictureInPicture) {
+    final controller = await WindowController.fromCurrentEngine();
+    await registerDetachedBoardReadyHandler(
+      controller: controller,
+      transferId: transferId,
+    );
+  }
   if (payload.pictureInPicture) {
     try {
       final controller = await WindowController.fromCurrentEngine();

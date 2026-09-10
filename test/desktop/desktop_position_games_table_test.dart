@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
+import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
@@ -17,6 +19,7 @@ import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:dio/dio.dart';
+import 'package:forui/forui.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -746,8 +749,12 @@ void main() {
 
     await tester.tap(find.text('Carlsen'));
     await tester.pump(const Duration(milliseconds: 40));
-    await tester.tap(find.text('Carlsen'));
-    await tester.pump(const Duration(milliseconds: 250));
+    // Local hydration runs on a real isolate; give it a real event loop.
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Carlsen'));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    });
+    await tester.pumpAndSettle();
 
     final container = ProviderScope.containerOf(
       tester.element(find.byType(DesktopPositionGamesTable)),
@@ -772,6 +779,150 @@ void main() {
     expect(args.librarySaveOrigin?.sourcePath, file.path);
     expect(args.librarySaveOrigin?.sourceIndex, 0);
   });
+
+  for (final action in ['open', 'insert']) {
+    for (final withOffsets in [true, false]) {
+      for (final change in ['grow', 'shrink', 'reorder']) {
+        testWidgets(
+          'retained local result $action after $change (offsets: $withOffsets)',
+          (tester) async {
+            final temp = io.Directory.systemTemp.createTempSync(
+              'position-span-',
+            );
+            addTearDown(() => temp.deleteSync(recursive: true));
+            final file = io.File('${temp.path}/source.pgn');
+            final first = _localTreePgn.trim().replaceFirst(
+              '1. e4',
+              '1. e4 {original annotation}',
+            );
+            final second = _secondLocalTreePgn.trim();
+            final original = '$first\n\n$second';
+            file.writeAsStringSync(original);
+            final index = buildLocalOpeningTreeIndex(
+              treeId: 'local:retained',
+              databaseId: 'retained',
+              games: [
+                LocalOpeningTreeGameInput(
+                  id: 'retained-neighbor',
+                  rawPgn: second,
+                  sourcePath: file.path,
+                  sourceRelativePath: 'source.pgn',
+                  fileName: 'source.pgn',
+                  indexInFile: 1,
+                  fileGameCount: 2,
+                  sourceByteStart:
+                      withOffsets ? utf8.encode('$first\n\n').length : null,
+                  sourceByteEnd:
+                      withOffsets ? utf8.encode(original).length : null,
+                ),
+              ],
+            );
+            await tester.pumpWidget(
+              ProviderScope(
+                overrides: [
+                  gamebaseRepositoryProvider.overrideWithValue(
+                    _FakeGamebaseRepository(),
+                  ),
+                  boardSettingsProviderNew.overrideWith(
+                    _TestBoardSettingsNotifier.new,
+                  ),
+                ],
+                child: FTheme(
+                  data: FThemes.zinc.dark,
+                  child: FToaster(
+                    child: MaterialApp(
+                      home: Scaffold(
+                        body: DesktopPositionGamesTable(
+                          fen: _initialFen,
+                          localOpeningTreeIndex: index,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            await tester.pumpAndSettle();
+            expect(find.text('Anand'), findsOneWidget);
+            // Retain the actual displayed result, then change only the physical
+            // source. No index rebuild is allowed to refresh its stale spans.
+            final changedFirst = first.replaceFirst(
+              '{original annotation}',
+              change == 'grow'
+                  ? '{a much longer annotation with Unicode ♞}'
+                  : '',
+            );
+            file.writeAsStringSync(
+              change == 'reorder'
+                  ? '$second\n\n$first'
+                  : '$changedFirst\n\n$second',
+            );
+            if (action == 'insert') {
+              await tester.tap(
+                find.text('Anand'),
+                buttons: kSecondaryMouseButton,
+              );
+              await tester.pumpAndSettle();
+              await tester.tap(find.text('Insert game'));
+              // The menu's close animation runs on fake time; the isolate
+              // hydration needs a real event loop.
+              await tester.pumpAndSettle();
+              await tester.runAsync(
+                () => Future<void>.delayed(
+                  const Duration(milliseconds: 250),
+                ),
+              );
+            } else {
+              await tester.tap(find.text('Anand'));
+              await tester.pump(const Duration(milliseconds: 40));
+              await tester.runAsync(() async {
+                await tester.tap(find.text('Anand'));
+                await Future<void>.delayed(const Duration(milliseconds: 250));
+              });
+            }
+            await tester.pumpAndSettle();
+            final container = ProviderScope.containerOf(
+              tester.element(find.byType(DesktopPositionGamesTable)),
+            );
+            if (action == 'insert') {
+              final request = container.read(boardGameInsertRequestProvider);
+              if (change == 'reorder') {
+                expect(request, isNull);
+                expect(
+                  find.text('Could not load PGN for insert.'),
+                  findsOneWidget,
+                );
+              } else {
+                expect(request?.pgn, second);
+              }
+            } else {
+              final tabs = container.read(boardTabGameArgsByTabIdProvider);
+              if (change == 'reorder') {
+                expect(tabs, isEmpty);
+                expect(
+                  find.text('Could not load local PGN for this game.'),
+                  findsOneWidget,
+                );
+              } else {
+                final args = tabs.values.single;
+                expect(args.pgn, second);
+                expect(args.librarySaveOrigin?.sourceIndex, 1);
+                expect(
+                  args.librarySaveOrigin?.sourcePgnFingerprint,
+                  localChessPgnFingerprint(second),
+                );
+                expect(
+                  args.librarySaveOrigin?.sourceRecordRevision,
+                  localPgnRecordRevision(second),
+                );
+                expect(args.databaseGames.single.pgn, second);
+              }
+            }
+          },
+        );
+      }
+    }
+  }
 
   testWidgets('source switch refreshes position game rows', (tester) async {
     final repository = _FakeGamebaseRepository();

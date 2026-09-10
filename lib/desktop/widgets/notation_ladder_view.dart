@@ -198,6 +198,7 @@ class NotationLadderView extends StatefulWidget {
     this.visibleMoveOrderController,
     this.variationCollapseController,
     this.showHeader = true,
+    this.headerTrailing,
     this.positionArrowKeys = const <String>{},
   });
 
@@ -212,6 +213,9 @@ class NotationLadderView extends StatefulWidget {
   /// Whether to show the notation header chrome (title, collapse/expand, help).
   /// Compact previews can hide it while keeping the same move rendering.
   final bool showHeader;
+
+  /// Optional caller-owned action at the far right of the metadata/ECO row.
+  final Widget? headerTrailing;
 
   /// Normalized position keys that have user-drawn arrows/circles.
   final Set<String> positionArrowKeys;
@@ -600,6 +604,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
               if (widget.showHeader)
                 _Header(
                   metadata: notationHeaderMetadataFromPgn(widget.game.metadata),
+                  trailing: widget.headerTrailing,
                 ),
               Expanded(
                 child:
@@ -2950,19 +2955,27 @@ class _SourceMetadataPill extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.metadata});
+  const _Header({required this.metadata, this.trailing});
+
+  final Widget? trailing;
 
   final NotationHeaderMetadata metadata;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: trailing == null ? 10 : 2,
+      ),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: kDividerColor)),
       ),
       child: Row(
-        children: [Expanded(child: _PgnMetadataHeader(metadata: metadata))],
+        children: [
+          Expanded(child: _PgnMetadataHeader(metadata: metadata)),
+          if (trailing != null) ...[const SizedBox(width: 6), trailing!],
+        ],
       ),
     );
   }

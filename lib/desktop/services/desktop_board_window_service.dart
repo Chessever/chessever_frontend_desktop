@@ -1,4 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+
+import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
@@ -10,6 +14,7 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/board_picture_in_picture_mode.dart';
+import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_combined_games_provider.dart';
@@ -19,10 +24,16 @@ import 'package:chessever/services/analytics/analytics_service.dart';
 class DesktopBoardWindowService {
   DesktopBoardWindowService({
     this.createWindow,
+    this.createDetachedWindow,
+    this.childReadyTimeout = const Duration(seconds: 30),
     this.onPictureInPictureVisibilityChanged,
   });
 
   final Future<void> Function(DesktopBoardWindowPayload payload)? createWindow;
+  final Future<DetachedBoardWindow> Function(DesktopBoardWindowPayload payload)?
+  createDetachedWindow;
+  final Duration childReadyTimeout;
+  final Set<String> _detachingTabs = {};
   final ValueChanged<BoardPictureInPictureVisibility>?
   onPictureInPictureVisibilityChanged;
 
@@ -144,10 +155,11 @@ class DesktopBoardWindowService {
     _setPictureInPictureHidden();
   }
 
-  Future<void> openDesktopTabWindow(
+  Future<DesktopBoardWindowPayload> openDesktopTabWindow(
     ProviderContainer container,
-    DesktopTab tab,
-  ) async {
+    DesktopTab tab, {
+    bool waitForChildReady = false,
+  }) async {
     final boardArgs = container.read(boardTabGameArgsByTabIdProvider)[tab.id];
     AnalyticsService.instance.trackEventDetached(
       'Desktop Tab Window Opened',
@@ -156,13 +168,70 @@ class DesktopBoardWindowService {
         'has_board_game': boardArgs != null,
       },
     );
-    await _openPayload(
-      DesktopBoardWindowPayload.fromTab(
+    final reader = container.read(boardPaneSnapshotReadersProvider)[tab.id];
+    final origin =
+        container.read(boardTabAttachedLibrarySaveOriginByTabIdProvider)[tab
+            .id];
+    if (tab.kind == TabKind.board && reader != null) {
+      final snapshot = reader();
+      if (!identical(
+        snapshot.seed,
+        boardArgs?.retainedSeedIdentity ?? boardArgs,
+      )) {
+        throw StateError('Board game is changing; try detaching again.');
+      }
+      final payload = DesktopBoardWindowPayload.fromBoardSession(
         tab,
-        boardArgs: boardArgs,
-        metadata: _metadataForTab(container, tab),
-      ),
+        openingArgs: boardArgs,
+        session: snapshot.session,
+        attachedOrigin: origin,
+      );
+      await _openTabPayload(payload, waitForChildReady);
+      return payload;
+    }
+    // Never silently replace a previously mounted/edited board with its seed.
+    if (tab.kind == TabKind.board &&
+        (origin != null ||
+            container
+                .read(boardPaneSessionByTabIdProvider)
+                .containsKey(tab.id))) {
+      throw StateError(
+        'Board snapshot is unavailable; activate the tab and retry.',
+      );
+    }
+    final payload = DesktopBoardWindowPayload.fromTab(
+      tab,
+      boardArgs: boardArgs,
+      metadata: _metadataForTab(container, tab),
     );
+    await _openTabPayload(payload, waitForChildReady);
+    return payload;
+  }
+
+  Future<void> _openTabPayload(
+    DesktopBoardWindowPayload payload,
+    bool waitForChildReady,
+  ) async {
+    if (!waitForChildReady) return _openPayload(payload);
+    final random = Random.secure();
+    final transferId = base64UrlEncode(
+      List<int>.generate(16, (_) => random.nextInt(256)),
+    );
+    final transfer = DesktopBoardWindowPayload.fromJson({
+      ...payload.toJson(),
+      'detachTransferId': transferId,
+    });
+    final DetachedBoardWindow child;
+    if (createDetachedWindow != null) {
+      child = await createDetachedWindow!(transfer);
+    } else {
+      final controller = await WindowController.create(
+        WindowConfiguration(hiddenAtLaunch: true, arguments: transfer.encode()),
+      );
+      await controller.show();
+      child = DetachedBoardWindow.fromController(controller);
+    }
+    await child.waitUntilReady(transferId, timeout: childReadyTimeout);
   }
 
   Future<void> _openPayload(DesktopBoardWindowPayload payload) async {
@@ -300,13 +369,89 @@ class DesktopBoardWindowService {
       return false;
     }
 
-    await openDesktopTabWindow(container, tab);
-    container.read(desktopTabsProvider.notifier).close(tabId);
-    AnalyticsService.instance.trackEventDetached(
-      'Desktop Tab Detached',
-      properties: {'tab_kind': tab.kind.name},
-    );
-    return true;
+    if (!_detachingTabs.add(tabId)) return false;
+    try {
+      final openingArgs =
+          container.read(boardTabGameArgsByTabIdProvider)[tabId];
+      final sent = await openDesktopTabWindow(
+        container,
+        tab,
+        waitForChildReady: true,
+      ).timeout(childReadyTimeout);
+      if (!container
+          .read(desktopTabsProvider)
+          .tabs
+          .any(
+            (current) =>
+                current.id == tabId &&
+                current.kind == TabKind.board &&
+                current.closable,
+          )) {
+        return false;
+      }
+      final currentArgs =
+          container.read(boardTabGameArgsByTabIdProvider)[tabId];
+      if (!identical(
+        currentArgs?.retainedSeedIdentity ?? currentArgs,
+        openingArgs?.retainedSeedIdentity ?? openingArgs,
+      )) {
+        return false;
+      }
+      if (sent.metadata.containsKey('boardSession')) {
+        final reader = container.read(boardPaneSnapshotReadersProvider)[tabId];
+        if (reader == null) return false;
+        final current = reader();
+        if (!identical(
+          current.seed,
+          currentArgs?.retainedSeedIdentity ?? currentArgs,
+        )) {
+          return false;
+        }
+        final currentPayload = DesktopBoardWindowPayload.fromBoardSession(
+          tab,
+          openingArgs: currentArgs,
+          session: current.session,
+          attachedOrigin:
+              container.read(
+                boardTabAttachedLibrarySaveOriginByTabIdProvider,
+              )[tabId],
+        );
+        // Window creation awaits another engine. Keep the original tab if the
+        // user edited or saved again while that engine was starting.
+        if (currentPayload.encode() != sent.encode()) return false;
+      } else {
+        // A board that mounted while the child booted now owns a live snapshot.
+        // Retain it rather than guessing whether that snapshot equals its seed.
+        if (container
+                .read(boardPaneSnapshotReadersProvider)
+                .containsKey(tabId) ||
+            container
+                .read(boardPaneSessionByTabIdProvider)
+                .containsKey(tabId) ||
+            container
+                .read(boardTabAttachedLibrarySaveOriginByTabIdProvider)
+                .containsKey(tabId) ||
+            DesktopBoardWindowPayload.fromTab(
+                  tab,
+                  boardArgs: currentArgs,
+                ).encode() !=
+                sent.encode()) {
+          return false;
+        }
+      }
+      container.read(desktopTabsProvider.notifier).close(tabId);
+      AnalyticsService.instance.trackEventDetached(
+        'Desktop Tab Detached',
+        properties: {'tab_kind': tab.kind.name},
+      );
+      return true;
+    } catch (_) {
+      // Creation, restoration, IPC failure, or timeout: the source stays owned
+      // by this engine. A late reply cannot resume this completed operation.
+      return false;
+    } finally {
+      _detachingTabs.remove(tabId);
+    }
   }
 
   Future<bool> detachBoardTabToWindow(

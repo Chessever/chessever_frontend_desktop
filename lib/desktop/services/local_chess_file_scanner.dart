@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'pgn_record_boundaries.dart';
 import 'dart:isolate';
 
 import 'package:archive/archive.dart';
@@ -13,6 +14,7 @@ import 'package:resqlite/resqlite.dart' as resqlite;
 import 'package:chessever/desktop/services/compact_local_tree_index.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
+import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -76,10 +78,6 @@ const String _kStandardStartingFen =
 final RegExp _kPgnHeaderRegex = RegExp(
   r'^\[\s*(\w+)\s+"((?:[^"\\]|\\.)*)"\s*\]',
   multiLine: true,
-);
-
-final RegExp _kPgnHeaderLineRegex = RegExp(
-  r'^\[\s*\w+\s+"(?:[^"\\]|\\.)*"\s*\]',
 );
 
 final RegExp _kPgnMoveHintRegex = RegExp(r'\b\d+\s*\.');
@@ -513,22 +511,45 @@ class LocalChessGame {
 
   String get inlineRawPgn => _rawPgn;
 
+  String get recordRevision => localPgnRecordRevision(rawPgn);
+
   String get rawPgn {
+    // Inline records are complete captured snapshots, not offset-based slices.
+    // Keep import workers on that snapshot rather than rereading the source.
     if (_rawPgn.isNotEmpty) return _rawPgn;
-    final start = sourceByteStart;
-    final end = sourceByteEnd;
-    if (start == null || end == null || end <= start) return '';
-    try {
-      final raf = File(sourcePath).openSync();
-      try {
-        raf.setPositionSync(start);
-        return _decodeTextBytes(raf.readSync(end - start)).trim();
-      } finally {
-        raf.closeSync();
+    if (sourceByteStart != null &&
+        sourceByteEnd != null &&
+        sourcePath.toLowerCase().endsWith('.pgn')) {
+      final raw = readLocalPgnRecord(
+        path: sourcePath,
+        indexInFile: indexInFile,
+        expectedPgnFingerprint: pgnFingerprint,
+      );
+      final entry = _entryFromPgnChunk(raw);
+      if (entry == null || (hasMoves && !entry.hasMoves)) {
+        throw StateError(
+          'The local PGN moves are unavailable. Refresh the database.',
+        );
       }
-    } on Object {
-      return '';
+      // Lightweight catalogs have no mainline fingerprint yet. At minimum,
+      // reject an ordinal whose known headers now identify another game.
+      if (pgnFingerprint.isEmpty) {
+        for (final key in const ['Event', 'White', 'Black', 'Date', 'Round']) {
+          final expected = game.metadata[key]?.toString().trim() ?? '';
+          if (expected.isNotEmpty &&
+              expected != '?' &&
+              entry.game.metadata[key]?.toString().trim() != expected) {
+            throw StateError(
+              'The local PGN record changed. Refresh the database.',
+            );
+          }
+        }
+      }
+      return raw;
     }
+    throw StateError(
+      'The local PGN record is unavailable. Refresh the database.',
+    );
   }
 
   String get title {
@@ -2307,20 +2328,21 @@ List<Object?> _compactPgnGameRow({
 }
 
 bool _compactPgnIsOnline(Map<String, String> metadata, String path) {
-  final haystack = <String>[
-    for (final key in const <String>[
-      'Site',
-      'Event',
-      'Source',
-      'ChessEverSource',
-      'Annotator',
-      'WhiteTeam',
-      'BlackTeam',
-    ])
-      metadata[key] ?? '',
-    metadata['TimeControl'] ?? '',
-    path,
-  ].join(' ').toLowerCase();
+  final haystack =
+      <String>[
+        for (final key in const <String>[
+          'Site',
+          'Event',
+          'Source',
+          'ChessEverSource',
+          'Annotator',
+          'WhiteTeam',
+          'BlackTeam',
+        ])
+          metadata[key] ?? '',
+        metadata['TimeControl'] ?? '',
+        path,
+      ].join(' ').toLowerCase();
   return haystack.contains('lichess') ||
       haystack.contains('chess.com') ||
       haystack.contains('chess24') ||
@@ -3325,8 +3347,7 @@ Future<_PgnParseResult> _parseSupportedFile({
 // headers + a movetext-present hint. Movetext is left unparsed: the Board
 // pane re-parses it on demand when the user opens a specific game.
 _PgnParseResult _parsePgnText(String text, {required int maxEntries}) {
-  final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-  final trimmed = normalized.trim();
+  final trimmed = text.trim();
   if (trimmed.isEmpty) {
     return const _PgnParseResult(
       entries: <_ParsedLocalChessGame>[],
@@ -3347,43 +3368,10 @@ _PgnParseResult _parsePgnText(String text, {required int maxEntries}) {
   return _PgnParseResult(entries: entries, totalEntries: totalEntries);
 }
 
-List<String> _splitPgnGameChunks(String text) {
-  final chunks = <String>[];
-  final current = StringBuffer();
-  var sawMovetext = false;
-  var inComment = false;
-
-  var start = 0;
-  while (start <= text.length) {
-    final newline = text.indexOf('\n', start);
-    final isLastLine = newline == -1;
-    final line =
-        isLastLine ? text.substring(start) : text.substring(start, newline);
-    final trimmedLine = _stripBom(line).trimLeft();
-    final isHeader =
-        !inComment &&
-        trimmedLine.startsWith('[') &&
-        _kPgnHeaderLineRegex.hasMatch(trimmedLine);
-    if (isHeader && sawMovetext && current.isNotEmpty) {
-      final chunk = current.toString().trim();
-      if (chunk.isNotEmpty) chunks.add(chunk);
-      current.clear();
-      sawMovetext = false;
-    }
-
-    current.writeln(line);
-    if (trimmedLine.isNotEmpty && !isHeader) {
-      sawMovetext = true;
-    }
-    inComment = _updatePgnCommentState(line, inComment);
-    if (isLastLine) break;
-    start = newline + 1;
-  }
-
-  final tail = current.toString().trim();
-  if (tail.isNotEmpty) chunks.add(tail);
-  return chunks;
-}
+List<String> _splitPgnGameChunks(String text) => [
+  for (final range in pgnGameRanges(text))
+    text.substring(range.start, range.end).trim(),
+];
 
 Future<_PgnParseResult> _parsePgnFile(
   String path, {
@@ -3443,9 +3431,9 @@ Future<_PgnRangeScanResult> _scanPgnFileRanges(
 }) async {
   final ranges = <_PgnByteRange>[];
   final checkpointOffsets = <int>[];
+  final boundary = PgnRecordBoundaryTracker();
   var currentStartOffset = 0;
   var hasCurrent = false;
-  var sawMovetext = false;
   var currentHasHeader = false;
   var currentHasMoveHint = false;
   var currentMaxMoveNumber = 0;
@@ -3455,9 +3443,9 @@ Future<_PgnRangeScanResult> _scanPgnFileRanges(
   var stopRequested = false;
 
   void flushCurrent(int endOffset) {
+    boundary.reset();
     if (!hasCurrent || endOffset <= currentStartOffset) {
       hasCurrent = false;
-      sawMovetext = false;
       currentHasHeader = false;
       currentHasMoveHint = false;
       currentMaxMoveNumber = 0;
@@ -3466,7 +3454,6 @@ Future<_PgnRangeScanResult> _scanPgnFileRanges(
     }
     if (!currentHasHeader && !currentHasMoveHint) {
       hasCurrent = false;
-      sawMovetext = false;
       currentHasHeader = false;
       currentHasMoveHint = false;
       currentMaxMoveNumber = 0;
@@ -3493,7 +3480,6 @@ Future<_PgnRangeScanResult> _scanPgnFileRanges(
       stopRequested = true;
     }
     hasCurrent = false;
-    sawMovetext = false;
     currentHasHeader = false;
     currentHasMoveHint = false;
     currentMaxMoveNumber = 0;
@@ -3503,18 +3489,18 @@ Future<_PgnRangeScanResult> _scanPgnFileRanges(
   var stat = await File(path).stat();
   Directory? ownedSnapshotDirectory;
   String? snapshotPath;
-  final scanner = _PgnByteLineScanner((line) {
+  final scanner = PgnByteLineScanner((line) {
     finalOffset = line.endOffset;
 
     if (!hasCurrent && line.isBlank) {
       return;
     }
 
-    if (line.isHeader && sawMovetext && hasCurrent) {
+    if (boundary.startsNewRecord(line)) {
       flushCurrent(line.startOffset);
-      sawMovetext = false;
     }
     if (stopRequested) return;
+    boundary.add(line);
 
     if (!hasCurrent) {
       currentStartOffset = line.contentStartOffset;
@@ -3529,9 +3515,6 @@ Future<_PgnRangeScanResult> _scanPgnFileRanges(
     }
     if (!line.isHeader && line.maxMoveNumber > currentMaxMoveNumber) {
       currentMaxMoveNumber = line.maxMoveNumber;
-    }
-    if (!line.isBlank && !line.isHeader) {
-      sawMovetext = true;
     }
   });
   if (stopAfterMaxEntries) {
@@ -3721,9 +3704,10 @@ Future<LocalChessFileNode> _scanPgnCatalogFile(
           _ParsedLocalChessGame? headerEntry;
           if (range.headerEnd > range.start) {
             raf.setPositionSync(range.start);
-            final headerText = _decodeTextBytes(
-              raf.readSync(range.headerEnd - range.start),
-            ).trim();
+            final headerText =
+                _decodeTextBytes(
+                  raf.readSync(range.headerEnd - range.start),
+                ).trim();
             if (headerText.isNotEmpty) {
               headerEntry = _entryFromPgnChunk(headerText);
             }
@@ -3879,8 +3863,6 @@ Future<void> _forEachParsedPgnRange(
   onReadProgress?.call(1);
 }
 
-const _kUtf8Bom = <int>[0xEF, 0xBB, 0xBF];
-
 class _PgnRangeScanResult {
   const _PgnRangeScanResult({
     required this.ranges,
@@ -3943,231 +3925,6 @@ class _PgnByteRange {
   final int maxMoveNumber;
 }
 
-class _PgnByteLine {
-  const _PgnByteLine({
-    required this.startOffset,
-    required this.contentStartOffset,
-    required this.endOffset,
-    required this.isHeader,
-    required this.isBlank,
-    required this.hasMoveHint,
-    required this.maxMoveNumber,
-  });
-
-  final int startOffset;
-  final int contentStartOffset;
-  final int endOffset;
-  final bool isHeader;
-  final bool isBlank;
-  final bool hasMoveHint;
-  final int maxMoveNumber;
-}
-
-class _PgnByteLineScanner {
-  _PgnByteLineScanner(this.onLine);
-
-  final void Function(_PgnByteLine line) onLine;
-
-  int finalOffset = 0;
-  int _offset = 0;
-  int _lineStartOffset = 0;
-  int _lineByteCount = 0;
-  bool _pendingCr = false;
-  bool _isFirstLine = true;
-  bool _lineStartedInComment = false;
-  bool _inComment = false;
-  bool _lineHasNonWhitespace = false;
-  bool _lineHasMoveHint = false;
-  int? _lineMoveNumberCandidate;
-  int _lineMaxMoveNumber = 0;
-  int _variationDepth = 0;
-  bool _lineStartsWithUtf8Bom = false;
-  int? _firstNonWhitespaceByte;
-
-  Future<void> scan(
-    String path, {
-    int? totalBytes,
-    void Function(double fraction)? onProgress,
-    bool Function()? shouldStop,
-  }) async {
-    var lastProgressOffset = 0;
-    void emitProgress({bool force = false}) {
-      if (onProgress == null || totalBytes == null || totalBytes <= 0) return;
-      if (!force && _offset - lastProgressOffset < 1024 * 1024) return;
-      lastProgressOffset = _offset;
-      onProgress((_offset / totalBytes).clamp(0.0, 1.0).toDouble());
-    }
-
-    emitProgress(force: true);
-    scanLoop:
-    await for (final chunk in File(path).openRead()) {
-      for (final byte in chunk) {
-        _readByte(byte);
-        if (shouldStop?.call() ?? false) break scanLoop;
-      }
-      emitProgress();
-    }
-    if (!(shouldStop?.call() ?? false)) {
-      if (_pendingCr) {
-        _flushLine(_offset);
-        _pendingCr = false;
-      }
-      if (_lineByteCount > 0 || _offset == _lineStartOffset) {
-        _flushLine(_offset);
-      }
-    }
-    finalOffset = _offset;
-    emitProgress(force: true);
-  }
-
-  void scanBytes(
-    Uint8List bytes, {
-    int? totalBytes,
-    void Function(double fraction)? onProgress,
-  }) {
-    var lastProgressOffset = 0;
-    void emitProgress({bool force = false}) {
-      if (onProgress == null || totalBytes == null || totalBytes <= 0) return;
-      if (!force && _offset - lastProgressOffset < 1024 * 1024) return;
-      lastProgressOffset = _offset;
-      onProgress((_offset / totalBytes).clamp(0.0, 1.0).toDouble());
-    }
-
-    emitProgress(force: true);
-    for (final byte in bytes) {
-      _readByte(byte);
-      if (_offset - lastProgressOffset >= 1024 * 1024) {
-        emitProgress();
-      }
-    }
-    if (_pendingCr) {
-      _flushLine(_offset);
-      _pendingCr = false;
-    }
-    if (_lineByteCount > 0 || _offset == _lineStartOffset) {
-      _flushLine(_offset);
-    }
-    finalOffset = _offset;
-    emitProgress(force: true);
-  }
-
-  void _readByte(int byte) {
-    if (_pendingCr) {
-      if (byte == 0x0A) {
-        _offset++;
-        _flushLine(_offset);
-        _pendingCr = false;
-        return;
-      }
-      _flushLine(_offset);
-      _pendingCr = false;
-    }
-
-    _offset++;
-    if (byte == 0x0D) {
-      _pendingCr = true;
-      return;
-    }
-    if (byte == 0x0A) {
-      _flushLine(_offset);
-      return;
-    }
-    _readContentByte(byte);
-  }
-
-  void _readContentByte(int byte) {
-    if (_isFirstLine &&
-        _lineByteCount < _kUtf8Bom.length &&
-        byte == _kUtf8Bom[_lineByteCount]) {
-      if (_lineByteCount == _kUtf8Bom.length - 1) {
-        _lineStartsWithUtf8Bom = true;
-      }
-      _lineByteCount++;
-      return;
-    }
-
-    _lineByteCount++;
-    if (!_isWhitespaceByte(byte)) {
-      _lineHasNonWhitespace = true;
-      _firstNonWhitespaceByte ??= byte;
-    }
-
-    if (byte == 0x7B) {
-      _inComment = true;
-      _lineMoveNumberCandidate = null;
-      return;
-    } else if (byte == 0x7D) {
-      _inComment = false;
-      _lineMoveNumberCandidate = null;
-      return;
-    }
-    if (_inComment) {
-      _lineMoveNumberCandidate = null;
-      return;
-    }
-    if (byte == 0x28) {
-      _variationDepth++;
-      _lineMoveNumberCandidate = null;
-      return;
-    }
-    if (byte == 0x29) {
-      if (_variationDepth > 0) _variationDepth--;
-      _lineMoveNumberCandidate = null;
-      return;
-    }
-    if (_variationDepth > 0) {
-      _lineMoveNumberCandidate = null;
-      return;
-    }
-
-    if (byte >= 0x30 && byte <= 0x39) {
-      final digit = byte - 0x30;
-      _lineMoveNumberCandidate = (_lineMoveNumberCandidate ?? 0) * 10 + digit;
-    } else if (byte == 0x2E && _lineMoveNumberCandidate != null) {
-      _lineHasMoveHint = true;
-      if (_lineMoveNumberCandidate! > _lineMaxMoveNumber) {
-        _lineMaxMoveNumber = _lineMoveNumberCandidate!;
-      }
-      _lineMoveNumberCandidate = null;
-    } else {
-      _lineMoveNumberCandidate = null;
-    }
-  }
-
-  void _flushLine(int endOffset) {
-    if (_lineByteCount == 0 && endOffset == _lineStartOffset) return;
-    final startsWithBom = _isFirstLine && _startsWithUtf8Bom();
-    onLine(
-      _PgnByteLine(
-        startOffset: _lineStartOffset,
-        contentStartOffset:
-            startsWithBom
-                ? _lineStartOffset + _kUtf8Bom.length
-                : _lineStartOffset,
-        endOffset: endOffset,
-        isHeader: !_lineStartedInComment && _firstNonWhitespaceByte == 0x5B,
-        isBlank: !_lineHasNonWhitespace,
-        hasMoveHint: _lineHasMoveHint,
-        maxMoveNumber: _lineMaxMoveNumber,
-      ),
-    );
-    _lineStartOffset = endOffset;
-    _lineByteCount = 0;
-    _lineHasNonWhitespace = false;
-    _lineHasMoveHint = false;
-    _lineMoveNumberCandidate = null;
-    _lineMaxMoveNumber = 0;
-    _lineStartsWithUtf8Bom = false;
-    _firstNonWhitespaceByte = null;
-    _lineStartedInComment = _inComment;
-    _isFirstLine = false;
-  }
-
-  bool _startsWithUtf8Bom() {
-    return _lineStartOffset == 0 && _lineStartsWithUtf8Bom;
-  }
-}
-
 bool _samePgnPreviewFileStat(FileStat before, FileStat after) {
   return before.type == FileSystemEntityType.file &&
       after.type == FileSystemEntityType.file &&
@@ -4176,34 +3933,7 @@ bool _samePgnPreviewFileStat(FileStat before, FileStat after) {
       before.changed == after.changed;
 }
 
-bool _isWhitespaceByte(int byte) {
-  return byte == 0x20 ||
-      byte == 0x09 ||
-      byte == 0x0A ||
-      byte == 0x0D ||
-      byte == 0x0B ||
-      byte == 0x0C;
-}
-
 bool _requiresFullDecode(String extension) => extension.toLowerCase() != '.pgn';
-
-String _stripBom(String line) {
-  if (line.startsWith('\uFEFF')) return line.substring(1);
-  return line;
-}
-
-bool _updatePgnCommentState(String line, bool inComment) {
-  if (!inComment && !line.contains('{')) return false;
-  var next = inComment;
-  for (final codeUnit in line.codeUnits) {
-    if (codeUnit == 0x7B) {
-      next = true;
-    } else if (codeUnit == 0x7D) {
-      next = false;
-    }
-  }
-  return next;
-}
 
 _ParsedLocalChessGame? _entryFromPgnChunk(String rawPgn) {
   final headers = <String, dynamic>{};
