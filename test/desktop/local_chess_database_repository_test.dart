@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -869,24 +870,29 @@ void main() {
     );
   });
 
-  test('current schema opens without entering the shared write queue', () async {
-    final queueEntered = Completer<void>();
-    final releaseQueue = Completer<void>();
-    final held = LocalChessDatabaseRepository.debugRunWriteSerialized(() async {
-      queueEntered.complete();
-      await releaseQueue.future;
-    });
-    await queueEntered.future.timeout(const Duration(seconds: 5));
+  test(
+    'current schema opens without entering the shared write queue',
+    () async {
+      final queueEntered = Completer<void>();
+      final releaseQueue = Completer<void>();
+      final held = LocalChessDatabaseRepository.debugRunWriteSerialized(
+        () async {
+          queueEntered.complete();
+          await releaseQueue.future;
+        },
+      );
+      await queueEntered.future.timeout(const Duration(seconds: 5));
 
-    try {
-      await createLocalChessResqliteDatabaseSchema(
-        db,
-      ).timeout(const Duration(seconds: 2));
-    } finally {
-      releaseQueue.complete();
-      await held.timeout(const Duration(seconds: 5));
-    }
-  });
+      try {
+        await createLocalChessResqliteDatabaseSchema(
+          db,
+        ).timeout(const Duration(seconds: 2));
+      } finally {
+        releaseQueue.complete();
+        await held.timeout(const Duration(seconds: 5));
+      }
+    },
+  );
 
   test(
     'invalid tree metadata prevents append replace and delete from mixing generations',
@@ -954,11 +960,14 @@ void main() {
           databasePath: pgnFile.path,
           indexInFile: 0,
           rawPgn: _legacyPgn,
+          expectedRecordRevision: localPgnRecordRevision(
+            readLocalPgnRecord(path: pgnFile.path, indexInFile: 0),
+          ),
         ),
         isTrue,
       );
-      expect(await _count(db, 'local_chess_tree_nodes'), staleNodeCount);
-      expect(await _count(db, 'local_chess_tree_moves'), staleMoveCount);
+      expect(await _count(db, 'local_chess_tree_nodes'), 0);
+      expect(await _count(db, 'local_chess_tree_moves'), 0);
       expect(
         await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
         isNull,
@@ -968,12 +977,17 @@ void main() {
         await repo.removeLocalPgnGames(
           databasePath: pgnFile.path,
           indexesInFile: const <int>{1},
+          expectedRecordRevisions: {
+            1: localPgnRecordRevision(
+              readLocalPgnRecord(path: pgnFile.path, indexInFile: 1),
+            ),
+          },
         ),
         1,
       );
       expect(await _count(db, 'local_chess_games'), 2);
-      expect(await _count(db, 'local_chess_tree_nodes'), staleNodeCount);
-      expect(await _count(db, 'local_chess_tree_moves'), staleMoveCount);
+      expect(await _count(db, 'local_chess_tree_nodes'), 0);
+      expect(await _count(db, 'local_chess_tree_moves'), 0);
       expect(
         await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
         isNull,
@@ -1232,56 +1246,53 @@ void main() {
     },
   );
 
-  test(
-    'player tree rebuild bypasses the shared database connection',
-    () async {
-      final pgnFile = File('${temp.path}/direct-player-tree.pgn');
-      await pgnFile.writeAsString(_samplePgn);
-      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
-      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
-      final seedRepository = LocalChessDatabaseRepository(
-        database: () async => db,
-      );
-      await seedRepository.persistFileNode(fileNode, sourceLabel: source.label);
+  test('player tree rebuild bypasses the shared database connection', () async {
+    final pgnFile = File('${temp.path}/direct-player-tree.pgn');
+    await pgnFile.writeAsString(_samplePgn);
+    final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+    final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+    final seedRepository = LocalChessDatabaseRepository(
+      database: () async => db,
+    );
+    await seedRepository.persistFileNode(fileNode, sourceLabel: source.label);
 
-      var sharedDatabaseRequested = false;
-      final directRepository = LocalChessDatabaseRepository(
-        database: () async {
-          sharedDatabaseRequested = true;
-          throw StateError('shared database should not be opened');
-        },
-        databaseFilePath: () async => '${temp.path}/local_chess.db',
-      );
+    var sharedDatabaseRequested = false;
+    final directRepository = LocalChessDatabaseRepository(
+      database: () async {
+        sharedDatabaseRequested = true;
+        throw StateError('shared database should not be opened');
+      },
+      databaseFilePath: () async => '${temp.path}/local_chess.db',
+    );
 
-      final rebuilt = await directRepository.rebuildOpeningTreeFromCachedGames(
+    final rebuilt = await directRepository.rebuildOpeningTreeFromCachedGames(
+      databasePath: pgnFile.path,
+    );
+
+    expect(rebuilt?.index.isUsable, isTrue);
+    expect(sharedDatabaseRequested, isFalse);
+    expect(
+      directRepository.loadCompactOpeningTreeIndexForDatabase(
         databasePath: pgnFile.path,
-      );
-
-      expect(rebuilt?.index.isUsable, isTrue);
-      expect(sharedDatabaseRequested, isFalse);
-      expect(
-        directRepository.loadCompactOpeningTreeIndexForDatabase(
-          databasePath: pgnFile.path,
-        ),
-        isNotNull,
-      );
-      final positionGames = await directRepository.localPositionGamesResponse(
-        databasePath: pgnFile.path,
-        fen: Chess.initial.fen,
-        filters: const PlayerOpeningTreeFilterCriteria(
-          playerNames: <String>['Hou, Yifan'],
-          color: 'white',
-        ),
-        sortBy: GamebaseSortField.date,
-        sortDirection: GamebaseSortDirection.desc,
-        pageNumber: 0,
-        pageSize: 20,
-      );
-      expect(positionGames?.data, hasLength(1));
-      expect(positionGames?.metadata.totalCount, 1);
-      expect(sharedDatabaseRequested, isFalse);
-    },
-  );
+      ),
+      isNotNull,
+    );
+    final positionGames = await directRepository.localPositionGamesResponse(
+      databasePath: pgnFile.path,
+      fen: Chess.initial.fen,
+      filters: const PlayerOpeningTreeFilterCriteria(
+        playerNames: <String>['Hou, Yifan'],
+        color: 'white',
+      ),
+      sortBy: GamebaseSortField.date,
+      sortDirection: GamebaseSortDirection.desc,
+      pageNumber: 0,
+      pageSize: 20,
+    );
+    expect(positionGames?.data, hasLength(1));
+    expect(positionGames?.metadata.totalCount, 1);
+    expect(sharedDatabaseRequested, isFalse);
+  });
 
   test('cached tree rebuild waits for the shared write queue', () async {
     final pgnFile = File('${temp.path}/queued-tree-rebuild.pgn');
@@ -2013,45 +2024,42 @@ void main() {
     },
   );
 
-  test(
-    'direct player import bypasses the shared app cache',
-    () async {
-      final pgnFile = File('${temp.path}/direct-player-import.pgn');
-      await pgnFile.writeAsString(_samplePgn);
-      final workerDbPath = p.join(
-        temp.path,
-        'direct-player-import-local-chess.db',
-      );
-      var openedAppCache = false;
-      final repo = LocalChessDatabaseRepository(
-        database: () async {
-          openedAppCache = true;
-          throw StateError('shared app cache should not be opened');
-        },
-        databaseFilePath: () async => workerDbPath,
-        cachedFileNodeGamePreviewLimit: 1,
-      );
+  test('direct player import bypasses the shared app cache', () async {
+    final pgnFile = File('${temp.path}/direct-player-import.pgn');
+    await pgnFile.writeAsString(_samplePgn);
+    final workerDbPath = p.join(
+      temp.path,
+      'direct-player-import-local-chess.db',
+    );
+    var openedAppCache = false;
+    final repo = LocalChessDatabaseRepository(
+      database: () async {
+        openedAppCache = true;
+        throw StateError('shared app cache should not be opened');
+      },
+      databaseFilePath: () async => workerDbPath,
+      cachedFileNodeGamePreviewLimit: 1,
+    );
 
-      final source = await repo.importSingleFileSource(
-        path: pgnFile.path,
-        preferDirectDatabase: true,
-      );
+    final source = await repo.importSingleFileSource(
+      path: pgnFile.path,
+      preferDirectDatabase: true,
+    );
 
-      expect(source, isNotNull);
-      expect(openedAppCache, isFalse);
-      expect(source!.root.singlePlayableDatabaseInSubtree!.gameCount, 2);
-      final stats = await repo.localDatabaseResultStats(
-        databasePath: pgnFile.path,
-        playerAliases: const <String>[],
-        preferDirectDatabase: true,
-      );
-      expect(stats.gameCount, 2);
-      expect(openedAppCache, isFalse);
-      final workerDb = await resqlite.Database.open(workerDbPath);
-      addTearDown(workerDb.close);
-      expect(await _count(workerDb, 'local_chess_games'), 2);
-    },
-  );
+    expect(source, isNotNull);
+    expect(openedAppCache, isFalse);
+    expect(source!.root.singlePlayableDatabaseInSubtree!.gameCount, 2);
+    final stats = await repo.localDatabaseResultStats(
+      databasePath: pgnFile.path,
+      playerAliases: const <String>[],
+      preferDirectDatabase: true,
+    );
+    expect(stats.gameCount, 2);
+    expect(openedAppCache, isFalse);
+    final workerDb = await resqlite.Database.open(workerDbPath);
+    addTearDown(workerDb.close);
+    expect(await _count(workerDb, 'local_chess_games'), 2);
+  });
 
   test('path-only fallback prepares schema through the write queue', () async {
     final pgnFile = File('${temp.path}/queued-path-fallback.pgn');

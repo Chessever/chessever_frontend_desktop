@@ -29,6 +29,63 @@ void main() {
       }
     });
 
+    test(
+      'saved source refresh evicts inactive sessions without switching databases',
+      () async {
+        final first = File('${temp.path}/first.pgn');
+        final second = File('${temp.path}/second.pgn');
+        await first.writeAsString(_samplePgn);
+        await second.writeAsString(
+          _samplePgn.replaceAll('Candidates', 'Other'),
+        );
+        final notifier = LocalChessLibraryNotifier();
+        expect(await notifier.openPaths([first.path]), isTrue);
+        expect(await notifier.openPaths([second.path]), isTrue);
+        final active = notifier.state.source;
+        await first.writeAsString(_samplePgn.replaceAll('Candidates', 'Saved'));
+        await notifier.refreshSavedFile(first.path);
+        expect(notifier.state.source, same(active));
+        expect(notifier.state.sessionSourceForPath(first.path), isNull);
+        expect(await notifier.openPaths([first.path]), isTrue);
+        final node =
+            notifier.state.source!.nodeForPath(first.path)
+                as LocalChessFileNode;
+        expect(node.games.single.game.metadata['Event'], 'Saved');
+      },
+    );
+
+    test(
+      'force refresh bypasses a warm cache and reads physical headers',
+      () async {
+        final db = await resqlite.Database.open(
+          '${temp.path}/force-refresh.db',
+        );
+        addTearDown(db.close);
+        await createLocalChessResqliteDatabaseSchema(db);
+        final repo = LocalChessDatabaseRepository(database: () async => db);
+        final file = File('${temp.path}/refresh.pgn');
+        await file.writeAsString(_samplePgn);
+        await repo.importSingleFileSource(path: file.path);
+        await db.execute('UPDATE local_chess_games SET headers_json = ?', [
+          jsonEncode({
+            'Event': 'Stale cached metadata',
+            'White': 'A',
+            'Black': 'B',
+          }),
+        ]);
+        final notifier = LocalChessLibraryNotifier(
+          localDatabaseRepository: repo,
+        );
+        expect(
+          await notifier.openPaths([file.path], forceRefresh: true),
+          isTrue,
+        );
+        final node =
+            notifier.state.source!.nodeForPath(file.path) as LocalChessFileNode;
+        expect(node.games.single.game.metadata['Event'], 'Candidates');
+      },
+    );
+
     test('openPaths opens an empty PGN as a writable database', () async {
       final notifier = LocalChessLibraryNotifier();
       final file = File('${temp.path}/new-database.pgn');
@@ -336,66 +393,69 @@ void main() {
       },
     );
 
-    test('large raw PGN opens fully before search indexing is requested', () async {
-      final file = File('${temp.path}/instant.pgn');
-      await file.writeAsString(_samplePgn);
-      final scanned = await scanLocalChessPaths(<String>[file.path]);
-      await file.writeAsBytes(
-        List<int>.filled(600 * 1024, 0x20),
-        mode: FileMode.append,
-      );
-      final catalog = await scanLocalChessPgnCatalog(file.path);
-      final importStarted = Completer<void>();
-      final releaseImport = Completer<void>();
-      final repo = _FailingLocalChessDatabaseRepository(
-        importedSource: scanned,
-        importStarted: importStarted,
-        releaseImport: releaseImport,
-      );
-      var catalogLimit = 0;
-      var catalogCalls = 0;
-      final notifier = LocalChessLibraryNotifier(
-        localDatabaseRepository: repo,
-        scanPgnCatalog: (_, {sourceLabel, maxGames = 200000}) async {
-          catalogCalls++;
-          catalogLimit = maxGames;
-          return catalog;
-        },
-      );
+    test(
+      'large raw PGN opens fully before search indexing is requested',
+      () async {
+        final file = File('${temp.path}/instant.pgn');
+        await file.writeAsString(_samplePgn);
+        final scanned = await scanLocalChessPaths(<String>[file.path]);
+        await file.writeAsBytes(
+          List<int>.filled(600 * 1024, 0x20),
+          mode: FileMode.append,
+        );
+        final catalog = await scanLocalChessPgnCatalog(file.path);
+        final importStarted = Completer<void>();
+        final releaseImport = Completer<void>();
+        final repo = _FailingLocalChessDatabaseRepository(
+          importedSource: scanned,
+          importStarted: importStarted,
+          releaseImport: releaseImport,
+        );
+        var catalogLimit = 0;
+        var catalogCalls = 0;
+        final notifier = LocalChessLibraryNotifier(
+          localDatabaseRepository: repo,
+          scanPgnCatalog: (_, {sourceLabel, maxGames = 200000}) async {
+            catalogCalls++;
+            catalogLimit = maxGames;
+            return catalog;
+          },
+        );
 
-      final opened = await notifier.openPaths(<String>[file.path]);
+        final opened = await notifier.openPaths(<String>[file.path]);
 
-      expect(opened, isTrue);
-      expect(importStarted.isCompleted, isFalse);
-      expect(releaseImport.isCompleted, isFalse);
-      expect(catalogLimit, 200000);
-      expect(notifier.state.isScanning, isFalse);
-      expect(notifier.state.source, isNotNull);
-      expect(notifier.state.backgroundImportForPath(file.path), isNull);
-      expect(catalogCalls, 1);
+        expect(opened, isTrue);
+        expect(importStarted.isCompleted, isFalse);
+        expect(releaseImport.isCompleted, isFalse);
+        expect(catalogLimit, 200000);
+        expect(notifier.state.isScanning, isFalse);
+        expect(notifier.state.source, isNotNull);
+        expect(notifier.state.backgroundImportForPath(file.path), isNull);
+        expect(catalogCalls, 1);
 
-      expect(notifier.ensureSearchIndex(file.path), isTrue);
-      expect(importStarted.isCompleted, isTrue);
-      expect(notifier.state.backgroundImportForPath(file.path), isNotNull);
+        expect(notifier.ensureSearchIndex(file.path), isTrue);
+        expect(importStarted.isCompleted, isTrue);
+        expect(notifier.state.backgroundImportForPath(file.path), isNotNull);
 
-      final reopened = await notifier.openPaths(<String>[file.path]);
+        final reopened = await notifier.openPaths(<String>[file.path]);
 
-      expect(reopened, isTrue);
-      expect(catalogCalls, 1);
-      expect(notifier.state.isScanning, isFalse);
-      expect(notifier.state.source, same(catalog));
-      expect(notifier.state.backgroundImportForPath(file.path), isNotNull);
+        expect(reopened, isTrue);
+        expect(catalogCalls, 1);
+        expect(notifier.state.isScanning, isFalse);
+        expect(notifier.state.source, same(catalog));
+        expect(notifier.state.backgroundImportForPath(file.path), isNotNull);
 
-      final indexingFinished = notifier.stream.firstWhere(
-        (state) => state.backgroundImportForPath(file.path) == null,
-      );
-      releaseImport.complete();
-      await indexingFinished.timeout(const Duration(seconds: 2));
+        final indexingFinished = notifier.stream.firstWhere(
+          (state) => state.backgroundImportForPath(file.path) == null,
+        );
+        releaseImport.complete();
+        await indexingFinished.timeout(const Duration(seconds: 2));
 
-      expect(notifier.state.backgroundImportForPath(file.path), isNull);
-      expect(notifier.state.warning, isNull);
-      notifier.clear();
-    });
+        expect(notifier.state.backgroundImportForPath(file.path), isNull);
+        expect(notifier.state.warning, isNull);
+        notifier.clear();
+      },
+    );
 
     test(
       'openPaths imports each multi-file PGN through the cache worker path',
@@ -815,9 +875,10 @@ void main() {
           eagerTreeMoveLoadLimit: 0,
           eagerPositionRefLoadLimit: 0,
         );
-        final restoredIndex = readRepo.loadCompactOpeningTreeIndexForDatabase(
-          databasePath: file.path,
-        )!;
+        final restoredIndex =
+            readRepo.loadCompactOpeningTreeIndexForDatabase(
+              databasePath: file.path,
+            )!;
         expect(restoredIndex.positionCount, greaterThan(1));
         expect(restoredIndex.downloadedGameCount, 1);
         expect(restoredIndex.nodesById, isEmpty);
@@ -1122,6 +1183,7 @@ void main() {
         final removed = await removeLocalPgnGamesFromFile(
           filePath: file.path,
           indexesInFile: {0},
+          expectedRecordRevisions: {0: initialFile.games.single.recordRevision},
         );
         final refreshed = await notifier.refreshFile(file.path);
 

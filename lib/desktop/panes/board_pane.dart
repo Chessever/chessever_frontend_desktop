@@ -3,6 +3,11 @@ import 'dart:io' as io;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:chessever/desktop/services/board_report_output.dart';
+import 'package:chessever/desktop/services/board_save_boundary.dart';
+
+import 'package:chessever/desktop/services/retained_local_pgn.dart';
+
 import 'package:chessground/chessground.dart' as cg;
 import 'package:file_picker/file_picker.dart';
 import 'package:dartchess/dartchess.dart';
@@ -227,7 +232,9 @@ bool shouldUsePristineEventSourceForLibrarySave({
   required bool dirtySinceLoad,
   required bool hasUserNags,
   required bool hasCompletedReport,
-}) => canSaveSource && !dirtySinceLoad && !hasUserNags && !hasCompletedReport;
+  bool hasCommittedSave = false,
+}) => canSaveSource && !hasCommittedSave && !dirtySinceLoad &&
+    !hasUserNags && !hasCompletedReport;
 
 @visibleForTesting
 String? resolveInitialBoardPgnLiveStatus({
@@ -399,10 +406,10 @@ bool shouldShowDesktopBoardEvalBar(EngineSettings settings) {
 class GameReportRevealState {
   const GameReportRevealState({this.gameFingerprint, this.isVisible = false});
 
-  final String? gameFingerprint;
+  final Object? gameFingerprint;
   final bool isVisible;
 
-  GameReportRevealState activate(String fingerprint) {
+  GameReportRevealState activate(Object fingerprint) {
     if (gameFingerprint == fingerprint) return this;
     return GameReportRevealState(gameFingerprint: fingerprint);
   }
@@ -414,7 +421,7 @@ class GameReportRevealState {
     );
   }
 
-  bool isVisibleFor(String fingerprint) {
+  bool isVisibleFor(Object fingerprint) {
     return isVisible && gameFingerprint == fingerprint;
   }
 }
@@ -852,9 +859,34 @@ class _BoardPaneContent extends HookConsumerWidget {
       const [],
     );
     final currentReportFingerprint = gameReportFingerprint(chessGame.value);
-    final currentReportRevealKey =
-        '${activeTabId ?? 'board-default'}:$currentReportFingerprint';
+    final reportActivation = useRef<Object>(Object());
+    final savedSourceSeedPgn = useRef(restoredSession?.savedSourceSeedPgn);
+    final hasCommittedSave = useRef(restoredSession?.hasCommittedSave ?? false);
     final reportRevealState = useRef(const GameReportRevealState());
+    // Listen synchronously: even coalesced A -> B -> A replacements invalidate
+    // reveal/save ownership. Summary-only retained PGN refreshes keep the seed.
+    ref.listen(
+      boardTabGameArgsByTabIdProvider.select(
+        (args) => args[activeTabId]?.retainedSeedIdentity ?? args[activeTabId],
+      ),
+      (previous, next) {
+        if (identical(previous, next)) return;
+        reportActivation.value = Object();
+        savedSourceSeedPgn.value = null;
+        hasCommittedSave.value = false;
+        reportRevealState.value = const GameReportRevealState();
+      },
+    );
+    ref.listen(desktopTabsProvider.select((tabs) => tabs.activeId),
+        (previous, next) {
+      if (previous != next) {
+        reportRevealState.value = const GameReportRevealState();
+      }
+    });
+    final currentReportRevealKey = (
+      reportActivation.value,
+      currentReportFingerprint,
+    );
     final reportRevealRevision = useState(0);
     final activeReportReveal = reportRevealState.value.activate(
       currentReportRevealKey,
@@ -1066,6 +1098,9 @@ class _BoardPaneContent extends HookConsumerWidget {
           dirtySinceLoad: dirtySinceLoad.value,
           hasUnseenMoves: hasUnseenMoves.value,
           undoStack: List<BoardUndoSnapshot>.unmodifiable(undoStack.value),
+          savedSourceSeedPgn: savedSourceSeedPgn.value,
+          hasCommittedSave: hasCommittedSave.value,
+          detachedSeedPgn: restoredSession?.detachedSeedPgn,
         );
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!context.mounted || token != boardSessionWriteToken.value) {
@@ -1085,6 +1120,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         flipped.value,
         loadedFrom.value,
         dirtySinceLoad.value,
+        hasCommittedSave.value,
+        savedSourceSeedPgn.value,
         hasUnseenMoves.value,
       ],
     );
@@ -1101,10 +1138,26 @@ class _BoardPaneContent extends HookConsumerWidget {
       String? gameId,
       String? acceptedLiveStatus,
       bool canonicalBroadcastUpdate = false,
+      bool isInitialSeed = false,
     }) {
       final trimmed = pgn.trim();
+      // A detached transport seed is private working state, not a new live
+      // packet. Preserve the separately transferred canonical baseline.
+      if (isInitialSeed && restoredSession?.detachedSeedPgn == trimmed) return;
+      if (!canonicalBroadcastUpdate &&
+          isInitialSeed &&
+          savedSourceSeedPgn.value == trimmed) {
+        return;
+      }
       if (trimmed.isEmpty) return;
       final initialFenKey = _nullableFenPositionKey(boardArgs?.initialFen);
+      if (boardArgs == null && !canonicalBroadcastUpdate) {
+        reportActivation.value = Object();
+        savedSourceSeedPgn.value = null;
+        hasCommittedSave.value = false;
+        reportRevealState.value = const GameReportRevealState();
+        reportRevealRevision.value++;
+      }
       final previousInitialFenKey = lastAppliedInitialFenKey.value;
       final notationStateTabId = activeTabId ?? 'board-default';
       final currentUserNags =
@@ -1804,6 +1857,7 @@ class _BoardPaneContent extends HookConsumerWidget {
               applyPgn(
                 args.pgn,
                 origin: 'tab:${args.label}',
+                isInitialSeed: true,
                 gameId: args.gameId,
                 canonicalBroadcastUpdate: shouldCanonicalizeBoardArgsPgn(
                   isDatabaseSnapshot: isDatabaseBoardSnapshot(args),
@@ -1853,6 +1907,7 @@ class _BoardPaneContent extends HookConsumerWidget {
             applyPgn(
               seed.pgn,
               origin: 'seed:${seed.path}',
+              isInitialSeed: true,
               gameId: seed.gameId,
             );
           });
@@ -2102,6 +2157,12 @@ class _BoardPaneContent extends HookConsumerWidget {
       final isTabSwitched = currentTabId != lastShapeTabId.value;
       if (activeGameId != lastAppliedGameId.value) {
         final priorGameId = lastAppliedGameId.value;
+        if (boardArgs == null) {
+          reportActivation.value = Object();
+          savedSourceSeedPgn.value = null;
+          hasCommittedSave.value = false;
+          reportRevealState.value = const GameReportRevealState();
+        }
         lastAppliedGameId.value = activeGameId;
         if (activeGameId != null) {
           lastAppliedPgn.value = null;
@@ -2699,16 +2760,18 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     bool gameHasMainline() => chessGame.value.mainline.isNotEmpty;
 
-    /// Completed report for the current mainline (if any). Used to hydrate
-    /// Copy PGN / Share / GIF with ChessEver classifications, matching mobile.
-    GameAnalysisReport? completedReportForCurrentGame() {
-      final report = gameReport.value;
-      if (report == null || report.moves.isEmpty) return null;
-      if (report.fingerprint != gameReportFingerprint(chessGame.value)) {
-        return null;
-      }
-      return report;
-    }
+    /// One opt-in boundary for every output and pristine-source decision.
+    /// Read reveal state at invocation, not from an older async build closure.
+    GameAnalysisReport? completedReportForCurrentGame() =>
+        eligibleBoardOutputReport(
+          game: chessGame.value,
+          report: gameReport.value,
+          explicitlyVisibleForActivation: allowGameAnalysis &&
+              reportRevealState.value.isVisibleFor((
+                reportActivation.value,
+                gameReportFingerprint(chessGame.value),
+              )),
+        );
 
     ChessGame hydrateGameWithReport(ChessGame game) {
       final report = completedReportForCurrentGame();
@@ -2725,15 +2788,87 @@ class _BoardPaneContent extends HookConsumerWidget {
           currentUserNags(),
         );
 
+    useEffect(() {
+      final tabId = activeTabId;
+      if (tabId == null) return null;
+      final readers = ref.read(boardPaneSnapshotReadersProvider);
+      ({Object? seed, BoardPaneSession session}) capture() => (
+        seed: boardArgs?.retainedSeedIdentity ?? boardArgs,
+        session: BoardPaneSession(
+          game: hydrateGameForUserOutput(chessGame.value),
+          pointer: List<int>.of(pointer.value),
+          pgnHeaders: Map<String, String>.of(pgnHeaders.value),
+          flipped: flipped.value,
+          loadedFrom: loadedFrom.value,
+          lastAppliedPgn: lastAppliedPgn.value,
+          lastAppliedGameId: lastAppliedGameId.value,
+          lastAppliedInitialFenKey: lastAppliedInitialFenKey.value,
+          dirtySinceLoad: dirtySinceLoad.value,
+          hasUnseenMoves: hasUnseenMoves.value,
+          undoStack: const [],
+          savedSourceSeedPgn: savedSourceSeedPgn.value,
+          hasCommittedSave: hasCommittedSave.value,
+          detachedSeedPgn: restoredSession?.detachedSeedPgn,
+        ),
+      );
+      readers[tabId] = capture;
+      return () {
+        if (identical(readers[tabId], capture)) readers.remove(tabId);
+      };
+    });
+
+    // Captured before any picker/dialog/write await. Successful completion
+    // promotes precisely those bytes, not a newer report or today's edits.
+    ({bool Function() ownsActivation, void Function(String) commit})
+        captureBoardSaveCompletion() {
+      final activation = reportActivation.value;
+
+      final seed = boardArgs?.retainedSeedIdentity ?? boardArgs;
+      final before = mergeUserMainlineNagsForGif(
+        chessGame.value, currentUserNags(),
+      );
+      bool ownsActivation() {
+        if (!context.mounted ||
+            !identical(activation, reportActivation.value)) {
+          return false;
+        }
+        if (activeTabId == null) return true;
+        final tabs = ref.read(desktopTabsProvider);
+        final args = ref.read(boardTabGameArgsByTabIdProvider)[activeTabId];
+        return tabs.tabs.any((tab) => tab.id == activeTabId) &&
+            identical(seed, args?.retainedSeedIdentity ?? args);
+      }
+      void commit(String pgn) {
+        if (!ownsActivation()) {
+          return;
+        }
+        final saved = ChessGame.fromPgn(before.gameId, pgn);
+        final current = mergeUserMainlineNagsForGif(
+          chessGame.value, currentUserNags(),
+        );
+        final rebased = rebaseBoardAfterSavedSnapshot(
+          before: before, saved: saved, current: current,
+        );
+        hasCommittedSave.value = true;
+        savedSourceSeedPgn.value ??= lastAppliedPgn.value;
+        lastAppliedPgn.value = pgn.trim();
+        chessGame.value = rebased;
+        pgnHeaders.value = rebased.metadata.map(
+          (key, value) => MapEntry(key, value?.toString() ?? ''),
+        );
+        dirtySinceLoad.value = exportGameToPgn(rebased).trim() != pgn.trim();
+      }
+      return (ownsActivation: ownsActivation, commit: commit);
+    }
+
     Future<void> copyPgnAction() async {
       if (!gameHasMainline()) {
         showToast('No PGN to copy yet — load a game first.');
         return;
       }
       try {
-        // Prefer a pristine source PGN only when there is no report to bake in
-        // and the tree has not grown variations. Once Game Analysis finishes,
-        // export must carry classic-glyph classifications (mobile parity).
+        // Hidden background completion must not displace the pristine source.
+        // Only explicitly revealed report enrichment participates in output.
         final report = completedReportForCurrentGame();
         final String pgn;
         final userNags = currentUserNags();
@@ -2797,45 +2932,32 @@ class _BoardPaneContent extends HookConsumerWidget {
       showToast('FEN copied to clipboard');
     }
 
-    Future<void> saveGameToLibraryAction() async {
+    Future<void> saveGameToLibraryActionImpl() async {
       if (!gameHasMainline()) {
         showToast('No game to save yet — load a game first.');
         return;
       }
-      // When the board tab originated from a live tournament card, route
-      // through the same `saveDesktopGameToLibrary` flow the right-click
-      // "Save to library" menu item uses on the game cards. Keeps PGN
-      // resolution + metadata enrichment identical across surfaces.
       final source = boardArgs?.sourceGame;
       final tournamentTitle = boardArgs?.tournamentTitle ?? '';
-      final userNags = currentUserNags();
-      final completedReport = completedReportForCurrentGame();
-      if (source != null &&
-          shouldUsePristineEventSourceForLibrarySave(
-            canSaveSource: canSaveDesktopGameToLibrary(source),
-            dirtySinceLoad: dirtySinceLoad.value,
-            hasUserNags: userNags.isNotEmpty,
-            hasCompletedReport: completedReport != null,
-          )) {
-        await saveDesktopGameToLibrary(
-          context: context,
-          ref: ref,
-          game: source,
-          sourceLabel:
-              tournamentTitle.trim().isEmpty
-                  ? 'finished game'
-                  : tournamentTitle,
-        );
-        return;
-      }
-      // Detached PGN (drag-drop, library re-open, scratch analysis) or a
-      // live game still in progress. Build a snapshot from the current
-      // analysis tree and hand it straight to the save dialog.
       try {
-        // Bake a finished report into the saved moves, exactly as Copy PGN
-        // does. The library row is what syncs to mobile, so without this the
-        // classifications would stay on this machine only.
-        final pgn = exportGameToPgn(hydrateGameForUserOutput(chessGame.value));
+        final saveCompletion = captureBoardSaveCompletion();
+        final useOpeningSource = source != null &&
+            shouldUsePristineEventSourceForLibrarySave(
+              canSaveSource: canSaveDesktopGameToLibrary(source),
+              dirtySinceLoad: dirtySinceLoad.value,
+              hasUserNags: currentUserNags().isNotEmpty,
+              hasCompletedReport: completedReportForCurrentGame() != null,
+              hasCommittedSave: hasCommittedSave.value,
+            );
+        // A clean committed baseline is no longer the opening card source.
+        final outputGame = await resolveBoardLibrarySaveGame(
+          useOpeningSource: useOpeningSource,
+          workingGame: hydrateGameForUserOutput(chessGame.value),
+          resolveOpeningSource: () =>
+              resolveDesktopChessGameForLibrary(ref, source!),
+        );
+        if (!context.mounted || !saveCompletion.ownsActivation()) return;
+        final pgn = exportGameToPgn(outputGame);
         final headers = pgnHeaders.value;
         final snapshot = ChessGame.fromPgn(
           activeGameId ??
@@ -2847,19 +2969,18 @@ class _BoardPaneContent extends HookConsumerWidget {
           startingFen: snapshot.startingFen,
           movesUci: boardEcoMainlineUcis(snapshot),
         );
-        if (source != null) {
-          metadata = mergeDesktopGameMetadataForLibrary(metadata, source);
+        if (source != null && !hasCommittedSave.value) {
+          metadata = {
+            ...mergeDesktopGameMetadataForLibrary({}, source),
+            ...metadata, // Current headers beat opening-card values.
+          };
         }
         metadata[ChessGame.metadataIsLiveKey] = false;
         metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
         final eventLabel = headers['Event']?.trim();
         final gameSnapshot = snapshot.copyWith(metadata: metadata);
-        final savingGame = chessGame.value;
-        final librarySaveOrigin =
-            boardArgs?.librarySaveOrigin ?? attachedLibrarySaveOrigin;
-        final isLocalPgnSaveOrigin =
-            librarySaveOrigin?.kind ==
-            BoardTabLibrarySaveOriginKind.localPgnFile;
+
+
         final outcome = await showLibrarySaveToFolderDialog(
           context: context,
           ref: ref,
@@ -2877,15 +2998,19 @@ class _BoardPaneContent extends HookConsumerWidget {
             boardArgs: boardArgs,
             attachedOrigin: attachedLibrarySaveOrigin,
             game: gameSnapshot,
+            isCurrentActivation: saveCompletion.ownsActivation,
           ),
-          destinationMode:
-              isLocalPgnSaveOrigin
-                  ? LibrarySaveDestinationMode.localOnly
-                  : LibrarySaveDestinationMode.cloudAndLocal,
+          destinationMode: LibrarySaveDestinationMode.cloudAndLocal,
         );
         if (!context.mounted || outcome == null || !outcome.didSave) return;
+        final committedGame = outcome.committedGame;
+        if (committedGame != null) {
+          saveCompletion.commit(exportGameToPgn(committedGame));
+        }
         final localUpdateTarget = outcome.localUpdateTarget;
-        if (localUpdateTarget != null && activeTabId != null) {
+        final cloudUpdateTarget = outcome.cloudUpdateTarget;
+        if ((localUpdateTarget != null || cloudUpdateTarget != null) &&
+            activeTabId != null) {
           final tabs = ref.read(desktopTabsProvider);
           final tabStillExists = tabs.tabs.any(
             (tab) => tab.id == activeTabId && tab.kind == TabKind.board,
@@ -2896,30 +3021,39 @@ class _BoardPaneContent extends HookConsumerWidget {
               ref.read(
                 boardTabAttachedLibrarySaveOriginByTabIdProvider,
               )[activeTabId];
-          final mayAttachLocalIdentity =
-              shouldAttachLocalPgnIdentityAfterSaveCompletion(
+          final mayAttachIdentity =
+              shouldAttachLibraryIdentityAfterSaveCompletion(
                 tabStillExists: tabStillExists,
-                gameStillMatches: identical(chessGame.value, savingGame),
+                gameStillMatches: saveCompletion.ownsActivation(),
                 savingArgs: boardArgs,
                 currentArgs: currentArgs,
                 savingAttachedOrigin: attachedLibrarySaveOrigin,
                 currentAttachedOrigin: currentAttachedOrigin,
-                hasLocalUpdateTarget: true,
+                hasUpdateTarget: true,
               );
-          if (!mayAttachLocalIdentity) {
+          if (!mayAttachIdentity) {
             showToast(outcome.toToastMessage());
             return;
           }
-          ref
-              .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
-              .attachLocalPgn(
-                tabId: activeTabId,
-                sourcePath: localUpdateTarget.sourcePath,
-                sourceIndex: localUpdateTarget.indexInFile,
-                sourceFileGameCount: localUpdateTarget.fileGameCount,
-                sourcePgnFingerprint: localUpdateTarget.pgnFingerprint,
-                title: _libraryGameTitle(gameSnapshot),
-              );
+          final origins = ref.read(
+            boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier,
+          );
+          if (cloudUpdateTarget != null) {
+            origins.attachCloudSavedAnalysis(
+              tabId: activeTabId,
+              origin: cloudUpdateTarget,
+            );
+          } else if (localUpdateTarget != null) {
+            origins.attachLocalPgn(
+              tabId: activeTabId,
+              sourcePath: localUpdateTarget.sourcePath,
+              sourceIndex: localUpdateTarget.indexInFile,
+              sourceFileGameCount: localUpdateTarget.fileGameCount,
+              sourcePgnFingerprint: localUpdateTarget.pgnFingerprint,
+              sourceRecordRevision: localUpdateTarget.recordRevision,
+              title: _libraryGameTitle(committedGame ?? gameSnapshot),
+            );
+          }
         }
         showToast(outcome.toToastMessage());
       } catch (e) {
@@ -2928,13 +3062,14 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
     }
 
-    Future<void> savePgnAction() async {
+    Future<void> savePgnActionImpl() async {
       if (!gameHasMainline()) {
         showToast('No PGN to save yet — load a game first.');
         return;
       }
       try {
-        // Same hydrate as Copy PGN: a .pgn written to disk carries the report.
+        final saveCompletion = captureBoardSaveCompletion();
+        // Same opt-in hydrate as Copy PGN.
         final pgn = exportGameToPgn(hydrateGameForUserOutput(chessGame.value));
         final headers = pgnHeaders.value;
         final defaultName = _suggestPgnFileName(headers);
@@ -2944,10 +3079,11 @@ class _BoardPaneContent extends HookConsumerWidget {
           type: FileType.custom,
           allowedExtensions: const ['pgn'],
         );
-        if (path == null) return;
+        if (path == null || !saveCompletion.ownsActivation()) return;
         final withExt =
             path.toLowerCase().endsWith('.pgn') ? path : '$path.pgn';
         await io.File(withExt).writeAsString(pgn, flush: true);
+        saveCompletion.commit(pgn);
         // Guard the toast — the await above pumped the event loop
         // and the pane could have unmounted before the file write
         // completed (tab closed, navigation, etc.).
@@ -2958,6 +3094,16 @@ class _BoardPaneContent extends HookConsumerWidget {
         showToast('Failed to save PGN: $e', error: true);
       }
     }
+
+    Future<void> runBoardSave(Future<void> Function() action) async {
+      if (!await boardSaveBoundary.tryRun(action) && context.mounted) {
+        showToast('A save is already in progress. Please wait.');
+      }
+    }
+
+    Future<void> saveGameToLibraryAction() =>
+        runBoardSave(saveGameToLibraryActionImpl);
+    Future<void> savePgnAction() => runBoardSave(savePgnActionImpl);
 
     void setMoveComment(ChessMovePointer target, String? comment) {
       if (target.isEmpty) return;
@@ -3554,8 +3700,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         final engineSettings =
             ref.read(engineSettingsProviderNew).valueOrNull ??
             const EngineSettings();
-        // Always bake a completed report into share/GIF PGN (not only when the
-        // Report panel is open) — same as mobile Copy/Share/GIF hydration.
+        // Share/GIF follows the same activation opt-in as Copy and Save.
         final baseShareGame = chessGame.value;
         final evaluatedShareGame = hydrateGameWithReport(baseShareGame);
         final shareGame = mergeUserMainlineNagsForGif(
@@ -5423,6 +5568,7 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
   required BoardTabGameArgs? boardArgs,
   required BoardTabLibrarySaveOrigin? attachedOrigin,
   required ChessGame game,
+  required bool Function() isCurrentActivation,
 }) {
   final origin = resolveBoardTabLibrarySaveOrigin(
     sourceOrigin: boardArgs?.librarySaveOrigin,
@@ -5440,8 +5586,14 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
                 : origin.title,
         subtitle: 'Cloud library',
         onUpdate: (updatedGame) async {
+          if (!isCurrentActivation()) {
+            throw StateError('The active Board game changed.');
+          }
           final repo = ref.read(libraryRepositoryProvider);
           final existing = await repo.getSavedAnalysis(analysisId);
+          if (!isCurrentActivation()) {
+            throw StateError('The active Board game changed.');
+          }
           if (existing == null) {
             throw StateError('Original cloud library game was not found.');
           }
@@ -5452,9 +5604,13 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
               updatedAt: DateTime.now(),
             ),
           );
-          ref.invalidate(libraryFoldersStreamProvider);
-          ref.invalidate(subscribedBooksProvider);
-          notifyCloudLibraryChanged(ref);
+          // The durable update succeeded. UI refresh must not turn it into a
+          // failed save if the owning Board was disposed while awaiting it.
+          if (context.mounted) {
+            ref.invalidate(libraryFoldersStreamProvider);
+            ref.invalidate(subscribedBooksProvider);
+            notifyCloudLibraryChanged(ref);
+          }
         },
       );
     case BoardTabLibrarySaveOriginKind.localPgnFile:
@@ -5480,56 +5636,82 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
           // mid-write. Reading `ref` after disposal would throw, which is what
           // previously let a committed update leave Library UI stale.
           final localLibrary = ref.read(localChessLibraryProvider.notifier);
+          final container = ProviderScope.containerOf(context, listen: false);
           final outcome = await updateLocalLibraryPgnGame(
             target: LocalLibraryGameUpdateTarget(
               sourcePath: sourcePath,
               indexInFile: sourceIndex,
               fileGameCount: sourceFileGameCount,
               pgnFingerprint: origin.sourcePgnFingerprint ?? '',
+              recordRevision: origin.sourceRecordRevision ?? '',
             ),
             game: updatedGame,
             repository: ref.read(localChessDatabaseRepositoryProvider),
           );
-          unawaited(localLibrary.refresh());
-          if (!context.mounted) return;
-          if (tabId != null) {
-            final tabs = ref.read(desktopTabsProvider);
-            final tabStillExists = tabs.tabs.any(
-              (tab) => tab.id == tabId && tab.kind == TabKind.board,
+          // Schedule cache maintenance independently of widget lifetime. Attach
+          // the committed revision synchronously below before any refresh await.
+          scheduleMicrotask(() {
+            unawaited(
+              localLibrary.refreshSavedFile(
+                outcome.sourcePath,
+                warning: outcome.cacheRefreshWarning,
+              ),
             );
-            final currentArgs =
-                ref.read(boardTabGameArgsByTabIdProvider)[tabId];
-            final currentAttachedOrigin =
-                ref.read(
-                  boardTabAttachedLibrarySaveOriginByTabIdProvider,
-                )[tabId];
-            // A scratch/detached Board carries null args on both sides, so the
-            // identity check still holds. Requiring non-null args here used to
-            // strand the pre-update fingerprint on such tabs, which then failed
-            // the external-change guard on the next update.
-            final mayAttachRefreshedOrigin =
-                shouldAttachRefreshedLocalPgnOriginAfterUpdate(
-                  tabStillExists: tabStillExists,
-                  updatingArgs: boardArgs,
-                  currentArgs: currentArgs,
-                  updatingOrigin: origin,
-                  currentAttachedOrigin: currentAttachedOrigin,
-                );
-            final refreshedTarget = outcome.updateTarget;
-            if (mayAttachRefreshedOrigin) {
-              ref
-                  .read(
-                    boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier,
-                  )
-                  .attachLocalPgn(
-                    tabId: tabId,
-                    sourcePath: refreshedTarget.sourcePath,
-                    sourceIndex: refreshedTarget.indexInFile,
-                    sourceFileGameCount: refreshedTarget.fileGameCount,
-                    sourcePgnFingerprint: refreshedTarget.pgnFingerprint,
-                    title: _libraryGameTitle(updatedGame),
+          });
+          try {
+            if (!context.mounted) return;
+            if (tabId != null) {
+              final tabs = ref.read(desktopTabsProvider);
+              final tabStillExists = tabs.tabs.any(
+                (tab) => tab.id == tabId && tab.kind == TabKind.board,
+              );
+              final currentArgs =
+                  ref.read(boardTabGameArgsByTabIdProvider)[tabId];
+              final currentAttachedOrigin =
+                  ref.read(
+                    boardTabAttachedLibrarySaveOriginByTabIdProvider,
+                  )[tabId];
+              // A scratch/detached Board carries null args on both sides, so the
+              // identity check still holds. Requiring non-null args here used to
+              // strand the pre-update fingerprint on such tabs, which then failed
+              // the external-change guard on the next update.
+              final mayAttachRefreshedOrigin =
+                  shouldAttachRefreshedLocalPgnOriginAfterUpdate(
+                    tabStillExists: tabStillExists,
+                    updatingArgs: boardArgs,
+                    currentArgs: currentArgs,
+                    updatingOrigin: origin,
+                    currentAttachedOrigin: currentAttachedOrigin,
                   );
+              final refreshedTarget = outcome.updateTarget;
+              if (mayAttachRefreshedOrigin && isCurrentActivation()) {
+                ref
+                    .read(
+                      boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier,
+                    )
+                    .attachLocalPgn(
+                      tabId: tabId,
+                      sourcePath: refreshedTarget.sourcePath,
+                      sourceIndex: refreshedTarget.indexInFile,
+                      sourceFileGameCount: refreshedTarget.fileGameCount,
+                      sourcePgnFingerprint: refreshedTarget.pgnFingerprint,
+                      sourceRecordRevision: refreshedTarget.recordRevision,
+                      title: _libraryGameTitle(updatedGame),
+                    );
+              }
             }
+          } finally {
+            publishRetainedLocalPgnCommit(
+              container,
+              previous: LocalLibraryGameUpdateTarget(
+                sourcePath: sourcePath,
+                indexInFile: sourceIndex,
+                fileGameCount: sourceFileGameCount,
+                pgnFingerprint: origin.sourcePgnFingerprint ?? '',
+                recordRevision: origin.sourceRecordRevision ?? '',
+              ),
+              outcome: outcome,
+            );
           }
         },
       );
@@ -9712,6 +9894,7 @@ BoardTabLibrarySaveOrigin? _boardLibrarySaveOriginForSummary(
     sourceIndex: source.sourceIndex,
     sourceFileGameCount: source.sourceFileGameCount,
     sourcePgnFingerprint: source.pgnFingerprint,
+    sourceRecordRevision: source.recordRevision,
     title: source.title,
   );
 }

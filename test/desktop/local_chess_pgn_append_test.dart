@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -679,6 +680,7 @@ void main() {
       final removed = await removeLocalPgnGamesFromFile(
         filePath: file.path,
         indexesInFile: {1},
+        expectedRecordRevisions: {1: localPgnRecordRevision(second)},
       );
 
       expect(removed, 1);
@@ -710,6 +712,7 @@ void main() {
         repository: repo,
         filePath: file.path,
         indexesInFile: {1},
+        expectedRecordRevisions: {1: localPgnRecordRevision(_secondPgn)},
       );
 
       expect(removed, 1);
@@ -756,6 +759,7 @@ void main() {
         repository: repo,
         filePath: file.path,
         indexesInFile: {0},
+        expectedRecordRevisions: {0: localPgnRecordRevision(_existingPgn)},
       );
 
       expect(removed, 1);
@@ -800,6 +804,7 @@ void main() {
           databasePath: file.path,
           indexInFile: 1,
           rawPgn: _replacementPgn,
+          expectedRecordRevision: localPgnRecordRevision(_secondPgn),
         );
 
         expect(replaced, isTrue);
@@ -874,6 +879,7 @@ void main() {
           expectedFileGameCount: 2,
           expectedPgnFingerprint: expectedFingerprint,
           rawPgn: _replacementPgn,
+          expectedRecordRevision: localPgnRecordRevision(_secondPgn),
         );
 
         expect(replaced, isFalse);

@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:country_picker/country_picker.dart';
@@ -221,7 +222,18 @@ void main() {
         overrides: [
           desktopBoardWindowServiceProvider.overrideWithValue(
             DesktopBoardWindowService(
-              createWindow: (payload) async => opened.add(payload),
+              createDetachedWindow: (payload) async {
+                opened.add(payload);
+                return DetachedBoardWindow(
+                  windowId: 'child',
+                  probe:
+                      (id) async => {
+                        'ready': true,
+                        'windowId': 'child',
+                        'transferId': id,
+                      },
+                );
+              },
             ),
           ),
         ],
@@ -250,7 +262,8 @@ void main() {
       overrides: [
         desktopBoardWindowServiceProvider.overrideWithValue(
           DesktopBoardWindowService(
-            createWindow: (_) async => throw StateError('window failed'),
+            createDetachedWindow:
+                (_) async => throw StateError('window failed'),
           ),
         ),
       ],
@@ -264,7 +277,7 @@ void main() {
 
     await expectLater(
       detachBoardTabToWindow(container, tabId),
-      throwsStateError,
+      completion(isFalse),
     );
 
     expect(

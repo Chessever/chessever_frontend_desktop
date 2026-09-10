@@ -279,18 +279,21 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     // flips `isScanning` on below.
     state = state.copyWith(error: null, warning: null);
     try {
-      final cached = await _loadFreshSourceBestEffort(
-        paths,
-        sourceLabel: sourceLabel,
-        onProgress: (progress) {
-          if (_scanToken != token) return;
-          state = state.copyWith(
-            isScanning: true,
-            scanProgress: progress,
-            error: null,
-          );
-        },
-      );
+      final cached =
+          forceRefresh
+              ? null
+              : await _loadFreshSourceBestEffort(
+                paths,
+                sourceLabel: sourceLabel,
+                onProgress: (progress) {
+                  if (_scanToken != token) return;
+                  state = state.copyWith(
+                    isScanning: true,
+                    scanProgress: progress,
+                    error: null,
+                  );
+                },
+              );
       if (_scanToken != token) return false;
 
       LocalChessSource? source = cached;
@@ -315,7 +318,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
                 .loadCompactOpeningTreeIndexForDatabase(
                   databasePath: immediatePgnPath,
                 );
-            if (compactTree != null && compactTree.isUsable) {
+            if (!forceRefresh && compactTree != null && compactTree.isUsable) {
               final replacement = _replaceFileNode(
                 preview.root,
                 _fileWithOpeningTreeIndex(previewFile, compactTree),
@@ -428,6 +431,24 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       sourceLabel: source.label,
       forceRefresh: true,
     );
+  }
+
+  /// Refresh the saved source, not whichever Library database is now active.
+  /// Inactive session snapshots must be evicted too or reopening them reuses
+  /// pre-save ranges and headers without checking the durable cache.
+  Future<void> refreshSavedFile(String path, {String? warning}) async {
+    final key = localChessInputPathKey(path);
+    final sessions = Map<String, LocalChessSource>.of(state.sessionSources)
+      ..removeWhere(
+        (_, source) =>
+            source.nodeForPath(path) != null ||
+            source.paths.any((value) => localChessInputPathKey(value) == key),
+      );
+    state = state.copyWith(sessionSources: Map.unmodifiable(sessions));
+    if (state.source?.nodeForPath(path) is LocalChessFileNode) {
+      await refreshFile(path);
+    }
+    if (warning != null) state = state.copyWith(warning: warning);
   }
 
   Future<bool> refreshFile(String path) async {
@@ -606,11 +627,12 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     final importToken = Object();
     _backgroundImportTokens[key] = importToken;
     final nextBackgroundImports = Map<String, LocalChessScanProgress>.of(
-      state.backgroundImports,
-    )..[key] = LocalChessScanProgress(
-      fraction: 0,
-      message: 'Preparing search...',
-    );
+        state.backgroundImports,
+      )
+      ..[key] = LocalChessScanProgress(
+        fraction: 0,
+        message: 'Preparing search...',
+      );
     state = state.copyWith(
       backgroundImports: Map<String, LocalChessScanProgress>.unmodifiable(
         nextBackgroundImports,

@@ -20,6 +20,7 @@ import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/local_pgn_atomic_write.dart';
+import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/time_control_classifier.dart';
@@ -33,6 +34,16 @@ import 'package:chessever/utils/local_pgn_metadata.dart';
 
 export 'package:chessever/repository/sqlite/local_chess_schema.dart'
     show createLocalChessDatabaseSchema;
+
+/// The physical write succeeded; callers must advance the Board save identity
+/// and surface a cache warning rather than invite a duplicate/retried save.
+final class LocalChessPgnSavedCacheRefreshException implements Exception {
+  const LocalChessPgnSavedCacheRefreshException();
+
+  @override
+  String toString() =>
+      'The PGN was saved, but its searchable cache needs a refresh.';
+}
 
 final class LocalChessPgnSourceChangedDuringAppend implements Exception {
   const LocalChessPgnSourceChangedDuringAppend(this.path);
@@ -2047,6 +2058,7 @@ class LocalChessDatabaseRepository {
     Future<resqlite.Database> Function()? purgeDatabase,
     this.slowPurgeBatchThreshold = _kSlowPurgeBatchThreshold,
     this.onSlowPurgeBatch,
+    this.debugPostMutationImport,
     this.eagerPositionRefLoadLimit = _kEagerPositionRefLoadLimit,
     this.eagerTreeMoveLoadLimit = _kEagerTreeMoveLoadLimit,
     this.cachedFileNodeGamePreviewLimit = _kCachedFileNodeGamePreviewLimit,
@@ -2059,6 +2071,8 @@ class LocalChessDatabaseRepository {
   final LocalChessDatabaseWithProgress? _databaseWithProgress;
   final LocalChessDatabaseFilePathResolver? _databaseFilePathResolver;
   final Future<resqlite.Database> Function()? _purgeDatabase;
+  @visibleForTesting
+  final Future<LocalChessSource> Function(String path)? debugPostMutationImport;
   final Duration slowPurgeBatchThreshold;
   final LocalChessPurgeDiagnosticSink? onSlowPurgeBatch;
   final int eagerPositionRefLoadLimit;
@@ -3090,6 +3104,10 @@ class LocalChessDatabaseRepository {
   /// and cache-persistence lifetime so overlapping commands cannot derive
   /// decisions from the same stale source snapshot.
   Future<T> runLocalPgnWriteQueued<T>(Future<T> Function() action) =>
+      _runLocalCacheWriteQueued(action);
+
+  /// File-only saves share the same queue even without a cache repository.
+  static Future<T> runLocalPgnFileWriteQueued<T>(Future<T> Function() action) =>
       _runLocalCacheWriteQueued(action);
 
   /// Rebuilds one cached PGN from its authoritative on-disk snapshot.
@@ -4892,502 +4910,201 @@ class LocalChessDatabaseRepository {
     return true;
   }
 
+  /// Replaces one physical record, never a reconstruction from cached rows.
+  /// Open the database before taking the queue: initialization may need it too.
   Future<bool?> replaceLocalPgnGame({
     required String databasePath,
     required int indexInFile,
     required String rawPgn,
     int? expectedFileGameCount,
     String? expectedPgnFingerprint,
+    String? expectedRecordRevision,
   }) async {
-    final replacementRawPgn = rawPgn.trim();
-    if (indexInFile < 0 || replacementRawPgn.isEmpty) return false;
-
-    final databaseId = _databaseId(databasePath);
     final db = await _database();
-    final databaseRows = await db.select(
-      '''
-      SELECT size_bytes, modified_at_ms
-      FROM $localChessDatabasesTable
-      WHERE id = ? AND deleted_at_ms IS NULL
-      LIMIT 1
-      ''',
-      <Object?>[databaseId],
-    );
-    if (databaseRows.isEmpty) return null;
-
-    final file = File(databasePath);
-    if (!await file.exists()) return null;
-    final currentStat = await file.stat();
-    final databaseRow = databaseRows.single;
-    if (_readInt(databaseRow['size_bytes']) != currentStat.size ||
-        _readNullableInt(databaseRow['modified_at_ms']) !=
-            currentStat.modified.millisecondsSinceEpoch) {
-      return null;
-    }
-    final expectedFileText = await file.readAsString();
-
-    final rows = await db.select(
-      '''
-      SELECT ${_localChessGameProjection('g')}
-      FROM $localChessGamesTable g
-      WHERE g.database_id = ?
-      ORDER BY g.index_in_file ASC
-      ''',
-      <Object?>[databaseId],
-    );
-    if (rows.isEmpty) return null;
-    if (expectedFileGameCount != null && rows.length != expectedFileGameCount) {
-      return false;
-    }
-
-    Map<String, Object?>? targetRow;
-    var targetOrdinal = -1;
-    for (final (ordinal, row) in rows.indexed) {
-      if (_readInt(row['index_in_file']) == indexInFile) {
-        targetRow = row;
-        targetOrdinal = ordinal;
-        break;
+    return _runLocalCacheWriteQueued(() async {
+      if (!databasePath.toLowerCase().endsWith('.pgn') ||
+          expectedRecordRevision == null ||
+          expectedRecordRevision.isEmpty) {
+        return false;
       }
-    }
-    if (targetRow == null) return false;
-
-    final targetId = targetRow['id'] as String;
-    final replacementFingerprint = localChessPgnFingerprint(replacementRawPgn);
-    final duplicateRows = await db.select(
-      '''
-      SELECT 1
-      FROM $localChessGamesTable
-      WHERE database_id = ?
-        AND pgn_hash = ?
-        AND id <> ?
-      LIMIT 1
-      ''',
-      <Object?>[databaseId, replacementFingerprint, targetId],
-    );
-    if (duplicateRows.isNotEmpty) return false;
-
-    final oldRawPgn = _rawPgnForRow(targetRow).trim();
-    if (oldRawPgn.isEmpty) return null;
-    final normalizedExpectedFingerprint = expectedPgnFingerprint?.trim() ?? '';
-    if (normalizedExpectedFingerprint.isNotEmpty &&
-        localChessPgnFingerprint(oldRawPgn) != normalizedExpectedFingerprint) {
-      return false;
-    }
-
-    final fileGameCount = rows.length;
-    final oldInput = LocalOpeningTreeGameInput(
-      id: targetId,
-      rawPgn: oldRawPgn,
-      sourcePath: databasePath,
-      sourceRelativePath: targetRow['source_relative_path'] as String,
-      fileName: targetRow['file_name'] as String,
-      indexInFile: targetOrdinal,
-      fileGameCount: fileGameCount,
-      sourceByteStart: _readNullableInt(targetRow['source_byte_start']),
-      sourceByteEnd: _readNullableInt(targetRow['source_byte_end']),
-    );
-    final newInput = LocalOpeningTreeGameInput(
-      id: targetId,
-      rawPgn: replacementRawPgn,
-      sourcePath: databasePath,
-      sourceRelativePath: targetRow['source_relative_path'] as String,
-      fileName: targetRow['file_name'] as String,
-      indexInFile: targetOrdinal,
-      fileGameCount: fileGameCount,
-    );
-
-    final treeMaxPly = await _currentTreeMaxPly(db, databaseId);
-    final oldDelta = await buildLocalOpeningTreeIndexWithDiagnosticsAsync(
-      treeId: 'local:${_stableId(databaseId)}:replace-old',
-      databaseId: databaseId,
-      maxPly: treeMaxPly,
-      includePositionGameRefs: true,
-      games: <LocalOpeningTreeGameInput>[oldInput],
-    );
-    if (oldDelta.skippedGames.isNotEmpty) return null;
-    final newDelta = await buildLocalOpeningTreeIndexWithDiagnosticsAsync(
-      treeId: 'local:${_stableId(databaseId)}:replace-new',
-      databaseId: databaseId,
-      maxPly: treeMaxPly,
-      includePositionGameRefs: true,
-      games: <LocalOpeningTreeGameInput>[newInput],
-    );
-    if (newDelta.skippedGames.isNotEmpty) return false;
-
-    final rootPath = _rootPathFromRelativePath(
-      databasePath,
-      targetRow['source_relative_path']?.toString(),
-    );
-    final parsedReplacement = localChessGameFromRawPgnChunk(
-      rawPgn: replacementRawPgn,
-      sourcePath: databasePath,
-      rootPath: rootPath,
-      indexInFile: targetOrdinal,
-      fileGameCount: fileGameCount,
-    );
-    if (parsedReplacement == null) return false;
-
-    final rewriteRows = <Map<String, Object?>>[
-      for (final (ordinal, row) in rows.indexed)
-        ordinal == targetOrdinal
-            ? <String, Object?>{
-              ...row,
-              'raw_pgn': replacementRawPgn,
-              'pgn_hash': replacementFingerprint,
-              'source_byte_start': null,
-              'source_byte_end': null,
-            }
-            : row,
-    ];
-    final rewrite = await _rewritePgnFileFromCachedRows(
-      databasePath,
-      rewriteRows,
-      expectedText: expectedFileText,
-    );
-    if (rewrite == null) return null;
-
-    final targetSpan = rewrite.spans.firstWhere(
-      (span) => span.gameId == targetId,
-    );
-    final replacementWithSpan = _localChessGameWithIdentity(
-      localChessGameFromRawPgnChunk(
-        rawPgn: replacementRawPgn,
-        sourcePath: databasePath,
-        rootPath: rootPath,
-        indexInFile: targetOrdinal,
-        fileGameCount: fileGameCount,
-        sourceByteStart: targetSpan.start,
-        sourceByteEnd: targetSpan.end,
-      )!,
-      targetId,
-    );
-    final nextStat = await file.stat();
-    final nextContentFingerprint =
-        await computeLocalChessFileContentFingerprint(
+      final file = File(databasePath);
+      final text = await file.readAsString();
+      // The validation input only needs a self-consistent span; the physical
+      // snapshot check below owns the real game-count contract.
+      final validationFileGameCount =
+          expectedFileGameCount != null && expectedFileGameCount > indexInFile
+              ? expectedFileGameCount
+              : indexInFile + 1;
+      final replacement = await buildLocalOpeningTreeIndexWithDiagnosticsAsync(
+        treeId: 'local:replacement-validation',
+        databaseId: _databaseId(databasePath),
+        games: <LocalOpeningTreeGameInput>[
+          LocalOpeningTreeGameInput(
+            id: 'replacement',
+            rawPgn: rawPgn,
+            sourcePath: databasePath,
+            sourceRelativePath: p.basename(databasePath),
+            fileName: p.basename(databasePath),
+            indexInFile: indexInFile,
+            fileGameCount: validationFileGameCount,
+          ),
+        ],
+      );
+      if (replacement.skippedGames.isNotEmpty) return false;
+      final String nextText;
+      try {
+        nextText = replaceLocalPgnRecordInSnapshot(
+          text: text,
+          indexInFile: indexInFile,
+          rawPgn: rawPgn,
+          expectedFileGameCount: expectedFileGameCount,
+          expectedPgnFingerprint: expectedPgnFingerprint,
+          expectedRecordRevision: expectedRecordRevision,
+        );
+      } on StateError {
+        return false;
+      }
+      final databaseId = _databaseId(databasePath);
+      final rows = await db.select(
+        'SELECT label FROM $localChessDatabasesTable WHERE id = ? AND deleted_at_ms IS NULL',
+        <Object?>[databaseId],
+      );
+      // Invalidate BEFORE committing the file. A crash or failed cache rebuild
+      // must never leave old ranges stamped as fresh. This is derived storage;
+      // even a rejected atomic replacement can safely leave it invalidated.
+      await db.execute(
+        'UPDATE $localChessDatabasesTable SET size_bytes = -1, modified_at_ms = NULL, content_fingerprint = NULL, tree_snapshot = NULL, tree_max_ply = NULL WHERE id = ?',
+        <Object?>[databaseId],
+      );
+      await writeLocalPgnAtomically(
+        file: file,
+        expectedText: text,
+        nextText: nextText,
+      );
+      try {
+        // Already-open shared connection, already inside the writer queue.
+        // Do not call importSingleFileSource here: its session initialization
+        // and in-flight import coalescing could wait on this same queue.
+        await _reconcileCommittedPgn(
           databasePath,
-          stat: nextStat,
+          sourceLabel: rows.isEmpty ? null : rows.single['label']?.toString(),
         );
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    await _lockedTransaction(db, (txn) async {
-      final updateOpeningTree = await _transactionHasUsableOpeningTreeMetadata(
-        txn,
-        databaseId,
-      );
-      await txn.execute(
-        'DELETE FROM $localChessPositionGamesTable WHERE database_id = ? AND game_id = ?',
-        <Object?>[databaseId, targetId],
-      );
-      await txn.execute(
-        'DELETE FROM $localChessGameAnalysisTable WHERE game_id = ?',
-        <Object?>[targetId],
-      );
-      await txn.execute(
-        'DELETE FROM $localChessGamesTable WHERE database_id = ? AND id = ?',
-        <Object?>[databaseId, targetId],
-      );
-      if (updateOpeningTree) {
-        await _subtractTreeDelta(txn, databaseId, oldDelta.index);
-        await _deleteUnreferencedTreeNodes(txn, databaseId);
-      }
-
-      final treeRow = newDelta.index.gameRowsById[targetId];
-      final playerNames = <String>{};
-      final eventNames = <String>{};
-      final siteNames = <String>{};
-      _addNormalizedName(
-        playerNames,
-        replacementWithSpan.game.metadata['White'] ?? treeRow?['white'],
-      );
-      _addNormalizedName(
-        playerNames,
-        replacementWithSpan.game.metadata['Black'] ?? treeRow?['black'],
-      );
-      _addNormalizedName(
-        eventNames,
-        replacementWithSpan.game.metadata['Event'] ?? treeRow?['event'],
-      );
-      _addNormalizedName(
-        siteNames,
-        replacementWithSpan.game.metadata['Site'] ?? treeRow?['site'],
-      );
-      final playerIds = await _idsForNames(
-        txn,
-        localChessPlayersTable,
-        playerNames,
-      );
-      final eventIds = await _idsForNames(
-        txn,
-        localChessEventsTable,
-        eventNames,
-      );
-      final siteIds = await _idsForNames(txn, localChessSitesTable, siteNames);
-      await _insertGameRows(
-        txn,
-        databaseId,
-        <LocalChessGame>[replacementWithSpan],
-        newDelta.index.gameRowsById,
-        playerIds: playerIds,
-        eventIds: eventIds,
-        siteIds: siteIds,
-      );
-      if (updateOpeningTree) {
-        await _upsertTreeDelta(txn, databaseId, newDelta.index);
-        await _insertPositionGameRefs(txn, databaseId, newDelta.index, <String>{
-          targetId,
-        });
-      }
-      await _executeBatchChunked(
-        txn,
-        '''
-        UPDATE $localChessGamesTable
-        SET
-          file_game_count = ?,
-          index_in_file = ?,
-          source_byte_start = ?,
-          source_byte_end = ?
-        WHERE database_id = ? AND id = ?
-        ''',
-        <List<Object?>>[
-          for (final (ordinal, span) in rewrite.spans.indexed)
-            <Object?>[
-              fileGameCount,
-              ordinal,
-              span.start,
-              span.end,
-              databaseId,
-              span.gameId,
-            ],
-        ],
-      );
-      var nextPositionCount = 0;
-      if (updateOpeningTree) {
-        final positionCountRows = await txn.select(
-          '''
-          SELECT COUNT(*) AS count
-          FROM $localChessTreeNodesTable
-          WHERE database_id = ?
-          ''',
-          <Object?>[databaseId],
+      } catch (error, stackTrace) {
+        // The PGN is committed. Never strand the Board's old save identity.
+        try {
+          await db.execute(
+            'UPDATE $localChessDatabasesTable SET size_bytes = -1, modified_at_ms = NULL, content_fingerprint = NULL, tree_snapshot = NULL, tree_max_ply = NULL WHERE id = ?',
+            <Object?>[databaseId],
+          );
+        } catch (invalidationError, invalidationStack) {
+          localChessLog.error(
+            'Could not invalidate saved PGN cache',
+            invalidationError,
+            invalidationStack,
+            tag: 'local_chess.update',
+          );
+        }
+        localChessLog.error(
+          'PGN saved; local cache requires refresh',
+          error,
+          stackTrace,
+          tag: 'local_chess.update',
+          context: <String, Object?>{'path': databasePath},
         );
-        nextPositionCount = _readInt(positionCountRows.single['count']);
+        throw const LocalChessPgnSavedCacheRefreshException();
       }
-      await txn.execute(
-        '''
-        UPDATE $localChessDatabasesTable
-        SET
-          size_bytes = ?,
-          modified_at_ms = ?,
-          content_fingerprint = ?,
-          game_count = ?,
-          position_count = ?,
-          tree_snapshot = NULL,
-          tree_max_ply = ?,
-          updated_at_ms = ?
-        WHERE id = ? AND deleted_at_ms IS NULL
-        ''',
-        <Object?>[
-          nextStat.size,
-          nextStat.modified.millisecondsSinceEpoch,
-          nextContentFingerprint,
-          fileGameCount,
-          nextPositionCount,
-          updateOpeningTree ? treeMaxPly : null,
-          now,
-          databaseId,
-        ],
-      );
+      return true;
     });
+  }
 
-    return true;
+  Future<void> _reconcileCommittedPgn(
+    String path, {
+    String? sourceLabel,
+  }) async {
+    final source =
+        debugPostMutationImport != null
+            ? await debugPostMutationImport!(path)
+            : await _importSingleLocalChessFileInline(
+              path: path,
+              sourceLabel: sourceLabel,
+              deduplicateGames: true,
+              writerRepository: this,
+            );
+    final nodes =
+        source.root.children
+            .whereType<LocalChessFileNode>()
+            .where((node) => node.path == path)
+            .toList();
+    if (nodes.length != 1 || !nodes.single.isOpenableDatabase) {
+      throw const LocalChessPgnSavedCacheRefreshException();
+    }
   }
 
   Future<int?> removeLocalPgnGames({
     required String databasePath,
     required Set<int> indexesInFile,
+    Map<int, String> expectedRecordRevisions = const {},
+    int? expectedFileGameCount,
   }) async {
     if (indexesInFile.isEmpty) return 0;
-    final databaseId = _databaseId(databasePath);
+    final selected = Set<int>.of(indexesInFile);
+    final revisions = Map<int, String>.of(expectedRecordRevisions);
     final db = await _database();
-    final databaseRows = await db.select(
-      '''
-      SELECT 1
-      FROM $localChessDatabasesTable
-      WHERE id = ? AND deleted_at_ms IS NULL
-      LIMIT 1
-      ''',
-      <Object?>[databaseId],
-    );
-    if (databaseRows.isEmpty) return null;
-
-    final rows = await db.select(
-      '''
-      SELECT ${_localChessGameProjection('g')}
-      FROM $localChessGamesTable g
-      WHERE g.database_id = ?
-      ORDER BY g.index_in_file ASC
-      ''',
-      <Object?>[databaseId],
-    );
-    if (rows.isEmpty) return null;
-
-    final deletedRows = <Map<String, Object?>>[];
-    final keptRows = <Map<String, Object?>>[];
-    for (final row in rows) {
-      if (indexesInFile.contains(_readInt(row['index_in_file']))) {
-        deletedRows.add(row);
-      } else {
-        keptRows.add(row);
+    return _runLocalCacheWriteQueued(() async {
+      if (!databasePath.toLowerCase().endsWith('.pgn')) {
+        throw UnsupportedError('Only PGN files support local deletion.');
       }
-    }
-    if (deletedRows.isEmpty) return 0;
-
-    final deletedInputs = <LocalOpeningTreeGameInput>[];
-    for (final row in deletedRows) {
-      final rawPgn = _rawPgnForRow(row).trim();
-      if (rawPgn.isEmpty) return null;
-      deletedInputs.add(
-        LocalOpeningTreeGameInput(
-          id: row['id'] as String,
-          rawPgn: rawPgn,
-          sourcePath: databasePath,
-          sourceRelativePath: row['source_relative_path'] as String,
-          fileName: row['file_name'] as String,
-          indexInFile: _readInt(row['index_in_file']),
-          fileGameCount: _readInt(row['file_game_count']),
-          sourceByteStart: _readNullableInt(row['source_byte_start']),
-          sourceByteEnd: _readNullableInt(row['source_byte_end']),
-        ),
+      final file = File(databasePath);
+      final text = await file.readAsString();
+      final nextText = removeLocalPgnRecordsFromSnapshot(
+        text: text,
+        indexesInFile: selected,
+        expectedRecordRevisions: revisions,
+        expectedFileGameCount: expectedFileGameCount,
       );
-    }
-    final treeMaxPly = await _currentTreeMaxPly(db, databaseId);
-    final deleteDelta = await buildLocalOpeningTreeIndexWithDiagnosticsAsync(
-      treeId: 'local:${_stableId(databaseId)}:delete',
-      databaseId: databaseId,
-      maxPly: treeMaxPly,
-      includePositionGameRefs: true,
-      games: deletedInputs,
-    );
-    if (deleteDelta.skippedGames.isNotEmpty) return null;
-
-    final expectedFileText = await File(databasePath).readAsString();
-    final rewrite = await _rewritePgnFileFromCachedRows(
-      databasePath,
-      keptRows,
-      expectedText: expectedFileText,
-    );
-    if (rewrite == null) return null;
-    final stat = await File(databasePath).stat();
-    final contentFingerprint =
-        keptRows.isEmpty
-            ? ''
-            : await computeLocalChessFileContentFingerprint(
-              databasePath,
-              stat: stat,
-            );
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final deletedIds = <String>{
-      for (final row in deletedRows) row['id'] as String,
-    };
-
-    await _lockedTransaction(db, (txn) async {
-      if (keptRows.isEmpty) {
-        await _deleteFileCache(txn, databasePath);
-        return;
-      }
-      final updateOpeningTree = await _transactionHasUsableOpeningTreeMetadata(
-        txn,
-        databaseId,
+      final databaseId = _databaseId(databasePath);
+      final rows = await db.select(
+        'SELECT label FROM $localChessDatabasesTable WHERE id = ?',
+        [databaseId],
       );
-
-      await _executeBatchChunked(
-        txn,
-        'DELETE FROM $localChessPositionGamesTable WHERE database_id = ? AND game_id = ?',
-        <List<Object?>>[
-          for (final id in deletedIds) <Object?>[databaseId, id],
-        ],
+      await db.execute(
+        'UPDATE $localChessDatabasesTable SET size_bytes = -1, modified_at_ms = NULL, content_fingerprint = NULL, tree_snapshot = NULL, tree_max_ply = NULL WHERE id = ?',
+        [databaseId],
       );
-      await _executeBatchChunked(
-        txn,
-        'DELETE FROM $localChessGameAnalysisTable WHERE game_id = ?',
-        <List<Object?>>[
-          for (final id in deletedIds) <Object?>[id],
-        ],
+      await writeLocalPgnAtomically(
+        file: file,
+        expectedText: text,
+        nextText: nextText,
       );
-      await _executeBatchChunked(
-        txn,
-        'DELETE FROM $localChessGamesTable WHERE database_id = ? AND id = ?',
-        <List<Object?>>[
-          for (final id in deletedIds) <Object?>[databaseId, id],
-        ],
-      );
-      if (updateOpeningTree) {
-        await _subtractTreeDelta(txn, databaseId, deleteDelta.index);
-        await _deleteUnreferencedTreeNodes(txn, databaseId);
-      }
-      await _executeBatchChunked(
-        txn,
-        '''
-        UPDATE $localChessGamesTable
-        SET
-          file_game_count = ?,
-          index_in_file = ?,
-          source_byte_start = ?,
-          source_byte_end = ?
-        WHERE database_id = ? AND id = ?
-        ''',
-        <List<Object?>>[
-          for (final (ordinal, span) in rewrite.spans.indexed)
-            <Object?>[
-              keptRows.length,
-              ordinal,
-              span.start,
-              span.end,
-              databaseId,
-              span.gameId,
-            ],
-        ],
-      );
-      var nextPositionCount = 0;
-      if (updateOpeningTree) {
-        final positionCountRows = await txn.select(
-          '''
-          SELECT COUNT(*) AS count
-          FROM $localChessTreeNodesTable
-          WHERE database_id = ?
-          ''',
-          <Object?>[databaseId],
+      try {
+        await _reconcileCommittedPgn(
+          databasePath,
+          sourceLabel: rows.isEmpty ? null : rows.single['label']?.toString(),
         );
-        nextPositionCount = _readInt(positionCountRows.single['count']);
+      } catch (error, stack) {
+        try {
+          await db.execute(
+            'UPDATE $localChessDatabasesTable SET size_bytes = -1, content_fingerprint = NULL, tree_snapshot = NULL, tree_max_ply = NULL WHERE id = ?',
+            [databaseId],
+          );
+        } catch (invalidationError, invalidationStack) {
+          localChessLog.error(
+            'Could not invalidate deleted PGN cache',
+            invalidationError,
+            invalidationStack,
+            tag: 'local_chess.delete',
+          );
+        }
+        localChessLog.error(
+          'PGN deleted; cache requires refresh',
+          error,
+          stack,
+          tag: 'local_chess.delete',
+        );
+        throw const LocalChessPgnSavedCacheRefreshException();
       }
-      await txn.execute(
-        '''
-        UPDATE $localChessDatabasesTable
-        SET
-          size_bytes = ?,
-          modified_at_ms = ?,
-          content_fingerprint = ?,
-          game_count = ?,
-          position_count = ?,
-          tree_snapshot = NULL,
-          tree_max_ply = ?,
-          updated_at_ms = ?
-        WHERE id = ? AND deleted_at_ms IS NULL
-        ''',
-        <Object?>[
-          stat.size,
-          stat.modified.millisecondsSinceEpoch,
-          contentFingerprint,
-          keptRows.length,
-          nextPositionCount,
-          updateOpeningTree ? treeMaxPly : null,
-          now,
-          databaseId,
-        ],
-      );
+      return selected.length;
     });
-
-    return deletedRows.length;
   }
 
   Future<List<MoveAggregate>> localMoveAggregatesForFen({
@@ -9111,181 +8828,6 @@ String _rootPathFromRelativePath(String databasePath, String? relativePath) {
   return p.joinAll(
     databaseParts.take(databaseParts.length - relativeParts.length),
   );
-}
-
-LocalChessGame _localChessGameWithIdentity(LocalChessGame game, String id) {
-  return LocalChessGame(
-    id: id,
-    game: game.game.copyWith(gameId: id),
-    rawPgn: game.inlineRawPgn,
-    sourcePath: game.sourcePath,
-    sourceRelativePath: game.sourceRelativePath,
-    fileName: game.fileName,
-    indexInFile: game.indexInFile,
-    fileGameCount: game.fileGameCount,
-    hasMoves: game.hasMoves,
-    moveLine: game.moveLine,
-    pgnFingerprint: game.pgnFingerprint,
-    sourceByteStart: game.sourceByteStart,
-    sourceByteEnd: game.sourceByteEnd,
-  );
-}
-
-String _rawPgnForRow(Map<String, Object?> row) {
-  final inline = row['raw_pgn']?.toString() ?? '';
-  if (inline.trim().isNotEmpty) return inline;
-  final path = row['source_path']?.toString();
-  final start = _readNullableInt(row['source_byte_start']);
-  final end = _readNullableInt(row['source_byte_end']);
-  if (path == null || path.isEmpty || start == null || end == null) return '';
-  if (end <= start) return '';
-  try {
-    final raf = File(path).openSync();
-    try {
-      raf.setPositionSync(start);
-      return utf8.decode(raf.readSync(end - start), allowMalformed: true);
-    } finally {
-      raf.closeSync();
-    }
-  } on Object {
-    return '';
-  }
-}
-
-Future<_PgnRewriteResult?> _rewritePgnFileFromCachedRows(
-  String databasePath,
-  List<Map<String, Object?>> rows, {
-  required String expectedText,
-}) async {
-  final buffer = StringBuffer();
-  final spans = <_PgnRewriteSpan>[];
-  var cursor = 0;
-  for (var i = 0; i < rows.length; i++) {
-    final row = rows[i];
-    final rawPgn = _rawPgnForRow(row).trim();
-    if (rawPgn.isEmpty) return null;
-    if (i > 0) {
-      buffer.write('\n\n');
-      cursor += 2;
-    }
-    final start = cursor;
-    buffer.write(rawPgn);
-    cursor += utf8.encode(rawPgn).length;
-    spans.add(
-      _PgnRewriteSpan(gameId: row['id'] as String, start: start, end: cursor),
-    );
-  }
-  if (rows.isNotEmpty) {
-    buffer.write('\n');
-  }
-  await writeLocalPgnAtomically(
-    file: File(databasePath),
-    expectedText: expectedText,
-    nextText: buffer.toString(),
-  );
-  return _PgnRewriteResult(spans);
-}
-
-Future<void> _subtractTreeDelta(
-  resqlite.Transaction tx,
-  String databaseId,
-  PlayerOpeningTreeIndex index,
-) async {
-  if (index.nodesById.isEmpty) return;
-  final fenKeys = index.nodesByFenKey.keys.toList(growable: false);
-  final persistedNodeIdsByFen = <String, int>{};
-  for (final chunk in _chunks(fenKeys, 800)) {
-    final placeholders = List<String>.filled(chunk.length, '?').join(', ');
-    final rows = await tx.select(
-      '''
-      SELECT fen_key, node_id
-      FROM $localChessTreeNodesTable
-      WHERE database_id = ? AND fen_key IN ($placeholders)
-      ''',
-      <Object?>[databaseId, ...chunk],
-    );
-    for (final row in rows) {
-      final fenKey = row['fen_key']?.toString();
-      if (fenKey == null || fenKey.isEmpty) continue;
-      persistedNodeIdsByFen[fenKey] = _readInt(row['node_id']);
-    }
-  }
-
-  final rows = <List<Object?>>[];
-  for (final node in index.nodesById.values) {
-    final persistedNodeId = persistedNodeIdsByFen[node.fenKey];
-    if (persistedNodeId == null) continue;
-    for (final move in node.moves) {
-      rows.add(<Object?>[
-        move.white,
-        move.black,
-        move.draws,
-        move.total,
-        databaseId,
-        persistedNodeId,
-        move.uci,
-      ]);
-    }
-  }
-  if (rows.isEmpty) return;
-  await _executeBatchChunked(tx, '''
-    UPDATE $localChessTreeMovesTable
-    SET
-      white = MAX(white - ?, 0),
-      black = MAX(black - ?, 0),
-      draws = MAX(draws - ?, 0),
-      total = MAX(total - ?, 0)
-    WHERE database_id = ? AND node_id = ? AND uci = ?
-    ''', rows);
-  await tx.execute(
-    '''
-    DELETE FROM $localChessTreeMovesTable
-    WHERE database_id = ? AND total <= 0
-    ''',
-    <Object?>[databaseId],
-  );
-}
-
-Future<void> _deleteUnreferencedTreeNodes(
-  resqlite.Transaction tx,
-  String databaseId,
-) async {
-  await tx.execute(
-    '''
-    DELETE FROM $localChessTreeNodesTable
-    WHERE database_id = ?
-      AND node_id <> 0
-      AND node_id NOT IN (
-        SELECT child_node_id
-        FROM $localChessTreeMovesTable
-        WHERE database_id = ?
-      )
-      AND node_id NOT IN (
-        SELECT node_id
-        FROM $localChessTreeMovesTable
-        WHERE database_id = ?
-      )
-    ''',
-    <Object?>[databaseId, databaseId, databaseId],
-  );
-}
-
-class _PgnRewriteResult {
-  const _PgnRewriteResult(this.spans);
-
-  final List<_PgnRewriteSpan> spans;
-}
-
-class _PgnRewriteSpan {
-  const _PgnRewriteSpan({
-    required this.gameId,
-    required this.start,
-    required this.end,
-  });
-
-  final String gameId;
-  final int start;
-  final int end;
 }
 
 String _stableId(String value) => sha1.convert(utf8.encode(value)).toString();

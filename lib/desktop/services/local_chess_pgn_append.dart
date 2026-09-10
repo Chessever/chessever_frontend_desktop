@@ -1,3 +1,4 @@
+import 'local_pgn_source.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -217,55 +218,42 @@ Future<int> appendPgnTextToLocalChessDatabaseFile({
 Future<int> removeLocalPgnGamesFromFile({
   required String filePath,
   required Set<int> indexesInFile,
-}) async {
+  Map<int, String> expectedRecordRevisions = const {},
+  int? expectedFileGameCount,
+}) => LocalChessDatabaseRepository.runLocalPgnFileWriteQueued(() async {
   _assertLocalPgnPath(filePath, action: 'Local delete');
   if (indexesInFile.isEmpty) return 0;
-
   final file = File(filePath);
-  if (!await file.exists()) {
-    throw FileSystemException('Local PGN file does not exist', filePath);
-  }
-
-  final existingText = await file.readAsString();
-  final parts = splitPgnGames(existingText.trim())
-      .map((part) => part.trim())
-      .where((part) => part.isNotEmpty)
-      .toList(growable: false);
-  if (parts.isEmpty) return 0;
-
-  final kept = <String>[];
-  var removed = 0;
-  for (var i = 0; i < parts.length; i++) {
-    if (indexesInFile.contains(i)) {
-      removed++;
-      continue;
-    }
-    kept.add(parts[i]);
-  }
-  if (removed == 0) return 0;
-
-  final nextText = kept.isEmpty ? '' : '${kept.join('\n\n')}\n';
-  await writeLocalPgnAtomically(
-    file: file,
-    expectedText: existingText,
-    nextText: nextText,
+  final text = await file.readAsString();
+  final next = removeLocalPgnRecordsFromSnapshot(
+    text: text,
+    indexesInFile: indexesInFile,
+    expectedRecordRevisions: expectedRecordRevisions,
+    expectedFileGameCount: expectedFileGameCount,
   );
-  return removed;
-}
+  await writeLocalPgnAtomically(file: file, expectedText: text, nextText: next);
+  return indexesInFile.length;
+});
 
 Future<int> removeLocalPgnGamesFromDatabaseFile({
   required LocalChessDatabaseRepository repository,
   required String filePath,
   required Set<int> indexesInFile,
+  Map<int, String> expectedRecordRevisions = const {},
+  int? expectedFileGameCount,
 }) async {
   final removed = await repository.removeLocalPgnGames(
     databasePath: filePath,
     indexesInFile: indexesInFile,
+    expectedRecordRevisions: expectedRecordRevisions,
+    expectedFileGameCount: expectedFileGameCount,
   );
   if (removed != null) return removed;
   return removeLocalPgnGamesFromFile(
     filePath: filePath,
     indexesInFile: indexesInFile,
+    expectedRecordRevisions: expectedRecordRevisions,
+    expectedFileGameCount: expectedFileGameCount,
   );
 }
 
