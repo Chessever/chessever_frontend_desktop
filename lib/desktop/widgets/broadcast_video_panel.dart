@@ -16,6 +16,7 @@ import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/state/broadcast_video_streams_provider.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:country_flags/country_flags.dart';
 
@@ -323,7 +324,12 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.active) {
+    // A hidden or minimised window is not a screen the user is viewing;
+    // YouTube's policies forbid a background player (III.I.9) and Twitch
+    // may disable autoplay for hidden embeds, so playback stops with the
+    // window and resumes when it is shown again.
+    final windowVisible = ref.watch(liveGameStreamingLifecycleProvider);
+    if (!widget.active || !windowVisible) {
       _scheduleStopPlayback();
       return const SizedBox.shrink();
     }
@@ -365,14 +371,18 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     final visible = preferences.visible ?? true;
     if (!visible) _scheduleStopPlayback();
     final groups = groupBroadcastVideoStreams(data.streams);
-    final watchUri =
-        data.source != null
-            ? broadcastVideoWatchUri(
-              scope: data.source!.scope,
-              scopeId: data.source!.id,
-              streamId: selected.id,
-            )
-            : Uri.parse(selected.url);
+    final watchUri = data.source != null
+        ? broadcastVideoWatchUri(
+            scope: data.source!.scope,
+            scopeId: data.source!.id,
+            streamId: selected.id,
+          )
+        : Uri.parse(selected.url);
+    // Player first, toolbar under it: every popover and tooltip the toolbar
+    // opens then falls downward over our own notation panel, never in front
+    // of the provider player. Both Twitch ("should not be obscured in any
+    // way by other page elements") and YouTube ("must not display overlays
+    // … in front of any part of a YouTube embedded player") forbid that.
     return DecoratedBox(
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: kDividerColor)),
@@ -380,6 +390,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (visible) _buildPlayer(selected, data.source),
           _BroadcastVideoToolbar(
             groups: groups,
             selectedId: selected.id,
@@ -388,10 +399,9 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
             onSelect: _selectStream,
             onToggle: () => _setVisible(!visible),
             onOpenWatch: () => unawaited(launchDesktopWebUrl(watchUri)),
-            onOpenSource:
-                () => unawaited(launchDesktopWebUrl(Uri.parse(selected.url))),
+            onOpenSource: () =>
+                unawaited(launchDesktopWebUrl(Uri.parse(selected.url))),
           ),
-          if (visible) _buildPlayer(selected, data.source),
         ],
       ),
     );
@@ -443,10 +453,9 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
         // 16:9 for the rail width, never below the provider's minimum player
         // height, and capped so the notation below keeps a usable share of
         // the rail on short windows.
-        final height =
-            (constraints.maxWidth * 9 / 16)
-                .clamp(provider.minHeight, math.max(340.0, provider.minHeight))
-                .toDouble();
+        final height = (constraints.maxWidth * 9 / 16)
+            .clamp(provider.minHeight, math.max(340.0, provider.minHeight))
+            .toDouble();
         return SizedBox(
           height: height,
           width: double.infinity,
@@ -525,22 +534,22 @@ class _BroadcastVideoToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Extra bottom room for the count badge, which hangs below its flag so
+    // nothing of ours reaches up into the player above.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
       child: LayoutBuilder(
         builder: (context, constraints) {
           // The trailing actions are fixed; only the remaining width can hold
           // language slots.
           const actionsWidth = 106.0;
           final flagsWidth = constraints.maxWidth - actionsWidth;
-          final capacity =
-              flagsWidth <= 0
-                  ? 0
-                  : ((flagsWidth + _gap) / (_slot + _gap)).floor();
-          final visibleCount =
-              capacity >= groups.length
-                  ? groups.length
-                  : (capacity - 1).clamp(0, groups.length);
+          final capacity = flagsWidth <= 0
+              ? 0
+              : ((flagsWidth + _gap) / (_slot + _gap)).floor();
+          final visibleCount = capacity >= groups.length
+              ? groups.length
+              : (capacity - 1).clamp(0, groups.length);
           final visibleGroups = groups.take(visibleCount).toList();
           final hiddenGroups = groups.skip(visibleCount).toList();
           return Row(
@@ -579,10 +588,9 @@ class _BroadcastVideoToolbar extends StatelessWidget {
               ),
               const SizedBox(width: 2),
               _RailIconButton(
-                icon:
-                    visible
-                        ? Icons.videocam_rounded
-                        : Icons.videocam_off_rounded,
+                icon: visible
+                    ? Icons.videocam_rounded
+                    : Icons.videocam_off_rounded,
                 tooltip: visible ? 'Hide video' : 'Show video',
                 selected: visible,
                 onPress: onToggle,
@@ -662,8 +670,14 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
     });
   }
 
-  Widget _withTooltip(String? message, Widget child) =>
-      message == null ? child : DesktopTooltip(message: message, child: child);
+  Widget _withTooltip(String? message, Widget child) => message == null
+      ? child
+      : DesktopTooltip(
+          message: message,
+          tipAnchor: Alignment.topCenter,
+          childAnchor: Alignment.bottomCenter,
+          child: child,
+        );
 
   @override
   Widget build(BuildContext context) {
@@ -672,27 +686,25 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
     final selected = widget.group.streams.any(
       (stream) => stream.id == widget.selectedId,
     );
-    final tooltip =
-        multiple
-            ? '${widget.group.label} · ${widget.group.streams.length} streams'
-            : '${widget.group.label} · ${broadcastVideoStreamTitle(primary)}';
+    final tooltip = multiple
+        ? '${widget.group.label} · ${widget.group.streams.length} streams'
+        : '${widget.group.label} · ${broadcastVideoStreamTitle(primary)}';
     return FTheme(
       data: FThemes.zinc.dark,
       child: FPopover(
         controller: _menuController,
-        popoverBuilder:
-            (context, _) => MouseRegion(
-              onEnter: (_) => _cancelClose(),
-              onExit: (_) => _closeMenuSoon(),
-              child: _GroupStreamMenu(
-                group: widget.group,
-                selectedId: widget.selectedId,
-                onSelect: (stream) {
-                  _closeMenu();
-                  widget.onSelect(stream);
-                },
-              ),
-            ),
+        popoverBuilder: (context, _) => MouseRegion(
+          onEnter: (_) => _cancelClose(),
+          onExit: (_) => _closeMenuSoon(),
+          child: _GroupStreamMenu(
+            group: widget.group,
+            selectedId: widget.selectedId,
+            onSelect: (stream) {
+              _closeMenu();
+              widget.onSelect(stream);
+            },
+          ),
+        ),
         child: MouseRegion(
           onEnter: (_) => _openMenu(),
           onExit: (_) => _closeMenuSoon(),
@@ -756,44 +768,29 @@ class _FlagButton extends StatelessWidget {
           final hovered = states.contains(WidgetState.hovered);
           final pressed = states.contains(WidgetState.pressed);
           final focused = states.contains(WidgetState.focused);
-          final border =
-              selected || focused
-                  ? kPrimaryColor
-                  : (hovered
-                      ? kWhiteColor.withValues(alpha: 0.28)
-                      : kDividerColor);
+          final border = selected || focused
+              ? kPrimaryColor
+              : (hovered ? kWhiteColor.withValues(alpha: 0.28) : kDividerColor);
           return Container(
             width: 30,
             height: 30,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color:
-                  selected
-                      ? kPrimaryColor.withValues(alpha: 0.12)
-                      : (hovered || pressed
-                          ? kBlack3Color
-                          : Colors.transparent),
+              color: selected
+                  ? kPrimaryColor.withValues(alpha: 0.12)
+                  : (hovered || pressed ? kBlack3Color : Colors.transparent),
               border: Border.all(color: border),
             ),
             child: child,
           );
         },
-        child:
-            code == null
-                ? const Icon(
-                  Icons.language_rounded,
-                  size: 16,
-                  color: kWhiteColor70,
-                )
-                : CountryFlag.fromCountryCode(
-                  code,
-                  theme: const ImageTheme(
-                    width: 20,
-                    height: 20,
-                    shape: Circle(),
-                  ),
-                ),
+        child: code == null
+            ? const Icon(Icons.language_rounded, size: 16, color: kWhiteColor70)
+            : CountryFlag.fromCountryCode(
+                code,
+                theme: const ImageTheme(width: 20, height: 20, shape: Circle()),
+              ),
       ),
     );
   }
@@ -813,7 +810,7 @@ class _StreamCountBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Transform.translate(
-      offset: const Offset(-4, -10),
+      offset: const Offset(-4, 8),
       child: FTheme(
         data: FThemes.zinc.dark,
         child: FTappable(
@@ -828,10 +825,9 @@ class _StreamCountBadge extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 4),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color:
-                    hovered || focused
-                        ? kPrimaryColor.withValues(alpha: 0.18)
-                        : kBlack2Color,
+                color: hovered || focused
+                    ? kPrimaryColor.withValues(alpha: 0.18)
+                    : kBlack2Color,
                 borderRadius: BorderRadius.circular(9),
                 border: Border.all(color: kPrimaryColor),
               ),
@@ -884,17 +880,18 @@ class _OverflowLanguageButtonState extends State<_OverflowLanguageButton>
       data: FThemes.zinc.dark,
       child: FPopover(
         controller: _controller,
-        popoverBuilder:
-            (context, _) => _OverflowMenu(
-              groups: widget.groups,
-              selectedId: widget.selectedId,
-              onSelect: (stream) {
-                _controller.hide();
-                widget.onSelect(stream);
-              },
-            ),
+        popoverBuilder: (context, _) => _OverflowMenu(
+          groups: widget.groups,
+          selectedId: widget.selectedId,
+          onSelect: (stream) {
+            _controller.hide();
+            widget.onSelect(stream);
+          },
+        ),
         child: DesktopTooltip(
           message: 'More video languages',
+          tipAnchor: Alignment.topCenter,
+          childAnchor: Alignment.bottomCenter,
           child: _RailIconButton(
             icon: Icons.keyboard_arrow_down_rounded,
             tooltip: '',
@@ -1057,10 +1054,9 @@ class _MenuRow extends StatelessWidget {
           final focused = states.contains(WidgetState.focused);
           return Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            color:
-                selected
-                    ? kPrimaryColor.withValues(alpha: 0.12)
-                    : (hovered || focused ? kBlack3Color : Colors.transparent),
+            color: selected
+                ? kPrimaryColor.withValues(alpha: 0.12)
+                : (hovered || focused ? kBlack3Color : Colors.transparent),
             child: Row(
               children: [
                 Expanded(
@@ -1112,14 +1108,12 @@ class _RailIconButton extends StatelessWidget {
           final hovered = states.contains(WidgetState.hovered);
           final pressed = states.contains(WidgetState.pressed);
           final focused = states.contains(WidgetState.focused);
-          final background =
-              selected
-                  ? kPrimaryColor.withValues(alpha: hovered ? 0.16 : 0.10)
-                  : (hovered || pressed ? kBlack3Color : Colors.transparent);
-          final foreground =
-              selected
-                  ? kPrimaryColor
-                  : (hovered ? kWhiteColor : kWhiteColor70);
+          final background = selected
+              ? kPrimaryColor.withValues(alpha: hovered ? 0.16 : 0.10)
+              : (hovered || pressed ? kBlack3Color : Colors.transparent);
+          final foreground = selected
+              ? kPrimaryColor
+              : (hovered ? kWhiteColor : kWhiteColor70);
           return Container(
             width: 30,
             height: 30,
@@ -1128,10 +1122,9 @@ class _RailIconButton extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               color: background,
               border: Border.all(
-                color:
-                    selected || focused
-                        ? kPrimaryColor.withValues(alpha: 0.35)
-                        : Colors.transparent,
+                color: selected || focused
+                    ? kPrimaryColor.withValues(alpha: 0.35)
+                    : Colors.transparent,
               ),
             ),
             child: Icon(icon, size: 17, color: foreground),
@@ -1140,6 +1133,11 @@ class _RailIconButton extends StatelessWidget {
       ),
     );
     if (tooltip.isEmpty) return button;
-    return DesktopTooltip(message: tooltip, child: button);
+    return DesktopTooltip(
+      message: tooltip,
+      tipAnchor: Alignment.topCenter,
+      childAnchor: Alignment.bottomCenter,
+      child: button,
+    );
   }
 }
