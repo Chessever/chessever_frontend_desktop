@@ -862,6 +862,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     reportRevealState.value = activeReportReveal;
     final reportRunning = useState(false);
     final gameReport = useState<GameAnalysisReport?>(null);
+    final reportResetRevision = useState(0);
     final gameReportVisible =
         allowGameAnalysis &&
         activeReportReveal.isVisibleFor(currentReportRevealKey);
@@ -2698,10 +2699,6 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     bool gameHasMainline() => chessGame.value.mainline.isNotEmpty;
 
-    bool gameHasUserVariations() {
-      return _gameHasUserVariations(chessGame.value);
-    }
-
     /// Completed report for the current mainline (if any). Used to hydrate
     /// Copy PGN / Share / GIF with ChessEver classifications, matching mobile.
     GameAnalysisReport? completedReportForCurrentGame() {
@@ -3127,40 +3124,60 @@ class _BoardPaneContent extends HookConsumerWidget {
     });
 
     Future<void> resetEditsAction() async {
-      final hasVars = gameHasUserVariations();
-      if (!hasVars && !hasShapes && !hasUserNags) {
+      final currentGame = chessGame.value;
+      final hasDetachedAnalysis =
+          currentGame.detachedRootAnalysis?.any((line) => line.isNotEmpty) ??
+          false;
+      final hasVars = _gameHasVariations(currentGame) || hasDetachedAnalysis;
+      final hasComments =
+          _gameHasComments(currentGame) ||
+          _gameHasMachineAnnotations(currentGame);
+      final hasMoveNags = _gameHasNags(currentGame);
+      final hasReportAnalysis =
+          completedReportForCurrentGame() != null || reportRunning.value;
+      final hasTreeAnalysis = gameHasClearableAnalysis(currentGame);
+      if (!hasTreeAnalysis &&
+          !hasShapes &&
+          !hasUserNags &&
+          !hasReportAnalysis) {
         showToast('Nothing to reset');
         return;
       }
       final confirmed = await showResetEditsConfirmation(
         context,
         hasVariations: hasVars,
+        hasComments: hasComments,
         hasShapes: hasShapes,
-        hasNags: hasUserNags,
+        hasNags: hasMoveNags || hasUserNags,
+        hasReport: hasReportAnalysis,
       );
       if (!confirmed) return;
       if (!context.mounted) return;
-      // Re-snapshot post-confirmation: a broadcast tick may have arrived
-      // during the dialog and reshaped the tree (the merge in `applyPgn`
-      // runs concurrently). Re-check before stripping so we don't wipe a
-      // freshly-merged broadcaster variation.
+      // Re-snapshot after confirmation: a live update may have reshaped the
+      // tree while the dialog was open. Preserve the raw mainline, but remove
+      // every PGN comment, NAG, and variation currently attached to it.
       final freshGame = chessGame.value;
-      if (_gameHasUserVariations(freshGame)) {
+      if (gameHasClearableAnalysis(freshGame)) {
         pushUndoSnapshot();
-        final stripped = freshGame.copyWith(
-          mainline: _stripUserVariations(freshGame.mainline),
-        );
+        final cleared = clearGameAnalysis(freshGame);
         final nextPointer =
-            _isPointerValid(stripped, pointer.value)
+            _isPointerValid(cleared, pointer.value)
                 ? pointer.value
-                : _truncateToValidPointer(stripped, pointer.value);
-        chessGame.value = stripped;
+                : _truncateToValidPointer(cleared, pointer.value);
+        chessGame.value = cleared;
         pointer.value = nextPointer;
       }
+      gameReport.value = null;
+      reportRunning.value = false;
+      reportRevealState.value = GameReportRevealState(
+        gameFingerprint: currentReportRevealKey,
+      );
+      reportRevealRevision.value++;
+      reportResetRevision.value++;
       ref.read(boardAnnotationsProvider(editsTabId).notifier).clear();
       ref.read(userMoveNagsProvider.notifier).clearTab(editsTabId);
       dirtySinceLoad.value = true;
-      showToast('Reset all edits');
+      showToast('Analysis cleared');
     }
 
     void openBoardSettingsTab() {
@@ -3455,7 +3472,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           hasShapesState.positionShapes.isNotEmpty;
       final hasNags =
           (ref.read(userMoveNagsProvider)[editsTabId] ?? const {}).isNotEmpty;
-      if (!gameHasUserVariations() &&
+      if (!_gameHasVariations(chessGame.value) &&
           !hasShapes &&
           !hasNags &&
           !_gameHasCommentsOrNags(chessGame.value)) {
@@ -3781,10 +3798,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         );
         return;
       }
-      final landing = _pointerForUciPath(
-        insertion.game,
-        insertion.landingPath,
-      );
+      final landing = _pointerForUciPath(insertion.game, insertion.landingPath);
       if (landing == null) {
         showToast('Could not insert the complete game.', error: true);
         return;
@@ -4672,6 +4686,17 @@ class _BoardPaneContent extends HookConsumerWidget {
         onSaveGameToLibrary: () => unawaited(saveGameToLibraryAction()),
         onOpenBoardSettings: openBoardSettingsTab,
         onOpenPositionSetup: openPositionSetup,
+        onClearAnalysis:
+            shouldOfferClearAnalysis(
+                  game: chessGame.value,
+                  hasShapes: hasShapes,
+                  hasUserNags: hasUserNags,
+                  hasGameReport:
+                      completedReportForCurrentGame() != null ||
+                      reportRunning.value,
+                )
+                ? () => unawaited(resetEditsAction())
+                : null,
         canCopyOrSavePgn: chessGame.value.mainline.isNotEmpty,
         boardFocusMode: boardFocusMode,
         showBoardFocusAction: !pictureInPictureMode,
@@ -5080,6 +5105,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                         onReportChanged: (report) {
                           gameReport.value = report;
                         },
+                        reportResetRevision: reportResetRevision.value,
                         onReportRunningChanged: (running) {
                           if (!context.mounted) return;
                           if (reportRunning.value != running) {
@@ -7768,32 +7794,67 @@ bool _isPromotionPawnMove(Position position, NormalMove move) {
       (move.to.rank == Rank.eighth && position.turn == Side.white);
 }
 
-/// True when [game]'s tree carries any user-grown sub-variations — i.e.
-/// any move with a non-empty `variations` list. The shipped PGN may
-/// also include broadcaster-authored variations; we don't try to
-/// distinguish here so "Clear my variations" stays a single
-/// destructive action.
-bool _gameHasUserVariations(ChessGame game) {
-  for (final move in game.mainline) {
-    if (_moveHasVariations(move)) return true;
-  }
-  return false;
+@visibleForTesting
+bool shouldOfferClearAnalysis({
+  required ChessGame game,
+  required bool hasShapes,
+  required bool hasUserNags,
+  required bool hasGameReport,
+}) =>
+    gameHasClearableAnalysis(game) || hasShapes || hasUserNags || hasGameReport;
+
+/// Whether the loaded PGN contains annotations beyond its raw mainline.
+/// Board arrows/circles and user-overlay NAGs live in providers and are checked
+/// separately by the owning pane.
+@visibleForTesting
+bool gameHasClearableAnalysis(ChessGame game) {
+  return _gameHasVariations(game) ||
+      _gameHasComments(game) ||
+      _gameHasNags(game) ||
+      _gameHasMachineAnnotations(game) ||
+      (game.detachedRootAnalysis?.any((line) => line.isNotEmpty) ?? false);
 }
 
-bool _moveHasVariations(ChessMove move) {
-  final vars = move.variations;
-  if (vars != null && vars.isNotEmpty) return true;
-  return false;
-}
+bool _gameHasVariations(ChessGame game) =>
+    game.mainline.any(_moveHasVariations);
 
-/// Strip every variation from [line] recursively. Used by Clear analysis
-/// to wipe both top-level branches and any nested sub-variations the
-/// user grew under them.
-ChessLine _stripUserVariations(ChessLine line) {
-  return [
-    for (final move in line)
-      move.copyWith(variations: null, overrideVariations: true),
-  ];
+bool _gameHasComments(ChessGame game) => game.mainline.any(
+  (move) => move.comments?.any((comment) => comment.trim().isNotEmpty) ?? false,
+);
+
+bool _gameHasNags(ChessGame game) =>
+    game.mainline.any((move) => move.nags?.isNotEmpty ?? false);
+
+bool _gameHasMachineAnnotations(ChessGame game) => game.mainline.any(
+  (move) =>
+      (move.eval?.trim().isNotEmpty ?? false) ||
+      (move.clockTime?.trim().isNotEmpty ?? false),
+);
+
+bool _moveHasVariations(ChessMove move) => move.variations?.isNotEmpty ?? false;
+
+/// Return the same game when clean; otherwise preserve metadata and the raw
+/// mainline while removing comments, NAGs, evaluations, clocks, and every side
+/// or detached-root variation.
+@visibleForTesting
+ChessGame clearGameAnalysis(ChessGame game) {
+  if (!gameHasClearableAnalysis(game)) return game;
+  return game.copyWith(
+    mainline: <ChessMove>[
+      for (final move in game.mainline)
+        ChessMove(
+          num: move.num,
+          fen: move.fen,
+          san: move.san,
+          uci: move.uci,
+          turn: move.turn,
+          comments: const <String>[],
+          nags: const <int>[],
+        ),
+    ],
+    detachedRootAnalysis: null,
+    overrideDetachedRootAnalysis: true,
+  );
 }
 
 /// Suggest a default filename for "Save PGN to file…" — pulls from PGN

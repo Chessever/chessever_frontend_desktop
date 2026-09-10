@@ -116,7 +116,10 @@ void main() {
       // Both text-tab siblings use the same quiet selected foreground, not
       // invented icons or Games-only styling. Hover/focus stays discoverable.
       expect(tab, contains('widget.selected || _hovered || _focused'));
-      expect(tab, contains('widget.selected ? FontWeight.w700 : FontWeight.w600'));
+      expect(
+        tab,
+        contains('widget.selected ? FontWeight.w700 : FontWeight.w600'),
+      );
       expect(tab, isNot(contains('Icon(')));
       expect(tab, contains('selected: widget.selected'));
       expect(tab, contains('label: _label'));
@@ -129,4 +132,73 @@ void main() {
       expect(tab, isNot(contains('TextDecoration.underline')));
     },
   );
+
+  test('event rail keeps team names in matchup header, not player rows', () {
+    final rail = source('lib/desktop/widgets/event_games_table.dart');
+    final playerLine = section(
+      rail,
+      'class _EventGamePlayerLine ',
+      'Color _eventGameResultColor',
+    );
+    expect(playerLine, contains('_PlayerCell('));
+    expect(playerLine, isNot(contains('whiteTeam')));
+    expect(playerLine, isNot(contains('blackTeam')));
+    final matchupHeader = section(
+      rail,
+      'class _EventMatchupHeader ',
+      'enum _GameRowAction',
+    );
+    expect(matchupHeader, contains('title'));
+  });
+
+  test('round header always reserves date and start time beside its name', () {
+    final rail = source('lib/desktop/widgets/event_games_table.dart');
+    final header = section(
+      rail,
+      'class _EventRoundHeaderState ',
+      'class _EventMatchupHeader',
+    );
+    expect(header, contains("DateFormat('d MMM yyyy HH:mm')"));
+    expect(header, isNot(contains('group.status != RoundStatus.upcoming')));
+    expect(header, contains('Expanded('));
+    expect(header, contains('group.title'));
+    expect(header, contains('overflow: TextOverflow.ellipsis'));
+    expect(
+      header.indexOf('group.title'),
+      lessThan(header.indexOf('if (subtitle.isNotEmpty)')),
+    );
+  });
+
+  test('board menu clears matching Game Report state before user output', () {
+    final board = source('lib/desktop/panes/board_pane.dart');
+    final reset = section(
+      board,
+      'Future<void> resetEditsAction()',
+      'void openBoardSettingsTab()',
+    );
+    expect(reset, contains('completedReportForCurrentGame() != null'));
+    expect(reset, contains('gameReport.value = null'));
+    expect(reset, contains('reportRunning.value = false'));
+    expect(reset, contains('reportResetRevision.value++'));
+    expect(reset, contains('reportRevealState.value = GameReportRevealState('));
+    expect(board, contains('reportResetRevision: reportResetRevision.value'));
+
+    final engine = source('lib/desktop/widgets/engine_panel.dart');
+    expect(engine, contains('final int reportResetRevision'));
+    expect(
+      engine,
+      contains('oldWidget.reportResetRevision != widget.reportResetRevision'),
+    );
+    expect(engine, contains('_reportController.invalidate()'));
+    expect(engine, contains('_autoStartedFingerprint = nextFingerprint'));
+  });
+
+  test('board menu exposes Clear analysis only through optional callback', () {
+    final menu = source('lib/desktop/widgets/board_context_menu.dart');
+    expect(menu, contains('VoidCallback? onClearAnalysis'));
+    expect(menu, contains('if (onClearAnalysis != null)'));
+    expect(menu, contains("label: 'Clear analysis'"));
+    expect(menu, contains('BoardActionKey.clearAnalysis'));
+    expect(menu, contains('onClearAnalysis?.call()'));
+  });
 }

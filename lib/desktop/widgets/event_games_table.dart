@@ -5795,9 +5795,9 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
   Widget build(BuildContext context) {
     final group = widget.group;
     final subtitle =
-        group.status != RoundStatus.upcoming || group.startsAt == null
+        group.startsAt == null
             ? ''
-            : DateFormat('MMM d · HH:mm').format(group.startsAt!.toLocal());
+            : DateFormat('d MMM yyyy HH:mm').format(group.startsAt!.toLocal());
 
     return ClickCursor(
       child: MouseRegion(

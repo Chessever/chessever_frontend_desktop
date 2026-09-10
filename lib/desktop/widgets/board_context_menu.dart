@@ -13,6 +13,7 @@ enum _BoardContextAction {
   copyFen,
   saveGameToLibrary,
   savePgn,
+  clearAnalysis,
   playFromHere,
   positionSetup,
   boardSettings,
@@ -34,6 +35,7 @@ Future<void> showBoardContextMenu(
   required VoidCallback onOpenPositionSetup,
   required bool canCopyOrSavePgn,
   required bool boardFocusMode,
+  VoidCallback? onClearAnalysis,
   VoidCallback? onOpenPictureInPicture,
   bool showPictureInPictureAction = false,
   bool pictureInPictureSelected = false,
@@ -112,6 +114,15 @@ Future<void> showBoardContextMenu(
         shortcut: hintFor(BoardActionKey.savePgnFile),
         enabled: canCopyOrSavePgn,
       ),
+      if (onClearAnalysis != null) ...[
+        const DesktopContextMenuDivider(),
+        DesktopContextMenuItem(
+          value: _BoardContextAction.clearAnalysis,
+          icon: Icons.cleaning_services_outlined,
+          label: 'Clear analysis',
+          shortcut: hintFor(BoardActionKey.clearAnalysis),
+        ),
+      ],
       const DesktopContextMenuDivider(),
       DesktopContextMenuItem(
         value: _BoardContextAction.playFromHere,
@@ -153,6 +164,8 @@ Future<void> showBoardContextMenu(
       onSaveGameToLibrary();
     case _BoardContextAction.savePgn:
       onSavePgn();
+    case _BoardContextAction.clearAnalysis:
+      onClearAnalysis?.call();
     case _BoardContextAction.playFromHere:
       onPlayFromHere?.call();
     case _BoardContextAction.positionSetup:

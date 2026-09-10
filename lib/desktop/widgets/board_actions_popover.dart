@@ -282,13 +282,17 @@ class _Divider extends StatelessWidget {
 Future<bool> showResetEditsConfirmation(
   BuildContext context, {
   required bool hasVariations,
+  required bool hasComments,
   required bool hasShapes,
   required bool hasNags,
+  required bool hasReport,
 }) async {
   final bullets = <String>[
-    if (hasVariations) 'Sub-variations you added to this game',
+    if (hasVariations) 'Side variations',
+    if (hasComments) 'PGN comments and analysis metadata',
     if (hasShapes) 'Arrows and circles drawn on the board',
-    if (hasNags) 'Move-quality marks (!, ?, !!, ??, !?, ?!) you applied',
+    if (hasNags) 'Move-quality marks (!, ?, !!, ??, !?, ?!)',
+    if (hasReport) 'Game Report evaluations and classifications',
   ];
   final confirmed = await showDesktopDialog<bool>(
     context,
@@ -324,7 +328,7 @@ Future<bool> showResetEditsConfirmation(
                       ),
                       const SizedBox(width: 10),
                       const Text(
-                        'Reset all edits?',
+                        'Clear analysis?',
                         style: TextStyle(
                           color: kWhiteColor,
                           fontSize: 14,
@@ -361,8 +365,7 @@ Future<bool> showResetEditsConfirmation(
                     ),
                   const SizedBox(height: 8),
                   const Text(
-                    'The mainline and broadcaster-authored variations stay '
-                    'untouched. This action cannot be undone.',
+                    'The raw game mainline stays untouched.',
                     style: TextStyle(
                       color: kWhiteColor70,
                       fontSize: 12,
@@ -379,7 +382,7 @@ Future<bool> showResetEditsConfirmation(
                       ),
                       const SizedBox(width: 8),
                       DesktopDialogButton(
-                        label: 'Reset',
+                        label: 'Clear',
                         tone: DesktopDialogButtonTone.danger,
                         onPress: () => Navigator.of(ctx).pop(true),
                       ),
