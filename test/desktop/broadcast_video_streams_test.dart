@@ -31,73 +31,35 @@ BroadcastVideoStream stream({
 }
 
 void main() {
-  group('broadcastVideoEmbed', () {
-    test('starts with sound on for every provider, exactly like the web', () {
-      for (final provider in BroadcastVideoProvider.values) {
-        final playing =
-            broadcastVideoEmbed(
-              provider: provider,
-              sourceId:
-                  provider == BroadcastVideoProvider.youtube
-                      ? 'abcdefghijk'
-                      : 'chess',
-              play: true,
-            ).url;
-        expect(
-          playing.queryParameters['autoplay'],
-          provider == BroadcastVideoProvider.youtube ? '1' : 'true',
-        );
-        final muteKey =
-            provider == BroadcastVideoProvider.youtube ? 'mute' : 'muted';
-        final muteValue =
-            provider == BroadcastVideoProvider.youtube ? '0' : 'false';
-        expect(playing.queryParameters[muteKey], muteValue);
-
-        final idle =
-            broadcastVideoEmbed(
-              provider: provider,
-              sourceId: 'chess',
-              play: false,
-            ).url;
-        expect(
-          idle.queryParameters['autoplay'],
-          provider == BroadcastVideoProvider.youtube ? '0' : 'false',
-        );
-        expect(idle.queryParameters[muteKey], muteValue);
-
-        if (provider == BroadcastVideoProvider.twitch) {
-          expect(playing.queryParameters['parent'], broadcastEmbedParentHost);
-        }
-      }
+  group('broadcastVideoEmbedPageUri', () {
+    test('frames the stream through the site, never a provider top-level', () {
+      final uri = broadcastVideoEmbedPageUri(
+        scope: 'round',
+        scopeId: 'r1',
+        streamId: 'twitch-chess',
+        play: true,
+      );
+      expect(
+        uri.toString(),
+        'https://chessever.com/embed/video/round/r1/twitch-chess?autoplay=1',
+      );
+      expect(broadcastEmbedPageHosts, contains(uri.host));
+      expect(
+        broadcastVideoEmbedPageUri(
+          scope: 'tour',
+          scopeId: 'a b/c',
+          streamId: 'x',
+          play: false,
+        ).toString(),
+        'https://chessever.com/embed/video/tour/a%20b%2Fc/x?autoplay=0',
+      );
     });
 
-    test('YouTube embeds carry the Referer the provider requires', () {
-      final youtube = broadcastVideoEmbed(
-        provider: BroadcastVideoProvider.youtube,
-        sourceId: 'abcdefghijk',
-        play: false,
-      );
-      expect(youtube.headers['Referer'], 'https://chessever.com/');
-      expect(youtube.url.host, 'www.youtube.com');
-      expect(youtube.url.path, '/embed/abcdefghijk');
-      expect(youtube.url.queryParameters['playsinline'], '1');
-
-      final twitch = broadcastVideoEmbed(
-        provider: BroadcastVideoProvider.twitch,
-        sourceId: 'chess',
-        play: false,
-      );
-      expect(twitch.headers, isEmpty);
-      expect(twitch.url.host, 'player.twitch.tv');
-
-      final kick = broadcastVideoEmbed(
-        provider: BroadcastVideoProvider.kick,
-        sourceId: 'chess',
-        play: false,
-      );
-      expect(kick.headers, isEmpty);
-      expect(kick.url.host, 'player.kick.com');
-      expect(kick.url.path, '/chess');
+    test('keeps provider minimum player sizes for the rail', () {
+      expect(BroadcastVideoProvider.twitch.minWidth, 400);
+      expect(BroadcastVideoProvider.twitch.minHeight, 300);
+      expect(BroadcastVideoProvider.youtube.minWidth, 200);
+      expect(BroadcastVideoProvider.kick.minHeight, 200);
     });
   });
 
