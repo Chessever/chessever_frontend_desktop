@@ -520,6 +520,15 @@ class LocalChessGame {
     if (sourceByteStart != null &&
         sourceByteEnd != null &&
         sourcePath.toLowerCase().endsWith('.pgn')) {
+      // Fast path: an O(record) read of the cached span, accepted only when
+      // it provably still delimits this exact record. Large databases skip
+      // inline snapshots, and their callers read many games in a row on the
+      // UI isolate (copy, delete, export), so the whole-file re-resolve
+      // below must stay the exception rather than the rule.
+      final cached = _readVerifiedCachedSpan();
+      if (cached != null) return cached;
+      // Slow path: cached spans are only hints. An edit earlier in the file
+      // shifts every later record, so resolve the physical ordinal afresh.
       final raw = readLocalPgnRecord(
         path: sourcePath,
         indexInFile: indexInFile,
@@ -533,23 +542,92 @@ class LocalChessGame {
       }
       // Lightweight catalogs have no mainline fingerprint yet. At minimum,
       // reject an ordinal whose known headers now identify another game.
-      if (pgnFingerprint.isEmpty) {
-        for (final key in const ['Event', 'White', 'Black', 'Date', 'Round']) {
-          final expected = game.metadata[key]?.toString().trim() ?? '';
-          if (expected.isNotEmpty &&
-              expected != '?' &&
-              entry.game.metadata[key]?.toString().trim() != expected) {
-            throw StateError(
-              'The local PGN record changed. Refresh the database.',
-            );
-          }
-        }
+      if (pgnFingerprint.isEmpty && !_matchesKnownIdentity(entry)) {
+        throw StateError('The local PGN record changed. Refresh the database.');
       }
       return raw;
     }
     throw StateError(
       'The local PGN record is unavailable. Refresh the database.',
     );
+  }
+
+  bool _matchesKnownIdentity(_ParsedLocalChessGame entry) {
+    for (final key in const ['Event', 'White', 'Black', 'Date', 'Round']) {
+      final expected = game.metadata[key]?.toString().trim() ?? '';
+      if (expected.isNotEmpty &&
+          expected != '?' &&
+          entry.game.metadata[key]?.toString().trim() != expected) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Reads the cached byte span and returns it only when everything says it
+  /// still is this record: it starts on a line boundary and a tag pair, its
+  /// braces balance, the next content after it is another record's header
+  /// (or the end of the file), it scans as exactly one record, and it carries
+  /// this game's fingerprint and identity. Anything else returns null so the
+  /// caller re-resolves the ordinal from the whole file.
+  String? _readVerifiedCachedSpan() {
+    final start = sourceByteStart!;
+    final end = sourceByteEnd!;
+    if (start < 0 || end <= start) return null;
+    const lookAhead = 256;
+    final origin = start <= _kUtf8BomLength ? 0 : start - 1;
+    final List<int> block;
+    try {
+      final raf = File(sourcePath).openSync();
+      try {
+        if (raf.lengthSync() < end) return null;
+        raf.setPositionSync(origin);
+        block = raf.readSync(end - origin + lookAhead);
+      } finally {
+        raf.closeSync();
+      }
+    } on Object {
+      return null;
+    }
+    final spanStart = start - origin;
+    final spanEnd = end - origin;
+    if (block.length < spanEnd) return null;
+    if (start > 0) {
+      final prefix = block.sublist(0, spanStart);
+      final onLineBoundary =
+          origin == start - 1
+              ? (prefix.single == 0x0A || prefix.single == 0x0D)
+              : _isUtf8Bom(prefix);
+      if (!onLineBoundary) return null;
+    }
+    var next = spanEnd;
+    while (next < block.length && _isWhitespaceByte(block[next])) {
+      next++;
+    }
+    if (next < block.length) {
+      if (block[next] != 0x5B) return null; // '['
+    } else if (block.length - spanEnd >= lookAhead) {
+      // The window was all whitespace; the boundary is unproven.
+      return null;
+    }
+    final raw = _decodeTextBytes(block.sublist(spanStart, spanEnd)).trim();
+    if (!raw.startsWith('[')) return null;
+    var braceDepth = 0;
+    for (final unit in raw.codeUnits) {
+      if (unit == 0x7B) braceDepth++;
+      if (unit == 0x7D) braceDepth--;
+      if (braceDepth < 0) return null;
+    }
+    if (braceDepth != 0) return null;
+    if (pgnGameRanges(raw).length != 1) return null;
+    if (pgnFingerprint.isNotEmpty &&
+        localChessPgnFingerprint(raw) != pgnFingerprint) {
+      return null;
+    }
+    final entry = _entryFromPgnChunk(raw);
+    if (entry == null || (hasMoves && !entry.hasMoves)) return null;
+    if (pgnFingerprint.isEmpty && !_matchesKnownIdentity(entry)) return null;
+    return raw;
   }
 
   String get title {
@@ -3286,11 +3364,23 @@ class _CompressedPgnDecodeException implements Exception {
   String toString() => 'Could not decode compressed PGN ($extension): $cause';
 }
 
-String _decodeTextBytes(List<int> bytes) {
-  final utf = utf8.decode(bytes, allowMalformed: true);
-  if (utf.trim().isNotEmpty) return utf;
-  return latin1.decode(bytes, allowInvalid: true);
-}
+String _decodeTextBytes(List<int> bytes) => decodeLocalPgnText(bytes);
+
+const int _kUtf8BomLength = 3;
+
+bool _isUtf8Bom(List<int> bytes) =>
+    bytes.length == _kUtf8BomLength &&
+    bytes[0] == 0xEF &&
+    bytes[1] == 0xBB &&
+    bytes[2] == 0xBF;
+
+bool _isWhitespaceByte(int byte) =>
+    byte == 0x20 ||
+    byte == 0x09 ||
+    byte == 0x0A ||
+    byte == 0x0D ||
+    byte == 0x0B ||
+    byte == 0x0C;
 
 Future<_PgnParseResult> _parseSupportedFile({
   required String path,

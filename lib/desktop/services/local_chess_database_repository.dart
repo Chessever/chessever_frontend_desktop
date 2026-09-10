@@ -4950,7 +4950,13 @@ class LocalChessDatabaseRepository {
           ),
         ],
       );
-      if (replacement.skippedGames.isNotEmpty) return false;
+      if (replacement.skippedGames.isNotEmpty) {
+        // Not a source-changed conflict: the caller must not tell the user to
+        // refresh, because no refresh will make this PGN indexable.
+        throw LocalChessPgnReplacementRejectedException(
+          replacement.skippedGames.first.message,
+        );
+      }
       final String nextText;
       try {
         nextText = replaceLocalPgnRecordInSnapshot(

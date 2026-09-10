@@ -205,14 +205,22 @@ void main() {
   test('malformed replacement does not overwrite a playable record', () async {
     await import('${_game(0)}\n');
     final before = await file.readAsString();
-    expect(
-      await repo.replaceLocalPgnGame(
+    // Rejected as unindexable, not reported as a source conflict: telling the
+    // user to refresh would never make this PGN saveable.
+    await expectLater(
+      repo.replaceLocalPgnGame(
         databasePath: file.path,
         indexInFile: 0,
         rawPgn: '[Event "Broken"]\n\n1. NotAMove *',
         expectedRecordRevision: localPgnRecordRevision(_game(0)),
       ),
-      isFalse,
+      throwsA(
+        isA<LocalChessPgnReplacementRejectedException>().having(
+          (error) => error.toString(),
+          'message',
+          allOf(contains('could not be indexed'), contains('left unchanged')),
+        ),
+      ),
     );
     expect(await file.readAsString(), before);
   });
