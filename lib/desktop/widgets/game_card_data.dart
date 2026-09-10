@@ -26,6 +26,8 @@ class GameCardData {
     required this.blackRating,
     this.whiteFideId,
     this.blackFideId,
+    this.whiteCustomPoints,
+    this.blackCustomPoints,
     required this.fen,
     required this.status,
     required this.hasStarted,
@@ -58,6 +60,8 @@ class GameCardData {
   final int blackRating;
   final int? whiteFideId;
   final int? blackFideId;
+  final double? whiteCustomPoints;
+  final double? blackCustomPoints;
 
   /// Last-known FEN for the eval bar. Null when the game hasn't started yet.
   final String? fen;
@@ -111,6 +115,8 @@ class GameCardData {
       blackRating: blackRating,
       whiteFideId: whiteFideId ?? this.whiteFideId,
       blackFideId: blackFideId ?? this.blackFideId,
+      whiteCustomPoints: whiteCustomPoints,
+      blackCustomPoints: blackCustomPoints,
       fen: fen,
       lastMove: lastMove,
       status: status,
@@ -154,6 +160,8 @@ class GameCardData {
       blackRating: game.blackPlayer.rating,
       whiteFideId: game.whitePlayer.fideId,
       blackFideId: game.blackPlayer.fideId,
+      whiteCustomPoints: game.whitePlayer.customPoints,
+      blackCustomPoints: game.blackPlayer.customPoints,
       fen: resolvedFen ?? game.fen,
       lastMove: game.lastMove,
       // Cards share the canonical live status with Board and the event rail.

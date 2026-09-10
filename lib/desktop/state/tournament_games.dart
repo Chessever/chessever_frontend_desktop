@@ -47,6 +47,8 @@ class TournamentGameSummary {
     this.blackClockSeconds,
     this.whiteFideId,
     this.blackFideId,
+    this.whiteCustomPoints,
+    this.blackCustomPoints,
     this.fen,
     this.roundId = '',
     this.roundSlug = '',
@@ -104,6 +106,8 @@ class TournamentGameSummary {
       ),
       whiteFideId: game.whitePlayer.fideId,
       blackFideId: game.blackPlayer.fideId,
+      whiteCustomPoints: game.whitePlayer.customPoints,
+      blackCustomPoints: game.blackPlayer.customPoints,
       hasPgn: (game.pgn ?? '').trim().isNotEmpty,
       pgn: (game.pgn ?? '').trim().isEmpty ? null : game.pgn,
       fen: (fen == null || fen.isEmpty) ? null : fen,
@@ -166,6 +170,8 @@ class TournamentGameSummary {
       ),
       whiteFideId: white?.fideId,
       blackFideId: black?.fideId,
+      whiteCustomPoints: white?.customPoints,
+      blackCustomPoints: black?.customPoints,
       hasPgn: (game.pgn ?? '').trim().isNotEmpty,
       pgn: (game.pgn ?? '').trim().isEmpty ? null : game.pgn,
       fen: (fen == null || fen.isEmpty) ? null : fen,
@@ -202,6 +208,8 @@ class TournamentGameSummary {
   final int? blackClockSeconds;
   final int? whiteFideId;
   final int? blackFideId;
+  final double? whiteCustomPoints;
+  final double? blackCustomPoints;
 
   /// Last-known FEN for this game. Populated from `Games.fen` when the
   /// tournament loads. Used as the Board tab's seed when the PGN is not
@@ -261,6 +269,10 @@ class TournamentGameSummary {
     int? blackClockSeconds,
     int? whiteFideId,
     int? blackFideId,
+    double? whiteCustomPoints,
+    double? blackCustomPoints,
+    bool clearWhiteCustomPoints = false,
+    bool clearBlackCustomPoints = false,
     String? whiteTeam,
     String? blackTeam,
     String? pgn,
@@ -288,6 +300,8 @@ class TournamentGameSummary {
       blackClockSeconds: blackClockSeconds ?? this.blackClockSeconds,
       whiteFideId: whiteFideId ?? this.whiteFideId,
       blackFideId: blackFideId ?? this.blackFideId,
+      whiteCustomPoints: clearWhiteCustomPoints ? null : whiteCustomPoints ?? this.whiteCustomPoints,
+      blackCustomPoints: clearBlackCustomPoints ? null : blackCustomPoints ?? this.blackCustomPoints,
       fen: fen ?? this.fen,
       roundId: roundId,
       roundSlug: roundSlug,
@@ -327,6 +341,7 @@ GamesTourModel gamesTourModelFromTournamentSummary(
       rating: summary.whiteRating,
       countryCode: whiteFederation,
       fideId: summary.whiteFideId,
+      customPoints: summary.whiteCustomPoints,
       team: summary.whiteTeam.trim().isEmpty ? null : summary.whiteTeam.trim(),
     ),
     blackPlayer: PlayerCard(
@@ -336,6 +351,7 @@ GamesTourModel gamesTourModelFromTournamentSummary(
       rating: summary.blackRating,
       countryCode: blackFederation,
       fideId: summary.blackFideId,
+      customPoints: summary.blackCustomPoints,
       team: summary.blackTeam.trim().isEmpty ? null : summary.blackTeam.trim(),
     ),
     whiteTimeDisplay: _formatClockSeconds(summary.whiteClockSeconds),
@@ -400,6 +416,8 @@ TournamentGameSummary tournamentSummaryWithArbitratedLiveGame({
         liveGame.blackClockSeconds ?? structuralSummary.blackClockSeconds,
     whiteFideId: liveGame.whitePlayer.fideId,
     blackFideId: liveGame.blackPlayer.fideId,
+    whiteCustomPoints: liveGame.whitePlayer.customPoints,
+    blackCustomPoints: liveGame.blackPlayer.customPoints,
     fen: fen == null || fen.isEmpty ? null : fen,
     roundId: structuralSummary.roundId,
     roundSlug: structuralSummary.roundSlug,

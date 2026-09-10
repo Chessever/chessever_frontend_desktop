@@ -17,6 +17,8 @@ int tournamentGamesSourceFingerprint(Iterable<Games> games) {
         game.roundSlug,
         game.boardNr,
         GameStatus.fromString(game.status),
+        game.players?.isNotEmpty == true ? game.players!.first.customPoints : null,
+        (game.players?.length ?? 0) >= 2 ? game.players![1].customPoints : null,
       ),
     ),
   );
@@ -31,6 +33,8 @@ int tournamentGameModelsSourceFingerprint(Iterable<GamesTourModel> games) {
         game.roundSlug,
         game.boardNr,
         game.gameStatus,
+        game.whitePlayer.customPoints,
+        game.blackPlayer.customPoints,
       ),
     ),
   );
@@ -724,6 +728,7 @@ class PlayerCard {
     String? team,
     String? gamebasePlayerId,
     double? customPoints,
+    bool clearCustomPoints = false,
   }) {
     return PlayerCard(
       name: name ?? this.name,
@@ -734,7 +739,7 @@ class PlayerCard {
       fideId: fideId ?? this.fideId,
       team: team ?? this.team,
       gamebasePlayerId: gamebasePlayerId ?? this.gamebasePlayerId,
-      customPoints: customPoints ?? this.customPoints,
+      customPoints: clearCustomPoints ? null : customPoints ?? this.customPoints,
     );
   }
 

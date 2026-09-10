@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:chessever/utils/awarded_points.dart';
+
 class Games {
   final String id;
   final String roundId;
@@ -371,7 +373,7 @@ class Player {
       fed: json['fed'] as String? ?? '',
       clock: (json['clock'] as num?)?.toInt() ?? 0,
       team: json['team'] as String? ?? '',
-      customPoints: (json['customPoints'] as num?)?.toDouble(),
+      customPoints: parseAwardedPoints(json['customPoints']),
     );
   }
 

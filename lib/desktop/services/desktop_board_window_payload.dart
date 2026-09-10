@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:chessever/utils/awarded_points.dart';
+
 import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -233,6 +235,8 @@ Map<String, Object?> _summaryToJson(TournamentGameSummary game) {
     'blackRating': game.blackRating,
     'whiteFideId': game.whiteFideId,
     'blackFideId': game.blackFideId,
+    'whiteCustomPoints': game.whiteCustomPoints,
+    'blackCustomPoints': game.blackCustomPoints,
     'fen': game.fen,
     'roundId': game.roundId,
     'roundSlug': game.roundSlug,
@@ -275,6 +279,8 @@ TournamentGameSummary _summaryFromJson(Map<String, Object?> json) {
     blackRating: _int(json['blackRating']),
     whiteFideId: _nullableInt(json['whiteFideId']),
     blackFideId: _nullableInt(json['blackFideId']),
+    whiteCustomPoints: parseAwardedPoints(json['whiteCustomPoints']),
+    blackCustomPoints: parseAwardedPoints(json['blackCustomPoints']),
     fen: _nullableString(json['fen']),
     roundId: _string(json['roundId']),
     roundSlug: _string(json['roundSlug']),
