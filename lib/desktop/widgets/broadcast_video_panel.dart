@@ -125,19 +125,30 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
-            // Provider players load inside the embed document's iframe;
-            // their own sub-frame navigations are theirs to make.
-            if (!request.isMainFrame) return NavigationDecision.navigate;
             final uri = Uri.tryParse(request.url);
             if (uri == null) return NavigationDecision.prevent;
+            // Provider players load inside the embed document's iframe;
+            // their own sub-frame navigations are theirs to make. The one
+            // exception is YouTube's passive Google sign-in frame: without
+            // a signed-in browser profile it reloads itself without end
+            // (`signin_passive?reload=9&reload=9…`), and the player plays
+            // exactly the same without it.
+            if (!request.isMainFrame) {
+              return _isGoogleSignInFrame(uri)
+                  ? NavigationDecision.prevent
+                  : NavigationDecision.navigate;
+            }
             if (uri.scheme == 'about') return NavigationDecision.navigate;
             if (broadcastEmbedPageHosts.contains(uri.host.toLowerCase())) {
               return NavigationDecision.navigate;
             }
-            // Anything taking over the top frame ("Watch on Twitch", a
-            // channel page, a YouTube title) belongs in the real browser,
-            // exactly as those links open a new tab on the site.
-            unawaited(launchDesktopWebUrl(uri));
+            // Anything taking over the top frame is cancelled; the rail
+            // stays on the embed document. Only a provider destination
+            // ("Watch on Twitch", a channel page, a YouTube title) earns a
+            // browser tab, and never more than one per moment: an ad or a
+            // fingerprinting frame that tries the top frame in a loop must
+            // not turn the user's browser into a tab fountain.
+            _maybeOpenExternally(uri);
             return NavigationDecision.prevent;
           },
           onWebResourceError: (error) {
@@ -164,6 +175,50 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       );
     }
     return WebViewController();
+  }
+
+  static bool _isGoogleSignInFrame(Uri uri) {
+    final host = uri.host.toLowerCase();
+    return host == 'accounts.google.com' ||
+        host.endsWith('.accounts.google.com') ||
+        (host.endsWith('youtube.com') &&
+            uri.path.toLowerCase().contains('signin_passive'));
+  }
+
+  /// Destinations worth a browser tab: the providers' own watch pages.
+  static const Set<String> _externalHosts = <String>{
+    'twitch.tv',
+    'www.twitch.tv',
+    'm.twitch.tv',
+    'youtube.com',
+    'www.youtube.com',
+    'm.youtube.com',
+    'youtu.be',
+    'kick.com',
+    'www.kick.com',
+  };
+  static const Duration _externalLaunchSpacing = Duration(seconds: 2);
+  static const Duration _externalRepeatSpacing = Duration(seconds: 15);
+
+  DateTime? _lastExternalLaunch;
+  String? _lastExternalUrl;
+
+  void _maybeOpenExternally(Uri uri) {
+    if (uri.scheme != 'https' ||
+        !_externalHosts.contains(uri.host.toLowerCase())) {
+      return;
+    }
+    final now = DateTime.now();
+    final last = _lastExternalLaunch;
+    final url = uri.toString();
+    if (last != null) {
+      final since = now.difference(last);
+      if (since < _externalLaunchSpacing) return;
+      if (url == _lastExternalUrl && since < _externalRepeatSpacing) return;
+    }
+    _lastExternalLaunch = now;
+    _lastExternalUrl = url;
+    unawaited(launchDesktopWebUrl(uri));
   }
 
   /// The embed document is a bare player; a Next "not found" or error page
@@ -329,9 +384,12 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
             groups: groups,
             selectedId: selected.id,
             visible: visible,
+            providerName: selected.provider.displayName,
             onSelect: _selectStream,
             onToggle: () => _setVisible(!visible),
             onOpenWatch: () => unawaited(launchDesktopWebUrl(watchUri)),
+            onOpenSource:
+                () => unawaited(launchDesktopWebUrl(Uri.parse(selected.url))),
           ),
           if (visible) _buildPlayer(selected, data.source),
         ],
@@ -442,17 +500,21 @@ class _BroadcastVideoToolbar extends StatelessWidget {
     required this.groups,
     required this.selectedId,
     required this.visible,
+    required this.providerName,
     required this.onSelect,
     required this.onToggle,
     required this.onOpenWatch,
+    required this.onOpenSource,
   });
 
   final List<BroadcastVideoStreamGroup> groups;
   final String selectedId;
   final bool visible;
+  final String providerName;
   final ValueChanged<BroadcastVideoStream> onSelect;
   final VoidCallback onToggle;
   final VoidCallback onOpenWatch;
+  final VoidCallback onOpenSource;
 
   // A 30px flag, plus the 18px count badge laid out beside it when the
   // language owns several streams. Reserving the badged footprint for every
@@ -469,7 +531,7 @@ class _BroadcastVideoToolbar extends StatelessWidget {
         builder: (context, constraints) {
           // The trailing actions are fixed; only the remaining width can hold
           // language slots.
-          const actionsWidth = 74.0;
+          const actionsWidth = 106.0;
           final flagsWidth = constraints.maxWidth - actionsWidth;
           final capacity =
               flagsWidth <= 0
@@ -504,6 +566,12 @@ class _BroadcastVideoToolbar extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
+              _RailIconButton(
+                icon: Icons.open_in_new_rounded,
+                tooltip: 'Open on $providerName',
+                onPress: onOpenSource,
+              ),
+              const SizedBox(width: 2),
               _RailIconButton(
                 icon: Icons.grid_view_rounded,
                 tooltip: 'Watch video with live boards',
@@ -594,6 +662,9 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
     });
   }
 
+  Widget _withTooltip(String? message, Widget child) =>
+      message == null ? child : DesktopTooltip(message: message, child: child);
+
   @override
   Widget build(BuildContext context) {
     final multiple = _multiple;
@@ -625,9 +696,11 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
         child: MouseRegion(
           onEnter: (_) => _openMenu(),
           onExit: (_) => _closeMenuSoon(),
-          child: DesktopTooltip(
-            message: tooltip,
-            child: Row(
+          child: _withTooltip(
+            // A multi-stream flag answers hover with the list itself; a
+            // tooltip on top of it would only clutter the rail.
+            multiple ? null : tooltip,
+            Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 _FlagButton(

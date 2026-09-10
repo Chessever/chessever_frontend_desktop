@@ -27,9 +27,20 @@ Rules that follow from this, for anyone touching the panel:
 3. Only streams the broadcast API resolves for the scope are embeddable; the
    embed page 404s for anything else, and the panel then offers the external
    link instead of a broken frame.
-4. Main-frame navigations away from the embed page (channel pages, "Watch on
-   Twitch", video titles) open in the system browser, as those links open a
-   new tab on the site. Sub-frame navigations belong to the provider.
+4. Main-frame navigations away from the embed page are cancelled; the rail
+   stays on the document. Only provider destinations (twitch.tv, youtube.com,
+   youtu.be, kick.com: channel pages, "Watch on Twitch", video titles) open in
+   the system browser, throttled to one launch per two seconds and no repeat
+   of the same URL within fifteen. Players load ad and bot-detection frames
+   (Amazon ads, Kasada) that may try the top frame; those must never reach
+   the user's browser. Sub-frame navigations belong to the provider and are
+   always allowed, except YouTube's passive Google sign-in frame
+   (`accounts.google.com`, `youtube.com/signin_passive`), which reloads
+   itself without end outside a signed-in browser profile and is cancelled.
+   On macOS WebKit reports every frame's navigation to the delegate, so the
+   `isMainFrame` check is what keeps sub-frames inside.
+6. The toolbar always offers "Open on <Provider>", so the official source is
+   one click away whatever the embed does.
 5. Honour the provider minimum player sizes (Twitch 400×300, YouTube and Kick
    200×200); below the width, show the external link, never a cropped player.
 
