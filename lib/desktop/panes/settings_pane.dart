@@ -89,84 +89,83 @@ class SettingsPane extends HookConsumerWidget {
         barrierLabel: 'Sign out',
         barrierColor: Colors.black.withValues(alpha: 0.55),
         transitionDuration: const Duration(milliseconds: 140),
-        pageBuilder:
-            (ctx, _, _) => FTheme(
-              data: FThemes.zinc.dark,
-              child: Center(
-                child: Container(
-                  width: 420,
-                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-                  decoration: BoxDecoration(
-                    color: kBlack2Color,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: kDividerColor),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.4),
-                        blurRadius: 24,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
+        pageBuilder: (ctx, _, _) => FTheme(
+          data: FThemes.zinc.dark,
+          child: Center(
+            child: Container(
+              width: 420,
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kDividerColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
                     children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.logout,
-                            color: Color(0xFFEB5757),
-                            size: 18,
-                          ),
-                          const SizedBox(width: 10),
-                          const Expanded(
-                            child: Text(
-                              'Sign out',
-                              style: TextStyle(
-                                color: kWhiteColor,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
+                      const Icon(
+                        Icons.logout,
+                        color: Color(0xFFEB5757),
+                        size: 18,
                       ),
-                      const SizedBox(height: 12),
-                      Text(
-                        session.value != null
-                            ? 'Are you sure you want to sign out of '
-                                '${session.value!.user.email}? '
-                                'You will need to sign in again to sync your data.'
-                            : 'Are you sure you want to sign out? '
-                                'You will need to sign in again to access your account.',
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 12,
-                          height: 1.5,
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Sign out',
+                          style: TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 18),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          DesktopDialogButton(
-                            label: 'Cancel',
-                            onPress: () => Navigator.of(ctx).pop(false),
-                          ),
-                          const SizedBox(width: 8),
-                          DesktopDialogButton(
-                            label: 'Sign out',
-                            tone: DesktopDialogButtonTone.danger,
-                            onPress: () => Navigator.of(ctx).pop(true),
-                          ),
-                        ],
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    session.value != null
+                        ? 'Are you sure you want to sign out of '
+                              '${session.value!.user.email}? '
+                              'You will need to sign in again to sync your data.'
+                        : 'Are you sure you want to sign out? '
+                              'You will need to sign in again to access your account.',
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      DesktopDialogButton(
+                        label: 'Cancel',
+                        onPress: () => Navigator.of(ctx).pop(false),
+                      ),
+                      const SizedBox(width: 8),
+                      DesktopDialogButton(
+                        label: 'Sign out',
+                        tone: DesktopDialogButtonTone.danger,
+                        onPress: () => Navigator.of(ctx).pop(true),
                       ),
                     ],
                   ),
-                ),
+                ],
               ),
             ),
+          ),
+        ),
       );
       if (confirmed == true) {
         await DesktopAuthService.instance.signOut();
@@ -219,6 +218,8 @@ class SettingsPane extends HookConsumerWidget {
             const _EngineSection(),
             const SizedBox(height: 16),
             const _UpdatesSection(),
+            const SizedBox(height: 16),
+            const _LegalSection(),
             const SizedBox(height: 16),
             const _PlatformSection(),
           ],
@@ -427,12 +428,11 @@ class _SubscriptionSection extends HookConsumerWidget {
     }
 
     final isPro = entitlement?.isActive ?? false;
-    final statusLabel =
-        !isPro
-            ? 'Free'
-            : entitlement!.willRenew
-            ? 'Pro · renews'
-            : 'Pro · cancels at term end';
+    final statusLabel = !isPro
+        ? 'Free'
+        : entitlement!.willRenew
+        ? 'Pro · renews'
+        : 'Pro · cancels at term end';
     final statusColor = isPro ? kGreenColor : kLightGreyColor;
 
     Future<void> openManageOnWeb() async {
@@ -470,20 +470,18 @@ class _SubscriptionSection extends HookConsumerWidget {
               if (!isPro)
                 _PrimaryButton(
                   icon: Icons.workspace_premium_rounded,
-                  label:
-                      loading.value
-                          ? 'Opening browser…'
-                          : pricing == null
-                          ? 'Loading pricing…'
-                          : 'Upgrade to Pro',
+                  label: loading.value
+                      ? 'Opening browser…'
+                      : pricing == null
+                      ? 'Loading pricing…'
+                      : 'Upgrade to Pro',
                   onTap: loading.value || pricing == null ? null : upgrade,
                 )
               else ...[
                 _SecondaryButton(
-                  label:
-                      loading.value
-                          ? 'Opening browser…'
-                          : 'Manage web subscription',
+                  label: loading.value
+                      ? 'Opening browser…'
+                      : 'Manage web subscription',
                   onTap: loading.value ? null : openManageOnWeb,
                 ),
                 const SizedBox(width: 8),
@@ -635,6 +633,48 @@ class _BoardSettingsSection extends ConsumerWidget {
   }
 }
 
+/// The privacy policy has to be reachable from inside the app at all times:
+/// the Board pane's stream panel embeds YouTube and Twitch players, and both
+/// providers' developer terms require an easily accessible policy that
+/// discloses the data those players collect.
+class _LegalSection extends StatelessWidget {
+  const _LegalSection();
+
+  @override
+  Widget build(BuildContext context) {
+    return _Card(
+      title: 'Privacy & terms',
+      icon: Icons.policy_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SettingsLinkRow(
+            icon: Icons.privacy_tip_outlined,
+            title: 'Privacy policy',
+            subtitle:
+                'What ChessEver collects, and what embedded YouTube, Twitch '
+                'and Kick players receive.',
+            onTap: () => unawaited(
+              launchDesktopWebUrl(
+                Uri.https('chessever.com', '/privacy-policy'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          _SettingsLinkRow(
+            icon: Icons.gavel_outlined,
+            title: 'Terms of use',
+            subtitle: 'The agreement that governs your use of ChessEver.',
+            onTap: () => unawaited(
+              launchDesktopWebUrl(Uri.https('chessever.com', '/terms-of-use')),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _NotificationsSection extends ConsumerWidget {
   const _NotificationsSection();
 
@@ -681,11 +721,10 @@ class _SettingsLinkRowState extends State<_SettingsLinkRow> {
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
-        onExit:
-            (_) => setState(() {
-              _hovered = false;
-              _pressed = false;
-            }),
+        onExit: (_) => setState(() {
+          _hovered = false;
+          _pressed = false;
+        }),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
@@ -699,9 +738,8 @@ class _SettingsLinkRowState extends State<_SettingsLinkRow> {
             child: SingleMotionBuilder(
               value: nudgeX,
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-              builder:
-                  (context, x, child) =>
-                      Transform.translate(offset: Offset(x, 0), child: child),
+              builder: (context, x, child) =>
+                  Transform.translate(offset: Offset(x, 0), child: child),
               child: Row(
                 children: [
                   Container(
@@ -841,10 +879,9 @@ class _UpdatesSection extends HookConsumerWidget {
     } else if (status == DesktopUpdateStatus.retrying) {
       pillLabel = 'Retrying…';
       pillColor = kPrimaryColor;
-      final retryLabel =
-          update == null || update.maxRetryAttempts == 0
-              ? ''
-              : ' Attempt ${update.retryAttempt}/${update.maxRetryAttempts}.';
+      final retryLabel = update == null || update.maxRetryAttempts == 0
+          ? ''
+          : ' Attempt ${update.retryAttempt}/${update.maxRetryAttempts}.';
       description =
           'Automatic update failed and will retry shortly.$retryLabel '
           'You can retry now or open the website if this keeps failing.';
@@ -862,11 +899,10 @@ class _UpdatesSection extends HookConsumerWidget {
     } else {
       pillLabel = 'Up to date';
       pillColor = kGreenColor;
-      description =
-          lastCheckedAt.value == null
-              ? 'No new version available.'
-              : 'No new version available as of '
-                  '${_formatLastChecked(lastCheckedAt.value!)}.';
+      description = lastCheckedAt.value == null
+          ? 'No new version available.'
+          : 'No new version available as of '
+                '${_formatLastChecked(lastCheckedAt.value!)}.';
     }
 
     return _Card(
@@ -1122,35 +1158,33 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
       enabled: !disabled,
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
-        onExit:
-            (_) => setState(() {
-              _hovered = false;
-              _pressed = false;
-            }),
+        onExit: (_) => setState(() {
+          _hovered = false;
+          _pressed = false;
+        }),
         child: GestureDetector(
           onTap: widget.onTap,
           onTapDown: disabled ? null : (_) => setState(() => _pressed = true),
           onTapUp: disabled ? null : (_) => setState(() => _pressed = false),
           onTapCancel: disabled ? null : () => setState(() => _pressed = false),
           child: SingleMotionBuilder(
-            value:
-                disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
+            value: disabled
+                ? 1.0
+                : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-            builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
+            builder: (context, scale, child) => Transform.scale(
+              scale: scale,
+              filterQuality: FilterQuality.medium,
+              child: child,
+            ),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color:
-                    disabled
-                        ? kPrimaryColor.withValues(alpha: 0.4)
-                        : (_hovered
-                            ? kPrimaryColor
-                            : kPrimaryColor.withValues(alpha: 0.92)),
+                color: disabled
+                    ? kPrimaryColor.withValues(alpha: 0.4)
+                    : (_hovered
+                          ? kPrimaryColor
+                          : kPrimaryColor.withValues(alpha: 0.92)),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
@@ -1196,33 +1230,31 @@ class _SecondaryButtonState extends State<_SecondaryButton> {
       enabled: !disabled,
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
-        onExit:
-            (_) => setState(() {
-              _hovered = false;
-              _pressed = false;
-            }),
+        onExit: (_) => setState(() {
+          _hovered = false;
+          _pressed = false;
+        }),
         child: GestureDetector(
           onTap: widget.onTap,
           onTapDown: disabled ? null : (_) => setState(() => _pressed = true),
           onTapUp: disabled ? null : (_) => setState(() => _pressed = false),
           onTapCancel: disabled ? null : () => setState(() => _pressed = false),
           child: SingleMotionBuilder(
-            value:
-                disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
+            value: disabled
+                ? 1.0
+                : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-            builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
+            builder: (context, scale, child) => Transform.scale(
+              scale: scale,
+              filterQuality: FilterQuality.medium,
+              child: child,
+            ),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color:
-                    disabled
-                        ? kBlack3Color.withValues(alpha: 0.45)
-                        : (_hovered ? kBlack3Color : Colors.transparent),
+                color: disabled
+                    ? kBlack3Color.withValues(alpha: 0.45)
+                    : (_hovered ? kBlack3Color : Colors.transparent),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: kDividerColor),
               ),
