@@ -73,6 +73,7 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/desktop/widgets/board_actions_popover.dart';
+import 'package:chessever/desktop/widgets/broadcast_video_panel.dart';
 import 'package:chessever/desktop/services/play/play_from_here.dart';
 import 'package:chessever/desktop/widgets/board_context_menu.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
@@ -4876,6 +4877,27 @@ class _BoardPaneContent extends HookConsumerWidget {
               onPlayFromHere: openPlayFromHereDialog,
             );
 
+    // Live-stream panel context: only Board tabs opened from a tournament
+    // game row carry the tour/round identity the broadcast API resolves.
+    // Detached PGN imports, library analyses and scratch boards get nothing.
+    final broadcastSourceGame = boardArgs?.sourceGame;
+    final broadcastTourId = (broadcastSourceGame?.tourId ?? '').trim();
+    final broadcastRoundId = (broadcastSourceGame?.roundId ?? '').trim();
+    final broadcastEventId = (boardArgs?.eventBroadcastId ?? '').trim();
+    final broadcastVideoPanel = broadcastTourId.isEmpty
+        ? null
+        : BroadcastVideoPanel(
+            key: ValueKey<String>(
+              'broadcast-video:$broadcastTourId:$broadcastRoundId',
+            ),
+            tourId: broadcastTourId,
+            roundId: broadcastRoundId.isEmpty ? null : broadcastRoundId,
+            tournamentStorageId: broadcastEventId.isEmpty
+                ? broadcastTourId
+                : broadcastEventId,
+            active: isForegroundSurface,
+          );
+
     final boardSplitIndex = showGameRail ? 1 : 0;
     // 13" MacBooks (1280–1366 logical) and other small laptops can't
     // afford the games rail by default — it eats over a third of the
@@ -5117,6 +5139,10 @@ class _BoardPaneContent extends HookConsumerWidget {
                   collapsedIcon: Icons.analytics_outlined,
                   child: KeyedSubtree(
                     key: rightRailAnalysisKey,
+                    child: Column(
+                      children: [
+                        if (broadcastVideoPanel != null) broadcastVideoPanel,
+                        Expanded(
                     child: NotationOpeningPanel(
                       tabId: activeTabId,
                       explorerScope: boardExplorerScope,
@@ -5273,6 +5299,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                             currentGameIsInPictureInPicture,
                       ),
                     ),
+                  ),
+                ],
+              ),
                   ),
                 ),
             ],
