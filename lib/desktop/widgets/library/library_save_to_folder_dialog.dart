@@ -1116,8 +1116,13 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                   const FDivider(),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    // Natural button widths first; only a genuinely narrow
+                    // dialog or large text scale stacks the action row.
+                    child: OverflowBar(
+                      alignment: MainAxisAlignment.spaceBetween,
+                      overflowAlignment: OverflowBarAlignment.end,
+                      spacing: 8,
+                      overflowSpacing: 8,
                       children: [
                         if (widget.destinationMode !=
                             LibrarySaveDestinationMode.localOnly)
@@ -1132,6 +1137,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                         else
                           const SizedBox.shrink(),
                         Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             DesktopDialogButton(
                               label: 'Cancel',

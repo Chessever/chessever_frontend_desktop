@@ -19,6 +19,7 @@ import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:dio/dio.dart';
+import 'package:forui/forui.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -748,8 +749,12 @@ void main() {
 
     await tester.tap(find.text('Carlsen'));
     await tester.pump(const Duration(milliseconds: 40));
-    await tester.tap(find.text('Carlsen'));
-    await tester.pump(const Duration(milliseconds: 250));
+    // Local hydration runs on a real isolate; give it a real event loop.
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Carlsen'));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    });
+    await tester.pumpAndSettle();
 
     final container = ProviderScope.containerOf(
       tester.element(find.byType(DesktopPositionGamesTable)),
@@ -822,11 +827,16 @@ void main() {
                     _TestBoardSettingsNotifier.new,
                   ),
                 ],
-                child: MaterialApp(
-                  home: Scaffold(
-                    body: DesktopPositionGamesTable(
-                      fen: _initialFen,
-                      localOpeningTreeIndex: index,
+                child: FTheme(
+                  data: FThemes.zinc.dark,
+                  child: FToaster(
+                    child: MaterialApp(
+                      home: Scaffold(
+                        body: DesktopPositionGamesTable(
+                          fen: _initialFen,
+                          localOpeningTreeIndex: index,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -853,10 +863,15 @@ void main() {
                 buttons: kSecondaryMouseButton,
               );
               await tester.pumpAndSettle();
-              await tester.runAsync(() async {
-                await tester.tap(find.text('Insert game'));
-                await Future<void>.delayed(const Duration(milliseconds: 250));
-              });
+              await tester.tap(find.text('Insert game'));
+              // The menu's close animation runs on fake time; the isolate
+              // hydration needs a real event loop.
+              await tester.pumpAndSettle();
+              await tester.runAsync(
+                () => Future<void>.delayed(
+                  const Duration(milliseconds: 250),
+                ),
+              );
             } else {
               await tester.tap(find.text('Anand'));
               await tester.pump(const Duration(milliseconds: 40));

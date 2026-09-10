@@ -4929,6 +4929,12 @@ class LocalChessDatabaseRepository {
       }
       final file = File(databasePath);
       final text = await file.readAsString();
+      // The validation input only needs a self-consistent span; the physical
+      // snapshot check below owns the real game-count contract.
+      final validationFileGameCount =
+          expectedFileGameCount != null && expectedFileGameCount > indexInFile
+              ? expectedFileGameCount
+              : indexInFile + 1;
       final replacement = await buildLocalOpeningTreeIndexWithDiagnosticsAsync(
         treeId: 'local:replacement-validation',
         databaseId: _databaseId(databasePath),
@@ -4940,7 +4946,7 @@ class LocalChessDatabaseRepository {
             sourceRelativePath: p.basename(databasePath),
             fileName: p.basename(databasePath),
             indexInFile: indexInFile,
-            fileGameCount: expectedFileGameCount ?? 0,
+            fileGameCount: validationFileGameCount,
           ),
         ],
       );

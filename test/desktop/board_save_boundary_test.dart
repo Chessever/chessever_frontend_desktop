@@ -96,7 +96,11 @@ void main() {
     final dialog = File(
       'lib/desktop/widgets/library/library_save_to_folder_dialog.dart',
     ).readAsStringSync();
-    expect(dialog, contains('return waitForSaveDialogWrites(route, pendingWrites)'));
+    expect(dialog, contains('await waitForSaveDialogWrites(route, pendingWrites)'));
+    expect(
+      dialog,
+      contains('waitForLibrarySaveOutcome(route, pendingWrites, () => committedOutcome)'),
+    );
     expect(dialog, contains('onWriteStarted: pendingWrites.add'));
     expect('widget.onWriteStarted(operation)'.allMatches(dialog), hasLength(2));
     final save = dialog.substring(dialog.indexOf('Future<void> _save('));

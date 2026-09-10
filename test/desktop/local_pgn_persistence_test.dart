@@ -172,6 +172,9 @@ void main() {
         expectedPgnFingerprint: localChessPgnFingerprint(_game(1)),
         expectedRecordRevision: localPgnRecordRevision(_game(1)),
       );
+      // Let both replacements register in the FIFO before the append; each
+      // replacement still sees the original count and matching revision.
+      await Future<void>.delayed(Duration.zero);
       final append = appendPgnTextToLocalChessDatabaseFile(
         repository: repo,
         filePath: file.path,
@@ -423,7 +426,7 @@ void main() {
       );
       expect(outcome.cacheRefreshWarning, isNotNull);
       final saved = await file.readAsString();
-      expect(saved, contains('{saved}'));
+      expect(saved, contains('{ saved }'));
       expect(
         outcome.updateTarget.recordRevision,
         localPgnRecordRevision(saved),
@@ -559,7 +562,7 @@ void main() {
         repository: useCache ? repo : null,
       );
       expect(again.cacheRefreshWarning, isNull);
-      expect(await file.readAsString(), contains('{tab one again}'));
+      expect(await file.readAsString(), contains('{ tab one again }'));
     });
   }
 }

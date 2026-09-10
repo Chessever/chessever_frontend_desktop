@@ -82,12 +82,23 @@ void main() {
       final hydrated = Completer<void>();
       final container = ProviderContainer(
         overrides: [
+          // Widget-test taps cannot await real file I/O (the binding's fake
+          // async zone never settles it). Stand in for the physical read and
+          // keep its contract under test in the direct hydrator tests.
           retainedLocalPgnHydratorProvider.overrideWithValue((row) async {
-            try {
-              return await hydrateRetainedLocalPgn(row);
-            } finally {
-              hydrated.complete();
-            }
+            hydrated.complete();
+            final source = row.localPgnSource!;
+            return row.copyWith(
+              pgn: freshPgn,
+              localPgnSource: TournamentGameLocalPgnSource(
+                sourcePath: source.sourcePath,
+                sourceIndex: source.sourceIndex,
+                sourceFileGameCount: source.sourceFileGameCount,
+                pgnFingerprint: localChessPgnFingerprint(freshPgn),
+                recordRevision: localPgnRecordRevision(freshPgn),
+                title: source.title,
+              ),
+            );
           }),
         ],
       );
@@ -109,10 +120,12 @@ void main() {
       await tester.pump();
       await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
       await tester.tap(find.text('A').first);
+      // The row also listens for double-tap, so the single tap only resolves
+      // after the recognizer's timeout.
       await tester.pump(const Duration(milliseconds: 400));
-      await tester.runAsync(() => hydrated.future);
+      expect(hydrated.isCompleted, isTrue);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       final newId = container.read(desktopTabsProvider).activeId;
       expect(newId, isNot(tab));
       final opened = container.read(boardTabGameArgsByTabIdProvider)[newId]!;
@@ -275,8 +288,14 @@ void main() {
         target.recordRevision,
       );
       // A read may refresh annotation-only differences; an old dirty save may not.
+      // The refreshed row (published above) carries the committed fingerprint.
+      final refreshedRow =
+          container
+              .read(boardTabGameArgsByTabIdProvider)[other]!
+              .databaseGames
+              .first;
       final refreshed =
-          (await tester.runAsync(() => hydrateRetainedLocalPgn(rows.first)))!;
+          (await tester.runAsync(() => hydrateRetainedLocalPgn(refreshedRow)))!;
       expect(refreshed.localPgnSource!.recordRevision, target.recordRevision);
       await tester.runAsync(() async {
         await expectLater(

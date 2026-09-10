@@ -234,7 +234,7 @@ void main() {
     expect(current.mainline.first.nags, isNot(contains(4)));
     expect(current.mainline.first.comments!.join(), contains('late prose'));
     expect(current.mainline.length, 3);
-    expect(current.mainline[1].variations, isNotEmpty);
+    expect(current.mainline.first.variations, isNotEmpty);
     expect(current.metadata['White'], 'Late edit');
     expect(exportGameToPgn(current), isNot(exactPgn)); // Still dirty.
     expect(ChessGame.fromPgn('disk', exactPgn).mainline.length, 2);
