@@ -29,7 +29,8 @@ List<Games> fixtureGames() {
   return (fixture['games'] as List).map((value) {
     final row = value as Map<String, dynamic>;
     // Adapt the public broadcast envelope to the existing Supabase model.
-    // Player objects (including awards) remain exactly as fetched.
+    // Awards remain exactly as fetched; only foreign-key/FIDE id typing is
+    // normalized because the broadcast envelope serializes ids as strings.
     return Games.fromJson({
       ...row,
       'round_id': 'Au6yU4b1',
@@ -38,6 +39,13 @@ List<Games> fixtureGames() {
       'tour_slug': 'global-chess-league-season-4-preliminary-stage',
       'board_nr': row['boardNr'],
       'last_move': row['lastMove'],
+      'players': [
+        for (final player in row['players'] as List? ?? const [])
+          {
+            ...(player as Map<String, dynamic>),
+            'fideId': int.tryParse('${player['fideId'] ?? ''}') ?? 0,
+          },
+      ],
     });
   }).toList();
 }
@@ -478,5 +486,7 @@ void main() {
       labels.every((text) => text.style?.color == kLightGreyColor),
       isTrue,
     );
+    // Card eval caches keep providers alive on 3s/4s timers.
+    await tester.pump(const Duration(seconds: 4));
   });
 }
