@@ -42,6 +42,9 @@ class BoardPaneSession {
     required this.dirtySinceLoad,
     required this.hasUnseenMoves,
     required this.undoStack,
+    this.savedSourceSeedPgn,
+    this.hasCommittedSave = false,
+    this.detachedSeedPgn,
   });
 
   final ChessGame game;
@@ -55,7 +58,23 @@ class BoardPaneSession {
   final bool dirtySinceLoad;
   final bool hasUnseenMoves;
   final List<BoardUndoSnapshot> undoStack;
+
+  /// Open-time seed superseded by this tab's successful save. Retained remounts
+  /// must not reapply it over the committed baseline or post-save edits.
+  final String? savedSourceSeedPgn;
+
+  /// Clean after saving is not the unchanged opening source.
+  final bool hasCommittedSave;
+
+  /// Transport seed already represented by the restored working tree.
+  final String? detachedSeedPgn;
 }
+
+/// Mounted panes expose a synchronous reader: the retained post-frame session
+/// can lag behind a just-completed save or the user's latest edit.
+final boardPaneSnapshotReadersProvider = Provider<
+  Map<String, ({Object? seed, BoardPaneSession session}) Function()>
+>((_) => {});
 
 final boardPaneSessionByTabIdProvider =
     StateProvider<Map<String, BoardPaneSession>>(

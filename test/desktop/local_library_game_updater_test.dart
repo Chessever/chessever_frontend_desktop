@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/services/local_pgn_source.dart'
+    show localPgnRecordRevision, localPgnRecordFromSnapshot;
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -46,6 +48,12 @@ void main() {
           sourcePath: file.path,
           indexInFile: 1,
           fileGameCount: 2,
+          recordRevision: localPgnRecordRevision(
+            localPgnRecordFromSnapshot(
+              text: await file.readAsString(),
+              indexInFile: 1,
+            ),
+          ),
         ),
         game: replacement,
       );
@@ -80,6 +88,7 @@ void main() {
             indexInFile: 0,
             fileGameCount: 1,
             pgnFingerprint: localChessPgnFingerprint(original),
+            recordRevision: localPgnRecordRevision(original),
           ),
           game: firstUpdate,
         );
@@ -120,6 +129,7 @@ void main() {
           indexInFile: 2,
           fileGameCount: 4,
           pgnFingerprint: 'before-update',
+          recordRevision: 'before-revision',
         ),
         game: game,
         repository: repository,
@@ -150,6 +160,7 @@ void main() {
           indexInFile: 0,
           fileGameCount: 1,
           pgnFingerprint: localChessPgnFingerprint(original),
+          recordRevision: localPgnRecordRevision(original),
         ),
         game: ChessGame.fromPgn(
           'first-update',
@@ -197,6 +208,9 @@ void main() {
               sourcePath: file.path,
               indexInFile: 1,
               fileGameCount: 2,
+              recordRevision: localPgnRecordRevision(
+                localPgnRecordFromSnapshot(text: currentPgn, indexInFile: 1),
+              ),
             ),
             game: replacement,
           ),
@@ -229,6 +243,7 @@ void main() {
               indexInFile: 1,
               fileGameCount: 2,
               pgnFingerprint: localChessPgnFingerprint(second),
+              recordRevision: localPgnRecordRevision(second),
             ),
             game: replacement,
           ),
@@ -253,6 +268,7 @@ class _SuccessfulCachedUpdateRepository extends LocalChessDatabaseRepository {
     required String rawPgn,
     int? expectedFileGameCount,
     String? expectedPgnFingerprint,
+    String? expectedRecordRevision,
   }) async {
     writtenPgn = rawPgn;
     return true;

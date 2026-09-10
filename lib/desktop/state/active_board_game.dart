@@ -26,13 +26,15 @@ class BoardTabLibrarySaveOrigin {
        sourcePath = null,
        sourceIndex = null,
        sourceFileGameCount = null,
-       sourcePgnFingerprint = null;
+       sourcePgnFingerprint = null,
+       sourceRecordRevision = null;
 
   const BoardTabLibrarySaveOrigin.localPgnFile({
     required this.sourcePath,
     required this.sourceIndex,
     required this.sourceFileGameCount,
     this.sourcePgnFingerprint = '',
+    this.sourceRecordRevision = '',
     required this.title,
   }) : kind = BoardTabLibrarySaveOriginKind.localPgnFile,
        analysisId = null;
@@ -43,6 +45,7 @@ class BoardTabLibrarySaveOrigin {
   final int? sourceIndex;
   final int? sourceFileGameCount;
   final String? sourcePgnFingerprint;
+  final String? sourceRecordRevision;
   final String title;
 }
 
@@ -85,6 +88,7 @@ class BoardTabGameArgs {
     this.eventGamesContinuation,
     this.gameListSelectedId,
     this.librarySaveOrigin,
+    this.retainedSeedIdentity,
   });
 
   /// Supabase game id, when this tab is bound to a tournament game. Null
@@ -202,6 +206,10 @@ class BoardTabGameArgs {
   /// instead of treating the edited game as a detached import.
   final BoardTabLibrarySaveOrigin? librarySaveOrigin;
 
+  /// Only retained-list publication carries this identity forward. Ordinary
+  /// game replacement/copyWith starts a new seed lifetime, even for equal PGN.
+  final Object? retainedSeedIdentity;
+
   BoardTabGameArgs copyWith({
     String? gameId,
     String? pgn,
@@ -242,6 +250,7 @@ class BoardTabGameArgs {
     BoardTabGamesContinuation? eventGamesContinuation,
     String? gameListSelectedId,
     BoardTabLibrarySaveOrigin? librarySaveOrigin,
+    Object? retainedSeedIdentity,
   }) {
     return BoardTabGameArgs(
       gameId: gameId ?? this.gameId,
@@ -290,6 +299,7 @@ class BoardTabGameArgs {
           eventGamesContinuation ?? this.eventGamesContinuation,
       gameListSelectedId: gameListSelectedId ?? this.gameListSelectedId,
       librarySaveOrigin: librarySaveOrigin ?? this.librarySaveOrigin,
+      retainedSeedIdentity: retainedSeedIdentity,
     );
   }
 }
@@ -436,8 +446,8 @@ final boardTabGameArgsByTabIdProvider =
       (_) => const <String, BoardTabGameArgs>{},
     );
 
-/// Mutable save identity attached after a scratch/detached Board tab appends
-/// one game to one local PGN, or refreshed after an existing local game is
+/// Mutable save identity attached after a scratch/detached Board tab saves
+/// one game to one local PGN or cloud row, or after an existing local game is
 /// updated. Keeping this separate from [BoardTabGameArgs] avoids rewriting the
 /// immutable open-time args after a durable save.
 final boardTabAttachedLibrarySaveOriginByTabIdProvider =
@@ -462,13 +472,35 @@ bool shouldAttachLocalPgnIdentityAfterSaveCompletion({
 }) =>
     tabStillExists &&
     gameStillMatches &&
-    identical(currentArgs, savingArgs) &&
+    identical(
+      currentArgs?.retainedSeedIdentity ?? currentArgs,
+      savingArgs?.retainedSeedIdentity ?? savingArgs,
+    ) &&
     identical(currentAttachedOrigin, savingAttachedOrigin) &&
     shouldAttachLocalPgnIdentityAfterSave(
       sourceOrigin: savingArgs?.librarySaveOrigin,
       attachedOrigin: savingAttachedOrigin,
       hasLocalUpdateTarget: hasLocalUpdateTarget,
     );
+
+/// First-save attachment uses the same compare-and-set for local and cloud.
+bool shouldAttachLibraryIdentityAfterSaveCompletion({
+  required bool tabStillExists,
+  required bool gameStillMatches,
+  required BoardTabGameArgs? savingArgs,
+  required BoardTabGameArgs? currentArgs,
+  required BoardTabLibrarySaveOrigin? savingAttachedOrigin,
+  required BoardTabLibrarySaveOrigin? currentAttachedOrigin,
+  required bool hasUpdateTarget,
+}) => shouldAttachLocalPgnIdentityAfterSaveCompletion(
+  tabStillExists: tabStillExists,
+  gameStillMatches: gameStillMatches,
+  savingArgs: savingArgs,
+  currentArgs: currentArgs,
+  savingAttachedOrigin: savingAttachedOrigin,
+  currentAttachedOrigin: currentAttachedOrigin,
+  hasLocalUpdateTarget: hasUpdateTarget,
+);
 
 BoardTabLibrarySaveOrigin? resolveBoardTabLibrarySaveOrigin({
   required BoardTabLibrarySaveOrigin? sourceOrigin,
@@ -493,7 +525,8 @@ bool shouldAcceptRefreshedLocalPgnOrigin({
       currentOrigin.sourceIndex == updatingOrigin.sourceIndex &&
       currentOrigin.sourceFileGameCount == updatingOrigin.sourceFileGameCount &&
       currentOrigin.sourcePgnFingerprint?.trim() ==
-          updatingOrigin.sourcePgnFingerprint?.trim();
+          updatingOrigin.sourcePgnFingerprint?.trim() &&
+      currentOrigin.sourceRecordRevision == updatingOrigin.sourceRecordRevision;
 }
 
 /// [updatingArgs] is nullable so scratch/detached Board tabs — which legitimately
@@ -507,7 +540,10 @@ bool shouldAttachRefreshedLocalPgnOriginAfterUpdate({
   required BoardTabLibrarySaveOrigin? currentAttachedOrigin,
 }) =>
     tabStillExists &&
-    identical(currentArgs, updatingArgs) &&
+    identical(
+      currentArgs?.retainedSeedIdentity ?? currentArgs,
+      updatingArgs?.retainedSeedIdentity ?? updatingArgs,
+    ) &&
     shouldAcceptRefreshedLocalPgnOrigin(
       updatingOrigin: updatingOrigin,
       currentSourceOrigin: currentArgs?.librarySaveOrigin,
@@ -516,12 +552,21 @@ bool shouldAttachRefreshedLocalPgnOriginAfterUpdate({
 
 extension BoardTabAttachedLibrarySaveOriginWriter
     on StateController<Map<String, BoardTabLibrarySaveOrigin>> {
+  void attachCloudSavedAnalysis({
+    required String tabId,
+    required BoardTabLibrarySaveOrigin origin,
+  }) {
+    assert(origin.kind == BoardTabLibrarySaveOriginKind.cloudSavedAnalysis);
+    state = {...state, tabId: origin};
+  }
+
   void attachLocalPgn({
     required String tabId,
     required String sourcePath,
     required int sourceIndex,
     required int sourceFileGameCount,
     required String sourcePgnFingerprint,
+    String sourceRecordRevision = '',
     required String title,
   }) {
     state = <String, BoardTabLibrarySaveOrigin>{
@@ -531,6 +576,7 @@ extension BoardTabAttachedLibrarySaveOriginWriter
         sourceIndex: sourceIndex,
         sourceFileGameCount: sourceFileGameCount,
         sourcePgnFingerprint: sourcePgnFingerprint,
+        sourceRecordRevision: sourceRecordRevision,
         title: title,
       ),
     };

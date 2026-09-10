@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
@@ -13,8 +14,7 @@ import 'package:intl/intl.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
-import 'package:chessever/desktop/services/local_library_game_updater.dart'
-    show PgnGameRange, pgnGameRanges;
+
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
@@ -1281,6 +1281,10 @@ class _DesktopPositionGamesTableState
       sourceIndex: sourceIndex,
       sourceFileGameCount: sourceFileGameCount,
       sourcePgnFingerprint: (row['pgnHash']?.toString() ?? '').trim(),
+      sourceRecordRevision:
+          (row['pgn']?.toString().trim().isNotEmpty ?? false)
+              ? localPgnRecordRevision(row['pgn'].toString())
+              : '',
       title: title,
     );
   }
@@ -2441,15 +2445,14 @@ class _Empty extends StatelessWidget {
 }
 
 /// Hydrates local PGN rows away from Flutter's UI isolate.
-///
-/// Current cache rows normally have a byte range, while older rows may only
-/// have a game ordinal. The legacy path intentionally caches each parsed source
-/// file so opening one table page never rereads and reparses the same large PGN
-/// once per visible row.
+/// Cached byte spans can belong to an older source revision. Resolve physical
+/// ordinals and validate identity against one immutable snapshot per source in
+/// this batch, including rows that predate cached byte spans.
 List<Map<String, dynamic>> _hydrateLocalPgnRowsInBackground(
   List<Map<String, dynamic>> rows,
 ) {
-  final legacySources = <String, ({String text, List<PgnGameRange> ranges})>{};
+  final sources = <String, ({String text, List<PgnGameRange> ranges})>{};
+  final unavailableSources = <String>{};
   final hydratedRows = <Map<String, dynamic>>[];
   for (final row in rows) {
     final hydrated = Map<String, dynamic>.from(row);
@@ -2460,53 +2463,32 @@ List<Map<String, dynamic>> _hydrateLocalPgnRowsInBackground(
     }
 
     final sourcePath = (hydrated['sourcePath']?.toString() ?? '').trim();
-    if (sourcePath.isEmpty) {
-      hydratedRows.add(hydrated);
-      continue;
-    }
-
-    final start = _readOptionalInt(hydrated['sourceByteStart']);
-    final end = _readOptionalInt(hydrated['sourceByteEnd']);
-    if (start != null && end != null && start >= 0 && end > start) {
-      try {
-        final file = io.File(sourcePath);
-        final raf = file.openSync();
-        try {
-          raf.setPositionSync(start);
-          final pgn =
-              utf8
-                  .decode(raf.readSync(end - start), allowMalformed: true)
-                  .trim();
-          if (pgn.isNotEmpty) hydrated['pgn'] = pgn;
-        } finally {
-          raf.closeSync();
-        }
-      } on Object {
-        // The caller reports an unavailable local PGN without crashing.
-      }
-      hydratedRows.add(hydrated);
-      continue;
-    }
-
     final indexInFile = _readOptionalInt(hydrated['indexInFile']);
-    if (indexInFile != null && indexInFile >= 0) {
+    if (sourcePath.isNotEmpty && indexInFile != null && indexInFile >= 0) {
       try {
-        final source = legacySources.putIfAbsent(sourcePath, () {
-          final text = io.File(sourcePath).readAsStringSync();
-          return (text: text, ranges: pgnGameRanges(text));
-        });
-        final fileGameCount = _readOptionalInt(hydrated['fileGameCount']);
-        final countMatches =
-            fileGameCount == null ||
-            fileGameCount <= 0 ||
-            source.ranges.length == fileGameCount;
-        if (countMatches && indexInFile < source.ranges.length) {
-          final range = source.ranges[indexInFile];
-          final pgn = source.text.substring(range.start, range.end).trim();
-          if (pgn.isNotEmpty) hydrated['pgn'] = pgn;
+        if (unavailableSources.contains(sourcePath)) {
+          throw StateError('The source PGN is unavailable.');
         }
+        final source = sources.putIfAbsent(sourcePath, () {
+          try {
+            final text = io.File(sourcePath).readAsStringSync();
+            return (text: text, ranges: pgnGameRanges(text));
+          } on Object {
+            // Do not repeatedly read a failed source once per neighbor.
+            unavailableSources.add(sourcePath);
+            rethrow;
+          }
+        });
+        hydrated['pgn'] = localPgnRecordFromSnapshot(
+          text: source.text,
+          recordRanges: source.ranges,
+          indexInFile: indexInFile,
+          expectedFileGameCount: _readOptionalInt(hydrated['fileGameCount']),
+          expectedPgnFingerprint: hydrated['pgnHash']?.toString(),
+        );
       } on Object {
-        // The caller reports an unavailable local PGN without crashing.
+        // Never let a rejected slice reach open/insert or acquire a revision.
+        hydrated.remove('pgn');
       }
     }
     hydratedRows.add(hydrated);

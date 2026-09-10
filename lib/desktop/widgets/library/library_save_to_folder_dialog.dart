@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import '../../services/board_save_boundary.dart';
+import '../../state/active_board_game.dart';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +19,8 @@ import 'package:chessever/desktop/services/local_library_writer.dart';
 import 'package:chessever/desktop/services/local_source_deletion.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
+import 'package:chessever/desktop/state/my_databases_focus.dart';
+import 'package:chessever/desktop/widgets/library/library_save_section.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -40,6 +45,8 @@ class LibrarySaveOutcome {
     this.localFoldersUsed = 0,
     this.didUpdateOriginal = false,
     this.localUpdateTarget,
+    this.cloudUpdateTarget,
+    this.committedGame,
   });
 
   /// Number of rows written to the cloud `saved_analyses` table.
@@ -62,6 +69,13 @@ class LibrarySaveOutcome {
   /// save. Null for cloud saves, folder exports, bulk saves, and ambiguous
   /// multi-destination saves.
   final LocalLibraryGameUpdateTarget? localUpdateTarget;
+
+  /// Exact inserted row, only for one game / one cloud / no local destinations.
+  final BoardTabLibrarySaveOrigin? cloudUpdateTarget;
+
+  /// Exact single-game snapshot supplied to the successful writer, including
+  /// metadata edited in this dialog. Never reconstructed after the await.
+  final ChessGame? committedGame;
 
   /// Total entries persisted across cloud + local destinations.
   int get totalEntries => savedRows + localFilesWritten;
@@ -111,6 +125,26 @@ LocalLibraryGameUpdateTarget? libraryLocalUpdateTargetForCompletedSave({
   return targets.length == 1 ? targets.single : null;
 }
 
+@visibleForTesting
+BoardTabLibrarySaveOrigin? libraryCloudUpdateTargetForCompletedSave({
+  required int gameCount,
+  required int selectedCloudFolderCount,
+  required int selectedLocalPathCount,
+  required BoardTabLibrarySaveOrigin? insertedOrigin,
+}) => gameCount == 1 && selectedCloudFolderCount == 1 &&
+    selectedLocalPathCount == 0 ? insertedOrigin : null;
+
+/// Retain a durable outcome even if a route is forcibly removed while busy.
+@visibleForTesting
+Future<LibrarySaveOutcome?> waitForLibrarySaveOutcome(
+  Future<LibrarySaveOutcome?> route,
+  List<Future<void>> pendingWrites,
+  LibrarySaveOutcome? Function() committedOutcome,
+) async {
+  final result = await waitForSaveDialogWrites(route, pendingWrites);
+  return committedOutcome() ?? result;
+}
+
 class LibraryUpdateTarget {
   const LibraryUpdateTarget({
     required this.title,
@@ -155,6 +189,35 @@ List<LibraryFolder> librarySaveWritableCloudFolders({
       .toList(growable: false);
 }
 
+/// Resolve existing user pin keys only, in their persisted order. Never infer
+/// system/generated identity from a display name. Group pins are not databases.
+@visibleForTesting
+List<String> librarySavePinnedDestinationKeys({
+  required List<String> orderedPinKeys,
+  required List<LibraryFolder> folders,
+  required List<LocalLibraryEntry> localEntries,
+  required LibrarySaveDestinationMode destinationMode,
+}) {
+  final eligible = <String>{
+    for (final folder in librarySaveWritableCloudFolders(
+      folders: folders,
+      destinationMode: destinationMode,
+    ))
+      if (folder.id != kTwicBookId &&
+          folder.userId.isNotEmpty &&
+          folder.icon != 'twic' &&
+          folder.icon != 'folder_container')
+        libraryCloudDatabasePinKey(folder.id),
+    if (librarySaveAllowsLocalDestinations(destinationMode))
+      for (final entry in localEntries)
+        if (entry.playerWorkspaceSource == null &&
+            playerWorkspaceIdFromLocalLibraryGroupId(entry.groupId) == null &&
+            p.extension(entry.path).toLowerCase() == '.pgn')
+          libraryLocalDatabasePinKey(entry.path),
+  };
+  return orderedPinKeys.where(eligible.remove).toList(growable: false);
+}
+
 /// Forui-styled "Save to folder(s)" dialog. Shows the user's writable
 /// folders as multi-select rows, supports inline create, and writes the
 /// supplied [games] into every selected folder as library entries via
@@ -172,11 +235,13 @@ Future<LibrarySaveOutcome?> showLibrarySaveToFolderDialog({
   LibraryUpdateTarget? updateTarget,
   LibrarySaveDestinationMode destinationMode =
       LibrarySaveDestinationMode.cloudAndLocal,
-}) {
-  if (games.isEmpty) {
-    return Future.value(null);
-  }
-  return showGeneralDialog<LibrarySaveOutcome>(
+}) async {
+  if (games.isEmpty) return null;
+  // A dismissed route does not cancel a durable write. Keep the caller's save
+  // boundary alive until every started operation has actually settled.
+  final pendingWrites = <Future<void>>[];
+  LibrarySaveOutcome? committedOutcome;
+  final route = showGeneralDialog<LibrarySaveOutcome>(
     context: context,
     barrierDismissible: true,
     barrierLabel: 'Save to folder',
@@ -187,6 +252,8 @@ Future<LibrarySaveOutcome?> showLibrarySaveToFolderDialog({
           ref: ref,
           games: games,
           sourceLabel: sourceLabel ?? 'imported',
+          onWriteStarted: pendingWrites.add,
+          onCommitted: (outcome) => committedOutcome = outcome,
           suggestedFolderId: suggestedFolderId,
           updateTarget: updateTarget,
           destinationMode: destinationMode,
@@ -205,6 +272,7 @@ Future<LibrarySaveOutcome?> showLibrarySaveToFolderDialog({
       );
     },
   );
+  return waitForLibrarySaveOutcome(route, pendingWrites, () => committedOutcome);
 }
 
 class _SaveToFolderDialog extends ConsumerStatefulWidget {
@@ -213,11 +281,15 @@ class _SaveToFolderDialog extends ConsumerStatefulWidget {
     required this.games,
     required this.sourceLabel,
     required this.suggestedFolderId,
+    required this.onWriteStarted,
+    required this.onCommitted,
     required this.updateTarget,
     required this.destinationMode,
   });
 
   final WidgetRef ref;
+  final void Function(Future<void>) onWriteStarted;
+  final void Function(LibrarySaveOutcome) onCommitted;
   final List<ChessGame> games;
   final String sourceLabel;
   final String? suggestedFolderId;
@@ -472,20 +544,28 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     }
   }
 
-  Future<void> _onUpdateOriginal() async {
+  Future<void> _onUpdateOriginal() {
+    final operation = _updateOriginal();
+    widget.onWriteStarted(operation);
+    return operation;
+  }
+
+  Future<void> _updateOriginal() async {
     final target = widget.updateTarget;
     if (_isSaving || _isUpdatingOriginal || target == null) return;
     setState(() => _isUpdatingOriginal = true);
     try {
-      await target.onUpdate(_gamesForSave().first);
-      if (!mounted) return;
-      Navigator.of(context).pop(
-        const LibrarySaveOutcome(
-          savedRows: 0,
-          folderCount: 0,
-          didUpdateOriginal: true,
-        ),
+      final committedGame = _gamesForSave().first;
+      await target.onUpdate(committedGame);
+      final outcome = LibrarySaveOutcome(
+        committedGame: committedGame,
+        savedRows: 0,
+        folderCount: 0,
+        didUpdateOriginal: true,
       );
+      widget.onCommitted(outcome);
+      if (!mounted) return;
+      Navigator.of(context).pop(outcome);
     } catch (e) {
       if (!mounted) return;
       _showToast('Update failed: $e', error: true);
@@ -496,18 +576,47 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   Future<void> _onSave(
     List<LibraryFolder> selectedFolders,
     List<String> selectedLocalPaths,
+  ) {
+    final operation = _save(selectedFolders, selectedLocalPaths);
+    widget.onWriteStarted(operation);
+    return operation;
+  }
+
+  Future<void> _save(
+    List<LibraryFolder> selectedFolders,
+    List<String> selectedLocalPaths,
   ) async {
-    if (_isSaving) return;
+    if (_isSaving || _isUpdatingOriginal) return;
     if (selectedFolders.isEmpty && selectedLocalPaths.isEmpty) return;
 
     final effectiveGames = _gamesForSave();
-
-    // The free-tier cap only applies to cloud rows. Local writes hit disk
-    // and never touch the saved_analyses table, so they are exempt.
-    final cloudRows = effectiveGames.length * selectedFolders.length;
-    if (cloudRows > 0) {
-      final allowed = await canSaveMoreGames(context, gamesToAdd: cloudRows);
-      if (!allowed || !mounted) return;
+    var localFoldersUsed = 0;
+    var cloudFoldersUsed = 0;
+    final localWriteOutcomes = <LocalLibraryWriteOutcome>[];
+    BoardTabLibrarySaveOrigin? insertedCloudOrigin;
+    LibrarySaveOutcome? committedOutcome;
+    void retainCommittedOutcome() {
+      if (_savedRows == 0 && _localWritten == 0) return;
+      committedOutcome = LibrarySaveOutcome(
+        committedGame: effectiveGames.length == 1 ? effectiveGames.single : null,
+        savedRows: _savedRows,
+        folderCount: cloudFoldersUsed,
+        localFilesWritten: _localWritten,
+        localFoldersUsed: localFoldersUsed,
+        cloudUpdateTarget: libraryCloudUpdateTargetForCompletedSave(
+          gameCount: effectiveGames.length,
+          selectedCloudFolderCount: selectedFolders.length,
+          selectedLocalPathCount: selectedLocalPaths.length,
+          insertedOrigin: insertedCloudOrigin,
+        ),
+        localUpdateTarget: libraryLocalUpdateTargetForCompletedSave(
+          gameCount: effectiveGames.length,
+          selectedCloudFolderCount: selectedFolders.length,
+          selectedLocalPathCount: selectedLocalPaths.length,
+          outcomes: localWriteOutcomes,
+        ),
+      );
+      widget.onCommitted(committedOutcome!);
     }
 
     setState(() {
@@ -516,6 +625,17 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       _localWritten = 0;
     });
     try {
+      // Claim the dialog before this first await so Save and Update cannot
+      // overlap during the cloud permission check. Local saves are exempt.
+      final cloudRows = effectiveGames.length * selectedFolders.length;
+      if (cloudRows > 0) {
+        final allowed = await canSaveMoreGames(context, gamesToAdd: cloudRows);
+        if (!mounted) return;
+        if (!allowed) {
+          setState(() => _isSaving = false);
+          return;
+        }
+      }
       // Cloud writes first so a disk failure later can be reported with the
       // cloud progress already on screen.
       if (selectedFolders.isNotEmpty) {
@@ -551,31 +671,50 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
           }
         }
 
-        for (var i = 0; i < rows.length; i += chunkSize) {
-          final end = math.min(i + chunkSize, rows.length);
-          final chunk = rows.sublist(i, end);
-          await repo.createSavedAnalysesBulk(chunk);
+        if (effectiveGames.length == 1 && selectedFolders.length == 1 &&
+            selectedLocalPaths.isEmpty) {
+          final inserted = await repo.createSavedAnalysis(rows.single);
+          insertedCloudOrigin = BoardTabLibrarySaveOrigin.cloudSavedAnalysis(
+            analysisId: inserted.id,
+            title: inserted.title,
+          );
+          _savedRows = 1;
+          cloudFoldersUsed = 1;
+          retainCommittedOutcome();
           if (!mounted) return;
-          setState(() => _savedRows += chunk.length);
+          setState(() {});
+        } else {
+          final writtenFolderIds = <String>{};
+          for (var i = 0; i < rows.length; i += chunkSize) {
+            final end = math.min(i + chunkSize, rows.length);
+            final chunk = rows.sublist(i, end);
+            await repo.createSavedAnalysesBulk(chunk);
+            _savedRows += chunk.length;
+            writtenFolderIds.addAll(chunk.map((row) => row.folderId).whereType<String>());
+            cloudFoldersUsed = writtenFolderIds.length;
+            retainCommittedOutcome();
+            if (!mounted) return;
+            setState(() {});
+          }
         }
 
         ref.invalidate(libraryFoldersStreamProvider);
         ref.invalidate(subscribedBooksProvider);
       }
 
-      var localFoldersUsed = 0;
       final localErrors = <String>[];
-      final localWriteOutcomes = <LocalLibraryWriteOutcome>[];
       if (selectedLocalPaths.isNotEmpty) {
         for (final path in selectedLocalPaths) {
           final writer = LocalLibraryWriter(folderPath: path);
           final outcome = await writer.writeGames(effectiveGames);
           localWriteOutcomes.add(outcome);
-          if (!mounted) return;
           if (outcome.written > 0) {
             localFoldersUsed++;
-            setState(() => _localWritten += outcome.written);
+            _localWritten += outcome.written;
           }
+          retainCommittedOutcome();
+          if (!mounted) return;
+          setState(() {});
           if (outcome.hasError) {
             localErrors.add('${p.basename(path)}: ${outcome.errorMessage}');
           }
@@ -629,24 +768,17 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       );
       if (!mounted) return;
 
-      Navigator.of(context).pop(
-        LibrarySaveOutcome(
-          savedRows: _savedRows,
-          folderCount: selectedFolders.length,
-          localFilesWritten: _localWritten,
-          localFoldersUsed: localFoldersUsed,
-          localUpdateTarget: libraryLocalUpdateTargetForCompletedSave(
-            gameCount: effectiveGames.length,
-            selectedCloudFolderCount: selectedFolders.length,
-            selectedLocalPathCount: selectedLocalPaths.length,
-            outcomes: localWriteOutcomes,
-          ),
-        ),
-      );
+      Navigator.of(context).pop(committedOutcome);
     } catch (e) {
       if (!mounted) return;
-      _showToast('Save failed: $e', error: true);
-      setState(() => _isSaving = false);
+      if (committedOutcome != null) {
+        // A retry here would duplicate already committed destinations.
+        _showToast('Some entries were saved before an error: $e', error: true);
+        Navigator.of(context).pop(committedOutcome);
+      } else {
+        _showToast('Save failed: $e', error: true);
+        setState(() => _isSaving = false);
+      }
     }
   }
 
@@ -712,6 +844,24 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         )
         .toList(growable: false);
 
+    final pinnedKeys = librarySavePinnedDestinationKeys(
+      orderedPinKeys:
+          ref.watch(myDatabasesFocusProvider).orderedPinnedDatabaseKeys,
+      folders: writable,
+      localEntries: localEntries,
+      destinationMode: widget.destinationMode,
+    );
+    final cloudByPin = {
+      for (final folder in writable) libraryCloudDatabasePinKey(folder.id): folder,
+    };
+    final localByPin = {
+      for (final entry in localEntries) libraryLocalDatabasePinKey(entry.path): entry,
+    };
+    final selectedPinKeys = {
+      ...selectedFolders.map((folder) => libraryCloudDatabasePinKey(folder.id)),
+      ...selectedLocalPaths.map(libraryLocalDatabasePinKey),
+    };
+
     final cloudRowsTarget = widget.games.length * selectedFolders.length;
     final localFilesTarget = widget.games.length * selectedLocalPaths.length;
     final totalTarget = cloudRowsTarget + localFilesTarget;
@@ -731,7 +881,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     final busy =
         _isSaving || _isUpdatingOriginal || _isDeletingLocalDestination;
 
-    return FTheme(
+    final content = FTheme(
       data: FThemes.zinc.dark,
       child: Center(
         child: ConstrainedBox(
@@ -817,77 +967,64 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                 ),
                                 const SizedBox(height: 12),
                               ],
+                              if (pinnedKeys.isNotEmpty) ...[
+                                LibrarySaveSection(
+                                  key: const ValueKey('save-pinned'),
+                                  icon: Icons.push_pin_outlined,
+                                  label: 'PINNED',
+                                  enabled: !busy,
+                                  selectedCount: pinnedKeys
+                                      .where(selectedPinKeys.contains)
+                                      .length,
+                                  children: [
+                                    for (final key in pinnedKeys)
+                                      if (cloudByPin[key] case final folder?)
+                                        _cloudDestinationRow(folder, busy)
+                                      else if (localByPin[key] case final entry?)
+                                        _localDestinationRow(entry, busy),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                              ],
                               if (writable.isNotEmpty) ...[
-                                const _SectionHeader(
+                                LibrarySaveSection(
+                                  key: const ValueKey('save-cloud'),
                                   icon: Icons.cloud_outlined,
                                   label: 'CLOUD LIBRARY',
+                                  enabled: !busy,
+                                  selectedCount: selectedFolders.length,
+                                  children: [
+                                    for (final folder in ordered)
+                                      _cloudDestinationRow(folder, busy),
+                                  ],
                                 ),
-                                ...ordered.map(
-                                  (folder) => _FolderRow(
-                                    folder: folder,
-                                    selected: _selected.contains(folder.id),
-                                    disabled: busy,
-                                    onToggle: () {
-                                      setState(() {
-                                        if (_selected.contains(folder.id)) {
-                                          _selected.remove(folder.id);
-                                        } else {
-                                          _selected.add(folder.id);
-                                        }
-                                      });
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 8),
                               ],
                               if (librarySaveAllowsLocalDestinations(
                                 widget.destinationMode,
-                              )) ...[
-                                _SectionHeader(
-                                  icon:
-                                      Platform.isMacOS
-                                          ? Icons.computer_outlined
-                                          : Icons.storage_outlined,
+                              ))
+                                LibrarySaveSection(
+                                  key: const ValueKey('save-local'),
+                                  icon: Platform.isMacOS
+                                      ? Icons.computer_outlined
+                                      : Icons.storage_outlined,
                                   label:
                                       Platform.isMacOS
                                           ? 'ON THIS MAC'
                                           : 'ON THIS PC',
+                                  enabled: !busy,
+                                  selectedCount: selectedLocalPaths.length,
+                                  children: [
+                                    for (final entry in localEntries)
+                                      _localDestinationRow(entry, busy),
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: _AddLocalFolderTile(
+                                        onTap: busy ? null : _onAddLocalPgnFile,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                ...localEntries.map((entry) {
-                                  final key = _normalizeLocalPath(entry.path);
-                                  return _LocalFolderRow(
-                                    entry: entry,
-                                    selected: _selectedLocalPaths.contains(key),
-                                    disabled:
-                                        _isSaving ||
-                                        _isUpdatingOriginal ||
-                                        _isDeletingLocalDestination,
-                                    onToggle: () {
-                                      setState(() {
-                                        if (_selectedLocalPaths.contains(key)) {
-                                          _selectedLocalPaths.remove(key);
-                                        } else {
-                                          _selectedLocalPaths.add(key);
-                                        }
-                                      });
-                                    },
-                                    onForget:
-                                        (_isSaving ||
-                                                _isUpdatingOriginal ||
-                                                _isDeletingLocalDestination)
-                                            ? null
-                                            : () => unawaited(
-                                              _deleteLocalDestination(entry),
-                                            ),
-                                  );
-                                }),
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: _AddLocalFolderTile(
-                                    onTap: busy ? null : _onAddLocalPgnFile,
-                                  ),
-                                ),
-                              ],
                             ],
                           ),
                         );
@@ -1040,6 +1177,32 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         ),
       ),
     );
+    // Match the disabled Cancel/Escape paths for barrier/back dismissal too.
+    return PopScope<LibrarySaveOutcome>(canPop: !busy, child: content);
+  }
+
+  // Pinned rows are aliases: both presentations toggle the same ID/path sets.
+  // Save payloads above are derived only from the underlying destination lists.
+  Widget _cloudDestinationRow(LibraryFolder folder, bool busy) => _FolderRow(
+    folder: folder,
+    selected: _selected.contains(folder.id),
+    disabled: busy,
+    onToggle: () => setState(() {
+      if (!_selected.add(folder.id)) _selected.remove(folder.id);
+    }),
+  );
+
+  Widget _localDestinationRow(LocalLibraryEntry entry, bool busy) {
+    final key = _normalizeLocalPath(entry.path);
+    return _LocalFolderRow(
+      entry: entry,
+      selected: _selectedLocalPaths.contains(key),
+      disabled: busy,
+      onToggle: () => setState(() {
+        if (!_selectedLocalPaths.add(key)) _selectedLocalPaths.remove(key);
+      }),
+      onForget: busy ? null : () => unawaited(_deleteLocalDestination(entry)),
+    );
   }
 
   Widget _buildGameDetailsSection() {
@@ -1052,7 +1215,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _GameDetailsHeader(
+          LibrarySaveSectionHeader(
+            label: 'GAME DETAILS',
+            icon: Icons.edit_note_rounded,
+            trailing: _showGameDetails ? 'Hide' : 'Edit',
             expanded: _showGameDetails,
             onToggle:
                 (_isSaving || _isUpdatingOriginal)
@@ -1420,34 +1586,7 @@ class _EmptyHint extends StatelessWidget {
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.icon, required this.label});
 
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 10, 4, 6),
-      child: Row(
-        children: [
-          Icon(icon, size: 12, color: kLightGreyColor),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              color: kLightGreyColor,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _AddLocalFolderTile extends StatefulWidget {
   const _AddLocalFolderTile({required this.onTap});
@@ -1556,9 +1695,8 @@ class _LocalFolderRowState extends State<_LocalFolderRow>
         child: MouseRegion(
           onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
           onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.disabled ? null : widget.onToggle,
+          child: DesktopTappable(
+            onPress: widget.disabled ? null : widget.onToggle,
             child: Container(
               padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
               decoration: BoxDecoration(
@@ -1770,61 +1908,7 @@ class _FieldLabel extends StatelessWidget {
   }
 }
 
-class _GameDetailsHeader extends StatelessWidget {
-  const _GameDetailsHeader({required this.expanded, required this.onToggle});
-  final bool expanded;
-  final VoidCallback? onToggle;
 
-  @override
-  Widget build(BuildContext context) {
-    return ClickCursor(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onToggle,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.edit_note_rounded,
-                size: 16,
-                color: kLightGreyColor,
-              ),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'GAME DETAILS',
-                  style: TextStyle(
-                    color: kLightGreyColor,
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.6,
-                  ),
-                ),
-              ),
-              Text(
-                expanded ? 'Hide' : 'Edit',
-                style: const TextStyle(
-                  color: kPrimaryColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Icon(
-                expanded
-                    ? Icons.keyboard_arrow_up_rounded
-                    : Icons.keyboard_arrow_down_rounded,
-                color: kPrimaryColor,
-                size: 18,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class _PlayerNameRow extends StatelessWidget {
   const _PlayerNameRow({
@@ -1986,9 +2070,8 @@ class _FolderRowState extends State<_FolderRow>
         child: MouseRegion(
           onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
           onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.disabled ? null : widget.onToggle,
+          child: DesktopTappable(
+            onPress: widget.disabled ? null : widget.onToggle,
             child: Container(
               padding: EdgeInsets.fromLTRB(10 + indent, 8, 10, 8),
               decoration: BoxDecoration(

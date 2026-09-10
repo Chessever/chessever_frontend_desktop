@@ -16,6 +16,7 @@ class TournamentGameLocalPgnSource {
     required this.sourceIndex,
     required this.sourceFileGameCount,
     this.pgnFingerprint = '',
+    this.recordRevision = '',
     required this.title,
   });
 
@@ -23,6 +24,7 @@ class TournamentGameLocalPgnSource {
   final int sourceIndex;
   final int sourceFileGameCount;
   final String pgnFingerprint;
+  final String recordRevision;
   final String title;
 }
 

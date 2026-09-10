@@ -1,5 +1,11 @@
 import 'dart:convert';
 
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:chessever/desktop/state/board_pane_session.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
+    show exportGameToPgn;
+
 import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -23,6 +29,7 @@ class DesktopBoardWindowPayload {
     this.args,
     this.metadata = const <String, Object?>{},
     this.pictureInPicture = false,
+    this.detachTransferId,
   });
 
   final String title;
@@ -31,6 +38,7 @@ class DesktopBoardWindowPayload {
   final BoardTabGameArgs? args;
   final Map<String, Object?> metadata;
   final bool pictureInPicture;
+  final String? detachTransferId;
 
   factory DesktopBoardWindowPayload.fromArgs(
     BoardTabGameArgs args, {
@@ -58,6 +66,83 @@ class DesktopBoardWindowPayload {
     );
   }
 
+  /// Keep the working tree and save identity in one synchronous handoff.
+  factory DesktopBoardWindowPayload.fromBoardSession(
+    DesktopTab tab, {
+    required BoardTabGameArgs? openingArgs,
+    required BoardPaneSession session,
+    required BoardTabLibrarySaveOrigin? attachedOrigin,
+  }) {
+    final pgn = exportGameToPgn(session.game);
+    return DesktopBoardWindowPayload.fromTab(
+      tab,
+      boardArgs: openingArgs?.copyWith(
+        pgn: pgn,
+        initialBoardFlipped: session.flipped,
+        librarySaveOrigin: resolveBoardTabLibrarySaveOrigin(
+          sourceOrigin: openingArgs.librarySaveOrigin,
+          attachedOrigin: attachedOrigin,
+        ),
+      ),
+      metadata: {
+        'boardSession': {
+          'game': session.game.toJson(),
+          'pointer': session.pointer,
+          'headers': session.pgnHeaders,
+          'flipped': session.flipped,
+          'loadedFrom': session.loadedFrom,
+          'lastAppliedPgn': session.lastAppliedPgn,
+          'lastAppliedGameId': session.lastAppliedGameId,
+          'lastAppliedInitialFenKey': session.lastAppliedInitialFenKey,
+          'dirty': session.dirtySinceLoad,
+          'unseen': session.hasUnseenMoves,
+          'committed': session.hasCommittedSave,
+          'savedSeed': session.savedSourceSeedPgn,
+          'detachedSeed': pgn.trim(),
+        },
+        'attachedOrigin': _librarySaveOriginToJson(attachedOrigin),
+      },
+    );
+  }
+
+  void restoreBoardSession(ProviderContainer container, String tabId) {
+    final value = metadata['boardSession'];
+    if (kind != TabKind.board || value is! Map) return;
+    final data = value.cast<String, dynamic>();
+    final game = ChessGame.fromJson(
+      (data['game'] as Map).cast<String, dynamic>(),
+    );
+    container
+        .read(boardPaneSessionByTabIdProvider.notifier)
+        .put(
+          tabId,
+          BoardPaneSession(
+            game: game,
+            pointer: (data['pointer'] as List).cast<int>(),
+            pgnHeaders: (data['headers'] as Map).cast<String, String>(),
+            flipped: data['flipped'] == true,
+            loadedFrom: data['loadedFrom'] as String?,
+            lastAppliedPgn: data['lastAppliedPgn'] as String?,
+            lastAppliedGameId: data['lastAppliedGameId'] as String?,
+            lastAppliedInitialFenKey:
+                data['lastAppliedInitialFenKey'] as String?,
+            dirtySinceLoad: data['dirty'] == true,
+            hasUnseenMoves: data['unseen'] == true,
+            undoStack: const [],
+            hasCommittedSave: data['committed'] == true,
+            savedSourceSeedPgn: data['savedSeed'] as String?,
+            detachedSeedPgn: data['detachedSeed'] as String?,
+          ),
+        );
+    final origin = _librarySaveOriginFromJson(metadata['attachedOrigin']);
+    if (origin != null) {
+      final origins = container.read(
+        boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier,
+      );
+      origins.state = {...origins.state, tabId: origin};
+    }
+  }
+
   factory DesktopBoardWindowPayload.fromJson(Map<String, Object?> json) {
     final argsJson = json['args'];
     final kind = _kind(json['kind']);
@@ -78,6 +163,7 @@ class DesktopBoardWindowPayload {
               ? metadataJson.cast<String, Object?>()
               : const <String, Object?>{},
       pictureInPicture: json['pictureInPicture'] == true,
+      detachTransferId: json['detachTransferId'] as String?,
     );
   }
 
@@ -105,6 +191,7 @@ class DesktopBoardWindowPayload {
     if (args != null) 'args': _argsToJson(args!),
     if (metadata.isNotEmpty) 'metadata': metadata,
     if (pictureInPicture) 'pictureInPicture': true,
+    if (detachTransferId != null) 'detachTransferId': detachTransferId,
   };
 
   String encode() => jsonEncode(toJson());
@@ -301,6 +388,7 @@ Map<String, Object?>? _localPgnSourceToJson(
     'sourceIndex': source.sourceIndex,
     'sourceFileGameCount': source.sourceFileGameCount,
     'pgnFingerprint': source.pgnFingerprint,
+    'recordRevision': source.recordRevision,
     'title': source.title,
   };
 }
@@ -315,6 +403,7 @@ TournamentGameLocalPgnSource? _localPgnSourceFromJson(Object? value) {
     sourceIndex: _int(json['sourceIndex']),
     sourceFileGameCount: _int(json['sourceFileGameCount']),
     pgnFingerprint: _string(json['pgnFingerprint']),
+    recordRevision: _string(json['recordRevision']),
     title: _string(json['title']),
   );
 }
@@ -330,6 +419,7 @@ Map<String, Object?>? _librarySaveOriginToJson(
     'sourceIndex': origin.sourceIndex,
     'sourceFileGameCount': origin.sourceFileGameCount,
     'sourcePgnFingerprint': origin.sourcePgnFingerprint,
+    'sourceRecordRevision': origin.sourceRecordRevision,
     'title': origin.title,
   };
 }
@@ -355,6 +445,7 @@ BoardTabLibrarySaveOrigin? _librarySaveOriginFromJson(Object? value) {
         sourceIndex: _int(json['sourceIndex']),
         sourceFileGameCount: _int(json['sourceFileGameCount']),
         sourcePgnFingerprint: _string(json['sourcePgnFingerprint']),
+        sourceRecordRevision: _string(json['sourceRecordRevision']),
         title: title,
       );
   }

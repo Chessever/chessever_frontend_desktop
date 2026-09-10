@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'local_chess_database_repository.dart';
+import 'local_pgn_source.dart';
 
 import 'package:path/path.dart' as p;
 
@@ -53,7 +55,9 @@ class LocalLibraryWriter {
     if (_looksLikePgnFile(folderPath) &&
         (type == FileSystemEntityType.file ||
             type == FileSystemEntityType.notFound)) {
-      return _appendGamesToPgnFile(games);
+      return LocalChessDatabaseRepository.runLocalPgnFileWriteQueued(
+        () => _appendGamesToPgnFile(games),
+      );
     }
 
     return _writeGamesToFolder(games);
@@ -75,6 +79,7 @@ class LocalLibraryWriter {
 
     final written = <String>[];
     final writtenFingerprints = <String>[];
+    final writtenRevisions = <String>[];
     var skipped = 0;
     String? error;
 
@@ -100,6 +105,7 @@ class LocalLibraryWriter {
           ..write('\n\n');
         written.add(file.path);
         writtenFingerprints.add(localChessPgnFingerprint(pgn));
+        writtenRevisions.add(localPgnRecordRevision(pgn));
       }
 
       if (written.isNotEmpty) {
@@ -118,6 +124,7 @@ class LocalLibraryWriter {
             indexInFile: existingGameCount + i,
             fileGameCount: finalGameCount,
             pgnFingerprint: writtenFingerprints[i],
+            recordRevision: writtenRevisions[i],
           ),
       ];
 

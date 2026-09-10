@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
 import 'dart:io' as io;
 import 'dart:math' as math;
@@ -8186,8 +8187,9 @@ BoardTabGameArgs _boardArgsForLocalPreviewGame(
     return value > 0 ? value : null;
   }
 
+  final pgn = localGame.rawPgn;
   return BoardTabGameArgs(
-    pgn: localGame.rawPgn,
+    pgn: pgn,
     label: localGame.title,
     whiteName: s('White'),
     blackName: s('Black'),
@@ -8220,6 +8222,7 @@ BoardTabGameArgs _boardArgsForLocalPreviewGame(
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
       sourcePgnFingerprint: localGame.pgnFingerprint,
+      sourceRecordRevision: localPgnRecordRevision(pgn),
       title: localGame.title,
     ),
   );
@@ -8290,6 +8293,7 @@ TournamentGameSummary _summaryFromLocalPreviewGame(LocalChessGame localGame) {
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
       pgnFingerprint: localGame.pgnFingerprint,
+      recordRevision: localPgnRecordRevision(pgn),
       title: localGame.title,
     ),
   );

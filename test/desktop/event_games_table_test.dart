@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/services/retained_local_pgn.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -2070,6 +2071,13 @@ void main() {
             title: 'Local One vs Local Two',
           ),
         ),
+        overrides: [
+          // This test isolates the opening payload contract; physical read
+          // refresh is covered by retained_local_pgn_test.dart.
+          retainedLocalPgnHydratorProvider.overrideWithValue(
+            (row) async => row,
+          ),
+        ],
       ),
     );
     await tester.pump();
