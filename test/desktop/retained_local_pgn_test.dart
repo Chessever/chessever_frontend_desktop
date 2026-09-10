@@ -230,7 +230,10 @@ void main() {
           shouldAttachRefreshedLocalPgnOriginAfterUpdate(
             tabStillExists: true,
             updatingArgs: privateSeed,
-            currentArgs: retained.copyWith(pgn: retained.pgn),
+            currentArgs: retained.copyWith(
+              pgn: retained.pgn,
+              clearRetainedSeedIdentity: true,
+            ),
             updatingOrigin: privateSeed.librarySaveOrigin!,
             currentAttachedOrigin: null,
           ),

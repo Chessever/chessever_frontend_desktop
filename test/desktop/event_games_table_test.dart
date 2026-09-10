@@ -1258,7 +1258,7 @@ void main() {
     },
   );
 
-  testWidgets('live round hides redundant round status and start time', (
+  testWidgets('live round shows canonical start time without status chip', (
     tester,
   ) async {
     final startsAt = DateTime.now().subtract(const Duration(hours: 2));
@@ -1287,12 +1287,10 @@ void main() {
     await tester.pump();
 
     expect(find.text('LIVE'), findsNothing);
-    expect(find.text(TimeUtils.formatRoundDateTime(startsAt)), findsNothing);
+    expect(find.text(TimeUtils.formatRoundDateTime(startsAt)), findsOneWidget);
   });
 
-  testWidgets('upcoming round uses one compact neutral start time', (
-    tester,
-  ) async {
+  testWidgets('upcoming round uses the canonical start time', (tester) async {
     final startsAt = DateTime(2030, 8, 12, 9, 40);
     await tester.pumpWidget(
       _wrap(
@@ -1320,7 +1318,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('SOON'), findsNothing);
-    expect(find.text('Aug 12 · 09:40'), findsOneWidget);
+    expect(find.text(TimeUtils.formatRoundDateTime(startsAt)), findsOneWidget);
   });
 
   testWidgets('event rail omits ongoing status chip text', (tester) async {
@@ -2507,8 +2505,14 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('May 25 · 11:00'), findsOneWidget);
-    expect(find.text('May 22 · 00:00'), findsNothing);
+    expect(
+      find.text(TimeUtils.formatRoundDateTime(DateTime(2030, 5, 25, 11))),
+      findsOneWidget,
+    );
+    expect(
+      find.text(TimeUtils.formatRoundDateTime(DateTime(2030, 5, 22))),
+      findsNothing,
+    );
   });
 
   testWidgets('selected top event round stays collapsed after header tap', (

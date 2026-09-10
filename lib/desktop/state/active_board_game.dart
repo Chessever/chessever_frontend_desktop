@@ -251,6 +251,7 @@ class BoardTabGameArgs {
     String? gameListSelectedId,
     BoardTabLibrarySaveOrigin? librarySaveOrigin,
     Object? retainedSeedIdentity,
+    bool clearRetainedSeedIdentity = false,
   }) {
     return BoardTabGameArgs(
       gameId: gameId ?? this.gameId,
@@ -299,7 +300,13 @@ class BoardTabGameArgs {
           eventGamesContinuation ?? this.eventGamesContinuation,
       gameListSelectedId: gameListSelectedId ?? this.gameListSelectedId,
       librarySaveOrigin: librarySaveOrigin ?? this.librarySaveOrigin,
-      retainedSeedIdentity: retainedSeedIdentity,
+      // Metadata-only copies (pagination, tree selection, live score ticks)
+      // must keep the committed save identity. Only explicit clears or fresh
+      // constructors start a new seed lifetime.
+      retainedSeedIdentity:
+          clearRetainedSeedIdentity
+              ? null
+              : retainedSeedIdentity ?? this.retainedSeedIdentity,
     );
   }
 }
