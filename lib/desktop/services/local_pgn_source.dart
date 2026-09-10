@@ -1,10 +1,36 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'pgn_record_boundaries.dart';
 
 import 'local_chess_pgn_fingerprint.dart';
+
+/// Decodes PGN bytes the way the import scanner does: UTF-8 with malformed
+/// sequences replaced, falling back to Latin-1 only when UTF-8 yields nothing.
+/// Every fingerprint and revision is computed over text decoded this way, so
+/// readers must not use `File.readAsString`, which throws on the Latin-1
+/// files ChessBase and older tools still write.
+String decodeLocalPgnText(List<int> bytes) {
+  final utf = utf8.decode(bytes, allowMalformed: true);
+  if (utf.trim().isNotEmpty) return utf;
+  return latin1.decode(bytes, allowInvalid: true);
+}
+
+/// The replacement PGN was rejected before the file was touched: the local
+/// database could not index it, and committing it anyway would drop the game
+/// from the cache the moment the file was reconciled.
+final class LocalChessPgnReplacementRejectedException implements Exception {
+  const LocalChessPgnReplacementRejectedException(this.reason);
+
+  final String reason;
+
+  @override
+  String toString() =>
+      'The updated game could not be indexed for the local database '
+      '($reason). The source file was left unchanged.';
+}
 
 /// Physical record boundaries, never deduplicated cache ordinals. Offsets are
 /// Dart string offsets into the exact supplied snapshot (not cached byte spans).
@@ -102,6 +128,9 @@ String localPgnRecordFromSnapshot({
 
 /// Cached byte ranges are only hints. Resolve the physical ordinal afresh so a
 /// comment-length edit in an earlier record cannot hydrate a truncated neighbor.
+///
+/// Reads and scans the whole file synchronously; on the UI isolate prefer
+/// [readLocalPgnRecordInBackground] for anything but small files.
 String readLocalPgnRecord({
   required String path,
   required int indexInFile,
@@ -109,12 +138,43 @@ String readLocalPgnRecord({
   String? expectedPgnFingerprint,
   String? expectedRecordRevision,
 }) => localPgnRecordFromSnapshot(
-  text: File(path).readAsStringSync(),
+  text: decodeLocalPgnText(File(path).readAsBytesSync()),
   indexInFile: indexInFile,
   expectedFileGameCount: expectedFileGameCount,
   expectedPgnFingerprint: expectedPgnFingerprint,
   expectedRecordRevision: expectedRecordRevision,
 );
+
+/// [readLocalPgnRecord] on a worker isolate, so a large database's read and
+/// boundary scan never stall the UI isolate. Validation failures surface as
+/// the same [StateError]s the synchronous reader throws.
+Future<String> readLocalPgnRecordInBackground({
+  required String path,
+  required int indexInFile,
+  int? expectedFileGameCount,
+  String? expectedPgnFingerprint,
+  String? expectedRecordRevision,
+}) async {
+  final outcome = await Isolate.run(() {
+    try {
+      return (
+        pgn: readLocalPgnRecord(
+          path: path,
+          indexInFile: indexInFile,
+          expectedFileGameCount: expectedFileGameCount,
+          expectedPgnFingerprint: expectedPgnFingerprint,
+          expectedRecordRevision: expectedRecordRevision,
+        ),
+        error: null,
+      );
+    } on StateError catch (error) {
+      return (pgn: null, error: error.message);
+    }
+  });
+  final error = outcome.error;
+  if (error != null) throw StateError(error);
+  return outcome.pgn!;
+}
 
 String replaceLocalPgnRecordInSnapshot({
   required String text,

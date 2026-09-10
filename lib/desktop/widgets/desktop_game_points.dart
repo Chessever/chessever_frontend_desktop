@@ -28,6 +28,5 @@ String desktopGamePointsLabel(
     customPoints: customPoints,
   );
   if (points == null) return '';
-  if (parseAwardedPoints(customPoints) == null && points == 0.5) return '½';
   return formatAwardedPoints(points);
 }

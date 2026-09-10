@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as path;
 
@@ -25,9 +23,10 @@ Future<TournamentGameSummary> hydrateRetainedLocalPgn(
   if (source.pgnFingerprint.isEmpty || source.sourceFileGameCount <= 0) {
     throw StateError('Refresh the database before opening this game.');
   }
-  final text = await File(source.sourcePath).readAsString();
-  final pgn = localPgnRecordFromSnapshot(
-    text: text,
+  // Off the UI isolate: this runs on every open of a database game, and the
+  // whole-file boundary scan behind it is seconds long for a large PGN.
+  final pgn = await readLocalPgnRecordInBackground(
+    path: source.sourcePath,
     indexInFile: source.sourceIndex,
     expectedFileGameCount: source.sourceFileGameCount,
     expectedPgnFingerprint: source.pgnFingerprint,
