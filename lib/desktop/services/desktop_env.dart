@@ -70,6 +70,14 @@ class DesktopEnv {
       'ANALYSIS_API_BASE',
       defaultValue: '',
     ),
+    // Public broadcast video API (tournament stream lists). Optional: the
+    // Board pane's stream client carries the production origin as its own
+    // default, and a debug `.env` can point it at the broadcasting repo's
+    // local API for end-to-end work.
+    'BROADCAST_API_BASE': String.fromEnvironment(
+      'BROADCAST_API_BASE',
+      defaultValue: '',
+    ),
     // Feedback relay. Optional: absent, the feedback dialog still works and
     // simply skips the Telegram notification. Declared here so the release
     // `--verify-release-env` probe can confirm CI actually injected them —

@@ -91,6 +91,8 @@ if command -v apt-get >/dev/null 2>&1; then
     libkeybinder-3.0-dev libnotify-dev
     libcurl4-openssl-dev zlib1g-dev
     libasound2-dev
+    # webview_all (Board pane live-stream panel) builds against WebKitGTK.
+    libwebkit2gtk-4.1-dev
   )
   apt_install() {
     sudo apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${PKGS[@]}"

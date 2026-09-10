@@ -289,7 +289,7 @@ Version: $RELEASE_VERSION
 Section: games
 Priority: optional
 Architecture: amd64
-Depends: libc6, libgtk-3-0 | libgtk-3-0t64, libstdc++6, libkeybinder-3.0-0, libnotify4, libcurl4 | libcurl4t64, libasound2 | libasound2t64
+Depends: libc6, libgtk-3-0 | libgtk-3-0t64, libstdc++6, libkeybinder-3.0-0, libnotify4, libcurl4 | libcurl4t64, libasound2 | libasound2t64, libwebkit2gtk-4.1-0
 Installed-Size: $installed_size
 Maintainer: ChessEver LLC <support@chessever.com>
 Description: Chessever desktop app
