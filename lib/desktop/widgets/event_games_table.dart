@@ -5542,25 +5542,7 @@ class _BoardEventRailTabState extends State<_BoardEventRailTab> {
                       color: active ? kWhiteColor : kWhiteColor70,
                       fontSize: 12,
                       fontWeight:
-                          widget.selected ? FontWeight.w800 : FontWeight.w600,
-                    ),
-                  ),
-                  Positioned(
-                    left: 10,
-                    right: 10,
-                    bottom: 0,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 100),
-                      height: 2,
-                      decoration: BoxDecoration(
-                        color:
-                            widget.selected
-                                ? kPrimaryColor
-                                : Colors.transparent,
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(2),
-                        ),
-                      ),
+                          widget.selected ? FontWeight.w700 : FontWeight.w600,
                     ),
                   ),
                 ],

@@ -4567,8 +4567,10 @@ class _BoardPaneContent extends HookConsumerWidget {
       required ChessMovePointer activePointer,
       required ValueChanged<ChessMovePointer> onJump,
       required ValueNotifier<NotationLayoutMode> layoutModeController,
+      required Widget headerTrailing,
     }) {
       return NotationLadderView(
+        headerTrailing: headerTrailing,
         game: chessGame.value,
         activePointer: activePointer,
         // Notation stays mounted under Explorer; keep the cursor highlight.
@@ -4853,7 +4855,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           onDismissPictureInPicture:
                               () => unawaited(dismissPictureInPictureAction()),
                           onNextGame: navigateNextGameManually,
-                          onOpenContextMenu: openBoardContextMenu,
+
                           boardSizePreference: boardSizePreference.value,
                           onBoardSizeChanged: (size) {
                             setBoardSizePreference(size);
@@ -4954,6 +4956,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                       hideLocalOpeningTreePicker:
                           boardArgs?.hideLocalOpeningTreePicker ?? false,
                       notationChild: buildNotationLadder(
+                        headerTrailing: _BoardMoreActionsButton(
+                          onPressed: openBoardContextMenu,
+                        ),
                         scrollController: notationScrollController,
                         activePointer: pointer.value,
                         onJump: jumpToPointer,
@@ -7866,7 +7871,6 @@ class _BoardArea extends ConsumerWidget {
     required this.onRestoreMainWindow,
     required this.onDismissPictureInPicture,
     required this.onNextGame,
-    required this.onOpenContextMenu,
     required this.boardSizePreference,
     required this.onBoardSizeChanged,
     required this.onBoardSizeReset,
@@ -7973,7 +7977,6 @@ class _BoardArea extends ConsumerWidget {
   final VoidCallback onRestoreMainWindow;
   final VoidCallback onDismissPictureInPicture;
   final VoidCallback onNextGame;
-  final ValueChanged<Offset> onOpenContextMenu;
   final double? boardSizePreference;
   final ValueChanged<double> onBoardSizeChanged;
   final VoidCallback onBoardSizeReset;
@@ -8263,12 +8266,8 @@ class _BoardArea extends ConsumerWidget {
             ),
           );
 
-          final moreActionsButton =
-              pictureInPicture
-                  ? null
-                  : _BoardMoreActionsButton(onPressed: onOpenContextMenu);
           final resizeHandle =
-              pictureInPicture
+              pictureInPicture || boardSize < 16
                   ? null
                   : BoardResizeHandle(
                     boardSize: boardSize,
@@ -8335,6 +8334,25 @@ class _BoardArea extends ConsumerWidget {
             behavior: HitTestBehavior.opaque,
             onPointerDown: (event) {
               if (event.buttons & kPrimaryMouseButton == 0) return;
+              // Resizing is chrome interaction, not a board-square click.
+              // The overlay is a sibling of the annotation layer; exclude it
+              // here too so starting a drag/reset cannot erase annotations.
+              final cornerRight = (constraints.maxWidth + boardWithBar) / 2;
+              final cornerBottom =
+                  (constraints.maxHeight + boardSize + extraVertical) / 2 -
+                  bottomRowHeight -
+                  _BoardArea.headerGap;
+              if (hasHeaders &&
+                  !focusMode &&
+                  resizeHandle != null &&
+                  Rect.fromLTWH(
+                    cornerRight - 16,
+                    cornerBottom - 16,
+                    16,
+                    16,
+                  ).contains(event.localPosition)) {
+                return;
+              }
               final shouldClear = shouldClearBoardAnnotationsForBoardAreaClick(
                 localPosition: event.localPosition,
                 contentSize: constraints.biggest,
@@ -8378,15 +8396,9 @@ class _BoardArea extends ConsumerWidget {
                                           (!topIsWhite &&
                                               sideToMove == Side.black),
                                       clockText: topClock,
-                                      // Reserve the actions menu's space in
-                                      // the player bar, but keep the actual
-                                      // control outside the export boundary.
-                                      trailingControl:
-                                          pictureInPicture
-                                              ? null
-                                              : const SizedBox.square(
-                                                dimension: _focusButtonSize,
-                                              ),
+                                      // The menu lives in notation; reserve no
+                                      // trailing control or gap after the clock.
+                                      trailingControl: null,
                                       activeGameId: activeGameId,
                                       historyOwnerId: tabId,
                                       useLiveClock:
@@ -8423,12 +8435,8 @@ class _BoardArea extends ConsumerWidget {
                                           (!bottomIsWhite &&
                                               sideToMove == Side.black),
                                       clockText: bottomClock,
-                                      trailingControl:
-                                          focusMode
-                                              ? null
-                                              : const SizedBox.square(
-                                                dimension: _resizeHandleSize,
-                                              ),
+                                      // The resize grip overlays the board corner.
+                                      trailingControl: null,
                                       activeGameId: activeGameId,
                                       historyOwnerId: tabId,
                                       useLiveClock:
@@ -8445,20 +8453,17 @@ class _BoardArea extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  if (hasHeaders && moreActionsButton != null)
-                    Positioned(
-                      top: (topRowHeight - _focusButtonSize) / 2,
-                      right: 0,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [moreActionsButton],
-                      ),
-                    ),
                   if (hasHeaders && !focusMode && resizeHandle != null)
                     Positioned(
-                      bottom: (bottomRowHeight - _resizeHandleSize) / 2,
+                      // Coordinates are inside the squares, not a separate
+                      // gutter. Keep the target in the extreme 16px corner,
+                      // away from the piece centre, and outside share exports.
+                      bottom: bottomRowHeight + _BoardArea.headerGap,
                       right: 0,
-                      child: resizeHandle,
+                      child: SizedBox.square(
+                        dimension: 16,
+                        child: resizeHandle,
+                      ),
                     ),
                 ],
               ),
