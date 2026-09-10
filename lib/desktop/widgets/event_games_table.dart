@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:chessever/desktop/services/retained_local_pgn.dart';
+import 'package:chessever/desktop/widgets/desktop_game_points.dart';
+import 'package:chessever/utils/awarded_points.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -3094,6 +3096,8 @@ TournamentGameSummary _mergeFreshEventGameSummary(
     blackClockSeconds: fresh.blackClockSeconds ?? current.blackClockSeconds,
     whiteFideId: fresh.whiteFideId ?? current.whiteFideId,
     blackFideId: fresh.blackFideId ?? current.blackFideId,
+    whiteCustomPoints: fresh.whiteCustomPoints,
+    blackCustomPoints: fresh.blackCustomPoints,
     fen: fresh.fen ?? current.fen,
     roundId: fresh.roundId.isNotEmpty ? fresh.roundId : current.roundId,
     roundSlug: fresh.roundSlug.isNotEmpty ? fresh.roundSlug : current.roundSlug,
@@ -3786,34 +3790,21 @@ String _matchupScoreDisplay(
   var finished = 0;
   for (final game in games) {
     final leftIsWhite = isLeftSideWhite(game);
-    switch (game.status) {
-      case GameStatus.whiteWins:
-        if (leftIsWhite) {
-          left += 1;
-        } else {
-          right += 1;
-        }
-        finished++;
-      case GameStatus.blackWins:
-        if (leftIsWhite) {
-          right += 1;
-        } else {
-          left += 1;
-        }
-        finished++;
-      case GameStatus.draw:
-        left += 0.5;
-        right += 0.5;
-        finished++;
-      default:
-        break;
-    }
+    if (!game.status.isFinished) continue;
+    final white = desktopGamePoints(game.status, isWhite: true,
+        customPoints: game.whiteCustomPoints)!;
+    final black = desktopGamePoints(game.status, isWhite: false,
+        customPoints: game.blackCustomPoints)!;
+    left += leftIsWhite ? white : black;
+    right += leftIsWhite ? black : white;
+    finished++;
   }
   if (finished == 0) return '';
   return '${_formatMatchPoints(left)}–${_formatMatchPoints(right)}';
 }
 
 String _formatMatchPoints(double value) {
+  if (value < 0 || value % 0.5 != 0) return formatAwardedPoints(value);
   final whole = value.truncate();
   final hasHalf = (value - whole) >= 0.5;
   if (whole == 0 && hasHalf) return '½';
@@ -4070,7 +4061,8 @@ class _EventGamePlayerLine extends StatelessWidget {
           child:
               result != null
                   ? Text(
-                    result,
+                    desktopGamePointsLabel(game.status, isWhite: isWhite,
+                      customPoints: isWhite ? game.whiteCustomPoints : game.blackCustomPoints),
                     textAlign: TextAlign.right,
                     style: trailingStyle,
                   )

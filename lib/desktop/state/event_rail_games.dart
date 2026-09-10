@@ -1431,6 +1431,8 @@ bool _eventRailSummariesEqual(
       current.blackClockSeconds == incoming.blackClockSeconds &&
       current.whiteFideId == incoming.whiteFideId &&
       current.blackFideId == incoming.blackFideId &&
+      current.whiteCustomPoints == incoming.whiteCustomPoints &&
+      current.blackCustomPoints == incoming.blackCustomPoints &&
       current.fen == incoming.fen &&
       current.roundId == incoming.roundId &&
       current.roundSlug == incoming.roundSlug &&

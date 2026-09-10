@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:chessever/desktop/widgets/desktop_game_points.dart';
+
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -542,7 +544,7 @@ class _CleanPlayerRow extends StatelessWidget {
     final fed = isWhite ? data.whiteFederation : data.blackFederation;
     final fideId = isWhite ? data.whiteFideId : data.blackFideId;
     final title = isWhite ? data.whiteTitle : data.blackTitle;
-    final result = _resultFor(data.status, isWhite: isWhite);
+    final result = _resultFor(data, isWhite: isWhite);
     const nameColor = kWhiteColor;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
@@ -587,7 +589,7 @@ class _CleanPlayerRow extends StatelessWidget {
           ],
           if (result.isNotEmpty) ...[
             const SizedBox(width: 10),
-            _ResultBadge(label: result, compact: false),
+            _ResultBadge(label: result, compact: false, color: _resultBadgeColor(data.status, isWhite)),
           ],
         ],
       ),
@@ -687,7 +689,7 @@ class _CompactScorePanel extends StatelessWidget {
     if (data.status.isFinished) {
       final winning =
           data.status == GameStatus.draw ? kLightGreyColor : kPrimaryColor;
-      return _ScorePlate(label: _resultLabel(data.status), color: winning);
+      return _ScorePlate(label: _resultLabel(data), color: winning);
     }
     if (data.hasStarted) {
       return const SizedBox(width: 60);
@@ -1103,7 +1105,7 @@ class _GridLayoutState extends State<_GridLayout>
                 _PlayerRow(
                   data: widget.data,
                   isWhite: false,
-                  result: _resultFor(widget.data.status, isWhite: false),
+                  result: _resultFor(widget.data, isWhite: false),
                   compact: true,
                 ),
                 const SizedBox(height: 10),
@@ -1188,7 +1190,7 @@ class _GridLayoutState extends State<_GridLayout>
                 _PlayerRow(
                   data: widget.data,
                   isWhite: true,
-                  result: _resultFor(widget.data.status, isWhite: true),
+                  result: _resultFor(widget.data, isWhite: true),
                   compact: true,
                 ),
               ],
@@ -1406,7 +1408,7 @@ class _PlayerRow extends StatelessWidget {
         ],
         if (result.isNotEmpty) ...[
           const SizedBox(width: 10),
-          _ResultBadge(label: result, compact: compact),
+          _ResultBadge(label: result, compact: compact, color: _resultBadgeColor(data.status, isWhite)),
         ],
       ],
     );
@@ -1464,13 +1466,14 @@ class _ClockPill extends StatelessWidget {
 }
 
 class _ResultBadge extends StatelessWidget {
-  const _ResultBadge({required this.label, required this.compact});
+  const _ResultBadge({required this.label, required this.compact, required this.color});
+  final Color color;
   final String label;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final color = _resultBadgeColor(label);
+
     return SizedBox(
       width: compact ? 24 : 30,
       height: compact ? 18 : 22,
@@ -1498,13 +1501,10 @@ class _ResultBadge extends StatelessWidget {
   }
 }
 
-Color _resultBadgeColor(String label) {
-  return switch (label.trim()) {
-    '1' || '1.0' => kPrimaryColor,
-    '0' || '0.0' => kRedColor,
-    '½' || '1/2' || '0.5' => kLightGreyColor,
-    _ => kLightGreyColor,
-  };
+Color _resultBadgeColor(GameStatus status, bool isWhite) {
+  if (status == GameStatus.draw) return kLightGreyColor;
+  final won = isWhite ? status == GameStatus.whiteWins : status == GameStatus.blackWins;
+  return won ? kPrimaryColor : kRedColor;
 }
 
 class _Pulse extends StatefulWidget {
@@ -1571,33 +1571,15 @@ class _NoEvalSplit extends StatelessWidget {
   }
 }
 
-String _resultFor(GameStatus s, {required bool isWhite}) {
-  switch (s) {
-    case GameStatus.whiteWins:
-      return isWhite ? '1' : '0';
-    case GameStatus.blackWins:
-      return isWhite ? '0' : '1';
-    case GameStatus.draw:
-      return '½';
-    case GameStatus.unknown:
-    case GameStatus.ongoing:
-      return '';
-  }
-}
+String _resultFor(GameCardData data, {required bool isWhite}) =>
+    desktopGamePointsLabel(data.status, isWhite: isWhite,
+      customPoints: isWhite ? data.whiteCustomPoints : data.blackCustomPoints);
 
-String _resultLabel(GameStatus s) {
-  switch (s) {
-    case GameStatus.whiteWins:
-      return '1 – 0';
-    case GameStatus.blackWins:
-      return '0 – 1';
-    case GameStatus.draw:
-      return '½ – ½';
-    case GameStatus.ongoing:
-      return 'Underway';
-    case GameStatus.unknown:
-      return '';
+String _resultLabel(GameCardData data) {
+  if (data.status.isFinished) {
+    return '${_resultFor(data, isWhite: true)} – ${_resultFor(data, isWhite: false)}';
   }
+  return data.status == GameStatus.ongoing ? 'Underway' : '';
 }
 
 /// Per-layout tile sizing for [DesktopGameCardsFlow].

@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/widgets/desktop_game_points.dart';
+import 'package:chessever/utils/awarded_points.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 enum DesktopTeamGameOrder { sameOrder, oppositeOrder }
@@ -37,29 +39,14 @@ class DesktopTeamMatchGroup {
     var right = 0.0;
 
     for (final matchGame in games) {
-      switch (matchGame.game.gameStatus) {
-        case GameStatus.ongoing:
-        case GameStatus.unknown:
-          continue;
-        case GameStatus.draw:
-          left += 0.5;
-          right += 0.5;
-          break;
-        case GameStatus.whiteWins:
-          if (matchGame.order == DesktopTeamGameOrder.sameOrder) {
-            left += 1;
-          } else {
-            right += 1;
-          }
-          break;
-        case GameStatus.blackWins:
-          if (matchGame.order == DesktopTeamGameOrder.sameOrder) {
-            right += 1;
-          } else {
-            left += 1;
-          }
-          break;
-      }
+      final game = matchGame.game;
+      final white = desktopGamePoints(game.gameStatus, isWhite: true,
+          customPoints: game.whitePlayer.customPoints) ?? 0;
+      final black = desktopGamePoints(game.gameStatus, isWhite: false,
+          customPoints: game.blackPlayer.customPoints) ?? 0;
+      final sameOrder = matchGame.order == DesktopTeamGameOrder.sameOrder;
+      left += sameOrder ? white : black;
+      right += sameOrder ? black : white;
     }
 
     return DesktopTeamMatchScore(left: left, right: right);
@@ -115,7 +102,7 @@ String formatDesktopTeamMatchScore(double score) {
   if (score == score.truncateToDouble()) {
     return score.toInt().toString();
   }
-  return score.toStringAsFixed(1);
+  return formatAwardedPoints(score);
 }
 
 class _DesktopTeamMatchGroupBuilder {

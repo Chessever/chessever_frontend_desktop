@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:chessever/utils/awarded_points.dart';
+
 import 'package:collection/collection.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
@@ -875,8 +877,7 @@ PlayerCard _mergeLivePlayerCard(
 
   final federation = nonEmptyString('fed') ?? base.federation;
   final customPointsValue = row['customPoints'] ?? row['custom_points'];
-  final customPoints =
-      customPointsValue is num ? customPointsValue.toDouble() : null;
+  final customPoints = parseAwardedPoints(customPointsValue);
   if (authoritativeFullRow) {
     final authoritativeFederation = nonEmptyString('fed') ?? '';
     return PlayerCard(
@@ -902,6 +903,7 @@ PlayerCard _mergeLivePlayerCard(
     countryCode: federation.isNotEmpty ? federation : base.countryCode,
     team: nonEmptyString('team'),
     customPoints: customPoints,
+    clearCustomPoints: (row.containsKey('customPoints') || row.containsKey('custom_points')) && customPoints == null,
   );
 }
 

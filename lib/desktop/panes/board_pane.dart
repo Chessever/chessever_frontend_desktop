@@ -3,6 +3,8 @@ import 'dart:io' as io;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:chessever/utils/awarded_points.dart';
+
 import 'package:chessever/desktop/services/board_report_output.dart';
 import 'package:chessever/desktop/services/board_save_boundary.dart';
 
@@ -9208,6 +9210,26 @@ EventPlayerGamesKey? boardPlayerHistoryKey({
   );
 }
 
+/// Awards stay attached to chess color, never the visual top/bottom row.
+/// A present source row can explicitly clear an old summary award.
+double? boardPlayerAwardedPoints({
+  required bool isWhite,
+  GamesTourModel? sourceGame,
+  BoardTabGameArgs? args,
+}) {
+  final source = sourceGame ?? args?.sourceGame;
+  if (source != null) {
+    return isWhite ? source.whitePlayer.customPoints : source.blackPlayer.customPoints;
+  }
+  if (args == null) return null;
+  final id = args.gameId ?? args.gameListSelectedId;
+  if (id == null) return null;
+  final summary = _findSummaryById(args.eventGames, id) ??
+      _findSummaryById(args.routeGames, id) ??
+      _findSummaryById(args.databaseGames, id);
+  return isWhite ? summary?.whiteCustomPoints : summary?.blackCustomPoints;
+}
+
 class DesktopBoardPlayerHeader extends HookConsumerWidget {
   const DesktopBoardPlayerHeader({
     super.key,
@@ -9536,6 +9558,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
               text: clockText ?? '',
               isToMove: isToMove,
               result: result,
+              customPoints: boardPlayerAwardedPoints(isWhite: isWhite, sourceGame: sourceGame, args: boardArgs),
             ),
           ],
           if (trailingControl != null) ...[
@@ -10065,7 +10088,9 @@ TournamentGameSummary _summaryWithLiveState(
           whitePlayer.fideId != summary.whiteFideId ||
           blackPlayer.fideId != summary.blackFideId ||
           (whitePlayer.team ?? '') != summary.whiteTeam ||
-          (blackPlayer.team ?? '') != summary.blackTeam);
+          (blackPlayer.team ?? '') != summary.blackTeam ||
+          whitePlayer.customPoints != summary.whiteCustomPoints ||
+          blackPlayer.customPoints != summary.blackCustomPoints);
   if (nextPgn == summary.pgn &&
       nextFen == summary.fen &&
       nextStatus == summary.status &&
@@ -10095,6 +10120,10 @@ TournamentGameSummary _summaryWithLiveState(
     blackFideId: playersChanged ? blackPlayer.fideId : null,
     whiteTeam: playersChanged ? whitePlayer.team ?? '' : null,
     blackTeam: playersChanged ? blackPlayer.team ?? '' : null,
+    whiteCustomPoints: whitePlayer?.customPoints,
+    blackCustomPoints: blackPlayer?.customPoints,
+    clearWhiteCustomPoints: whitePlayer != null && whitePlayer.customPoints == null,
+    clearBlackCustomPoints: blackPlayer != null && blackPlayer.customPoints == null,
   );
 }
 
@@ -10122,6 +10151,7 @@ GamesTourModel _gamesTourModelFromSummary(
       rating: summary.whiteRating,
       countryCode: whiteFederation,
       fideId: summary.whiteFideId,
+      customPoints: summary.whiteCustomPoints,
       team: null,
     ),
     blackPlayer: PlayerCard(
@@ -10131,6 +10161,7 @@ GamesTourModel _gamesTourModelFromSummary(
       rating: summary.blackRating,
       countryCode: blackFederation,
       fideId: summary.blackFideId,
+      customPoints: summary.blackCustomPoints,
       team: null,
     ),
     whiteTimeDisplay: '--:--',
@@ -10277,6 +10308,7 @@ class _PlayerClock extends StatelessWidget {
     required this.text,
     required this.isToMove,
     this.result,
+    this.customPoints,
     this.liveClockSeconds,
     this.liveLastMoveTime,
     this.liveCountdownActive = false,
@@ -10288,6 +10320,7 @@ class _PlayerClock extends StatelessWidget {
   final String text;
   final bool isToMove;
   final DesktopBoardPlayerResult? result;
+  final double? customPoints;
 
   /// Live broadcast snapshot of this side's clock in seconds. When set
   /// (alongside [liveLastMoveTime]) the badge renders the live time
@@ -10370,7 +10403,9 @@ class _PlayerClock extends StatelessWidget {
                   color: _desktopBoardResultColor(result!),
                   alignment: Alignment.center,
                   child: Text(
-                    _desktopBoardResultLabel(result!),
+                    parseAwardedPoints(customPoints) == null
+                        ? _desktopBoardResultLabel(result!)
+                        : formatAwardedPoints(customPoints!),
                     style: const TextStyle(
                       color: kWhiteColor,
                       fontSize: 12,
