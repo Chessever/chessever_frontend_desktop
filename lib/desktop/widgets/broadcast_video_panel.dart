@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
@@ -23,9 +24,11 @@ import 'package:country_flags/country_flags.dart';
 /// Parity port of the web broadcast Board screen's `VideoStreams`: the
 /// organiser-managed Twitch / YouTube / Kick list for the game's round (or
 /// tour) is polled every 30 seconds, grouped by language, and the selected
-/// stream plays inline. The player is a real WebView so provider embeds work
-/// identically to the site — WKWebView on macOS, WebView2 (composited as a
-/// Flutter texture) on Windows.
+/// stream plays inline. The player is a real WebView (WKWebView on macOS,
+/// WebView2 composited as a Flutter texture on Windows) showing
+/// chessever.com's own `/embed/video` document, so the provider is framed by
+/// the site exactly as in the browser: no provider player is ever loaded
+/// top-level, and no referrer or `parent` is asserted by the app itself.
 ///
 /// Renders nothing while the scope has no configured streams, so the rail
 /// collapses to the notation panel for ordinary analysis tabs.
@@ -61,22 +64,17 @@ class BroadcastVideoPanel extends ConsumerStatefulWidget {
 }
 
 class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
-  static const Set<String> _playerHosts = <String>{
-    'player.twitch.tv',
-    'www.youtube.com',
-    'youtube.com',
-    'www.youtube-nocookie.com',
-    'youtube-nocookie.com',
-    'consent.youtube.com',
-    'player.kick.com',
-  };
-
   /// Shared across panels: the first panel starts the environment and every
   /// later one awaits that same future instead of assuming it finished.
   static Future<void>? _windowsEnvironment;
 
   WebViewController? _controller;
   String? _loadedEmbedUrl;
+
+  /// The embed document failed to arrive or did not carry a player (site
+  /// unreachable, route missing): show the external link instead of a
+  /// broken frame.
+  bool _frameFailed = false;
 
   /// Windows only: WebView2's environment must exist before the first
   /// controller is constructed, or the controller wins the race and creates a
@@ -127,17 +125,26 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
+            // Provider players load inside the embed document's iframe;
+            // their own sub-frame navigations are theirs to make.
+            if (!request.isMainFrame) return NavigationDecision.navigate;
             final uri = Uri.tryParse(request.url);
             if (uri == null) return NavigationDecision.prevent;
             if (uri.scheme == 'about') return NavigationDecision.navigate;
-            if (_playerHosts.contains(uri.host.toLowerCase())) {
+            if (broadcastEmbedPageHosts.contains(uri.host.toLowerCase())) {
               return NavigationDecision.navigate;
             }
-            // Provider chrome links ("Watch on Twitch", channel pages…)
-            // belong in the real browser, not in the rail-sized frame.
+            // Anything taking over the top frame ("Watch on Twitch", a
+            // channel page, a YouTube title) belongs in the real browser,
+            // exactly as those links open a new tab on the site.
             unawaited(launchDesktopWebUrl(uri));
             return NavigationDecision.prevent;
           },
+          onWebResourceError: (error) {
+            if (error.isForMainFrame != true || !mounted) return;
+            setState(() => _frameFailed = true);
+          },
+          onPageFinished: (_) => unawaited(_verifyEmbedDocument()),
         ),
       );
     _controller = controller;
@@ -159,15 +166,33 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     return WebViewController();
   }
 
-  void _scheduleEmbedLoad(BroadcastVideoEmbed embed) {
-    final url = embed.url.toString();
-    if (_loadedEmbedUrl == url) return;
-    _loadedEmbedUrl = url;
+  /// The embed document is a bare player; a Next "not found" or error page
+  /// (route not deployed, site down) has no frame at all. Fall back to the
+  /// external link rather than showing that page in the rail.
+  Future<void> _verifyEmbedDocument() async {
+    final controller = _controller;
+    if (controller == null || _loadedEmbedUrl == null) return;
+    Object? result;
+    try {
+      result = await controller.runJavaScriptReturningResult(
+        'document.querySelector("iframe") !== null',
+      );
+    } catch (_) {
+      return; // Not answerable (page torn down); the next load re-checks.
+    }
+    final hasFrame = result == true || result.toString() == 'true';
+    if (!mounted || hasFrame || _loadedEmbedUrl == null) return;
+    setState(() => _frameFailed = true);
+  }
+
+  void _scheduleEmbedLoad(Uri url) {
+    final key = url.toString();
+    if (_loadedEmbedUrl == key) return;
+    _loadedEmbedUrl = key;
+    _frameFailed = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(
-        _ensureController().loadRequest(embed.url, headers: embed.headers),
-      );
+      unawaited(_ensureController().loadRequest(url));
     });
   }
 
@@ -308,17 +333,33 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
             onToggle: () => _setVisible(!visible),
             onOpenWatch: () => unawaited(launchDesktopWebUrl(watchUri)),
           ),
-          if (visible) _buildPlayer(selected),
+          if (visible) _buildPlayer(selected, data.source),
         ],
       ),
     );
   }
 
-  Widget _buildPlayer(BroadcastVideoStream stream) {
+  Widget _buildPlayer(
+    BroadcastVideoStream stream,
+    BroadcastVideoSourceRef? source,
+  ) {
     final provider = stream.provider;
-    final embed = broadcastVideoEmbed(
-      provider: provider,
-      sourceId: stream.sourceId,
+    void openExternal() =>
+        unawaited(launchDesktopWebUrl(Uri.parse(stream.url)));
+    // The API attaches the resolving scope to every non-empty list; without
+    // it there is no site document to frame the player through.
+    if (source == null) {
+      _scheduleStopPlayback();
+      return _OpenExternallyRow(
+        message: 'This stream can only be watched on ${provider.displayName}.',
+        provider: provider,
+        onOpenExternal: openExternal,
+      );
+    }
+    final embedPage = broadcastVideoEmbedPageUri(
+      scope: source.scope,
+      scopeId: source.id,
+      streamId: stream.id,
       play: true,
     );
     if (!_environmentReady) return const SizedBox(height: 8);
@@ -326,26 +367,34 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       builder: (context, constraints) {
         if (constraints.maxWidth < provider.minWidth) {
           _scheduleStopPlayback();
-          return _TooNarrowRow(
+          return _OpenExternallyRow(
+            message: 'Open ${provider.displayName} to watch at this width.',
             provider: provider,
-            onOpenExternal:
-                () => unawaited(launchDesktopWebUrl(Uri.parse(stream.url))),
+            onOpenExternal: openExternal,
           );
         }
-        _scheduleEmbedLoad(embed);
+        _scheduleEmbedLoad(embedPage);
+        if (_frameFailed) {
+          return _OpenExternallyRow(
+            message: 'The player could not load here.',
+            provider: provider,
+            onOpenExternal: openExternal,
+          );
+        }
         final controller = _ensureController();
-        // Cap the player so the notation below keeps a usable share of the
-        // rail on short windows; the AspectRatio folds the excess into width.
-        return ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 340),
-          child: Center(
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: ColoredBox(
-                color: kBlackColor,
-                child: WebViewWidget(controller: controller),
-              ),
-            ),
+        // 16:9 for the rail width, never below the provider's minimum player
+        // height, and capped so the notation below keeps a usable share of
+        // the rail on short windows.
+        final height =
+            (constraints.maxWidth * 9 / 16)
+                .clamp(provider.minHeight, math.max(340.0, provider.minHeight))
+                .toDouble();
+        return SizedBox(
+          height: height,
+          width: double.infinity,
+          child: ColoredBox(
+            color: kBlackColor,
+            child: WebViewWidget(controller: controller),
           ),
         );
       },
@@ -353,9 +402,14 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 }
 
-class _TooNarrowRow extends StatelessWidget {
-  const _TooNarrowRow({required this.provider, required this.onOpenExternal});
+class _OpenExternallyRow extends StatelessWidget {
+  const _OpenExternallyRow({
+    required this.message,
+    required this.provider,
+    required this.onOpenExternal,
+  });
 
+  final String message;
   final BroadcastVideoProvider provider;
   final VoidCallback onOpenExternal;
 
@@ -367,7 +421,7 @@ class _TooNarrowRow extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              'Open ${provider.displayName} to watch at this width.',
+              message,
               style: const TextStyle(fontSize: 11.5, color: kWhiteColor70),
             ),
           ),
@@ -490,19 +544,59 @@ class _LanguageGroupButton extends StatefulWidget {
 
 class _LanguageGroupButtonState extends State<_LanguageGroupButton>
     with SingleTickerProviderStateMixin {
+  /// Same grace the site gives: leaving the flag closes the list unless the
+  /// pointer reaches it within this window.
+  static const Duration _closeGrace = Duration(milliseconds: 140);
+
   late final FPopoverController _menuController = FPopoverController(
     vsync: this,
   );
+  Timer? _closeTimer;
+
+  bool get _multiple => widget.group.streams.length > 1;
 
   @override
   void dispose() {
+    _closeTimer?.cancel();
     _menuController.dispose();
     super.dispose();
   }
 
+  void _cancelClose() {
+    _closeTimer?.cancel();
+    _closeTimer = null;
+  }
+
+  /// Hovering a flag that owns several streams lists them, as on the site;
+  /// a single-stream flag only carries its tooltip.
+  void _openMenu() {
+    if (!_multiple) return;
+    _cancelClose();
+    final status = _menuController.status;
+    if (status == AnimationStatus.completed ||
+        status == AnimationStatus.forward) {
+      return;
+    }
+    unawaited(_menuController.show());
+  }
+
+  void _closeMenu() {
+    _cancelClose();
+    unawaited(_menuController.hide());
+  }
+
+  void _closeMenuSoon() {
+    if (!_multiple) return;
+    _cancelClose();
+    _closeTimer = Timer(_closeGrace, () {
+      _closeTimer = null;
+      if (mounted) unawaited(_menuController.hide());
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final multiple = widget.group.streams.length > 1;
+    final multiple = _multiple;
     final primary = widget.group.streams.first;
     final selected = widget.group.streams.any(
       (stream) => stream.id == widget.selectedId,
@@ -516,35 +610,47 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
       child: FPopover(
         controller: _menuController,
         popoverBuilder:
-            (context, _) => _GroupStreamMenu(
-              group: widget.group,
-              selectedId: widget.selectedId,
-              onSelect: (stream) {
-                _menuController.hide();
-                widget.onSelect(stream);
-              },
-            ),
-        child: DesktopTooltip(
-          message: tooltip,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _FlagButton(
-                code: widget.group.countryCode,
-                selected: selected,
-                semanticsLabel: tooltip,
-                onPress: () => widget.onSelect(primary),
+            (context, _) => MouseRegion(
+              onEnter: (_) => _cancelClose(),
+              onExit: (_) => _closeMenuSoon(),
+              child: _GroupStreamMenu(
+                group: widget.group,
+                selectedId: widget.selectedId,
+                onSelect: (stream) {
+                  _closeMenu();
+                  widget.onSelect(stream);
+                },
               ),
-              if (multiple)
-                _StreamCountBadge(
-                  count: widget.group.streams.length,
-                  semanticsLabel:
-                      multiple
-                          ? 'Choose among ${widget.group.streams.length} ${widget.group.label} streams'
-                          : tooltip,
-                  onPress: _menuController.toggle,
+            ),
+        child: MouseRegion(
+          onEnter: (_) => _openMenu(),
+          onExit: (_) => _closeMenuSoon(),
+          child: DesktopTooltip(
+            message: tooltip,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _FlagButton(
+                  code: widget.group.countryCode,
+                  selected: selected,
+                  semanticsLabel: tooltip,
+                  onPress: () {
+                    _closeMenu();
+                    widget.onSelect(primary);
+                  },
                 ),
-            ],
+                if (multiple)
+                  _StreamCountBadge(
+                    count: widget.group.streams.length,
+                    semanticsLabel:
+                        'Choose among ${widget.group.streams.length} ${widget.group.label} streams',
+                    onPress: () {
+                      _cancelClose();
+                      unawaited(_menuController.toggle());
+                    },
+                  ),
+              ],
+            ),
           ),
         ),
       ),

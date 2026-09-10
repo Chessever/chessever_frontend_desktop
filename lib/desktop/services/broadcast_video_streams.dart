@@ -3,10 +3,15 @@
 /// The web Board screen reads `…/video-streams` for the round or tour it is
 /// showing and renders the organiser-managed Twitch / YouTube / Kick players
 /// in the top-right corner. The desktop Board pane carries the same panel,
-/// so the models, language grouping, selection defaults and embed URLs below
-/// mirror `chessever_web_frontend/src/broadcast/lib/video-streams.ts`,
-/// `video-language.ts` and `video-playback.ts` one-for-one. The URL shapes
-/// are provider data, never stored embed HTML.
+/// so the models, language grouping and selection defaults below mirror
+/// `chessever_web_frontend/src/broadcast/lib/video-streams.ts`,
+/// `video-language.ts` and `video-playback.ts` one-for-one.
+///
+/// Playback itself is never a provider player loaded top-level: the desktop
+/// WebView loads chessever.com's own `/embed/video/…` document, which frames
+/// the provider exactly as the site does. Twitch's `parent` and YouTube's
+/// referrer are therefore the real host serving that page, not values the
+/// app asserts about itself. See docs/broadcast_video_embed_compliance.md.
 library;
 
 import 'dart:convert';
@@ -17,13 +22,8 @@ import 'package:http/http.dart' as http;
 /// Public broadcast API host. Same origin the web spectator bridge proxies to.
 const String broadcastApiOrigin = 'https://api.broadcast.chessever.com';
 
-/// Host Twitch validates the `parent` parameter against and the Referer the
-/// YouTube embed needs. The web embeds run on chessever.com; the desktop
-/// WebView presents itself as that origin instead of the player host so both
-/// providers accept the frame.
-const String broadcastEmbedParentHost = 'chessever.com';
-
-/// Public watch page the panel's "open with live boards" action points at.
+/// Public site origin: hosts the `/watch` pages the toolbar links to and the
+/// `/embed/video` documents the panel plays through.
 const String broadcastWatchOrigin = 'https://chessever.com';
 
 enum BroadcastVideoProvider { twitch, youtube, kick }
@@ -350,59 +350,33 @@ class BroadcastVideoStreamsClient {
   void dispose() => _http.close();
 }
 
-/// Provider player URL plus the extra request headers the embed needs.
-class BroadcastVideoEmbed {
-  const BroadcastVideoEmbed({required this.url, this.headers = const {}});
-
-  final Uri url;
-  final Map<String, String> headers;
-}
-
-/// Builds the provider iframe URL the web renders, adapted to a top-level
-/// desktop WebView. `play` mirrors the web's autoplay decision; every entry
-/// starts with sound on, exactly like `selectedVideoEmbed` on the site.
-BroadcastVideoEmbed broadcastVideoEmbed({
-  required BroadcastVideoProvider provider,
-  required String sourceId,
+/// The site document the desktop player loads: one organiser-managed stream,
+/// resolved by the API for its scope, framed by chessever.com itself.
+/// `play` mirrors the web's in-game autoplay decision.
+Uri broadcastVideoEmbedPageUri({
+  required String scope,
+  required String scopeId,
+  required String streamId,
   required bool play,
 }) {
-  final query = <String, String>{
-    'autoplay':
-        play
-            ? (provider == BroadcastVideoProvider.youtube ? '1' : 'true')
-            : (provider == BroadcastVideoProvider.youtube ? '0' : 'false'),
-    if (provider == BroadcastVideoProvider.youtube)
-      'mute': '0'
-    else
-      'muted': 'false',
-  };
-  final Uri url = switch (provider) {
-    BroadcastVideoProvider.twitch => Uri.https('player.twitch.tv', '/', {
-      'channel': sourceId,
-      'parent': broadcastEmbedParentHost,
-      ...query,
-    }),
-    BroadcastVideoProvider.kick => Uri.https(
-      'player.kick.com',
-      '/$sourceId',
-      query,
-    ),
-    BroadcastVideoProvider.youtube => Uri.https(
-      'www.youtube.com',
-      '/embed/$sourceId',
-      {'playsinline': '1', ...query},
-    ),
-  };
-  return BroadcastVideoEmbed(
-    url: url,
-    headers:
-        provider == BroadcastVideoProvider.youtube
-            ? const <String, String>{
-              'Referer': 'https://$broadcastEmbedParentHost/',
-            }
-            : const <String, String>{},
-  );
+  final path = <String>[
+    'embed',
+    'video',
+    scope,
+    scopeId,
+    streamId,
+  ].map(Uri.encodeComponent).join('/');
+  return Uri.parse('$broadcastWatchOrigin/$path?autoplay=${play ? 1 : 0}');
 }
+
+/// Hosts a main-frame navigation may stay on inside the desktop player: the
+/// embed document itself. Provider frames live inside it; anything that
+/// tries to take over the top frame (a "Watch on Twitch" link, a channel
+/// page) belongs in the real browser.
+final Set<String> broadcastEmbedPageHosts = <String>{
+  Uri.parse(broadcastWatchOrigin).host,
+  'www.${Uri.parse(broadcastWatchOrigin).host}',
+};
 
 /// Public watch page for one stream, mirroring `watchPath` on the web.
 Uri broadcastVideoWatchUri({
