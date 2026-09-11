@@ -1,5 +1,7 @@
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
+import 'package:chessever/desktop/auth/desktop_database_creation_guard.dart';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
 
@@ -567,6 +569,9 @@ final _twicPreviewPgnProvider = FutureProvider.autoDispose
   GamesTourModel? selected,
 ) {
   if (selected == null) return (game: null, isLoading: false);
+  if (ref.watch(desktopPremiumAccessProvider) != DesktopAccess.allowed) {
+    return (game: _previewChessGameFromTourGame(selected), isLoading: false);
+  }
 
   final hasInitialMoves = pgnHasMoves(selected.pgn);
   final hydratedPgnAsync =
@@ -4994,7 +4999,9 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
                           selectedId: selectedId.value,
                           selectedIds: clampedSelectedIds,
                           scrollController: scrollController,
-                          onSortChange: (next) => sort.value = next,
+                          onSortChange: (next) async {
+                            if (await requireDesktopPremium(context, feature: 'Cloud sorting') && context.mounted) sort.value = next;
+                          },
                           onRangeSelect: rangeSelectSavedRow,
                           onSelect: (analysis) {
                             final index = rows.indexWhere(
@@ -5177,6 +5184,10 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
     }
 
     void copySelectedTwic() {
+      if (ref.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) {
+        unawaited(requireDesktopPremium(context, feature: 'Database export'));
+        return;
+      }
       final copyGames = _selectedTwicGamesForCopy(
         games: games,
         selectedIds: clampedSelectedIds,
@@ -6303,7 +6314,9 @@ class _FolderContentView extends HookConsumerWidget {
                   query: query.value,
                   viewMode: viewMode.value,
                   sort: sort.value,
-                  onSortChange: (next) => sort.value = next,
+                  onSortChange: (next) async {
+                            if (await requireDesktopPremium(context, feature: 'Cloud sorting') && context.mounted) sort.value = next;
+                          },
                   selectedIds: clampedSelected,
                   onPrimeSelectionAnchor: primeSelectionAnchor,
                   onRangeSelect: setRangeSelection,
@@ -8607,7 +8620,10 @@ Future<void> _onCreateFolder({
     kind: kind,
     allowKindSelection: allowKindSelection,
   );
-  if (draft == null) return;
+  if (draft == null || !context.mounted) return;
+  if (draft.kind == LibraryFolderCreateKind.database &&
+      !await canCreateDesktopCloudDatabase(context)) { return; }
+  if (!context.mounted) return;
   try {
     await ref
         .read(libraryRepositoryProvider)
@@ -9287,6 +9303,7 @@ BoardTabGameArgs _buildTwicBoardArgs(
     ref.read(gamebaseDatabaseGamesPaginatedProvider).games,
   ).map(TournamentGameSummary.fromGamesTourModel).toList(growable: false);
   return BoardTabGameArgs(
+    requiresPremium: true,
     gameId: game.gameId,
     pgn: game.pgn ?? '',
     label: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
@@ -9421,6 +9438,11 @@ Future<void> _showTwicGameContextMenu({
   );
   if (picked == null || !context.mounted) return;
 
+  if (picked == _TwicGameContextAction.open || picked == _TwicGameContextAction.openNewTab ||
+      picked == _TwicGameContextAction.openNewWindow || picked == _TwicGameContextAction.openBackground ||
+      picked == _TwicGameContextAction.saveToLibrary || picked == _TwicGameContextAction.share) {
+    if (!await requireDesktopPremium(context, feature: 'Database games') || !context.mounted) return;
+  }
   switch (picked) {
     case _TwicGameContextAction.open:
       openBoardGameTab(
@@ -11347,7 +11369,9 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
                         selectedId: selectedId.value,
                         selectedIds: clampedSelectedIds,
                         scrollController: listScrollController,
-                        onSortChange: (next) => sort.value = next,
+                        onSortChange: (next) async {
+                            if (await requireDesktopPremium(context, feature: 'Cloud sorting') && context.mounted) sort.value = next;
+                          },
                         onRangeSelect: rangeSelectSavedIndex,
                         onSelect: (analysis) {
                           final index = filtered.indexWhere(
@@ -11571,6 +11595,10 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
             : '${formatCompactCount(totalCount)} games';
 
     void copySelectedTwic() {
+      if (ref.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) {
+        unawaited(requireDesktopPremium(context, feature: 'Database export'));
+        return;
+      }
       final copyGames = _selectedTwicGamesForCopy(
         games: games,
         selectedIds: clampedSelectedIds,

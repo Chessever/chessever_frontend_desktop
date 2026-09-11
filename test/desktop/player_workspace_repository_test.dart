@@ -723,6 +723,7 @@ void main() {
           database: () async => db,
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: localRepository,
@@ -774,6 +775,7 @@ void main() {
                 ],
               );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -830,6 +832,7 @@ void main() {
           },
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -886,6 +889,7 @@ void main() {
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository();
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -914,6 +918,7 @@ void main() {
     test('removing the opened player clears selected state', () async {
       final workspaceRepository = _FakePlayerWorkspaceRepository();
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -939,6 +944,7 @@ void main() {
         final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
         final localRepository = _BlockingPurgeLocalRepository(db, gate);
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: localRepository,
@@ -1021,6 +1027,7 @@ void main() {
             ],
           );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -1084,6 +1091,7 @@ void main() {
             ],
           );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -1147,6 +1155,7 @@ void main() {
             ],
           );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -1213,6 +1222,7 @@ void main() {
           ],
         );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -1245,6 +1255,7 @@ void main() {
           lichessPgnByUsername: const <String, String>{'alpha': _mergeGameOne},
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -1305,6 +1316,7 @@ void main() {
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository();
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -1382,6 +1394,7 @@ void main() {
     test('concurrent online account connects preserve both rows', () async {
       final workspaceRepository = _FakePlayerWorkspaceRepository();
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -1423,6 +1436,7 @@ void main() {
         chessComPgnByUsername: const <String, String>{'hikaru': _mergeGameTwo},
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -1467,6 +1481,7 @@ void main() {
           },
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -1538,6 +1553,7 @@ void main() {
           lichessPgnByUsername: sourcePgns,
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -1595,6 +1611,7 @@ void main() {
           lichessPgnByUsername: sourcePgns,
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -1652,6 +1669,7 @@ void main() {
         lichessPgnByUsername: sourcePgns,
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -1698,6 +1716,7 @@ void main() {
           lichessPgnByUsername: sourcePgns,
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -1744,6 +1763,7 @@ void main() {
     test('manual PGN imports become source and combined databases', () async {
       final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -1801,6 +1821,7 @@ void main() {
           },
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -1856,6 +1877,7 @@ void main() {
         },
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -1933,6 +1955,7 @@ void main() {
         );
 
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: localRepository,
@@ -2017,6 +2040,7 @@ void main() {
         );
 
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: localRepository,
@@ -2044,6 +2068,7 @@ void main() {
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -2112,6 +2137,7 @@ void main() {
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -2177,6 +2203,7 @@ void main() {
           },
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -2243,6 +2270,7 @@ void main() {
             ],
           );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -2289,6 +2317,7 @@ void main() {
           },
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: gamebaseRepository,
           localRepository: LocalChessDatabaseRepository(
@@ -2351,6 +2380,7 @@ void main() {
         },
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -2412,6 +2442,7 @@ void main() {
           database: () async => db,
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: localRepository,
@@ -2563,6 +2594,7 @@ void main() {
         chessEverPgnByPlayerId: sourcePgns,
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -2619,6 +2651,7 @@ void main() {
           },
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -2670,6 +2703,7 @@ void main() {
         },
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -2707,6 +2741,7 @@ void main() {
         lichessPgnByUsername: const <String, String>{'msb2': _mergeGameOne},
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -2763,6 +2798,7 @@ void main() {
           ],
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -2816,6 +2852,7 @@ void main() {
           },
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -2865,6 +2902,7 @@ void main() {
         },
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -2925,6 +2963,7 @@ void main() {
           },
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -2995,6 +3034,7 @@ void main() {
         database: () async => db,
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: localRepository,
@@ -3066,6 +3106,7 @@ void main() {
         },
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -3112,6 +3153,7 @@ void main() {
         },
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -3158,6 +3200,7 @@ void main() {
         },
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -3205,6 +3248,7 @@ void main() {
           },
         );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -3283,6 +3327,7 @@ void main() {
                 ],
               );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -3351,6 +3396,7 @@ void main() {
             ],
           );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -3381,6 +3427,7 @@ void main() {
     test('addManualPlayer returns the created player id', () async {
       final workspaceRepository = _FakePlayerWorkspaceRepository();
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -3398,6 +3445,7 @@ void main() {
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository();
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -3476,6 +3524,7 @@ void main() {
                 ],
               );
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(
@@ -3572,6 +3621,7 @@ void main() {
                   ],
                 );
           final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
             workspaceRepository: workspaceRepository,
             gamebaseRepository: GamebaseRepository(Dio()),
             localRepository: LocalChessDatabaseRepository(
@@ -3618,6 +3668,7 @@ void main() {
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository();
         final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
           workspaceRepository: workspaceRepository,
           gamebaseRepository: GamebaseRepository(Dio()),
           localRepository: LocalChessDatabaseRepository(

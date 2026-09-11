@@ -57,7 +57,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
   static const String _kInitialFen =
       'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
-  GamebaseExplorerNotifier(this.ref)
+  GamebaseExplorerNotifier(this.ref, {this.accessCheck})
     : super(
         GamebaseExplorerState(
           currentFen: _kInitialFen,
@@ -79,6 +79,8 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       );
 
   final Ref ref;
+  /// Optional host admission policy. Mobile retains its existing contract.
+  final bool Function(GamebaseExplorerState state, int advance)? accessCheck;
 
   /// Internal position tracking using dartchess (consistent with ChessGame)
   Position get currentPosition =>
@@ -213,6 +215,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
 
   /// Fetch move aggregates for current position
   Future<void> _fetchMoveAggregates() async {
+    if (!mounted || accessCheck?.call(state, 0) == false) return;
     final fetchId = ++_fetchToken;
     final requestedFen = state.currentFen;
     final filtersSnapshot = state.filters;
@@ -282,7 +285,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       );
 
       // Ignore if a newer request started or FEN changed while awaiting.
-      if (fetchId != _fetchToken || requestedFen != state.currentFen) return;
+      if (!mounted || accessCheck?.call(state, 0) == false || fetchId != _fetchToken || requestedFen != state.currentFen) return;
 
       _putCacheEntry(cacheKey, aggregates);
       state = state.copyWith(moveAggregates: aggregates, isLoading: false);
@@ -290,8 +293,8 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       // Opportunistically prefetch a few likely next positions to make the
       // explorer feel instantaneous even when backend caches are cold.
       // Skip prefetch when filters are active because those paths can be slow.
-      if (!_hasActiveFilters(filtersSnapshot) ||
-          _isPlayerScopedOnlyFilter(filtersSnapshot)) {
+      if (accessCheck?.call(state, 1) != false && (!_hasActiveFilters(filtersSnapshot) ||
+          _isPlayerScopedOnlyFilter(filtersSnapshot))) {
         _prefetchNextPositions(
           repository: repository,
           baseFen: requestedFen,
@@ -301,7 +304,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
         );
       }
     } catch (e) {
-      if (fetchId != _fetchToken) return;
+      if (!mounted || accessCheck?.call(state, 0) == false || fetchId != _fetchToken) return;
       state = state.copyWith(isLoading: false, error: e.toString());
     }
   }

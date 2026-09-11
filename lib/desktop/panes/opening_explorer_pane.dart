@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
 import 'package:fast_immutable_collections/fast_immutable_collections.dart'
@@ -139,6 +141,7 @@ class OpeningExplorerPane extends HookConsumerWidget {
         // when the caller actually supplied scoping; generic FEN seeds (board
         // pane, board editor) leave the user's existing filter chips alone.
         if (seed.player != null || seed.filters != null) {
+          if (ref.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) return;
           final base = seed.filters ?? const GamebaseFilters();
           final scoped =
               seed.player != null
@@ -182,6 +185,11 @@ class OpeningExplorerPane extends HookConsumerWidget {
         if (p.move != null) p.move!.uci,
     ].sublist(0, cursor.value.clamp(0, history.value.length - 1));
     final lineUcis = <String>[...seededLineUcis.value, ...localLineUcis];
+    final premium = ref.watch(desktopPremiumAccessProvider);
+    final explorerAccess = desktopExplorerAccess(premium,
+      playedPlies: lineUcis.length,
+      preparation: scopedPlayer.value != null,
+      exactPosition: exactFenSearch.value);
     final lineKey = lineUcis.join(' ');
     final notationStartsAtInitial = seededLineUcis.value.isNotEmpty;
     final notationStartPosition =
@@ -201,8 +209,12 @@ class OpeningExplorerPane extends HookConsumerWidget {
 
     // Sync the explorer provider on every cursor change.
     useEffect(() {
+      if (explorerAccess != DesktopAccess.allowed) return null;
       Future.microtask(() {
         if (!context.mounted) return;
+        if (desktopExplorerAccess(ref.read(desktopPremiumAccessProvider),
+          playedPlies: lineUcis.length, preparation: scopedPlayer.value != null,
+          exactPosition: exactFenSearch.value) != DesktopAccess.allowed) { return; }
         if (scopedPlayer.value == null &&
             ref.read(gamebaseExplorerProvider).filters !=
                 const GamebaseFilters()) {
@@ -215,7 +227,7 @@ class OpeningExplorerPane extends HookConsumerWidget {
             .setPositionWithMoves(position.fen, lineUcis);
       });
       return null;
-    }, [position.fen, cursor.value, lineKey]);
+    }, [position.fen, cursor.value, lineKey, explorerAccess]);
 
     // Drop the pinned-uci filter whenever the underlying position
     // changes — it was scoped to a specific FEN, so keeping it across a
@@ -232,11 +244,25 @@ class OpeningExplorerPane extends HookConsumerWidget {
 
     void jumpTo(int target) {
       final clamped = target.clamp(0, history.value.length - 1);
+      if (clamped > cursor.value && desktopExplorerAccess(
+        ref.read(desktopPremiumAccessProvider),
+        playedPlies: seededLineUcis.value.length + clamped,
+        preparation: scopedPlayer.value != null,
+        exactPosition: exactFenSearch.value) != DesktopAccess.allowed) {
+        unawaited(requireDesktopPremium(context, feature: 'Opening explorer'));
+        return;
+      }
       if (clamped == cursor.value) return;
       cursor.value = clamped;
     }
 
     void playUci(String uci) {
+      if (desktopExplorerAccess(ref.read(desktopPremiumAccessProvider),
+        playedPlies: lineUcis.length + 1, preparation: scopedPlayer.value != null,
+        exactPosition: exactFenSearch.value) != DesktopAccess.allowed) {
+        unawaited(requireDesktopPremium(context, feature: 'Opening explorer'));
+        return;
+      }
       try {
         final move = Move.parse(uci);
         if (move == null) return;
@@ -278,6 +304,13 @@ class OpeningExplorerPane extends HookConsumerWidget {
       }
 
       final targetMoveCount = pointer.first + 1;
+      if (targetMoveCount > lineUcis.length && desktopExplorerAccess(
+        ref.read(desktopPremiumAccessProvider), playedPlies: targetMoveCount,
+        preparation: scopedPlayer.value != null,
+        exactPosition: exactFenSearch.value) != DesktopAccess.allowed) {
+        unawaited(requireDesktopPremium(context, feature: 'Opening explorer'));
+        return;
+      }
       if (notationStartsAtInitial) {
         final targetMoves = lineUcis.take(targetMoveCount).toList();
         final targetPosition =
@@ -434,7 +467,9 @@ class OpeningExplorerPane extends HookConsumerWidget {
                       Container(height: 1, color: kDividerColor),
                     ],
                     Expanded(
-                      child: DesktopPositionGamesTable(
+                      child: explorerAccess != DesktopAccess.allowed
+                        ? const SingleChildScrollView(child: DesktopLockedFeature(feature: 'Opening explorer'))
+                        : DesktopPositionGamesTable(
                         fen: position.fen,
                         moves: lineUcis,
                         uci: pinnedGamesUci.value,
@@ -494,7 +529,9 @@ class OpeningExplorerPane extends HookConsumerWidget {
                       collapsedIcon: Icons.account_tree_outlined,
                       child: ColoredBox(
                         color: kBlack2Color,
-                        child: DesktopOpeningExplorer(
+                        child: explorerAccess != DesktopAccess.allowed
+                          ? const SingleChildScrollView(child: DesktopLockedFeature(feature: 'Opening explorer'))
+                          : DesktopOpeningExplorer(
                           onMove: playUci,
                           onShowGames: (uci) => pinnedGamesUci.value = uci,
                         ),

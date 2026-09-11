@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'dart:io' show Platform;
 
 import 'package:dartchess/dartchess.dart';
@@ -1376,6 +1377,12 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
 
 class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     with AutomaticKeepAliveClientMixin<_OpeningExplorerPage> {
+  DesktopAccess _access({int advance = 0}) => desktopExplorerAccess(
+    ref.read(desktopPremiumAccessProvider),
+    playedPlies: widget.localOpeningTreeIndex != null ? 0 : widget.lineUcis.length + advance,
+    preparation: widget.explorerScope != null,
+    exactPosition: widget.exactFenSearch,
+  );
   String _lastSyncedKey = '';
   final FocusNode _focusNode = FocusNode(debugLabel: 'opening-explorer-page');
   late final DesktopPositionGamesTableController _gamesController =
@@ -1447,6 +1454,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
 
   void _syncProvider({bool force = false}) {
     if (!widget.active) return;
+    if (_access() != DesktopAccess.allowed) return;
     final effectiveLocalTree = _effectiveLocalOpeningTreeIndex;
     // Same shape mobile uses: starting FEN + line of UCIs up to cursor.
     // Sanitise here too (the provider also sanitises) so our cache key
@@ -1463,7 +1471,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     _lastSyncedKey = key;
     // Defer to next microtask so we don't notify a provider during build.
     Future.microtask(() {
-      if (!mounted || !widget.active) return;
+      if (!mounted || !widget.active || _access() != DesktopAccess.allowed) return;
       final notifier = ref.read(gamebaseExplorerProvider.notifier);
       notifier.setLocalDatabaseTreeMode(effectiveLocalTree != null);
       final scope = widget.explorerScope;
@@ -1662,6 +1670,10 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
   }
 
   void _activateExplorerMove(String uci) {
+    if (_access(advance: 1) != DesktopAccess.allowed) {
+      unawaited(requireDesktopPremium(context, feature: 'Opening explorer'));
+      return;
+    }
     _keepExplorerFocus();
     widget.onClearPreviewUciMove?.call();
     widget.onPlayUciMove(uci);
@@ -1861,6 +1873,9 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
   }
 
   Future<void> _activateFocusedGameSelection() async {
+    if (widget.localOpeningTreeIndex == null || widget.explorerScope != null) {
+      if (!await requireDesktopPremium(context, feature: 'Database games') || !mounted) return;
+    }
     if (_focusedGameIndex < 0) return;
     final step = _activeGameContinuationStep();
     if (step == null) {
@@ -1881,7 +1896,9 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       canInsertMoves: true,
       targetContext: context,
     );
-    if (!mounted || picked == null) return;
+    if (!mounted || !widget.active || picked == null) return;
+    if ((widget.localOpeningTreeIndex == null || widget.explorerScope != null) &&
+        ref.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) { return; }
     switch (picked) {
       case GameContinuationAction.insertMoves:
         widget.onPlayUciLine?.call(
@@ -2148,6 +2165,13 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
   Widget build(BuildContext context) {
     super.build(context);
     if (!widget.active) return const SizedBox.expand();
+    ref.listen(desktopPremiumAccessProvider, (_, next) {
+      if (next == DesktopAccess.allowed) _syncProvider(force: true);
+    });
+    ref.watch(desktopPremiumAccessProvider);
+    if (_access() != DesktopAccess.allowed) {
+      return const SingleChildScrollView(child: DesktopLockedFeature(feature: 'Opening explorer'));
+    }
     final effectiveLocalTree = _effectiveLocalOpeningTreeIndex;
     final localTreeCatalog =
         widget.enableLocalOpeningTreePicker
@@ -2675,6 +2699,9 @@ class _PositionGamesPageState extends ConsumerState<_PositionGamesPage>
   }
 
   Future<void> _activateFocusedSelection() async {
+    if (widget.localOpeningTreeIndex == null || widget.explorerScope != null) {
+      if (!await requireDesktopPremium(context, feature: 'Database games') || !mounted || !widget.active) return;
+    }
     if (_focusedIndex < 0) return;
     final step = _activeContinuationStep();
     if (step == null) {
@@ -2697,7 +2724,9 @@ class _PositionGamesPageState extends ConsumerState<_PositionGamesPage>
       canInsertMoves: true,
       targetContext: context,
     );
-    if (!mounted || picked == null) return;
+    if (!mounted || !widget.active || picked == null) return;
+    if ((widget.localOpeningTreeIndex == null || widget.explorerScope != null) &&
+        ref.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) { return; }
     switch (picked) {
       case GameContinuationAction.insertMoves:
         widget.onPlayUciLine?.call(
@@ -2841,6 +2870,12 @@ class _PositionGamesPageState extends ConsumerState<_PositionGamesPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    if (!widget.active) return const SizedBox.expand();
+    if (desktopExplorerAccess(ref.watch(desktopPremiumAccessProvider),
+      playedPlies: widget.localOpeningTreeIndex != null ? 0 : widget.moves.length,
+      preparation: widget.explorerScope != null, exactPosition: widget.exactFenSearch) != DesktopAccess.allowed) {
+      return const SingleChildScrollView(child: DesktopLockedFeature(feature: 'Opening explorer'));
+    }
     final activeContinuationStep = _activeContinuationStep();
     return Focus(
       focusNode: _focusNode,
@@ -2856,6 +2891,7 @@ class _PositionGamesPageState extends ConsumerState<_PositionGamesPage>
               child: DesktopPositionGamesTable(
                 fen: widget.fen,
                 moves: widget.moves,
+                playerOpeningTreePlayerId: widget.explorerScope?.player.id,
                 exactFenSearch: widget.exactFenSearch,
                 active: widget.active,
                 uci: widget.pinnedUci,

@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+import 'package:chessever/desktop/auth/desktop_quota_guard.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/app_typography.dart';
@@ -41,6 +43,9 @@ Future<bool> canAddMoreFavorites(
     return false;
   }
 
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    return canAddDesktopFavorite(context);
+  }
   final isSubscribed = ref.read(subscriptionProvider).isSubscribed;
   if (isSubscribed) return true;
 

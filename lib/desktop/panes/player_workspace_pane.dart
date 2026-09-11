@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -273,8 +274,18 @@ final _playerTreeBuildProvider = StateNotifierProvider<
   );
 });
 
-class PlayerWorkspacePane extends HookConsumerWidget {
+class PlayerWorkspacePane extends StatelessWidget {
   const PlayerWorkspacePane({super.key, this.tabId});
+  final String? tabId;
+  @override
+  Widget build(BuildContext context) => DesktopAccessGate(
+    feature: 'Prepare',
+    builder: (_) => _PremiumPlayerWorkspacePane(tabId: tabId),
+  );
+}
+
+class _PremiumPlayerWorkspacePane extends HookConsumerWidget {
+  const _PremiumPlayerWorkspacePane({this.tabId});
 
   final String? tabId;
 
@@ -3957,8 +3968,10 @@ Future<void> openOrBuildPlayerWorkspaceSourceTree({
   required PlayerWorkspaceSource source,
   required PlayerBuildTreePreparationSide preparationSide,
 }) async {
+  if (!await requireDesktopPremium(context, feature: 'Prepare') || !context.mounted) return;
   final workspaceNotifier = ref.read(playerWorkspaceProvider.notifier);
   await workspaceNotifier.selectPlayer(player.id);
+  if (!context.mounted || ref.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) return;
 
   var currentPlayer =
       _playerById(ref.read(playerWorkspaceProvider).players, player.id) ??
@@ -4078,6 +4091,7 @@ Future<void> _buildLocalTree(
   required PlayerBuildTreePreparationSide preparationSide,
   OperationCancellationToken? cancellationToken,
 }) async {
+  if (!await requireDesktopPremium(context, feature: 'Prepare') || !context.mounted) return;
   cancellationToken?.throwIfCanceled();
   final index = await ref
       .read(_playerTreeBuildProvider.notifier)
@@ -4102,6 +4116,7 @@ Future<void> _openOrBuildLocalTreeTarget(
   required PlayerBuildTreePreparationSide preparationSide,
   OperationCancellationToken? cancellationToken,
 }) async {
+  if (!await requireDesktopPremium(context, feature: 'Prepare') || !context.mounted) return;
   cancellationToken?.throwIfCanceled();
   PlayerOpeningTreeIndex? cachedIndex;
   try {
@@ -4141,6 +4156,7 @@ void _openLocalTree(
   required PlayerBuildTreePreparationSide preparationSide,
   required PlayerWorkspacePlayer player,
 }) {
+  if (ref.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) return;
   final tabId = openBoardGameTab(
     ref,
     BoardTabGameArgs(
@@ -4157,6 +4173,7 @@ void _openLocalTree(
       // library keeps its picker, but switching to Global or another tree here
       // would silently break the player's prep scope.
       hideLocalOpeningTreePicker: true,
+      requiresPremium: true,
     ),
     reuseExisting: false,
   );

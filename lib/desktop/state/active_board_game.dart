@@ -1,4 +1,6 @@
 import 'package:flutter/foundation.dart';
+import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -51,6 +53,7 @@ class BoardTabLibrarySaveOrigin {
 
 class BoardTabGameArgs {
   const BoardTabGameArgs({
+    this.requiresPremium = false,
     this.gameId,
     required this.pgn,
     required this.label,
@@ -95,6 +98,22 @@ class BoardTabGameArgs {
   /// for drag-dropped PGNs and saved-analysis opens — those have no live
   /// stream to subscribe to.
   final String? gameId;
+  /// Source-specific admission; the same broadcast game stays free elsewhere.
+  final bool requiresPremium;
+
+  /// Recover admission intent from pre-freemium saved/window payloads too.
+  /// An explicit personal save origin remains a free recovery path.
+  /// Prepare action entry points separately authorize their new work.
+  bool get needsPremiumAdmission {
+    if (librarySaveOrigin != null) return false;
+    if (requiresPremium) return true;
+    if (hideLocalOpeningTreePicker ||
+        viewSource == ChessboardView.playerProfile ||
+        viewSource == ChessboardView.countryman ||
+        (databaseGamesPagination != null && localOpeningTreeIndex == null)) { return true; }
+    return [eventGamesContinuation, routeGamesContinuation, databaseGamesContinuation]
+        .any((c) => c != null && c.kind != BoardTabGamesContinuationKind.favorites);
+  }
 
   /// Initial PGN movetext seeded into the board pane on mount.
   final String pgn;
@@ -211,6 +230,7 @@ class BoardTabGameArgs {
   final Object? retainedSeedIdentity;
 
   BoardTabGameArgs copyWith({
+    bool? requiresPremium,
     String? gameId,
     String? pgn,
     String? label,
@@ -254,6 +274,7 @@ class BoardTabGameArgs {
     bool clearRetainedSeedIdentity = false,
   }) {
     return BoardTabGameArgs(
+      requiresPremium: requiresPremium ?? this.requiresPremium,
       gameId: gameId ?? this.gameId,
       pgn: pgn ?? this.pgn,
       label: label ?? this.label,
@@ -645,6 +666,10 @@ String openBoardGameTab(
   bool focus = true,
   bool replaceActive = false,
 }) {
+  if (args.needsPremiumAdmission && ref.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) {
+    unawaited(requireDesktopPremium(ref.context, feature: 'Database games'));
+    return '';
+  }
   return openBoardGameTabFromContainer(
     ProviderScope.containerOf(ref.context, listen: false),
     args,
@@ -662,10 +687,12 @@ String openBoardGameTab(
 String openBoardGameTabFromContainer(
   ProviderContainer container,
   BoardTabGameArgs args, {
+  bool allowLockedPreview = false,
   bool reuseExisting = true,
   bool focus = true,
   bool replaceActive = false,
 }) {
+  if (!allowLockedPreview && args.needsPremiumAdmission && container.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) return '';
   final tabsNotifier = container.read(desktopTabsProvider.notifier);
   final byTab = container.read(boardTabGameArgsByTabIdProvider);
 

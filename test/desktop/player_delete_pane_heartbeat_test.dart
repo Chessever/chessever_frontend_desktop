@@ -16,6 +16,7 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -181,6 +182,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: <Override>[
+            desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
             playerWorkspaceRepositoryProvider.overrideWithValue(
               workspaceRepository,
             ),
@@ -192,6 +194,7 @@ void main() {
             localChessLibraryProvider.overrideWith((ref) => localLibrary),
             playerWorkspaceProvider.overrideWith(
               (ref) => PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
                 workspaceRepository: workspaceRepository,
                 gamebaseRepository: gamebaseRepository,
                 localRepository: localRepository,

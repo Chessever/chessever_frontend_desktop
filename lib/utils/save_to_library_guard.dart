@@ -1,4 +1,6 @@
 import 'package:chessever/repository/library/library_repository.dart';
+import 'dart:io' show Platform;
+import 'package:chessever/desktop/auth/desktop_quota_guard.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/utils/library_utils.dart';
 import 'package:chessever/widgets/paywall/premium_paywall_sheet.dart';
@@ -25,6 +27,9 @@ Future<bool> canSaveMoreGames(
   BuildContext context, {
   int gamesToAdd = 1,
 }) async {
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    return canAddDesktopCloudGames(context, additions: gamesToAdd);
+  }
   final container = ProviderScope.containerOf(context, listen: false);
 
   if (container.read(subscriptionProvider).isSubscribed) return true;

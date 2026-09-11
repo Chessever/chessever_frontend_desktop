@@ -69,6 +69,7 @@ void main() {
         },
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: localRepository,
