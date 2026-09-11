@@ -1,7 +1,7 @@
 /// Desktop port of the web broadcast video-stream contract.
 ///
 /// The web Board screen reads `…/video-streams` for the round or tour it is
-/// showing and renders the organiser-managed Twitch / YouTube / Kick players
+/// showing and renders the editor-curated Twitch / YouTube / Kick players
 /// in the top-right corner. The desktop Board pane carries the same panel,
 /// so the models, language grouping and selection defaults below mirror
 /// `chessever_web_frontend/src/broadcast/lib/video-streams.ts`,
@@ -292,7 +292,7 @@ class BroadcastVideoStreamsException implements Exception {
   String toString() => 'BroadcastVideoStreamsException: $message';
 }
 
-/// Reads the organiser-managed stream list for one scope.
+/// Reads the editor-curated stream list for one scope.
 class BroadcastVideoStreamsClient {
   BroadcastVideoStreamsClient({
     http.Client? httpClient,
@@ -350,7 +350,7 @@ class BroadcastVideoStreamsClient {
   void dispose() => _http.close();
 }
 
-/// The site document the desktop player loads: one organiser-managed stream,
+/// The site document the desktop player loads: one editor-curated stream,
 /// resolved by the API for its scope, framed by chessever.com itself.
 /// `play` mirrors the web's in-game autoplay decision.
 Uri broadcastVideoEmbedPageUri({

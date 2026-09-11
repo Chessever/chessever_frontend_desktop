@@ -23,7 +23,7 @@ import 'package:country_flags/country_flags.dart';
 /// Live-stream panel for the top of the Board pane's right rail.
 ///
 /// Parity port of the web broadcast Board screen's `VideoStreams`: the
-/// organiser-managed Twitch / YouTube / Kick list for the game's round (or
+/// editor-curated Twitch / YouTube / Kick list for the game's round (or
 /// tour) is polled every 30 seconds, grouped by language, and the selected
 /// stream plays inline. The player is a real WebView (WKWebView on macOS,
 /// WebView2 composited as a Flutter texture on Windows) showing

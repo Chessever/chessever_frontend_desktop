@@ -10,8 +10,10 @@ needs none, because embedding uses no API key.
 
 ## The model in one paragraph
 
-Organisers attach their own Twitch, YouTube or Kick streams to an event. The
-site frames the provider's embeddable player on a chessever.com page. The
+ChessEver's editors find the public Twitch, YouTube and Kick streams that
+cover an event and attach them to it in our Supabase broadcast settings; the
+streamers are third parties who did not upload anything to us. The site
+frames the provider's embeddable player on a chessever.com page. The
 desktop app never loads a provider player itself: its WebView loads the
 chessever.com player page, so Twitch's `parent` and YouTube's referrer are the
 host that really serves the document. Nothing of ours is drawn in front of the
@@ -60,6 +62,7 @@ place, owner named; N/A = does not apply.
 | Privacy policy: prominently displayed, states use of YouTube API Services, links the Google Privacy Policy, explains data collected and shared, cookies, contact (III.A.2; ToS §7) | OPEN until deployed | Policy text in the web PR above; desktop Settings gains a "Privacy & terms" card linking the policy and the terms of use. |
 | Industry-standard transport encryption (III.E.5.b) | OK | HTTPS everywhere; the embed page requires it. |
 | YouTube name not used in our product name; logos unmodified (Branding Guidelines) | OK | We draw no YouTube logo of our own; "YouTube" appears only as a plain provider label. |
+| Content licence: uploaders grant other users the right to access their content through YouTube's features such as embeds, and can switch embedding off per video (YouTube Terms of Service) | OK, with duties | Curated channels are third parties; we rely on that licence, so a video whose uploader disabled embedding simply shows YouTube's own "unavailable" card and must not be worked around, and a removal request from an uploader is honoured at once. |
 
 ### Twitch
 
@@ -72,13 +75,13 @@ place, owner named; N/A = does not apply.
 | Autoplay where the embed is the focus; Twitch may disable it for hidden or obscured embeds (DSA D.1) | OK | The panel autoplays only as the visible focus of the game view and stops when hidden. The site's current rule starts Twitch muted until the viewer takes control; the embed page inherits it. |
 | Not on sites that replicate Twitch without substantial additional content, nor targeting children under 13 (DSA D.1 prohibited uses) | OK | Live boards, engine and notation are the product; ChessEver is not directed at children. |
 | Must not transmit embeds through advertising networks or services (DSA D.1) | OK | None. |
-| Must not embed in exchange for compensation from a content provider on a site the provider does not own (DSA D.1) | OK, confirm | Organisers attach streams to their own events; ChessEver takes no payment for embedding a channel. Keep it that way: no paid placement of third-party streams. |
+| Must not embed in exchange for compensation from a content provider on a site the provider does not own (DSA D.1) | OK, keep | Our editors pick the channels; no streamer pays us, we pay no streamer, and no channel is placed for a fee. Keep it that way: no paid placement of anyone's stream. |
 | May charge for the service, but not fees specifically to watch the embeds (DSA D.1 permitted uses) | OK | ChessEver Desktop is a paid product that includes Twitch embeds, exactly the case this clause permits. Streams are not marketed as a paid feature and must not become one. |
 | Advertising on the same site is allowed only beside substantial other content (DSA D.1) | N/A | No advertising. |
 | Public, easily accessible privacy policy with data-protection disclosures; disclose tracking and offer an opt-out (DSA A) | OPEN until deployed | Same web PR; Settings link on desktop. Existing analytics disclosures already cover tracking. |
 | Do not store copies of Twitch Content beyond a 24-hour cache; honour deletions and changes (DSA C) | OK, broadcasting API to keep | The desktop stores only the organiser's stream list it receives from ChessEver's API. The broadcasting API's publication observations for a Twitch channel (title, status, times) must keep refreshing and must not be retained as a permanent copy beyond the 24-hour window. |
 | Twitch Marks only per the Trademark Guidelines (DSA 2.ii) | OK | "Twitch" appears as a plain provider label; no logo of ours. |
-| Obtain the end user's authorisation before using their channel's content to market a commercial product (DSA D.1) | OK | Streams are shown inside the event they belong to, not in marketing. Do not reuse organiser streams in promotional material without their consent. |
+| Obtain the end user's authorisation before using their channel's content to market a commercial product; Twitch's embed permission is not a licence from the streamer (DSA D.1) | OK, with duties | We only display a streamer's public channel inside the event it covers, which is what Twitch's embed exists for; we never use a streamer's content in marketing, screenshots or the Pro pitch without their written consent. Because the streamers did not opt in, we honour any removal request at once (`info@chessever.com`), keep every provider link and attribution intact so the channel gets the viewers, and never autoplay a hidden embed (Twitch may treat that as inflating viewer counts). |
 
 ### Kick
 
@@ -149,9 +152,14 @@ reload a player on a timer; never load more than the selected stream.
   `/embed/video` page PR (#375). Until the page is live the desktop panel
   shows "The player could not load here. Open <Provider>".
 - Product: keep the panel ad-free and never priced or marketed as a
-  feature; do not accept payment from organisers for placing a channel
-  (Twitch DSA D.1). Should YouTube ever require it, `feat/streams-link-out-only`
-  is the ready fallback that lists and links without a player.
+  feature; take no payment from anyone for placing a channel (Twitch DSA
+  D.1). Should YouTube ever require it, `feat/streams-link-out-only` is the
+  ready fallback that lists and links without a player.
+- Editorial: because our editors choose third-party channels, a streamer can
+  object. Remove a channel on request without argument, keep a note of who
+  asked, and prefer a short courtesy message to a channel before featuring
+  it. The site's privacy policy must describe the streams as selected by
+  ChessEver, not by organisers.
 
 ## Open source
 

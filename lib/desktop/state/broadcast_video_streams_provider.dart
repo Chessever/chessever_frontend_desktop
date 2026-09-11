@@ -7,7 +7,7 @@ import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 
-/// Interval the board panel re-reads the organiser-managed stream list.
+/// Interval the board panel re-reads the editor-curated stream list.
 /// Matches the web's 30-second `VideoStreams` refresh.
 const Duration broadcastVideoStreamsRefreshInterval = Duration(seconds: 30);
 
