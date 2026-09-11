@@ -50,7 +50,7 @@ place, owner named; N/A = does not apply.
 | No background player: content must not play from a player not displayed in the page, tab or screen the user is viewing (III.I.9) | OK | Playback stops when the tab is not foreground and when the window is hidden or minimised (`liveGameStreamingLifecycleProvider`), and resumes on return. |
 | Must not separate or promote audio/video components separately (III.I.7, III.I.8) | OK | Player shown whole; no audio-only mode. |
 | Must not modify, interfere with, replace or block YouTube advertisements (III.I.5) | OK | No content blocking in the WebView; provider ad and measurement frames navigate freely (only Google's passive sign-in frame is cancelled, which carries no ad). |
-| Must not charge users to watch in an embedded player or gate a video behind any action other than play (III.F.3.a, III.F.3.b) | OK | The panel is free and ungated on desktop and on the site. |
+| Must not charge users to watch in an embedded player or gate a video behind any action other than play (III.F.3.a, III.F.3.b) | OK | ChessEver Desktop is premium-only, so the desktop never embeds YouTube: a YouTube stream is listed and linked ("Open on YouTube", "Watch with live boards" on the free site) but never played inline there (`broadcastVideoPlaysInlineOnDesktop`). The site's board and watch pages are free and embed normally. |
 | No incentives for engaging with YouTube (III.F.3.c) | OK | None. |
 | Make clear YouTube is the source by displaying YouTube Brand Features; never obscure YouTube's attribution (III.F.2.a, III.F.2.c) | OK | The player's own branding is unobscured; the toolbar, menus and the "Open on YouTube" action name YouTube. |
 | Must not sell ads or sponsorships on or within the player, nor on a page that contains only YouTube data (III.G.1.c, III.G.1.d) | OK | No advertising in the desktop app; the site runs no ad network. |
@@ -73,7 +73,7 @@ place, owner named; N/A = does not apply.
 | Not on sites that replicate Twitch without substantial additional content, nor targeting children under 13 (DSA D.1 prohibited uses) | OK | Live boards, engine and notation are the product; ChessEver is not directed at children. |
 | Must not transmit embeds through advertising networks or services (DSA D.1) | OK | None. |
 | Must not embed in exchange for compensation from a content provider on a site the provider does not own (DSA D.1) | OK, confirm | Organisers attach streams to their own events; ChessEver takes no payment for embedding a channel. Keep it that way: no paid placement of third-party streams. |
-| May charge for the service, but not fees specifically to watch the embeds (DSA D.1 permitted uses) | OK | The panel is free on desktop and on the site. |
+| May charge for the service, but not fees specifically to watch the embeds (DSA D.1 permitted uses) | OK | ChessEver Desktop is a paid product that includes Twitch embeds, exactly the case this clause permits. Streams are not marketed as a paid feature and must not become one. |
 | Advertising on the same site is allowed only beside substantial other content (DSA D.1) | N/A | No advertising. |
 | Public, easily accessible privacy policy with data-protection disclosures; disclose tracking and offer an opt-out (DSA A) | OPEN until deployed | Same web PR; Settings link on desktop. Existing analytics disclosures already cover tracking. |
 | Do not store copies of Twitch Content beyond a 24-hour cache; honour deletions and changes (DSA C) | OK, broadcasting API to keep | The desktop stores only the organiser's stream list it receives from ChessEver's API. The broadcasting API's publication observations for a Twitch channel (title, status, times) must keep refreshing and must not be retained as a permanent copy beyond the 24-hour window. |
@@ -112,8 +112,11 @@ place, owner named; N/A = does not apply.
    player.
 7. Playback stops when the Board tab is not foreground and when the window
    is hidden or minimised; it resumes on return.
-8. The panel is free. Never gate it behind a subscription, and never place
-   advertising in or around it.
+8. Never sell the panel: streams must not be marketed or priced as a paid
+   feature, and no advertising may sit in or around it. The desktop app as
+   a whole is paid, which Twitch's agreement permits; because YouTube's
+   policies do not draw that line, the desktop never embeds YouTube inline
+   (`broadcastVideoPlaysInlineOnDesktop`). Do not "fix" that.
 9. The toolbar always offers "Open on <Provider>", so the official source is
    one click away whatever the embed does.
 10. When the broadcasting API supplies `publication.madeForKids`, the site
@@ -128,8 +131,10 @@ place, owner named; N/A = does not apply.
 - Site: merge and deploy the privacy-policy and Made-for-Kids PR and the
   `/embed/video` page PR (#375). Until the page is live the desktop panel
   shows "The player could not load here. Open <Provider>".
-- Product: keep the panel free and ad-free; do not accept payment from
-  organisers for placing a channel (Twitch DSA D.1).
+- Product: keep the panel ad-free and never priced as a feature; do not
+  accept payment from organisers for placing a channel (Twitch DSA D.1). If
+  the desktop app ever gains a free tier that includes tournament boards,
+  inline YouTube can be revisited.
 
 ## Open source
 

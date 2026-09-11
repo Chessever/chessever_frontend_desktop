@@ -55,6 +55,21 @@ void main() {
       );
     });
 
+    test('a paid desktop app never embeds YouTube inline', () {
+      expect(
+        broadcastVideoPlaysInlineOnDesktop(BroadcastVideoProvider.youtube),
+        isFalse,
+      );
+      expect(
+        broadcastVideoPlaysInlineOnDesktop(BroadcastVideoProvider.twitch),
+        isTrue,
+      );
+      expect(
+        broadcastVideoPlaysInlineOnDesktop(BroadcastVideoProvider.kick),
+        isTrue,
+      );
+    });
+
     test('keeps provider minimum player sizes for the rail', () {
       expect(BroadcastVideoProvider.twitch.minWidth, 400);
       expect(BroadcastVideoProvider.twitch.minHeight, 300);
