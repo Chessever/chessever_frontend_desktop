@@ -31,53 +31,6 @@ BroadcastVideoStream stream({
 }
 
 void main() {
-  group('broadcastVideoEmbedPageUri', () {
-    test('frames the stream through the site, never a provider top-level', () {
-      final uri = broadcastVideoEmbedPageUri(
-        scope: 'round',
-        scopeId: 'r1',
-        streamId: 'twitch-chess',
-        play: true,
-      );
-      expect(
-        uri.toString(),
-        'https://chessever.com/embed/video/round/r1/twitch-chess?autoplay=1',
-      );
-      expect(broadcastEmbedPageHosts, contains(uri.host));
-      expect(
-        broadcastVideoEmbedPageUri(
-          scope: 'tour',
-          scopeId: 'a b/c',
-          streamId: 'x',
-          play: false,
-        ).toString(),
-        'https://chessever.com/embed/video/tour/a%20b%2Fc/x?autoplay=0',
-      );
-    });
-
-    test('a paid desktop app never embeds YouTube inline', () {
-      expect(
-        broadcastVideoPlaysInlineOnDesktop(BroadcastVideoProvider.youtube),
-        isFalse,
-      );
-      expect(
-        broadcastVideoPlaysInlineOnDesktop(BroadcastVideoProvider.twitch),
-        isTrue,
-      );
-      expect(
-        broadcastVideoPlaysInlineOnDesktop(BroadcastVideoProvider.kick),
-        isTrue,
-      );
-    });
-
-    test('keeps provider minimum player sizes for the rail', () {
-      expect(BroadcastVideoProvider.twitch.minWidth, 400);
-      expect(BroadcastVideoProvider.twitch.minHeight, 300);
-      expect(BroadcastVideoProvider.youtube.minWidth, 200);
-      expect(BroadcastVideoProvider.kick.minHeight, 200);
-    });
-  });
-
   group('language detection', () {
     test('explicit metadata wins over the title', () {
       final detected = broadcastStreamLanguage(

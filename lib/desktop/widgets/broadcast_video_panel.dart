@@ -1,35 +1,29 @@
 import 'dart:async';
-import 'dart:io' show Platform;
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:webview_all/webview_all.dart';
-import 'package:webview_all_windows/webview_all_windows.dart'
-    show WindowsWebViewController;
-import 'package:webview_all_wkwebview/webview_all_wkwebview.dart'
-    show PlaybackMediaTypes, WebKitWebViewControllerCreationParams;
 
 import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/state/broadcast_video_streams_provider.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
-import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:country_flags/country_flags.dart';
 
 /// Live-stream panel for the top of the Board pane's right rail.
 ///
-/// Parity port of the web broadcast Board screen's `VideoStreams`: the
-/// organiser-managed Twitch / YouTube / Kick list for the game's round (or
-/// tour) is polled every 30 seconds, grouped by language, and the selected
-/// stream plays inline. The player is a real WebView (WKWebView on macOS,
-/// WebView2 composited as a Flutter texture on Windows) showing
-/// chessever.com's own `/embed/video` document, so the provider is framed by
-/// the site exactly as in the browser: no provider player is ever loaded
-/// top-level, and no referrer or `parent` is asserted by the app itself.
+/// Lists the organiser-managed Twitch / YouTube / Kick streams for the
+/// game's round (or tour), polled every 30 seconds and grouped by language
+/// exactly as the site's `VideoStreams` toolbar does, and opens the selected
+/// stream on the provider or on chessever.com's watch page with live boards.
+///
+/// Nothing plays inside the app. ChessEver Desktop is a paid product and the
+/// providers' embed terms are written for web pages (Twitch verifies the
+/// embedding domain through `parent`; YouTube forbids a player behind a
+/// paywall), so the desktop lists and links instead of framing a player.
+/// See docs/broadcast_video_embed_compliance.md before changing that.
 ///
 /// Renders nothing while the scope has no configured streams, so the rail
 /// collapses to the notation panel for ordinary analysis tabs.
@@ -46,8 +40,7 @@ class BroadcastVideoPanel extends ConsumerStatefulWidget {
   final String tourId;
 
   /// Whether the owning Board tab is the foreground surface. Inactive tabs
-  /// render nothing and tear playback down, so a hidden tab can never keep a
-  /// stream (and its audio) alive behind the one on screen.
+  /// render nothing, so only the visible tab polls the stream list.
   final bool active;
 
   /// Round of the game on the board, when known. The API resolves stream
@@ -65,227 +58,10 @@ class BroadcastVideoPanel extends ConsumerStatefulWidget {
 }
 
 class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
-  /// Shared across panels: the first panel starts the environment and every
-  /// later one awaits that same future instead of assuming it finished.
-  static Future<void>? _windowsEnvironment;
-
-  WebViewController? _controller;
-  String? _loadedEmbedUrl;
-
-  /// The embed document failed to arrive or did not carry a player (site
-  /// unreachable, route missing): show the external link instead of a
-  /// broken frame.
-  bool _frameFailed = false;
-
-  /// Windows only: WebView2's environment must exist before the first
-  /// controller is constructed, or the controller wins the race and creates a
-  /// default environment that can no longer receive the autoplay policy.
-  bool _environmentReady = !Platform.isWindows;
-
   BroadcastVideoScope get _scope =>
       BroadcastVideoScope(tourId: widget.tourId, roundId: widget.roundId);
 
   String get _storageKey => 'ce-video.v1:${widget.tournamentStorageId}';
-
-  @override
-  void initState() {
-    super.initState();
-    if (Platform.isWindows) {
-      // WebView2 blocks autoplay with sound by default. The web embeds start
-      // muted=false with autoplay on; request the same policy so the desktop
-      // panel behaves identically. Idempotent across panels.
-      unawaited(
-        _ensureWindowsEnvironment().whenComplete(() {
-          if (mounted) setState(() => _environmentReady = true);
-        }),
-      );
-    }
-  }
-
-  static Future<void> _ensureWindowsEnvironment() {
-    return _windowsEnvironment ??= _createWindowsEnvironment();
-  }
-
-  static Future<void> _createWindowsEnvironment() async {
-    try {
-      await WindowsWebViewController.ensureEnvironment(
-        additionalArguments: '--autoplay-policy=no-user-gesture-required',
-      );
-    } catch (_) {
-      // The panel still works; the provider's own play control remains.
-    }
-  }
-
-  WebViewController _ensureController() {
-    final existing = _controller;
-    if (existing != null) return existing;
-    final controller = _createController();
-    controller
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(kBlackColor)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: (request) {
-            final uri = Uri.tryParse(request.url);
-            if (uri == null) return NavigationDecision.prevent;
-            // Provider players load inside the embed document's iframe;
-            // their own sub-frame navigations are theirs to make. The one
-            // exception is YouTube's passive Google sign-in frame: without
-            // a signed-in browser profile it reloads itself without end
-            // (`signin_passive?reload=9&reload=9…`), and the player plays
-            // exactly the same without it.
-            if (!request.isMainFrame) {
-              return _isGoogleSignInFrame(uri)
-                  ? NavigationDecision.prevent
-                  : NavigationDecision.navigate;
-            }
-            if (uri.scheme == 'about') return NavigationDecision.navigate;
-            if (broadcastEmbedPageHosts.contains(uri.host.toLowerCase())) {
-              return NavigationDecision.navigate;
-            }
-            // Anything taking over the top frame is cancelled; the rail
-            // stays on the embed document. Only a provider destination
-            // ("Watch on Twitch", a channel page, a YouTube title) earns a
-            // browser tab, and never more than one per moment: an ad or a
-            // fingerprinting frame that tries the top frame in a loop must
-            // not turn the user's browser into a tab fountain.
-            _maybeOpenExternally(uri);
-            return NavigationDecision.prevent;
-          },
-          onWebResourceError: (error) {
-            if (error.isForMainFrame != true || !mounted) return;
-            setState(() => _frameFailed = true);
-          },
-          onPageFinished: (_) => unawaited(_verifyEmbedDocument()),
-        ),
-      );
-    _controller = controller;
-    return controller;
-  }
-
-  WebViewController _createController() {
-    if (Platform.isMacOS) {
-      // Inline HTML5 playback and autoplay, matching the web's autoplay
-      // behaviour. Defaults (inline false, media requires a gesture) would
-      // push the embed fullscreen and demand a click.
-      return WebViewController.fromPlatformCreationParams(
-        WebKitWebViewControllerCreationParams(
-          allowsInlineMediaPlayback: true,
-          mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
-        ),
-      );
-    }
-    return WebViewController();
-  }
-
-  static bool _isGoogleSignInFrame(Uri uri) {
-    final host = uri.host.toLowerCase();
-    return host == 'accounts.google.com' ||
-        host.endsWith('.accounts.google.com') ||
-        (host.endsWith('youtube.com') &&
-            uri.path.toLowerCase().contains('signin_passive'));
-  }
-
-  /// Destinations worth a browser tab: the providers' own watch pages.
-  static const Set<String> _externalHosts = <String>{
-    'twitch.tv',
-    'www.twitch.tv',
-    'm.twitch.tv',
-    'youtube.com',
-    'www.youtube.com',
-    'm.youtube.com',
-    'youtu.be',
-    'kick.com',
-    'www.kick.com',
-  };
-  static const Duration _externalLaunchSpacing = Duration(seconds: 2);
-  static const Duration _externalRepeatSpacing = Duration(seconds: 15);
-
-  DateTime? _lastExternalLaunch;
-  String? _lastExternalUrl;
-
-  void _maybeOpenExternally(Uri uri) {
-    if (uri.scheme != 'https' ||
-        !_externalHosts.contains(uri.host.toLowerCase())) {
-      return;
-    }
-    final now = DateTime.now();
-    final last = _lastExternalLaunch;
-    final url = uri.toString();
-    if (last != null) {
-      final since = now.difference(last);
-      if (since < _externalLaunchSpacing) return;
-      if (url == _lastExternalUrl && since < _externalRepeatSpacing) return;
-    }
-    _lastExternalLaunch = now;
-    _lastExternalUrl = url;
-    unawaited(launchDesktopWebUrl(uri));
-  }
-
-  /// The embed document is a bare player; a Next "not found" or error page
-  /// (route not deployed, site down) has no frame at all. Fall back to the
-  /// external link rather than showing that page in the rail.
-  Future<void> _verifyEmbedDocument() async {
-    final controller = _controller;
-    if (controller == null || _loadedEmbedUrl == null) return;
-    Object? result;
-    try {
-      result = await controller.runJavaScriptReturningResult(
-        'document.querySelector("iframe") !== null',
-      );
-    } catch (_) {
-      return; // Not answerable (page torn down); the next load re-checks.
-    }
-    final hasFrame = result == true || result.toString() == 'true';
-    if (!mounted || hasFrame || _loadedEmbedUrl == null) return;
-    setState(() => _frameFailed = true);
-  }
-
-  void _scheduleEmbedLoad(Uri url) {
-    final key = url.toString();
-    if (_loadedEmbedUrl == key) return;
-    _loadedEmbedUrl = key;
-    _frameFailed = false;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      unawaited(_ensureController().loadRequest(url));
-    });
-  }
-
-  void _scheduleStopPlayback() {
-    if (_loadedEmbedUrl == null) return;
-    _loadedEmbedUrl = null;
-    final controller = _controller;
-    if (controller == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      unawaited(controller.loadRequest(Uri.parse('about:blank')));
-    });
-  }
-
-  @override
-  void dispose() {
-    final controller = _controller;
-    if (controller != null) {
-      final platform = controller.platform;
-      if (platform is WindowsWebViewController) {
-        // Windows keeps a native controller alive until it is disposed; do
-        // it deterministically instead of leaving a WebView2 renderer for
-        // the GC.
-        unawaited(platform.dispose());
-      } else {
-        // WKWebView outlives its widget until the controller is collected,
-        // so a torn-down pane would otherwise keep the stream (and its
-        // audio) playing invisibly. Blank it now.
-        unawaited(
-          controller
-              .loadRequest(Uri.parse('about:blank'))
-              .catchError((Object _) {}),
-        );
-      }
-    }
-    super.dispose();
-  }
 
   void _selectStream(BroadcastVideoStream stream) {
     ref
@@ -306,84 +82,41 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     );
   }
 
-  void _setVisible(bool visible) {
-    final preferences =
-        ref.read(broadcastVideoSessionPreferencesProvider)[_storageKey] ??
-        const BroadcastVideoPreference();
-    ref
-        .read(broadcastVideoSessionPreferencesProvider.notifier)
-        .write(
-          _storageKey,
-          BroadcastVideoPreference(
-            selectedId: preferences.selectedId,
-            countryCode: preferences.countryCode,
-            visible: visible,
-          ),
-        );
-  }
-
   @override
   Widget build(BuildContext context) {
-    // A hidden or minimised window is not a screen the user is viewing;
-    // YouTube's policies forbid a background player (III.I.9) and Twitch
-    // may disable autoplay for hidden embeds, so playback stops with the
-    // window and resumes when it is shown again.
-    final windowVisible = ref.watch(liveGameStreamingLifecycleProvider);
-    if (!widget.active || !windowVisible) {
-      _scheduleStopPlayback();
-      return const SizedBox.shrink();
-    }
+    if (!widget.active) return const SizedBox.shrink();
     final scope = _scope;
     final streamsState = ref.watch(broadcastVideoStreamsProvider(scope));
     final data = streamsState.valueOrNull;
-    // No list yet, or the read failed: the web's in-game view renders
-    // nothing in both cases (its "temporarily unavailable" notice only
-    // exists on the tournament hall). A permanent failure means the scope
-    // has no embeddable coverage; a transient one keeps polling every 30s
-    // and the panel appears once a read succeeds.
-    if (data == null) {
-      _scheduleStopPlayback();
-      return const SizedBox.shrink();
-    }
-    if (data.streams.isEmpty) {
-      _scheduleStopPlayback();
-      return const SizedBox.shrink();
-    }
+    // No list yet, or the read failed: render nothing, as the site's in-game
+    // view does. A transient failure keeps polling every 30 seconds and the
+    // panel appears once a read succeeds.
+    if (data == null || data.streams.isEmpty) return const SizedBox.shrink();
     final languageState = ref.watch(broadcastVideoLanguageProvider);
     // The remembered language only applies once loaded, so the first paint
-    // never flashes (and loads) the default stream before settling on the
-    // spectator's last pick. Mirrors the web's `language.loaded` gate.
+    // never flashes the default stream before settling on the spectator's
+    // last pick. Mirrors the web's `language.loaded` gate.
     if (languageState.isLoading) return const SizedBox.shrink();
     final preferences =
         ref.watch(broadcastVideoSessionPreferencesProvider)[_storageKey] ??
         const BroadcastVideoPreference();
-    final language = languageState.valueOrNull;
     final selected = resolveBroadcastVideoSelection(
       data.streams,
       selectedId: preferences.selectedId,
-      language: language,
+      language: languageState.valueOrNull,
       countryCode: preferences.countryCode,
     );
-    if (selected == null) {
-      _scheduleStopPlayback();
-      return const SizedBox.shrink();
-    }
-    final visible = preferences.visible ?? true;
-    if (!visible) _scheduleStopPlayback();
+    if (selected == null) return const SizedBox.shrink();
     final groups = groupBroadcastVideoStreams(data.streams);
+    final source = data.source;
     final watchUri =
-        data.source != null
+        source != null
             ? broadcastVideoWatchUri(
-              scope: data.source!.scope,
-              scopeId: data.source!.id,
+              scope: source.scope,
+              scopeId: source.id,
               streamId: selected.id,
             )
             : Uri.parse(selected.url);
-    // Player first, toolbar under it: every popover and tooltip the toolbar
-    // opens then falls downward over our own notation panel, never in front
-    // of the provider player. Both Twitch ("should not be obscured in any
-    // way by other page elements") and YouTube ("must not display overlays
-    // … in front of any part of a YouTube embedded player") forbid that.
     return DecoratedBox(
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: kDividerColor)),
@@ -391,15 +124,14 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (visible) _buildPlayer(selected, data.source),
           _BroadcastVideoToolbar(
             groups: groups,
             selectedId: selected.id,
-            visible: visible,
-            providerName: selected.provider.displayName,
             onSelect: _selectStream,
-            onToggle: () => _setVisible(!visible),
             onOpenWatch: () => unawaited(launchDesktopWebUrl(watchUri)),
+          ),
+          _SelectedStreamRow(
+            stream: selected,
             onOpenSource:
                 () => unawaited(launchDesktopWebUrl(Uri.parse(selected.url))),
           ),
@@ -407,111 +139,55 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       ),
     );
   }
-
-  Widget _buildPlayer(
-    BroadcastVideoStream stream,
-    BroadcastVideoSourceRef? source,
-  ) {
-    final provider = stream.provider;
-    void openExternal() =>
-        unawaited(launchDesktopWebUrl(Uri.parse(stream.url)));
-    // A paid app must not put a YouTube player behind its paywall; see
-    // broadcastVideoPlaysInlineOnDesktop. The stream stays listed and one
-    // click away, on YouTube or on the free site via the toolbar.
-    if (!broadcastVideoPlaysInlineOnDesktop(provider)) {
-      _scheduleStopPlayback();
-      return _OpenExternallyRow(
-        message:
-            '${provider.displayName} streams play on ${provider.displayName}, '
-            'or on chessever.com with live boards.',
-        provider: provider,
-        onOpenExternal: openExternal,
-      );
-    }
-    // The API attaches the resolving scope to every non-empty list; without
-    // it there is no site document to frame the player through.
-    if (source == null) {
-      _scheduleStopPlayback();
-      return _OpenExternallyRow(
-        message: 'This stream can only be watched on ${provider.displayName}.',
-        provider: provider,
-        onOpenExternal: openExternal,
-      );
-    }
-    final embedPage = broadcastVideoEmbedPageUri(
-      scope: source.scope,
-      scopeId: source.id,
-      streamId: stream.id,
-      play: true,
-    );
-    if (!_environmentReady) return const SizedBox(height: 8);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < provider.minWidth) {
-          _scheduleStopPlayback();
-          return _OpenExternallyRow(
-            message: 'Open ${provider.displayName} to watch at this width.',
-            provider: provider,
-            onOpenExternal: openExternal,
-          );
-        }
-        _scheduleEmbedLoad(embedPage);
-        if (_frameFailed) {
-          return _OpenExternallyRow(
-            message: 'The player could not load here.',
-            provider: provider,
-            onOpenExternal: openExternal,
-          );
-        }
-        final controller = _ensureController();
-        // 16:9 for the rail width, never below the provider's minimum player
-        // height, and capped so the notation below keeps a usable share of
-        // the rail on short windows.
-        final height =
-            (constraints.maxWidth * 9 / 16)
-                .clamp(provider.minHeight, math.max(340.0, provider.minHeight))
-                .toDouble();
-        return SizedBox(
-          height: height,
-          width: double.infinity,
-          child: ColoredBox(
-            color: kBlackColor,
-            child: WebViewWidget(controller: controller),
-          ),
-        );
-      },
-    );
-  }
 }
 
-class _OpenExternallyRow extends StatelessWidget {
-  const _OpenExternallyRow({
-    required this.message,
-    required this.provider,
-    required this.onOpenExternal,
-  });
+/// The selected stream, named, with the one action that plays it: on the
+/// provider, in the system browser.
+class _SelectedStreamRow extends StatelessWidget {
+  const _SelectedStreamRow({required this.stream, required this.onOpenSource});
 
-  final String message;
-  final BroadcastVideoProvider provider;
-  final VoidCallback onOpenExternal;
+  final BroadcastVideoStream stream;
+  final VoidCallback onOpenSource;
 
   @override
   Widget build(BuildContext context) {
+    final provider = stream.provider.displayName;
+    final live = stream.publication?.isLive ?? false;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+      padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              message,
-              style: const TextStyle(fontSize: 11.5, color: kWhiteColor70),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  broadcastVideoStreamDisplayName(stream),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: kWhiteColor,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  live ? '$provider · Live now' : provider,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: kLightGreyColor),
+                ),
+              ],
             ),
           ),
+          const SizedBox(width: 10),
           DesktopToolbarPillButton(
-            label: 'Open ${provider.displayName}',
+            label: 'Open on $provider',
             icon: Icons.open_in_new_rounded,
+            tone: DesktopToolbarPillTone.primary,
             height: 28,
-            onPress: onOpenExternal,
+            onPress: onOpenSource,
           ),
         ],
       ),
@@ -523,22 +199,14 @@ class _BroadcastVideoToolbar extends StatelessWidget {
   const _BroadcastVideoToolbar({
     required this.groups,
     required this.selectedId,
-    required this.visible,
-    required this.providerName,
     required this.onSelect,
-    required this.onToggle,
     required this.onOpenWatch,
-    required this.onOpenSource,
   });
 
   final List<BroadcastVideoStreamGroup> groups;
   final String selectedId;
-  final bool visible;
-  final String providerName;
   final ValueChanged<BroadcastVideoStream> onSelect;
-  final VoidCallback onToggle;
   final VoidCallback onOpenWatch;
-  final VoidCallback onOpenSource;
 
   // A 30px flag, plus the 18px count badge laid out beside it when the
   // language owns several streams. Reserving the badged footprint for every
@@ -549,15 +217,14 @@ class _BroadcastVideoToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Extra bottom room for the count badge, which hangs below its flag so
-    // nothing of ours reaches up into the player above.
+    // Extra bottom room for the count badge, which hangs below its flag.
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // The trailing actions are fixed; only the remaining width can hold
+          // The trailing action is fixed; only the remaining width can hold
           // language slots.
-          const actionsWidth = 106.0;
+          const actionsWidth = 38.0;
           final flagsWidth = constraints.maxWidth - actionsWidth;
           final capacity =
               flagsWidth <= 0
@@ -593,25 +260,9 @@ class _BroadcastVideoToolbar extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               _RailIconButton(
-                icon: Icons.open_in_new_rounded,
-                tooltip: 'Open on $providerName',
-                onPress: onOpenSource,
-              ),
-              const SizedBox(width: 2),
-              _RailIconButton(
                 icon: Icons.grid_view_rounded,
                 tooltip: 'Watch video with live boards',
                 onPress: onOpenWatch,
-              ),
-              const SizedBox(width: 2),
-              _RailIconButton(
-                icon:
-                    visible
-                        ? Icons.videocam_rounded
-                        : Icons.videocam_off_rounded,
-                tooltip: visible ? 'Hide video' : 'Show video',
-                selected: visible,
-                onPress: onToggle,
               ),
             ],
           );
@@ -1128,13 +779,11 @@ class _RailIconButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onPress,
-    this.selected = false,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback onPress;
-  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -1148,13 +797,8 @@ class _RailIconButton extends StatelessWidget {
           final pressed = states.contains(WidgetState.pressed);
           final focused = states.contains(WidgetState.focused);
           final background =
-              selected
-                  ? kPrimaryColor.withValues(alpha: hovered ? 0.16 : 0.10)
-                  : (hovered || pressed ? kBlack3Color : Colors.transparent);
-          final foreground =
-              selected
-                  ? kPrimaryColor
-                  : (hovered ? kWhiteColor : kWhiteColor70);
+              hovered || pressed ? kBlack3Color : Colors.transparent;
+          final foreground = hovered ? kWhiteColor : kWhiteColor70;
           return Container(
             width: 30,
             height: 30,
@@ -1164,7 +808,7 @@ class _RailIconButton extends StatelessWidget {
               color: background,
               border: Border.all(
                 color:
-                    selected || focused
+                    focused
                         ? kPrimaryColor.withValues(alpha: 0.35)
                         : Colors.transparent,
               ),

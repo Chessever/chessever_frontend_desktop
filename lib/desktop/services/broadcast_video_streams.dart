@@ -2,16 +2,12 @@
 ///
 /// The web Board screen reads `…/video-streams` for the round or tour it is
 /// showing and renders the organiser-managed Twitch / YouTube / Kick players
-/// in the top-right corner. The desktop Board pane carries the same panel,
-/// so the models, language grouping and selection defaults below mirror
+/// in the top-right corner. The desktop Board pane carries the same list,
+/// grouping and selection defaults, ported one-for-one from
 /// `chessever_web_frontend/src/broadcast/lib/video-streams.ts`,
-/// `video-language.ts` and `video-playback.ts` one-for-one.
-///
-/// Playback itself is never a provider player loaded top-level: the desktop
-/// WebView loads chessever.com's own `/embed/video/…` document, which frames
-/// the provider exactly as the site does. Twitch's `parent` and YouTube's
-/// referrer are therefore the real host serving that page, not values the
-/// app asserts about itself. See docs/broadcast_video_embed_compliance.md.
+/// `video-language.ts` and `video-playback.ts`, but it never plays a stream
+/// inside the app: streams open on the provider or on chessever.com's watch
+/// page. See docs/broadcast_video_embed_compliance.md for why.
 library;
 
 import 'dart:convert';
@@ -22,8 +18,7 @@ import 'package:http/http.dart' as http;
 /// Public broadcast API host. Same origin the web spectator bridge proxies to.
 const String broadcastApiOrigin = 'https://api.broadcast.chessever.com';
 
-/// Public site origin: hosts the `/watch` pages the toolbar links to and the
-/// `/embed/video` documents the panel plays through.
+/// Public site origin: hosts the `/watch` pages the panel links to.
 const String broadcastWatchOrigin = 'https://chessever.com';
 
 enum BroadcastVideoProvider { twitch, youtube, kick }
@@ -39,19 +34,6 @@ extension BroadcastVideoProviderX on BroadcastVideoProvider {
     BroadcastVideoProvider.twitch => 'Twitch',
     BroadcastVideoProvider.youtube => 'YouTube',
     BroadcastVideoProvider.kick => 'Kick',
-  };
-
-  /// Provider minimum player size, matching the web adapters.
-  double get minWidth => switch (this) {
-    BroadcastVideoProvider.twitch => 400,
-    BroadcastVideoProvider.youtube => 200,
-    BroadcastVideoProvider.kick => 200,
-  };
-
-  double get minHeight => switch (this) {
-    BroadcastVideoProvider.twitch => 300,
-    BroadcastVideoProvider.youtube => 200,
-    BroadcastVideoProvider.kick => 200,
   };
 }
 
@@ -140,9 +122,8 @@ class BroadcastVideoAudience {
     return BroadcastVideoAudience(
       channelId: channelId,
       count: value['count'] is num ? (value['count'] as num).toInt() : null,
-      checkedOn: value['checkedOn'] is String
-          ? value['checkedOn'] as String
-          : null,
+      checkedOn:
+          value['checkedOn'] is String ? value['checkedOn'] as String : null,
     );
   }
 }
@@ -194,9 +175,10 @@ class BroadcastVideoStream {
     return BroadcastVideoStream(
       id: id,
       label: label,
-      countryCode: country is String && country.trim().isNotEmpty
-          ? country.trim().toUpperCase()
-          : null,
+      countryCode:
+          country is String && country.trim().isNotEmpty
+              ? country.trim().toUpperCase()
+              : null,
       provider: provider,
       sourceId: sourceId,
       url: url,
@@ -349,51 +331,6 @@ class BroadcastVideoStreamsClient {
 
   void dispose() => _http.close();
 }
-
-/// Whether the desktop app may play this provider inline.
-///
-/// ChessEver Desktop is premium-only: every screen sits behind a paid
-/// entitlement. YouTube's API Services policies forbid charging users to
-/// watch content in an embedded YouTube player or gating a video behind any
-/// action other than pressing play (III.F.3.a, III.F.3.b), and unlike
-/// Twitch's agreement they draw no line between paying for a service and
-/// paying for the video. So the desktop never embeds YouTube: its streams
-/// are listed and linked, and they play on YouTube or on the free site.
-/// Twitch's Developer Services Agreement explicitly allows paid services
-/// that include its embeds (Schedule D.1), and Kick has no such rule.
-bool broadcastVideoPlaysInlineOnDesktop(BroadcastVideoProvider provider) =>
-    switch (provider) {
-      BroadcastVideoProvider.twitch || BroadcastVideoProvider.kick => true,
-      BroadcastVideoProvider.youtube => false,
-    };
-
-/// The site document the desktop player loads: one organiser-managed stream,
-/// resolved by the API for its scope, framed by chessever.com itself.
-/// `play` mirrors the web's in-game autoplay decision.
-Uri broadcastVideoEmbedPageUri({
-  required String scope,
-  required String scopeId,
-  required String streamId,
-  required bool play,
-}) {
-  final path = <String>[
-    'embed',
-    'video',
-    scope,
-    scopeId,
-    streamId,
-  ].map(Uri.encodeComponent).join('/');
-  return Uri.parse('$broadcastWatchOrigin/$path?autoplay=${play ? 1 : 0}');
-}
-
-/// Hosts a main-frame navigation may stay on inside the desktop player: the
-/// embed document itself. Provider frames live inside it; anything that
-/// tries to take over the top frame (a "Watch on Twitch" link, a channel
-/// page) belongs in the real browser.
-final Set<String> broadcastEmbedPageHosts = <String>{
-  Uri.parse(broadcastWatchOrigin).host,
-  'www.${Uri.parse(broadcastWatchOrigin).host}',
-};
 
 /// Public watch page for one stream, mirroring `watchPath` on the web.
 Uri broadcastVideoWatchUri({
@@ -668,24 +605,26 @@ List<BroadcastVideoStreamGroup> groupBroadcastVideoStreams(
   for (final stream in streams) {
     final language = broadcastStreamLanguage(stream);
     final countryName = broadcastCountryName(stream.countryCode);
-    final key = language.code != 'und'
-        ? language.code
-        : stream.countryCode != null && countryName != null
-        ? 'country-${stream.countryCode}'
-        : 'stream-${stream.id}';
-    final resolved = language.code != 'und'
-        ? BroadcastStreamLanguage(
-            code: language.code,
-            label: language.label,
-            countryCode: stream.countryCode ?? language.countryCode,
-          )
-        : countryName != null
-        ? BroadcastStreamLanguage(
-            code: key,
-            label: countryName,
-            countryCode: stream.countryCode,
-          )
-        : language;
+    final key =
+        language.code != 'und'
+            ? language.code
+            : stream.countryCode != null && countryName != null
+            ? 'country-${stream.countryCode}'
+            : 'stream-${stream.id}';
+    final resolved =
+        language.code != 'und'
+            ? BroadcastStreamLanguage(
+              code: language.code,
+              label: language.label,
+              countryCode: stream.countryCode ?? language.countryCode,
+            )
+            : countryName != null
+            ? BroadcastStreamLanguage(
+              code: key,
+              label: countryName,
+              countryCode: stream.countryCode,
+            )
+            : language;
     groups.putIfAbsent(key, () => <BroadcastVideoStream>[]).add(stream);
     display[key] = resolved;
   }
@@ -731,32 +670,34 @@ List<BroadcastVideoStreamGroup> groupBroadcastVideoStreams(
   }
 
   int nameOrder(BroadcastVideoStream a, BroadcastVideoStream b) {
-    final byName = broadcastVideoStreamDisplayName(a)
-        .toLowerCase()
-        .compareTo(broadcastVideoStreamDisplayName(b).toLowerCase());
+    final byName = broadcastVideoStreamDisplayName(
+      a,
+    ).toLowerCase().compareTo(broadcastVideoStreamDisplayName(b).toLowerCase());
     if (byName != 0) return byName;
     return a.id.compareTo(b.id);
   }
 
-  final ordered = groups.entries
-      .map(
-        (entry) => BroadcastVideoStreamGroup(
-          key: entry.key,
-          code: display[entry.key]!.code,
-          label: display[entry.key]!.label,
-          countryCode: display[entry.key]!.countryCode,
-          streams: entry.value
-            ..sort((a, b) {
-              final byPreferred =
-                  (b.preferred == true ? 1 : 0) - (a.preferred == true ? 1 : 0);
-              if (byPreferred != 0) return byPreferred;
-              final byCount = count(b) - count(a);
-              if (byCount != 0) return byCount;
-              return nameOrder(a, b);
-            }),
-        ),
-      )
-      .toList();
+  final ordered =
+      groups.entries
+          .map(
+            (entry) => BroadcastVideoStreamGroup(
+              key: entry.key,
+              code: display[entry.key]!.code,
+              label: display[entry.key]!.label,
+              countryCode: display[entry.key]!.countryCode,
+              streams:
+                  entry.value..sort((a, b) {
+                    final byPreferred =
+                        (b.preferred == true ? 1 : 0) -
+                        (a.preferred == true ? 1 : 0);
+                    if (byPreferred != 0) return byPreferred;
+                    final byCount = count(b) - count(a);
+                    if (byCount != 0) return byCount;
+                    return nameOrder(a, b);
+                  }),
+            ),
+          )
+          .toList();
   ordered.sort((a, b) {
     final byEnglish = (b.code == 'en' ? 1 : 0) - (a.code == 'en' ? 1 : 0);
     if (byEnglish != 0) return byEnglish;
