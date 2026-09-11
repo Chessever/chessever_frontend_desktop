@@ -50,7 +50,7 @@ place, owner named; N/A = does not apply.
 | No background player: content must not play from a player not displayed in the page, tab or screen the user is viewing (III.I.9) | OK | Playback stops when the tab is not foreground and when the window is hidden or minimised (`liveGameStreamingLifecycleProvider`), and resumes on return. |
 | Must not separate or promote audio/video components separately (III.I.7, III.I.8) | OK | Player shown whole; no audio-only mode. |
 | Must not modify, interfere with, replace or block YouTube advertisements (III.I.5) | OK | No content blocking in the WebView; provider ad and measurement frames navigate freely (only Google's passive sign-in frame is cancelled, which carries no ad). |
-| Must not charge users to watch in an embedded player or gate a video behind any action other than play (III.F.3.a, III.F.3.b) | OK | ChessEver Desktop is premium-only, so the desktop never embeds YouTube: a YouTube stream is listed and linked ("Open on YouTube", "Watch with live boards" on the free site) but never played inline there (`broadcastVideoPlaysInlineOnDesktop`). The site's board and watch pages are free and embed normally. |
+| Must not charge users to watch in an embedded player or gate a video behind any action other than play (III.F.3.a, III.F.3.b) | OK, by reading | ChessEver Desktop is a paid product; the fee buys the analysis engine, databases, live boards and tools, and a stream is supplementary context inside them. YouTube's audit form lists subscription and freemium apps as valid models; the clause targets charging for the video itself. Conditions we hold: streams are never marketed, priced or gated as a paid benefit; the same streams play free on chessever.com and on YouTube; the player is unmodified with its controls, ads, branding and links intact; no background playback; "Open on YouTube" is always one click away. If YouTube ever reads it otherwise, the fallback is the link-out panel on `feat/streams-link-out-only`. |
 | No incentives for engaging with YouTube (III.F.3.c) | OK | None. |
 | Make clear YouTube is the source by displaying YouTube Brand Features; never obscure YouTube's attribution (III.F.2.a, III.F.2.c) | OK | The player's own branding is unobscured; the toolbar, menus and the "Open on YouTube" action name YouTube. |
 | Must not sell ads or sponsorships on or within the player, nor on a page that contains only YouTube data (III.G.1.c, III.G.1.d) | OK | No advertising in the desktop app; the site runs no ad network. |
@@ -112,11 +112,12 @@ place, owner named; N/A = does not apply.
    player.
 7. Playback stops when the Board tab is not foreground and when the window
    is hidden or minimised; it resumes on return.
-8. Never sell the panel: streams must not be marketed or priced as a paid
-   feature, and no advertising may sit in or around it. The desktop app as
-   a whole is paid, which Twitch's agreement permits; because YouTube's
-   policies do not draw that line, the desktop never embeds YouTube inline
-   (`broadcastVideoPlaysInlineOnDesktop`). Do not "fix" that.
+8. Never sell the panel: streams must not be marketed, priced or gated as a
+   paid benefit, and no advertising may sit in or around it. The desktop app
+   as a whole is paid; Twitch's agreement permits that explicitly, and the
+   YouTube reading above depends on the stream staying supplementary to the
+   product's own value. A "Pay to watch GM live streams" pitch, anywhere,
+   breaks both.
 9. The toolbar always offers "Open on <Provider>", so the official source is
    one click away whatever the embed does.
 10. When the broadcasting API supplies `publication.madeForKids`, the site
@@ -131,10 +132,10 @@ place, owner named; N/A = does not apply.
 - Site: merge and deploy the privacy-policy and Made-for-Kids PR and the
   `/embed/video` page PR (#375). Until the page is live the desktop panel
   shows "The player could not load here. Open <Provider>".
-- Product: keep the panel ad-free and never priced as a feature; do not
-  accept payment from organisers for placing a channel (Twitch DSA D.1). If
-  the desktop app ever gains a free tier that includes tournament boards,
-  inline YouTube can be revisited.
+- Product: keep the panel ad-free and never priced or marketed as a
+  feature; do not accept payment from organisers for placing a channel
+  (Twitch DSA D.1). Should YouTube ever require it, `feat/streams-link-out-only`
+  is the ready fallback that lists and links without a player.
 
 ## Open source
 

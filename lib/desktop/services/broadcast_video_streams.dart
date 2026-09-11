@@ -350,23 +350,6 @@ class BroadcastVideoStreamsClient {
   void dispose() => _http.close();
 }
 
-/// Whether the desktop app may play this provider inline.
-///
-/// ChessEver Desktop is premium-only: every screen sits behind a paid
-/// entitlement. YouTube's API Services policies forbid charging users to
-/// watch content in an embedded YouTube player or gating a video behind any
-/// action other than pressing play (III.F.3.a, III.F.3.b), and unlike
-/// Twitch's agreement they draw no line between paying for a service and
-/// paying for the video. So the desktop never embeds YouTube: its streams
-/// are listed and linked, and they play on YouTube or on the free site.
-/// Twitch's Developer Services Agreement explicitly allows paid services
-/// that include its embeds (Schedule D.1), and Kick has no such rule.
-bool broadcastVideoPlaysInlineOnDesktop(BroadcastVideoProvider provider) =>
-    switch (provider) {
-      BroadcastVideoProvider.twitch || BroadcastVideoProvider.kick => true,
-      BroadcastVideoProvider.youtube => false,
-    };
-
 /// The site document the desktop player loads: one organiser-managed stream,
 /// resolved by the API for its scope, framed by chessever.com itself.
 /// `play` mirrors the web's in-game autoplay decision.
