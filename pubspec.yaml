@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 20.32.13+362
+version: 20.32.14+363
 environment:
   sdk: ^3.7.2
 
@@ -112,7 +112,11 @@ dependencies:
   # and WebView2 on Windows, and is API-compatible with webview_flutter.
   # The two platform subpackages are direct deps only so the panel can opt
   # into inline/autoplay media on macOS and the shared WebView2 environment
-  # on Windows through their typed creation params.
+  # on Windows through their typed creation params. Both are overridden to
+  # patched copies under third_party/ (see each package's CHESSEVER_PATCH.md):
+  # WKWebView needs `isElementFullscreenEnabled` for a player's own
+  # fullscreen control to exist, and the Windows package keeps WebView2's
+  # fullscreen-element signal private.
   webview_all: ^1.4.1
   webview_all_wkwebview: ^1.4.1
   webview_all_windows: ^1.4.1
@@ -217,6 +221,10 @@ dependency_overrides:
   meta: 1.17.0
   desktop_updater:
     path: third_party/desktop_updater
+  webview_all_wkwebview:
+    path: third_party/webview_all_wkwebview
+  webview_all_windows:
+    path: third_party/webview_all_windows
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
