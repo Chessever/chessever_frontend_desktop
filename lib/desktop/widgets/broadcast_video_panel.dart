@@ -77,6 +77,30 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   /// broken frame.
   bool _frameFailed = false;
 
+  /// A failed frame (site unreachable, page not deployed yet) retries on its
+  /// own after this pause, and at once from the row's Retry action; without
+  /// it the fallback would stick to the stream until the tab changed.
+  static const Duration _retryAfter = Duration(seconds: 45);
+  Timer? _retryTimer;
+
+  void _markFrameFailed() {
+    if (!mounted || _frameFailed) return;
+    setState(() => _frameFailed = true);
+    _retryTimer?.cancel();
+    _retryTimer = Timer(_retryAfter, _retryEmbed);
+  }
+
+  void _retryEmbed() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    if (!mounted) return;
+    setState(() {
+      _frameFailed = false;
+      // Forget the failed load so the next build issues a fresh request.
+      _loadedEmbedUrl = null;
+    });
+  }
+
   /// Windows only: WebView2's environment must exist before the first
   /// controller is constructed, or the controller wins the race and creates a
   /// default environment that can no longer receive the autoplay policy.
@@ -154,7 +178,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
           },
           onWebResourceError: (error) {
             if (error.isForMainFrame != true || !mounted) return;
-            setState(() => _frameFailed = true);
+            _markFrameFailed();
           },
           onPageFinished: (_) => unawaited(_verifyEmbedDocument()),
         ),
@@ -238,7 +262,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     }
     final hasFrame = result == true || result.toString() == 'true';
     if (!mounted || hasFrame || _loadedEmbedUrl == null) return;
-    setState(() => _frameFailed = true);
+    _markFrameFailed();
   }
 
   void _scheduleEmbedLoad(Uri url) {
@@ -265,6 +289,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
 
   @override
   void dispose() {
+    _retryTimer?.cancel();
     final controller = _controller;
     if (controller != null) {
       final platform = controller.platform;
@@ -447,6 +472,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
             message: 'The player could not load here.',
             provider: provider,
             onOpenExternal: openExternal,
+            onRetry: _retryEmbed,
           );
         }
         final controller = _ensureController();
@@ -474,11 +500,13 @@ class _OpenExternallyRow extends StatelessWidget {
     required this.message,
     required this.provider,
     required this.onOpenExternal,
+    this.onRetry,
   });
 
   final String message;
   final BroadcastVideoProvider provider;
   final VoidCallback onOpenExternal;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -492,6 +520,15 @@ class _OpenExternallyRow extends StatelessWidget {
               style: const TextStyle(fontSize: 11.5, color: kWhiteColor70),
             ),
           ),
+          if (onRetry != null) ...[
+            DesktopToolbarPillButton(
+              label: 'Retry',
+              icon: Icons.refresh_rounded,
+              height: 28,
+              onPress: onRetry,
+            ),
+            const SizedBox(width: 6),
+          ],
           DesktopToolbarPillButton(
             label: 'Open ${provider.displayName}',
             icon: Icons.open_in_new_rounded,
