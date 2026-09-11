@@ -462,7 +462,8 @@ void main() {
 
       expect(find.text('Nakamura, Hikaru'), findsOneWidget);
       expect(find.text('2800'), findsOneWidget);
-      expect(find.text('9½'), findsOneWidget);
+      // Compact rows format points like the full table: plain decimals.
+      expect(find.text('9.5'), findsOneWidget);
       expect(
         tester
             .getSize(find.byKey(const Key('event-rail-standing-2016192')))
