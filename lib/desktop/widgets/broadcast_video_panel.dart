@@ -78,16 +78,60 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   bool _frameFailed = false;
 
   /// A failed frame (site unreachable, page not deployed yet) retries on its
-  /// own after this pause, and at once from the row's Retry action; without
-  /// it the fallback would stick to the stream until the tab changed.
-  static const Duration _retryAfter = Duration(seconds: 45);
+  /// own a few times with growing pauses, and at once from the row's Retry
+  /// action. Bounded on purpose: a site that stays down must not be asked
+  /// for a player forever. The providers are never in this loop; they are
+  /// only reached once our own page has delivered its frame.
+  static const List<Duration> _retryBackoff = <Duration>[
+    Duration(seconds: 45),
+    Duration(seconds: 90),
+    Duration(minutes: 3),
+  ];
   Timer? _retryTimer;
+  int _autoRetries = 0;
+
+  /// Leaving the tab or hiding the window does not blank the player at once:
+  /// a quick switch back re-attaches the same player instead of asking the
+  /// provider for it again. After the grace the player is blanked, so
+  /// nothing keeps playing from a screen the user is not viewing.
+  static const Duration _stopGrace = Duration(seconds: 20);
+  Timer? _stopTimer;
 
   void _markFrameFailed() {
     if (!mounted || _frameFailed) return;
     setState(() => _frameFailed = true);
     _retryTimer?.cancel();
-    _retryTimer = Timer(_retryAfter, _retryEmbed);
+    if (_autoRetries < _retryBackoff.length) {
+      _retryTimer = Timer(_retryBackoff[_autoRetries], () {
+        _autoRetries++;
+        _retryEmbed();
+      });
+    }
+  }
+
+  void _scheduleStopPlaybackAfterGrace() {
+    if (_loadedEmbedUrl == null || _stopTimer != null) return;
+    _stopTimer = Timer(_stopGrace, () {
+      _stopTimer = null;
+      if (mounted) _stopPlaybackNow();
+    });
+  }
+
+  void _cancelStopGrace() {
+    _stopTimer?.cancel();
+    _stopTimer = null;
+  }
+
+  void _stopPlaybackNow() {
+    if (_loadedEmbedUrl == null) return;
+    _loadedEmbedUrl = null;
+    final controller = _controller;
+    if (controller == null) return;
+    unawaited(
+      controller
+          .loadRequest(Uri.parse('about:blank'))
+          .catchError((Object _) {}),
+    );
   }
 
   void _retryEmbed() {
@@ -261,7 +305,11 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       return; // Not answerable (page torn down); the next load re-checks.
     }
     final hasFrame = result == true || result.toString() == 'true';
-    if (!mounted || hasFrame || _loadedEmbedUrl == null) return;
+    if (!mounted || _loadedEmbedUrl == null) return;
+    if (hasFrame) {
+      _autoRetries = 0;
+      return;
+    }
     _markFrameFailed();
   }
 
@@ -290,6 +338,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   @override
   void dispose() {
     _retryTimer?.cancel();
+    _stopTimer?.cancel();
     final controller = _controller;
     if (controller != null) {
       final platform = controller.platform;
@@ -355,9 +404,10 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     // window and resumes when it is shown again.
     final windowVisible = ref.watch(liveGameStreamingLifecycleProvider);
     if (!widget.active || !windowVisible) {
-      _scheduleStopPlayback();
+      _scheduleStopPlaybackAfterGrace();
       return const SizedBox.shrink();
     }
+    _cancelStopGrace();
     final scope = _scope;
     final streamsState = ref.watch(broadcastVideoStreamsProvider(scope));
     final data = streamsState.valueOrNull;

@@ -47,7 +47,7 @@ place, owner named; N/A = does not apply.
 | No overlays, frames or visual elements in front of any part of the player (RMF) | OK | Desktop: player first, toolbar under it; tooltips and popovers anchor downward over our notation panel. Site: hover list opens above the flag, overflow menu `side="top"`, chat launcher hidden on `/embed`. |
 | No mouseovers or touch events on the player to initiate actions (RMF) | OK | Hover handlers exist only on the toolbar flags, not on the player. |
 | Do not modify, build upon or block player functionality; no changes not described by the API docs (III.I.6, RMF) | OK | Documented player parameters only (`autoplay`, `mute`, `playsinline`); no scripts injected into provider frames. |
-| No background player: content must not play from a player not displayed in the page, tab or screen the user is viewing (III.I.9) | OK | Playback stops when the tab is not foreground and when the window is hidden or minimised (`liveGameStreamingLifecycleProvider`), and resumes on return. |
+| No background player: content must not play from a player not displayed in the page, tab or screen the user is viewing (III.I.9) | OK | Playback stops 20 seconds after the tab leaves the foreground or the window is hidden or minimised (`liveGameStreamingLifecycleProvider`); the grace only lets a quick switch back re-attach the same player instead of loading it again. |
 | Must not separate or promote audio/video components separately (III.I.7, III.I.8) | OK | Player shown whole; no audio-only mode. |
 | Must not modify, interfere with, replace or block YouTube advertisements (III.I.5) | OK | No content blocking in the WebView; provider ad and measurement frames navigate freely (only Google's passive sign-in frame is cancelled, which carries no ad). |
 | Must not charge users to watch in an embedded player or gate a video behind any action other than play (III.F.3.a, III.F.3.b) | OK, by reading | ChessEver Desktop is a paid product; the fee buys the analysis engine, databases, live boards and tools, and a stream is supplementary context inside them. YouTube's audit form lists subscription and freemium apps as valid models; the clause targets charging for the video itself. Conditions we hold: streams are never marketed, priced or gated as a paid benefit; the same streams play free on chessever.com and on YouTube; the player is unmodified with its controls, ads, branding and links intact; no background playback; "Open on YouTube" is always one click away. If YouTube ever reads it otherwise, the fallback is the link-out panel on `feat/streams-link-out-only`. |
@@ -110,8 +110,9 @@ place, owner named; N/A = does not apply.
 6. Honour the provider minimum player sizes (Twitch 400×300, YouTube and
    Kick 200×200); below the width, show the external link, never a cropped
    player.
-7. Playback stops when the Board tab is not foreground and when the window
-   is hidden or minimised; it resumes on return.
+7. Playback stops 20 seconds after the Board tab leaves the foreground or the
+   window is hidden or minimised, and resumes on return. The grace exists so
+   a quick switch re-attaches the same player rather than loading it again.
 8. Never sell the panel: streams must not be marketed, priced or gated as a
    paid benefit, and no advertising may sit in or around it. The desktop app
    as a whole is paid; Twitch's agreement permits that explicitly, and the
@@ -122,6 +123,21 @@ place, owner named; N/A = does not apply.
    one click away whatever the embed does.
 10. When the broadcasting API supplies `publication.madeForKids`, the site
     switches YouTube to `youtube-nocookie.com`; do not remove that path.
+
+## Request discipline (what the desktop sends, and how often)
+
+The providers must never be hammered. Every outbound request of the panel:
+
+| Request | Target | Cadence |
+|---|---|---|
+| Stream list for the game's scope | `api.broadcast.chessever.com` (ours) | Every 30 s while the panel is on a foreground tab of a visible window; paused otherwise; one extra read when the window returns. Never touches a provider. |
+| Embed page | `chessever.com/embed/video/…` (ours) | Once per selected stream. The 30 s poll never reloads it; a metadata refresh that leaves the stream unchanged is a no-op. |
+| Provider player | Twitch / YouTube / Kick, from inside the embed page | Once per embed page load. Only the selected stream loads; nothing is prefetched. |
+| Failed-frame retry | `chessever.com` only | At most three automatic retries (45 s, 90 s, 3 min), then manual. Fires only when our page delivered no frame, so a provider outage never triggers it. |
+| Teardown and return | provider, via the page | A tab switch or hidden window blanks the player after 20 s; a return inside that window re-attaches the same player with no new request. |
+
+Rules: never add a request to a provider host from the app itself; never
+reload a player on a timer; never load more than the selected stream.
 
 ## Open items and owners
 
