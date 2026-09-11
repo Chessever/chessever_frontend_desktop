@@ -822,7 +822,7 @@ class _CompactStandingRowState extends State<_CompactStandingRow> {
     final player = widget.player;
     final playerKey = _standingWidgetKey(player);
     final rating = player.score > 0 ? player.score.toString() : '';
-    final points = _compactStandingsPoints(player.matchScore);
+    final points = _standingsPoints(player.matchScore);
     final active = _hovered || _focused;
 
     return Semantics(
@@ -1343,13 +1343,6 @@ class _StandingsRoundResult extends StatelessWidget {
       ),
     );
   }
-}
-
-String _compactStandingsPoints(String? matchScore) {
-  final formatted = _standingsPoints(matchScore);
-  if (!formatted.endsWith('.5')) return formatted;
-  final whole = formatted.substring(0, formatted.length - 2);
-  return whole == '0' ? '½' : '$whole½';
 }
 
 String _standingsPoints(String? matchScore) {

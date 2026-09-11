@@ -191,6 +191,9 @@ PODS:
     - FlutterMacOS
   - url_launcher_macos (0.0.1):
     - FlutterMacOS
+  - webview_all_wkwebview (0.0.1):
+    - Flutter
+    - FlutterMacOS
   - window_manager (0.5.0):
     - FlutterMacOS
 
@@ -223,6 +226,7 @@ DEPENDENCIES:
   - sign_in_with_apple (from `Flutter/ephemeral/.symlinks/plugins/sign_in_with_apple/macos`)
   - sqflite_darwin (from `Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin`)
   - url_launcher_macos (from `Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos`)
+  - webview_all_wkwebview (from `Flutter/ephemeral/.symlinks/plugins/webview_all_wkwebview/darwin`)
   - window_manager (from `Flutter/ephemeral/.symlinks/plugins/window_manager/macos`)
 
 SPEC REPOS:
@@ -304,6 +308,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin
   url_launcher_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos
+  webview_all_wkwebview:
+    :path: Flutter/ephemeral/.symlinks/plugins/webview_all_wkwebview/darwin
   window_manager:
     :path: Flutter/ephemeral/.symlinks/plugins/window_manager/macos
 
@@ -355,6 +361,7 @@ SPEC CHECKSUMS:
   sign_in_with_apple: 6673c03c9e3643f6c8d33601943fbfa9ae99f94e
   sqflite_darwin: 20b2a3a3b70e43edae938624ce550a3cbf66a3d0
   url_launcher_macos: 0fba8ddabfc33ce0a9afe7c5fef5aab3d8d2d673
+  webview_all_wkwebview: 552f6bf5ee38936a1b51c2195ac66b085aeb152f
   window_manager: b729e31d38fb04905235df9ea896128991cad99e
 
 PODFILE CHECKSUM: 82e43341c349d11466f47dec7ce464659a11ee65
