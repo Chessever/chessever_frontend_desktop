@@ -5,7 +5,6 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:chessever/desktop/auth/desktop_premium_required_screen.dart';
 import 'package:chessever/desktop/auth/desktop_welcome_screen.dart';
 import 'package:chessever/desktop/services/desktop_offline_access_cache.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
@@ -15,13 +14,8 @@ import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-/// Root content widget for the desktop build. ChessEver Desktop is
-/// **premium-only**. There is no local onboarding flow — country and
-/// favorite players are configured server-side and synced on sign-in.
-///
-/// 1. **Signed out** → [DesktopWelcomeScreen]. Sign in.
-/// 2. **Signed in but not premium** → [DesktopPremiumRequiredScreen].
-/// 3. **Signed in and premium** → [DesktopShell]. Normal app.
+/// Authenticated free and Premium accounts share the Desktop shell.
+/// Premium is enforced at feature/work boundaries, never at app entrance.
 class DesktopAuthGate extends HookConsumerWidget {
   const DesktopAuthGate({super.key});
 
@@ -65,19 +59,12 @@ class DesktopAuthGate extends HookConsumerWidget {
 
     final s = session.value;
 
-    if (s == null) {
+    if (s == null || s.user.isAnonymous) {
       return const DesktopStandaloneWindowChrome(child: DesktopWelcomeScreen());
     }
 
-    final subscription = ref.watch(subscriptionProvider);
-    if (shouldShowDesktopSubscriptionGateLoading(subscription)) {
-      return const DesktopStandaloneWindowChrome(child: _GateLoading());
-    }
-    if (!subscription.isSubscribed) {
-      return const DesktopStandaloneWindowChrome(
-        child: DesktopPremiumRequiredScreen(),
-      );
-    }
+    // Authentication admits free accounts; feature gates own Premium checks.
+    // Never unmount boards or private work during entitlement refresh/expiry.
 
     return const MandatoryUpdateGate(child: DesktopShell());
   }

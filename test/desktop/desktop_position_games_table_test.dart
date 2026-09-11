@@ -23,6 +23,7 @@ import 'package:forui/forui.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 const _initialFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -65,6 +66,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -135,6 +137,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -169,6 +172,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -202,6 +206,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -241,6 +246,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -279,6 +285,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -316,6 +323,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -366,6 +374,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -417,6 +426,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -472,6 +482,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
             gamebaseRepositoryProvider.overrideWithValue(repository),
             boardSettingsProviderNew.overrideWith(
               _TestBoardSettingsNotifier.new,
@@ -545,6 +556,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -607,6 +619,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -648,6 +661,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -721,6 +735,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -820,6 +835,7 @@ void main() {
             await tester.pumpWidget(
               ProviderScope(
                 overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
                   gamebaseRepositoryProvider.overrideWithValue(
                     _FakeGamebaseRepository(),
                   ),
@@ -959,6 +975,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -1013,6 +1030,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -1059,6 +1077,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -1121,6 +1140,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -1180,6 +1200,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           gamebaseRepositoryProvider.overrideWithValue(repository),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         ],
@@ -1239,6 +1260,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+          desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
             gamebaseRepositoryProvider.overrideWithValue(
               _FakeGamebaseRepository(moveAggregates: const []),
             ),

@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -9,22 +8,10 @@ import 'package:chessever/desktop/services/desktop_offline_access_cache.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 
-/// Desktop-side override of [subscriptionProvider].
-///
-/// On desktop the source of truth for subscription state is the Supabase
-/// `entitlement` Edge Function (which reads `public.subscriptions`). This
-/// notifier polls it on auth state changes, on a 5-minute timer, and on
-/// demand (e.g. when the billing deep link arrives after Stripe Checkout).
-///
-/// We extend [SubscriptionNotifier] via the `.stub()` constructor so that
-/// none of the RevenueCat-specific timers/listeners (which would crash on
-/// desktop without `purchases_flutter`) are wired up.
+/// Server-backed cross-device entitlement. Unknown/offline never grants new
+/// Premium work. Authentication and personal-file recovery remain independent.
 class DesktopSubscriptionNotifier extends SubscriptionNotifier {
-  /// Last-constructed instance. Used by [DesktopDeepLinkListener] (which
-  /// runs outside the widget tree) to trigger an entitlement refresh after
-  /// a `chessever://billing/success` redirect lands.
   static DesktopSubscriptionNotifier? current;
-
   DesktopSubscriptionNotifier()
     : super.stub(SubscriptionState(isLoading: true)) {
     current = this;
@@ -32,135 +19,135 @@ class DesktopSubscriptionNotifier extends SubscriptionNotifier {
   }
 
   Timer? _refreshTimer;
+  Timer? _expiryTimer;
   StreamSubscription<AuthState>? _authSub;
   Future<EntitlementSnapshot?>? _refreshFuture;
-
-  static const _refreshPeriod = Duration(minutes: 5);
+  String? _accountId;
+  int _generation = 0;
 
   void _wire() {
-    // The debug desktop shell is intentionally allowed to start without
-    // backend configuration. Riverpod can still instantiate this override
-    // from widgets inside that shell, so never touch Supabase.instance until
-    // the singleton has actually been initialized.
     if (!DesktopSupabaseInit.isInitialized) {
-      state = SubscriptionState(
-        isLoading: false,
-        error: 'Supabase is unavailable in this desktop session.',
-      );
+      state = SubscriptionState(error: 'Membership service is unavailable.');
       return;
     }
-
+    _accountId = Supabase.instance.client.auth.currentUser?.id;
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((event) {
-      if (kDebugMode) {
-        debugPrint(
-          '[desktop-sub] auth event ${event.event}; refreshing entitlement',
-        );
+      final account = event.session?.user.id;
+      if (account != _accountId) {
+        _accountId = account;
+        _generation++;
+        _refreshFuture = null;
+        _expiryTimer?.cancel();
+        state = SubscriptionState(isLoading: account != null);
+        unawaited(refreshFromBackend());
       }
-      // ignore: discarded_futures
-      refreshFromBackend(forceSessionRefresh: true);
     });
-    _refreshTimer = Timer.periodic(_refreshPeriod, (_) {
-      // ignore: discarded_futures
-      refreshFromBackend();
+    _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      unawaited(refreshFromBackend());
     });
-    // First fetch.
-    // ignore: discarded_futures
-    refreshFromBackend(forceSessionRefresh: true);
+    unawaited(refreshFromBackend());
   }
 
-  /// Fetch the latest entitlement from the backend and update [state].
-  /// Coalesces concurrent calls — the deep-link listener and the periodic
-  /// timer can both fire at the same moment.
+  @override
+  Future<void> refresh() async {
+    await refreshFromBackend();
+  }
+
+  @override
+  Future<void> syncAndRefresh() async {
+    await refreshFromBackend();
+  }
+
   Future<EntitlementSnapshot?> refreshFromBackend({
     bool forceSessionRefresh = false,
   }) {
-    final inFlight = _refreshFuture;
-    if (inFlight != null) return inFlight;
-
-    final future = _refreshFromBackend(
-      forceSessionRefresh: forceSessionRefresh,
-    );
+    if (!mounted || !DesktopSupabaseInit.isInitialized) {
+      return Future.value(null);
+    }
+    final active = _refreshFuture;
+    if (active != null) return active;
+    final generation = _generation;
+    final account = _accountId;
+    final future = _fetch(generation, account, forceSessionRefresh);
     _refreshFuture = future;
     return future.whenComplete(() {
-      if (identical(_refreshFuture, future)) {
-        _refreshFuture = null;
-      }
+      if (identical(_refreshFuture, future)) _refreshFuture = null;
     });
   }
 
-  Future<EntitlementSnapshot?> _refreshFromBackend({
-    required bool forceSessionRefresh,
-  }) async {
+  bool _owns(int generation, String? account) =>
+      mounted &&
+      generation == _generation &&
+      account == _accountId &&
+      Supabase.instance.client.auth.currentUser?.id == account;
+
+  Future<EntitlementSnapshot?> _fetch(
+    int generation,
+    String? account,
+    bool force,
+  ) async {
+    state = state.copyWith(isLoading: true, error: null);
     try {
-      state = state.copyWith(isLoading: true);
-      final ent = await DesktopBillingService.instance.currentEntitlement(
-        forceSessionRefresh: forceSessionRefresh,
-      );
-      if (ent == null) {
-        state = SubscriptionState(
-          isSubscribed: false,
-          isLoading: false,
-          error: 'Sign in to sync your ChessEver Premium membership.',
-        );
+      if (account == null) {
+        if (_owns(generation, account)) state = SubscriptionState();
         return null;
       }
-      await DesktopOfflineAccessCache.recordEntitlement(isActive: ent.isActive);
+      final ent = await DesktopBillingService.instance.currentEntitlement(
+        forceSessionRefresh: force,
+      );
+      if (!_owns(generation, account)) return null;
+      if (ent == null) {
+        state = SubscriptionState(error: 'Sign in to verify membership.');
+        return null;
+      }
+      final expired =
+          !ent.inBillingGracePeriod &&
+          ent.expiresAt != null &&
+          !ent.expiresAt!.isAfter(DateTime.now());
       state = SubscriptionState(
-        isSubscribed: ent.isActive,
-        isLoading: false,
+        isSubscribed: ent.isActive && !expired,
         expirationDate: ent.expiresAt,
         willRenew: ent.willRenew,
         provider: ent.provider,
         inBillingGracePeriod: ent.inBillingGracePeriod,
       );
-      return ent;
-    } on DesktopBillingAuthException catch (e) {
-      if (kDebugMode) debugPrint('[desktop-sub] auth refresh failed: $e');
-      if (await DesktopOfflineAccessCache.canUseOfflineAccess()) {
-        state = state.copyWith(
-          isSubscribed: true,
-          isLoading: false,
-          error:
-              'Offline mode — Premium will be verified when internet returns.',
-        );
-        return null;
+      _expiryTimer?.cancel();
+      if (state.isSubscribed &&
+          !ent.inBillingGracePeriod &&
+          ent.expiresAt != null) {
+        _expiryTimer = Timer(ent.expiresAt!.difference(DateTime.now()), () {
+          if (!_owns(generation, account)) return;
+          state = state.copyWith(isSubscribed: false);
+          unawaited(refreshFromBackend());
+        });
       }
-      try {
-        await Supabase.instance.client.auth.signOut();
-      } catch (_) {}
-      state = SubscriptionState(
-        isSubscribed: false,
-        isLoading: false,
-        error: 'Your sign-in expired. Sign in again to sync Premium.',
+      // This cache permits recovery of an authenticated shell, not entitlement.
+      await DesktopOfflineAccessCache.recordEntitlement(
+        isActive: state.isSubscribed,
       );
-      return null;
-    } catch (e) {
-      if (kDebugMode) debugPrint('[desktop-sub] refresh failed: $e');
-      if (await DesktopOfflineAccessCache.canUseOfflineAccess()) {
-        state = state.copyWith(
-          isSubscribed: true,
-          isLoading: false,
-          error:
-              'Offline mode — Premium will be verified when internet returns.',
-        );
-        return null;
-      }
-      state = state.copyWith(isLoading: false, error: e.toString());
+      return _owns(generation, account) ? ent : null;
+    } catch (_) {
+      if (!_owns(generation, account)) return null;
+      state = state.copyWith(
+        isLoading: false,
+        error:
+            'Membership could not be verified. Check your connection and retry.',
+      );
       return null;
     }
   }
 
   @override
   void dispose() {
+    _generation++;
     _refreshTimer?.cancel();
-    _authSub?.cancel();
+    _expiryTimer?.cancel();
+    unawaited(_authSub?.cancel());
     if (identical(current, this)) current = null;
     super.dispose();
   }
 }
 
-/// Riverpod override that swaps the mobile RevenueCat-driven notifier for
-/// the desktop one. Wired into [ProviderScope] in `desktop_main.dart`.
 final Override desktopSubscriptionOverride = subscriptionProvider.overrideWith(
   (ref) => DesktopSubscriptionNotifier(),
 );

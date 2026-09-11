@@ -2,6 +2,9 @@
 // signals users see when something goes wrong before the window appears.
 // ignore_for_file: avoid_print
 import 'dart:async';
+import 'package:chessever/desktop/auth/desktop_player_profile_policy.dart';
+import 'package:chessever/desktop/auth/desktop_library_quota_repository.dart';
+import 'package:chessever/desktop/auth/desktop_favorite_quota_notifier.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -371,7 +374,7 @@ Future<void> _desktopBoot({
     // The desktop subscription notifier polls our /entitlement edge
     // function (backed by public.subscriptions, which mirrors both Stripe
     // web and RevenueCat mobile state). Replaces the stub-true override.
-    overrides: [desktopSubscriptionOverride],
+    overrides: [desktopSubscriptionOverride, desktopPlayerProfileGamesOverride, desktopLibraryRepositoryOverride, desktopFavoritePlayersOverride],
   );
   try {
     await registerPictureInPictureMainWindowHandler(
@@ -542,7 +545,7 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
         : '[desktop] ⚠️ board window supabase unavailable',
   );
 
-  final container = ProviderContainer(overrides: [desktopSubscriptionOverride]);
+  final container = ProviderContainer(overrides: [desktopSubscriptionOverride, desktopPlayerProfileGamesOverride, desktopLibraryRepositoryOverride, desktopFavoritePlayersOverride]);
   container.read(boardPictureInPictureModeProvider.notifier).state =
       payload.pictureInPicture;
   await _preloadChessgroundPieceImages(
@@ -555,6 +558,7 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
           ? openBoardGameTabFromContainer(
             container,
             boardArgs,
+            allowLockedPreview: true,
             reuseExisting: false,
             focus: true,
           )
@@ -597,6 +601,7 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
           openBoardGameTabFromContainer(
             container,
             replacementArgs,
+            allowLockedPreview: true,
             reuseExisting: false,
             focus: true,
             replaceActive: true,

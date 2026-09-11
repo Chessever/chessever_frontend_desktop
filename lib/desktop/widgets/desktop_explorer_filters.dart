@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_button.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -135,6 +137,10 @@ class DesktopExplorerFilters extends ConsumerWidget {
                     const SizedBox(height: 5),
                     if (scopedPlayer != null)
                       _SelectedPlayerPill(player: scopedPlayer!, onRemove: null)
+                    else if (ref.watch(desktopPremiumAccessProvider) != DesktopAccess.allowed)
+                      DesktopPaywallButton(label: 'Player filter · Premium', onPress: () async {
+                        await requireDesktopPremium(context, feature: 'Player filters');
+                      })
                     else
                       _PlayerFilterField(
                         selected:

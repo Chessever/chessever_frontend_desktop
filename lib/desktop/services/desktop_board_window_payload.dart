@@ -200,6 +200,7 @@ class DesktopBoardWindowPayload {
 }
 
 Map<String, Object?> _argsToJson(BoardTabGameArgs args) => <String, Object?>{
+  'requiresPremium': args.needsPremiumAdmission,
   'gameId': args.gameId,
   'pgn': args.pgn,
   'label': args.label,
@@ -238,6 +239,7 @@ Map<String, Object?> _argsToJson(BoardTabGameArgs args) => <String, Object?>{
 BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
   final label = _string(json['label']);
   return BoardTabGameArgs(
+    requiresPremium: json['requiresPremium'] == true,
     gameId: _nullableString(json['gameId']),
     pgn: _string(json['pgn']),
     label: label.isEmpty ? 'Board' : label,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/auth/desktop_database_creation_guard.dart';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -523,7 +524,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
           .where((f) => f.parentId == null)
           .toList(growable: false),
     );
-    if (draft == null) return;
+    if (draft == null || !mounted) return;
+    if (draft.kind == LibraryFolderCreateKind.database &&
+        !await canCreateDesktopCloudDatabase(context)) { return; }
+    if (!context.mounted) return;
     try {
       final repo = ref.read(libraryRepositoryProvider);
       final created = await repo.createFolder(

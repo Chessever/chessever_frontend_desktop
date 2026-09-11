@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
@@ -20,6 +21,9 @@ import 'package:url_launcher/url_launcher.dart';
 /// Show the premium paywall sheet.
 /// Returns `true` if the user successfully subscribed.
 Future<bool> showPremiumPaywallSheet({required BuildContext context}) async {
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    return requireDesktopPremium(context);
+  }
   // Sync purchases when paywall opens (user might have subscribed externally)
   unawaited(RevenueCatService().syncPurchases());
 
@@ -42,6 +46,9 @@ Future<bool> showPremiumPaywallSheet({required BuildContext context}) async {
 /// Returns true if user has premium or just subscribed.
 /// Note: Requires authentication first - shows auth upgrade sheet if user is anonymous.
 Future<bool> requirePremiumGuard(BuildContext context, WidgetRef ref) async {
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    return requireDesktopPremium(context);
+  }
   if (kDebugMode) return true;
 
   // First ensure user is authenticated (not anonymous)
@@ -58,6 +65,9 @@ Future<bool> requirePremiumGuard(BuildContext context, WidgetRef ref) async {
 /// Guard variant for places where WidgetRef is not conveniently available.
 /// Returns true if user has premium or just subscribed from paywall.
 Future<bool> requirePremiumGuardNoRef(BuildContext context) async {
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    return requireDesktopPremium(context);
+  }
   if (kDebugMode) return true;
 
   final isAuthenticated = await requireFullAuthGuard(context);

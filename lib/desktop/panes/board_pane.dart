@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_board_access_gate.dart';
+import 'package:chessever/desktop/auth/desktop_explorer_policy.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -652,15 +654,26 @@ class BoardPane extends ConsumerWidget {
       return const _BoardPaneContent();
     }
 
+    final args = ref.watch(boardTabGameArgsByTabIdProvider.select((m) => m[activeTabId]));
+    final recovery = ref.watch(boardPaneSessionByTabIdProvider.select((m) {
+      final session = m[activeTabId];
+      return session?.dirtySinceLoad == true || session?.hasCommittedSave == true;
+    }));
+
     return ProviderScope(
       key: ValueKey<String>('board-explorer-scope:$activeTabId'),
       overrides: [
         gamebaseExplorerProvider.overrideWith(
-          (ref) => GamebaseExplorerNotifier(ref),
+          (ref) => GamebaseExplorerNotifier(ref,
+            accessCheck: (state, advance) => canFetchDesktopExplorer(ref, state, advance)),
         ),
         appliedBoardExplorerScopeKeyProvider.overrideWith((ref) => null),
       ],
-      child: _BoardPaneContent(tabId: activeTabId),
+      child: DesktopBoardAccessGate(
+        key: ValueKey('$activeTabId:${args?.gameId ?? args?.label ?? 'Board'}'),
+        requiresPremium: args?.needsPremiumAdmission ?? false,
+        personalRecovery: recovery,
+        builder: (_) => _BoardPaneContent(tabId: activeTabId)),
     );
   }
 }
@@ -9767,6 +9780,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           localOpeningTreeTitle: args.localOpeningTreeTitle,
           enableLocalOpeningTreePicker: args.enableLocalOpeningTreePicker,
           hideLocalOpeningTreePicker: args.hideLocalOpeningTreePicker,
+          requiresPremium: args.needsPremiumAdmission,
           gameListSelectedId: selected.id,
           librarySaveOrigin: localPgnSaveOrigin,
         ),
@@ -9812,6 +9826,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         ref,
         selectedGame,
         title,
+        requiresPremium: args?.needsPremiumAdmission ?? false,
         eventGames: eventGames,
         routeTitle: routeContext ? args!.routeTitle : '',
         routeGames: routeGames,

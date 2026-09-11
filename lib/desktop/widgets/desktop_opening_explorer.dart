@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/foundation.dart';
@@ -186,6 +187,12 @@ class DesktopOpeningExplorer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(gamebaseExplorerProvider);
+    final access = desktopExplorerAccess(ref.watch(desktopPremiumAccessProvider),
+      playedPlies: localOpeningTreeIndex != null ? 0 : state.currentMoveNumber - 1,
+      preparation: usePlayerOpeningTree || state.filters.playerIds.isNotEmpty);
+    if (access != DesktopAccess.allowed) {
+      return const SingleChildScrollView(child: DesktopLockedFeature(feature: 'Opening explorer'));
+    }
     final localIndex = localOpeningTreeIndex;
     final localPlayerId =
         localIndex == null &&

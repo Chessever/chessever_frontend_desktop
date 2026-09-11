@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'dart:math' as math;
 
 import 'package:chessever/desktop/services/retained_local_pgn.dart';
@@ -4590,6 +4591,7 @@ Future<void> _openEventGame({
       ownerContainer.read(boardPaneSessionByTabIdProvider)[ownerTabs.activeId];
   bool stillOwnsOpen() =>
       ownerContext.mounted &&
+      (ownerArgs?.needsPremiumAdmission != true || ownerContainer.read(desktopPremiumAccessProvider) == DesktopAccess.allowed) &&
       (kind != _GameListKind.database ||
           inNewTab ||
           inNewWindow ||
@@ -4605,6 +4607,10 @@ Future<void> _openEventGame({
                     .activeId],
                 ownerArgs,
               )));
+  if (ownerArgs?.needsPremiumAdmission == true && ownerContainer.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) {
+    await requireDesktopPremium(ownerContext, feature: 'Database games');
+    return;
+  }
   final GameRepository? gameRepository =
       kind == _GameListKind.database
           ? null
@@ -4690,6 +4696,7 @@ Future<void> _openEventGame({
           activeArgs?.enableLocalOpeningTreePicker ?? false,
       hideLocalOpeningTreePicker:
           activeArgs?.hideLocalOpeningTreePicker ?? false,
+      requiresPremium: activeArgs?.needsPremiumAdmission ?? false,
       gameListSelectedId: openGame.id,
       librarySaveOrigin: localPgnSaveOrigin,
     );
@@ -4716,6 +4723,7 @@ Future<void> _openEventGame({
       openGame,
     );
     final args = BoardTabGameArgs(
+      requiresPremium: activeArgs?.needsPremiumAdmission ?? false,
       gameId: openGame.id,
       pgn: pgn,
       label:
@@ -4768,6 +4776,7 @@ Future<void> _openEventGame({
   }
 
   final args = BoardTabGameArgs(
+    requiresPremium: activeArgs?.needsPremiumAdmission ?? false,
     gameId: openGame.id,
     pgn: pgn,
     label:

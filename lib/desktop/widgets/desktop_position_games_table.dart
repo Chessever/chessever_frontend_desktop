@@ -1,5 +1,6 @@
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'dart:convert';
 import 'dart:io' as io;
 
@@ -17,6 +18,8 @@ import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
@@ -482,10 +485,16 @@ class _DesktopPositionGamesTableState
           ? const Duration(seconds: 2)
           : const Duration(milliseconds: 120);
 
+  bool get _queryAllowed => desktopExplorerAccess(ref.read(desktopPremiumAccessProvider),
+      playedPlies: widget.localOpeningTreeIndex != null ? 0 : widget.moves.length,
+      preparation: widget.playerOpeningTreePlayerId != null || ref.read(gamebaseExplorerProvider).filters.playerIds.isNotEmpty,
+      exactPosition: widget.exactFenSearch) == DesktopAccess.allowed;
+
   Future<void> _fetchPage({
     required bool reset,
     bool preserveRows = false,
   }) async {
+    if (!mounted || !_queryAllowed) return;
     if (!widget.active) {
       _needsRefresh = true;
       return;
@@ -568,7 +577,7 @@ class _DesktopPositionGamesTableState
         localOpeningTreeIndex: widget.localOpeningTreeIndex,
       );
       final response = page.response;
-      if (!mounted || requestToken != _requestToken) return;
+      if (!mounted || !_queryAllowed || requestToken != _requestToken) return;
 
       final merged =
           reset
@@ -616,7 +625,7 @@ class _DesktopPositionGamesTableState
         _rowSourceLabelsSnapshot(),
       );
     } catch (e) {
-      if (!mounted || requestToken != _requestToken) return;
+      if (!mounted || !_queryAllowed || requestToken != _requestToken) return;
       setState(() {
         _error = e.toString().replaceFirst('Exception: ', '');
         _isInitialLoading = false;
@@ -912,6 +921,18 @@ class _DesktopPositionGamesTableState
   }
 
   Future<void> _insertGame(Map<String, dynamic> row) async {
+    final owner = ProviderScope.containerOf(context, listen: false);
+    final tab = owner.read(desktopTabsProvider).activeId;
+    final args = owner.read(boardTabGameArgsByTabIdProvider)[tab];
+    final session = owner.read(boardPaneSessionByTabIdProvider)[tab];
+    bool stillOwnsInsert() => mounted &&
+        owner.read(desktopTabsProvider).activeId == tab &&
+        identical(owner.read(boardTabGameArgsByTabIdProvider)[tab], args) &&
+        identical(owner.read(boardPaneSessionByTabIdProvider)[tab], session);
+    if (widget.localOpeningTreeIndex == null || widget.playerOpeningTreePlayerId != null) {
+      if (!await requireDesktopPremium(context, feature: 'Database games') || !mounted) return;
+    }
+    if (!stillOwnsInsert()) return;
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
     try {
@@ -922,7 +943,7 @@ class _DesktopPositionGamesTableState
                 _hydrateLocalPgnRowsInBackground,
                 <Map<String, dynamic>>[Map<String, dynamic>.from(row)],
               )).single;
-      if (!mounted) return;
+      if (!stillOwnsInsert()) return;
       var pgn = (openedRow['pgn']?.toString() ?? '').trim();
       if (!pgnHasMoves(pgn) && widget.localOpeningTreeIndex == null) {
         final gameWithPgn = await ref
@@ -933,7 +954,9 @@ class _DesktopPositionGamesTableState
           pgn = (buildPgnFromGamebaseData(gameWithPgn!.data) ?? '').trim();
         }
       }
-      if (!mounted) return;
+      if (!stillOwnsInsert()) return;
+      if ((widget.localOpeningTreeIndex == null || widget.playerOpeningTreePlayerId != null) &&
+          ref.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) { return; }
       if (!pgnHasMoves(pgn)) {
         _showErrorToast('Could not load PGN for insert.');
         return;
@@ -1030,6 +1053,7 @@ class _DesktopPositionGamesTableState
   }
 
   Future<void> _loadFullContinuation(String id, List<String> fallback) async {
+    if (ref.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) return;
     try {
       final gameWithPgn = await ref
           .read(gamebaseRepositoryProvider)
@@ -1104,6 +1128,9 @@ class _DesktopPositionGamesTableState
     bool inNewWindow = false,
     int? continuationStep,
   }) async {
+    if (widget.localOpeningTreeIndex == null || widget.playerOpeningTreePlayerId != null) {
+      if (!await requireDesktopPremium(context, feature: 'Database games') || !mounted) return;
+    }
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
     final sourceRows = <Map<String, dynamic>>[
@@ -1137,6 +1164,7 @@ class _DesktopPositionGamesTableState
       return;
     }
     final args = BoardTabGameArgs(
+      requiresPremium: widget.localOpeningTreeIndex == null || widget.playerOpeningTreePlayerId != null,
       gameId: isLocalRow ? null : id,
       pgn: pgn,
       label: '$whiteName vs $blackName',
@@ -1314,6 +1342,13 @@ class _DesktopPositionGamesTableState
   @override
   Widget build(BuildContext context) {
     // Re-run the query whenever the explorer's filter slice changes
+    ref.listen(desktopPremiumAccessProvider, (_, next) {
+      if (next == DesktopAccess.allowed) unawaited(_fetchPage(reset: true));
+    });
+    ref.watch(desktopPremiumAccessProvider);
+    if (!_queryAllowed) {
+      return const SingleChildScrollView(child: DesktopLockedFeature(feature: 'Opening explorer'));
+    }
     // (toggle a chip, set a rating range, pick a player, etc).
     ref.listen<GamebaseFilters>(
       gamebaseExplorerProvider.select((s) => s.filters),

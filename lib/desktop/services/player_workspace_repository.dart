@@ -75,6 +75,7 @@ class PlayerWorkspaceCombinedSource {
 
 class PlayerWorkspaceRepository {
   PlayerWorkspaceRepository({
+    this.checkAccess,
     AppDatabase? appDatabase,
     http.Client? client,
     Duration? importStatsTimeout,
@@ -87,6 +88,7 @@ class PlayerWorkspaceRepository {
        _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
 
   final AppDatabase _appDatabase;
+  final void Function()? checkAccess;
   final http.Client _client;
   final GamebaseRepository? _gamebaseRepository;
   final Duration importStatsTimeout;
@@ -391,6 +393,7 @@ class PlayerWorkspaceRepository {
   }
 
   Future<PlayerWorkspaceAccount> fetchLichessAccount(String username) async {
+    checkAccess?.call();
     final clean = username.trim();
     if (clean.isEmpty) throw ArgumentError('Lichess username is required.');
     final uri = Uri.https('lichess.org', '/api/user/$clean');
@@ -437,6 +440,7 @@ class PlayerWorkspaceRepository {
   }
 
   Future<PlayerWorkspaceAccount> fetchChessComAccount(String username) async {
+    checkAccess?.call();
     final clean = username.trim().toLowerCase();
     if (clean.isEmpty) throw ArgumentError('Chess.com username is required.');
     final profileUri = Uri.https('api.chess.com', '/pub/player/$clean');
@@ -452,6 +456,7 @@ class PlayerWorkspaceRepository {
       throw StateError('Chess.com user "$clean" was not found.');
     }
     _throwForBadResponse(profileResponse, 'Chess.com profile');
+    checkAccess?.call();
     final statsResponse = await _client.get(
       statsUri,
       headers: const <String, String>{
@@ -522,6 +527,7 @@ class PlayerWorkspaceRepository {
   ) async {
     final clean = fideId.trim();
     if (clean.isEmpty || clean == '?') return null;
+    checkAccess?.call();
     final players = await repository.getPlayers(fideId: clean, pageSize: 20);
     for (final player in players) {
       if (player.fideId.trim() == clean) return player;
@@ -705,6 +711,7 @@ class PlayerWorkspaceRepository {
     final exportWaitTimer = progress.startExportWaitTimer();
     final GamebasePlayerPgnExport? export;
     try {
+      checkAccess?.call();
       export = await repository.getPlayerGamesPgn(
         playerId: playerId,
         fideId: fideId,
@@ -768,6 +775,7 @@ class PlayerWorkspaceRepository {
         }
       });
       try {
+        checkAccess?.call();
         export = await repository.getExternalPlayerGamesPgn(
           source: externalSource,
           username: username,

@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'package:chessever/desktop/auth/desktop_explorer_policy.dart';
+import 'package:chessever/desktop/auth/desktop_player_profile_policy.dart';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -89,6 +92,9 @@ class DesktopShell extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.listen(desktopProfileFilterPaywallProvider, (_, next) {
+      unawaited(requireDesktopPremium(context, feature: 'Combined player filters'));
+    });
     final tabsState = ref.watch(desktopTabsProvider);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
     final boardArgsByTabId = ref.watch(boardTabGameArgsByTabIdProvider);
@@ -1018,7 +1024,8 @@ Widget resolveDesktopTabContent(
         key: ValueKey('opening-explorer-scope-${tab.id}'),
         overrides: [
           gamebaseExplorerProvider.overrideWith(
-            (ref) => GamebaseExplorerNotifier(ref),
+            (ref) => GamebaseExplorerNotifier(ref,
+              accessCheck: (state, advance) => canFetchDesktopExplorer(ref, state, advance)),
           ),
         ],
         child: OpeningExplorerPane(tabId: tab.id),

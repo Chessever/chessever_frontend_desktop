@@ -22,6 +22,7 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -119,6 +120,7 @@ void main() {
     final repository = _PaneFakePlayerWorkspaceRepository();
     final container = ProviderContainer(
       overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
         playerWorkspaceRepositoryProvider.overrideWithValue(repository),
         _playerWorkspaceOverride(repository),
       ],
@@ -367,6 +369,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -512,6 +515,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -615,6 +619,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
             playerWorkspaceRepositoryProvider.overrideWithValue(repository),
             _playerWorkspaceOverride(repository),
             localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -756,6 +761,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -856,6 +862,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -954,6 +961,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1007,6 +1015,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1050,6 +1059,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1110,6 +1120,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1173,6 +1184,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1283,6 +1295,7 @@ Future<void> _pumpAndConnectOnlineAccount(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        desktopPremiumAccessProvider.overrideWithValue(DesktopAccess.allowed),
         playerWorkspaceRepositoryProvider.overrideWithValue(repository),
         _playerWorkspaceOverride(repository),
       ],
@@ -1321,6 +1334,7 @@ Override _playerWorkspaceOverride(
 ) {
   return playerWorkspaceProvider.overrideWith(
     (ref) => PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
       workspaceRepository: repository,
       gamebaseRepository: ref.watch(gamebaseRepositoryProvider),
       localRepository: ref.watch(localChessDatabaseRepositoryProvider),

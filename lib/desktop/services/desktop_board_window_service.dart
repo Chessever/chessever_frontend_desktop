@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 import 'dart:io';
 import 'dart:math';
 
@@ -533,7 +534,9 @@ final desktopBoardWindowServiceProvider = Provider<DesktopBoardWindowService>((
   );
 });
 
-Future<void> openBoardGameWindow(WidgetRef ref, BoardTabGameArgs args) {
+Future<void> openBoardGameWindow(WidgetRef ref, BoardTabGameArgs args) async {
+  if (args.needsPremiumAdmission && !await requireDesktopPremium(ref.context, feature: 'Database games')) return;
+  if (!ref.context.mounted) return;
   return ref.read(desktopBoardWindowServiceProvider).openBoardGameWindow(args);
 }
 

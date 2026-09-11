@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_button.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
@@ -144,6 +147,8 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
       _didSyncInitialMiniatureSearch = false;
     }
     final gamesAsync = ref.watch(premiumGamesProvider(type));
+    final freeMiniatures = type == PremiumGamesType.miniatures &&
+        !desktopCanContinuePremiumWork(ref.watch(subscriptionProvider));
     final copy = _copyForType(type);
 
     return Container(
@@ -230,8 +235,18 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                       ],
                     ),
           ),
+          if (freeMiniatures)
+            Padding(padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+              child: Row(children: [
+                const Expanded(child: Text('Free Miniatures preview · up to 12 games',
+                  style: TextStyle(color: kWhiteColor70))),
+                DesktopPaywallButton(label: 'View full list', onPress: () async {
+                  await requireDesktopPremium(context, feature: 'All Miniatures');
+                }),
+              ])),
           Expanded(
             child: gamesAsync.when(
+              // Free range is also the board rail range; no next-game bypass.
               loading: () => const _SmartGamesLoadingSkeleton(),
               error:
                   (error, stack) => _PaneMessage(
@@ -326,9 +341,9 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                 return _SmartGamesList(
                   tabId: widget.tabId,
                   type: type,
-                  games: visibleGames,
+                  games: freeMiniatures ? visibleGames.take(12).toList() : visibleGames,
                   routeTitle: copy.title,
-                  hasMore: state.hasMore,
+                  hasMore: !freeMiniatures && state.hasMore,
                   isLoading: state.isLoadingMore,
                   // A day-paginated collection only ever holds whole days, so
                   // its counts are final the moment a day lands.
@@ -337,6 +352,7 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                       isDayPaginatedSmartGamesType(type) ||
                       !state.hasMore,
                   onLoadMore: () {
+                    if (freeMiniatures) return;
                     ref.read(premiumGamesProvider(type).notifier).loadMore();
                   },
                 );
@@ -682,6 +698,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                               gameId: game.gameId,
                               onSelect: selectGame,
                               child: LiveDesktopGameCard(
+                                requiresPremium: widget.type != PremiumGamesType.miniatures,
                                 game: game,
                                 tournamentTitle: _smartGameTournamentTitle(
                                   game,
@@ -849,6 +866,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                           gameId: game.gameId,
                           onSelect: selectGame,
                           child: LiveDesktopGameCard(
+                                requiresPremium: widget.type != PremiumGamesType.miniatures,
                             game: game,
                             tournamentTitle: _smartGameTournamentTitle(
                               game,
@@ -1112,21 +1130,24 @@ class _SmartHeaderBadge extends StatelessWidget {
   }
 }
 
-void _openSmartGame(
+Future<void> _openSmartGame(
   WidgetRef ref,
   GamesTourModel game,
   PremiumGamesType type,
   String routeTitle,
   List<GamesTourModel> routeGames,
-) {
-  openTournamentGameTab(
+) async {
+  final paid = type != PremiumGamesType.miniatures;
+  return openTournamentGameTab(
     ref,
     game,
     game.tourSlug ?? routeTitle,
     routeTitle: routeTitle,
     routeGames: routeGames,
     routeGamesContinuation: smartGamesBoardContinuationFor(type),
+    requiresPremium: paid,
     viewSource: ChessboardView.tour,
+    canCommitOpen: (container) => !paid || container.read(desktopPremiumAccessProvider) == DesktopAccess.allowed,
   );
 }
 

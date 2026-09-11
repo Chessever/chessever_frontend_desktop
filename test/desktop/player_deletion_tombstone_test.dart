@@ -98,6 +98,7 @@ void main() {
         ),
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: repository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -157,6 +158,7 @@ void main() {
       }
 
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: harness.repository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -217,6 +219,7 @@ void main() {
       ),
     );
     final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
       workspaceRepository: repository,
       gamebaseRepository: GamebaseRepository(Dio()),
       localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -289,6 +292,7 @@ void main() {
         ),
       );
       final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
         workspaceRepository: repository,
         gamebaseRepository: GamebaseRepository(Dio()),
         localRepository: LocalChessDatabaseRepository(database: () async => db),
@@ -333,6 +337,7 @@ void main() {
     );
     final localRepository = _FailOnceLocalRepository(db);
     final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
       workspaceRepository: repository,
       gamebaseRepository: GamebaseRepository(Dio()),
       localRepository: localRepository,
@@ -376,6 +381,7 @@ void main() {
       database: () async => db,
     );
     final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
       workspaceRepository: repository,
       gamebaseRepository: GamebaseRepository(Dio()),
       localRepository: localRepository,
@@ -434,6 +440,7 @@ _activeChessComSyncHarness(Directory root, resqlite.Database db) async {
     ),
   );
   final notifier = PlayerWorkspaceNotifier(
+        premiumAllowed: () => true,
     workspaceRepository: repository,
     gamebaseRepository: GamebaseRepository(Dio()),
     localRepository: LocalChessDatabaseRepository(database: () async => db),

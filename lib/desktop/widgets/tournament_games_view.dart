@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -1907,7 +1908,9 @@ Future<void> openTournamentGameTab(
   ChessboardView viewSource = ChessboardView.tour,
   String? eventBroadcastId,
   bool Function(ProviderContainer container)? canCommitOpen,
+  bool requiresPremium = false,
 }) async {
+  requiresPremium = requiresPremium || viewSource == ChessboardView.playerProfile || viewSource == ChessboardView.countryman;
   // Capture the ProviderContainer up front. `ref` belongs to the widget
   // that owns the tap (often a LiveDesktopGameCard whose live-stream
   // rebuild can dispose the card while we await the PGN fetch below),
@@ -1915,6 +1918,7 @@ Future<void> openTournamentGameTab(
   // unmounted — which used to swallow the click silently. The container
   // is held by the surrounding ProviderScope and survives card disposal.
   final container = ProviderScope.containerOf(ref.context, listen: false);
+  if (requiresPremium && !await requireDesktopPremium(ref.context, feature: 'Collection games')) return;
   final gameRepo = container.read(gameRepositoryProvider);
 
   final hydratedGame = await _hydrateTournamentGameForBoardOpen(
@@ -1922,6 +1926,7 @@ Future<void> openTournamentGameTab(
     game: game,
   );
   if (canCommitOpen != null && !canCommitOpen(container)) return;
+  if (requiresPremium && container.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) return;
   _seedBaseGameIfFresher(container, hydratedGame);
 
   final args = buildTournamentBoardTabArgs(
@@ -1940,7 +1945,7 @@ Future<void> openTournamentGameTab(
   container.read(chessboardViewFromProviderNew.notifier).state = viewSource;
   final tabId = openBoardGameTabFromContainer(
     container,
-    args,
+    args.copyWith(requiresPremium: requiresPremium),
     focus: focus,
     reuseExisting: reuseExisting,
     replaceActive: replaceActive,
@@ -1958,6 +1963,7 @@ Future<void> openTournamentGameTab(
 
 Future<void> openTournamentGameWindow({
   required ProviderContainer container,
+  bool requiresPremium = false,
   required GamesTourModel game,
   required String tournamentTitle,
   List<GamesTourModel> eventGames = const <GamesTourModel>[],
@@ -1971,6 +1977,8 @@ Future<void> openTournamentGameWindow({
   String? eventBroadcastId,
 }) async {
   // Both services belong to the surrounding ProviderScope, not to the live
+  requiresPremium = requiresPremium || viewSource == ChessboardView.playerProfile || viewSource == ChessboardView.countryman;
+  if (requiresPremium && container.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) return;
   // card that initiated the action. Capture them before hydration so removing
   // or filtering that card cannot invalidate the detached-window open.
   final gameRepo = container.read(gameRepositoryProvider);
@@ -1979,6 +1987,7 @@ Future<void> openTournamentGameWindow({
     gameRepo: gameRepo,
     game: game,
   );
+  if (requiresPremium && container.read(desktopPremiumAccessProvider) != DesktopAccess.allowed) return;
   _seedBaseGameIfFresher(container, hydratedGame);
   final args = buildTournamentBoardTabArgs(
     hydratedGame,
@@ -1993,7 +2002,7 @@ Future<void> openTournamentGameWindow({
     viewSource: viewSource,
     eventBroadcastId: eventBroadcastId,
   );
-  await windowService.openBoardGameWindow(args);
+  await windowService.openBoardGameWindow(args.copyWith(requiresPremium: requiresPremium));
 }
 
 @visibleForTesting
@@ -2268,6 +2277,7 @@ String? _roundNameForGame(
 GameTabDragPayload tournamentGameDragPayload(
   GamesTourModel game,
   String tournamentTitle, {
+  bool requiresPremium = false,
   List<GamesTourModel> eventGames = const <GamesTourModel>[],
   String routeTitle = '',
   List<GamesTourModel> routeGames = const <GamesTourModel>[],
@@ -2284,6 +2294,7 @@ GameTabDragPayload tournamentGameDragPayload(
     eventBroadcastId: _normalizedOptionalId(eventBroadcastId),
     spawn:
         (ref, {required focus}) => openTournamentGameTab(
+          requiresPremium: requiresPremium,
           ref,
           game,
           tournamentTitle,
@@ -2319,6 +2330,7 @@ GameTabDragPayload tournamentGameDragPayload(
 class LiveDesktopGameCard extends ConsumerWidget {
   const LiveDesktopGameCard({
     super.key,
+    this.requiresPremium = false,
     required this.game,
     required this.tournamentTitle,
     this.eventGames = const <GamesTourModel>[],
@@ -2378,6 +2390,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
   /// In this mode a plain child tap has no action, while double-click keeps
   /// the usual game-open behavior and modifier-click still opens a new tab.
   final bool selectionHandledByAncestor;
+  final bool requiresPremium;
 
   /// When set together with [federationFallback], any side whose name
   /// matches and whose federation is empty inherits the fallback ISO2 code.
@@ -2441,6 +2454,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
         ref,
         displayGame,
         tournamentTitle,
+        requiresPremium: requiresPremium,
         eventGames: eventGames,
         routeTitle: routeTitle,
         routeGames: routeGames,
@@ -2473,6 +2487,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
                 unawaited(
                   _showLiveGameContextMenu(
                     context: context,
+                    requiresPremium: requiresPremium,
                     ref: ref,
                     position: position,
                     game: liveGame,
@@ -2493,6 +2508,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
       dragPayload: tournamentGameDragPayload(
         liveGame,
         tournamentTitle,
+        requiresPremium: requiresPremium,
         eventGames: eventGames,
         routeTitle: routeTitle,
         routeGames: routeGames,
@@ -2549,6 +2565,7 @@ enum _LiveGameContextAction {
 
 Future<void> _showLiveGameContextMenu({
   required BuildContext context,
+  bool requiresPremium = false,
   required WidgetRef ref,
   required Offset position,
   required GamesTourModel game,
@@ -2631,12 +2648,23 @@ Future<void> _showLiveGameContextMenu({
   );
   if (picked == null || !context.mounted) return;
 
+  final paidAction = picked == _LiveGameContextAction.open ||
+      picked == _LiveGameContextAction.openNewTab ||
+      picked == _LiveGameContextAction.openNewWindow ||
+      picked == _LiveGameContextAction.openBackground ||
+      picked == _LiveGameContextAction.saveToLibrary ||
+      picked == _LiveGameContextAction.share;
+  requiresPremium = requiresPremium || viewSource == ChessboardView.playerProfile || viewSource == ChessboardView.countryman;
+  if (paidAction && requiresPremium && !await requireDesktopPremium(context, feature: 'Collection games')) return;
+  if (!context.mounted) return;
+
   switch (picked) {
     case _LiveGameContextAction.open:
       await openTournamentGameTab(
         ref,
         game,
         tournamentTitle,
+        requiresPremium: requiresPremium,
         eventGames: eventGames,
         routeTitle: routeTitle,
         routeGames: routeGames,
@@ -2652,6 +2680,7 @@ Future<void> _showLiveGameContextMenu({
         ref,
         game,
         tournamentTitle,
+        requiresPremium: requiresPremium,
         eventGames: eventGames,
         routeTitle: routeTitle,
         routeGames: routeGames,
@@ -2668,6 +2697,7 @@ Future<void> _showLiveGameContextMenu({
       final container = ProviderScope.containerOf(context, listen: false);
       await openTournamentGameWindow(
         container: container,
+        requiresPremium: requiresPremium,
         game: game,
         tournamentTitle: tournamentTitle,
         eventGames: eventGames,
@@ -2685,6 +2715,7 @@ Future<void> _showLiveGameContextMenu({
         ref,
         game,
         tournamentTitle,
+        requiresPremium: requiresPremium,
         eventGames: eventGames,
         routeTitle: routeTitle,
         routeGames: routeGames,

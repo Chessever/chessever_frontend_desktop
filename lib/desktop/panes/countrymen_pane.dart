@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 
 import 'package:cue/cue.dart';
 import 'package:flutter/material.dart';
@@ -1852,6 +1853,7 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                                     Act.slideY(from: 0.18),
                                   ],
                                   child: LiveDesktopGameCard(
+                                requiresPremium: true,
                                     game: game,
                                     tournamentTitle:
                                         game.tourSlug ?? 'Countrymen',
@@ -1979,6 +1981,7 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                                 Act.slideY(from: 0.18),
                               ],
                               child: LiveDesktopGameCard(
+                                requiresPremium: true,
                                 game: game,
                                 tournamentTitle: game.tourSlug ?? 'Countrymen',
                                 routeTitle: widget.routeTitle,
@@ -2015,20 +2018,22 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
   }
 }
 
-void _openCountrymenGame(
+Future<void> _openCountrymenGame(
   WidgetRef ref,
   GamesTourModel game,
   String routeTitle,
   List<GamesTourModel> routeGames,
-) {
-  openTournamentGameTab(
+) async {
+  return openTournamentGameTab(
     ref,
     game,
     game.tourSlug ?? 'Countrymen',
     routeTitle: routeTitle,
     routeGames: routeGames,
     routeGamesContinuation: const BoardTabGamesContinuation.countrymen(),
+    requiresPremium: true,
     viewSource: ChessboardView.countryman,
+    canCommitOpen: (container) => container.read(desktopPremiumAccessProvider) == DesktopAccess.allowed,
   );
 }
 

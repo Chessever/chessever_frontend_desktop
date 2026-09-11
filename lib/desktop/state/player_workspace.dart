@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -86,6 +88,11 @@ class PlayerWorkspaceState {
 
 final playerWorkspaceRepositoryProvider = Provider<PlayerWorkspaceRepository>(
   (ref) => PlayerWorkspaceRepository(
+    checkAccess: () {
+      if (!desktopCanContinuePremiumWork(ref.read(subscriptionProvider))) {
+        throw const DesktopPremiumRequiredException();
+      }
+    },
     gamebaseRepository: ref.watch(gamebaseRepositoryProvider),
   ),
 );
@@ -183,6 +190,7 @@ typedef PlayerWorkspaceLocalDatabasePlayerUnregistrar =
 final playerWorkspaceProvider =
     StateNotifierProvider<PlayerWorkspaceNotifier, PlayerWorkspaceState>((ref) {
       return PlayerWorkspaceNotifier(
+        premiumAllowed: () => ref.read(desktopPremiumAccessProvider) == DesktopAccess.allowed,
         workspaceRepository: ref.watch(playerWorkspaceRepositoryProvider),
         gamebaseRepository: ref.watch(gamebaseRepositoryProvider),
         localRepository: ref.watch(localChessDatabaseRepositoryProvider),
@@ -222,6 +230,7 @@ class _PlayerWorkspaceOperationScope {
 
 class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   PlayerWorkspaceNotifier({
+    bool Function()? premiumAllowed,
     required PlayerWorkspaceRepository workspaceRepository,
     required GamebaseRepository gamebaseRepository,
     required LocalChessDatabaseRepository localRepository,
@@ -229,7 +238,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     PlayerWorkspaceLocalDatabaseUnregistrar? localDatabaseUnregistrar,
     PlayerWorkspaceLocalDatabasePlayerUnregistrar?
     localDatabasePlayerUnregistrar,
-  }) : _workspaceRepository = workspaceRepository,
+  }) : _premiumAllowed = premiumAllowed ?? (() => false),
+       _workspaceRepository = workspaceRepository,
        _gamebaseRepository = gamebaseRepository,
        _localRepository = localRepository,
        _localDatabaseRegistrar = localDatabaseRegistrar,
@@ -239,6 +249,10 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     _initialLoadFuture = load();
   }
 
+  final bool Function() _premiumAllowed;
+  void _requirePremium() {
+    if (!mounted || !_premiumAllowed()) throw const DesktopPremiumRequiredException();
+  }
   final PlayerWorkspaceRepository _workspaceRepository;
   final GamebaseRepository _gamebaseRepository;
   final LocalChessDatabaseRepository _localRepository;
@@ -363,7 +377,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
           const <_PlayerWorkspaceOperationScope>[],
         );
       }
-      await _repairPersistedDownloadedStatsBestEffort();
+      if (_premiumAllowed()) await _repairPersistedDownloadedStatsBestEffort();
       await _registerPlayersGeneratedDatabasesBestEffort(state.players);
       await _rebuildSelectedCombinedIfStaleBestEffort();
     } catch (error) {
@@ -375,6 +389,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<List<GamebasePlayer>> searchChessEverPlayers(String query) {
+    _requirePremium();
     return _workspaceRepository.searchChessEverPlayers(
       _gamebaseRepository,
       query,
@@ -384,6 +399,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// Adds a free-text prep target and returns its new player id so callers can
   /// open it and chain straight into connecting online usernames.
   Future<String> addManualPlayer(String name) async {
+    _requirePremium();
     final player = _workspaceRepository.manualPlayer(name);
     await _upsertPlayer(player, select: false);
     return player.id;
@@ -392,6 +408,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// Adds a ChessEver-indexed player and returns its new player id (see
   /// [addManualPlayer]).
   Future<String> addChessEverPlayer(GamebasePlayer gamebasePlayer) async {
+    _requirePremium();
     final existing = _canonicalChessEverPlayer(gamebasePlayer);
     if (existing != null) {
       await selectPlayer(existing.id);
@@ -410,6 +427,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// by FIDE ID. An existing FIDE-only workspace is upgraded by attaching its
   /// exact ChessEver source.
   Future<String> ensurePlayerWorkspaceByFideId(String fideId) async {
+    _requirePremium();
     await _initialLoadFuture;
     final normalized = _normalizedPlayerFideId(fideId);
     if (normalized == null) {
@@ -461,6 +479,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   Future<int> attachFetchedAccounts(
     List<PlayerWorkspaceAccount> accounts,
   ) async {
+    _requirePremium();
     if (accounts.isEmpty) return 0;
     final player = state.selectedPlayer;
     if (player == null) return 0;
@@ -485,6 +504,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> connectChessEverPlayer(GamebasePlayer gamebasePlayer) async {
+    _requirePremium();
     final player = state.selectedPlayer;
     if (player == null) return;
     final lockedFideId = _normalizedPlayerFideId(player.fideId);
@@ -521,6 +541,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// immediately downloads its games. FIDE-less workspaces intentionally keep
   /// using the searchable connect dialog instead.
   Future<void> reconnectLockedChessEverSource() async {
+    _requirePremium();
     final player = state.selectedPlayer;
     if (player == null) return;
     final lockedFideId = _normalizedPlayerFideId(player.fideId);
@@ -575,6 +596,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> _rebuildSelectedCombinedIfStaleBestEffort() async {
+    if (!_premiumAllowed()) return;
     final player = state.selectedPlayer;
     if (player == null) return;
     final combinedPath = player.combinedPgnPath?.trim();
@@ -817,6 +839,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     required PlayerWorkspaceSource source,
     required String username,
   }) async {
+    _requirePremium();
     if (source == PlayerWorkspaceSource.chessever ||
         source == PlayerWorkspaceSource.manual ||
         source == PlayerWorkspaceSource.combined) {
@@ -876,6 +899,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     required PlayerWorkspaceAccount account,
     required String username,
   }) async {
+    _requirePremium();
     if (account.source != PlayerWorkspaceSource.lichess &&
         account.source != PlayerWorkspaceSource.chesscom) {
       throw StateError('Only online usernames can be edited here.');
@@ -985,6 +1009,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> refreshAccountEntry(PlayerWorkspaceAccount account) async {
+    _requirePremium();
     final player = state.selectedPlayer;
     if (player == null) return;
     final existing = _matchingAccount(player, account);
@@ -1125,6 +1150,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     PlayerWorkspaceAccount account, {
     bool reinstall = false,
   }) async {
+    _requirePremium();
     final player = state.selectedPlayer;
     if (player == null) return;
     final existing = _matchingAccount(player, account);
@@ -1391,6 +1417,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     required String label,
     required String pgn,
   }) async {
+    _requirePremium();
     final cleanLabel = label.trim().isEmpty ? 'Manual PGN' : label.trim();
     await _importManualDownloadedPgn(
       label: cleanLabel,
@@ -1403,6 +1430,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> importManualPgnPaths({required List<String> paths}) async {
+    _requirePremium();
     final player = state.selectedPlayer;
     if (player == null) return;
     final cleanLabel = localChessDatabaseDisplayNameForPaths(paths);
@@ -1525,6 +1553,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> rebuildCombinedDatabase() async {
+    _requirePremium();
     final player = state.selectedPlayer;
     if (player == null) return;
     if (_hasActiveSourceOperations(player.id)) {
@@ -1548,6 +1577,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   Future<PlayerWorkspacePlayer?> prepareCombinedDatabaseForTree(
     String playerId,
   ) async {
+    _requirePremium();
     _canceledCombinedPreparationPlayerIds.remove(playerId);
     final inFlightAtClick = _combinedRebuildFutures[playerId];
     if (inFlightAtClick != null) {
@@ -1641,6 +1671,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> _rebuildCombinedDatabaseForPlayer(PlayerWorkspacePlayer player) {
+    _requirePremium();
     final active = _combinedRebuildFutures[player.id];
     if (active != null) return active;
     final rebuild = _performCombinedDatabaseRebuild(player);

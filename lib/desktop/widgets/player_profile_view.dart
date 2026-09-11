@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_access_gate.dart';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -191,6 +192,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   }
 
   Future<void> _buildChessEverPlayerTree(int fideId) async {
+    if (!await requireDesktopPremium(context, feature: 'Prepare') || !mounted) return;
     if (_isBuildingProfile || _isBuildingTree) return;
     setState(() => _isBuildingTree = true);
     try {
@@ -260,6 +262,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   }
 
   Future<void> _openOrBuildPlayerWorkspace(int fideId) async {
+    if (!await requireDesktopPremium(context, feature: 'Prepare') || !mounted) return;
     if (_isBuildingProfile || _isBuildingTree) return;
     final normalizedFideId = fideId.toString();
     var workspace = ref
@@ -454,11 +457,10 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
       blitz: activeProfile?.blitzRating,
     );
 
-    final workspacePlayer = ref.watch(
-      playerWorkspaceProvider.select(
-        (state) => state.playerForFideId(effectiveFideId?.toString()),
-      ),
-    );
+    final workspacePlayer = ref.watch(desktopPremiumAccessProvider) == DesktopAccess.allowed
+        ? ref.watch(playerWorkspaceProvider.select(
+            (state) => state.playerForFideId(effectiveFideId?.toString())))
+        : null;
     final hasFideId = effectiveFideId != null && effectiveFideId > 0;
     final memorialIdentity = widget.args.memorialSourceIdentity?.trim();
     final hasMemorialIdentity = memorialIdentity?.isNotEmpty == true;
@@ -3887,6 +3889,8 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
   }
 
   Future<void> _selectAllFilteredGames(PlayerProfileGamesState state) async {
+    if ((state.totalCount ?? state.filteredGames.length) > 1 &&
+        !await requireDesktopPremium(context, feature: 'Bulk player games')) { return; }
     if (_isLoadingAllPagesForSelection) return;
     if (!mounted) return;
 
@@ -3927,6 +3931,7 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
   }
 
   Future<void> _addSelectedToLibrary(PlayerProfileGamesState state) async {
+    if (!await requireDesktopPremium(context, feature: 'Save player games') || !mounted) return;
     final selected = state.filteredGames
         .where((game) => _selectedGameIds.contains(game.gameId))
         .toList(growable: false);
