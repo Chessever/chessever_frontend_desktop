@@ -190,7 +190,19 @@ void main() {
       contains('oldWidget.reportResetRevision != widget.reportResetRevision'),
     );
     expect(engine, contains('_reportController.invalidate()'));
-    expect(engine, contains('_autoStartedFingerprint = nextFingerprint'));
+    // Automatic reports were removed: a reset or a new game re-keys the panel
+    // and clears the stale notice, and nothing re-requests a report on its
+    // own. A cleared report only comes back from the cache on an explicit
+    // request.
+    final update = section(
+      engine,
+      'void didUpdateWidget(covariant EnginePanel oldWidget)',
+      'String? _fingerprint(',
+    );
+    expect(update, contains('_gameFingerprint = nextFingerprint'));
+    expect(update, contains('_requestNotice = null'));
+    expect(update, isNot(contains('_analyze(')));
+    expect(update, isNot(contains('_reportCoordinator.request(')));
   });
 
   test('board menu exposes Clear analysis only through optional callback', () {

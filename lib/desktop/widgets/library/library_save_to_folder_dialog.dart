@@ -28,6 +28,8 @@ import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/library/library_folder_dialogs.dart';
 import 'package:chessever/utils/save_to_library_guard.dart';
+import 'package:chessever/repository/freemium/freemium_quota.dart';
+import 'package:chessever/utils/freemium_quota_guard.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
@@ -524,15 +526,27 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
           .toList(growable: false),
     );
     if (draft == null) return;
+    final isDatabase = draft.kind == LibraryFolderCreateKind.database;
+    // Folders are unlimited; only a new database asks for a slot.
+    if (isDatabase) {
+      if (!mounted) return;
+      final quota = await requestFreemiumQuota(
+        context,
+        FreemiumQuotaKind.ownedDatabases,
+      );
+      if (!mounted) return;
+      if (!quota.isAllowed) {
+        _showToast(freemiumQuotaBlockedMessage(quota), error: true);
+        return;
+      }
+    }
     try {
       final repo = ref.read(libraryRepositoryProvider);
       final created = await repo.createFolder(
         name: draft.name,
         parentId: draft.parentId,
-        icon:
-            draft.kind == LibraryFolderCreateKind.database
-                ? 'database'
-                : 'folder_container',
+        icon: isDatabase ? 'database' : 'folder_container',
+        nodeType: isDatabase ? 'database' : 'folder',
       );
       ref.invalidate(libraryFoldersStreamProvider);
       ref.invalidate(subscribedBooksProvider);
@@ -540,7 +554,16 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       setState(() => _selected.add(created.id));
     } catch (e) {
       if (!mounted) return;
-      _showToast('Failed to create folder: $e', error: true);
+      final rejection = freemiumQuotaRejection(
+        e,
+        fallbackKind: FreemiumQuotaKind.ownedDatabases,
+      );
+      _showToast(
+        rejection != null
+            ? freemiumQuotaBlockedMessage(rejection)
+            : 'Failed to create folder: $e',
+        error: true,
+      );
     }
   }
 
@@ -628,10 +651,15 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       // Claim the dialog before this first await so Save and Update cannot
       // overlap during the cloud permission check. Local saves are exempt.
       final cloudRows = effectiveGames.length * selectedFolders.length;
+      // Every destination copy counts: N games into M databases is N x M.
       if (cloudRows > 0) {
-        final allowed = await canSaveMoreGames(context, gamesToAdd: cloudRows);
+        final quota = await requestSaveGamesQuota(
+          context,
+          gamesToAdd: cloudRows,
+        );
         if (!mounted) return;
-        if (!allowed) {
+        if (!quota.isAllowed) {
+          _showToast(freemiumQuotaBlockedMessage(quota), error: true);
           setState(() => _isSaving = false);
           return;
         }
@@ -771,12 +799,26 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       Navigator.of(context).pop(committedOutcome);
     } catch (e) {
       if (!mounted) return;
+      // A write that lost the race for the last slot is a quota answer, not a
+      // failure: name the allowance instead of dumping the database error.
+      final rejection = freemiumQuotaRejection(
+        e,
+        fallbackKind: FreemiumQuotaKind.savedGames,
+      );
+      final detail =
+          rejection != null ? freemiumQuotaBlockedMessage(rejection) : '$e';
       if (committedOutcome != null) {
         // A retry here would duplicate already committed destinations.
-        _showToast('Some entries were saved before an error: $e', error: true);
+        _showToast(
+          'Some entries were saved before an error: $detail',
+          error: true,
+        );
         Navigator.of(context).pop(committedOutcome);
       } else {
-        _showToast('Save failed: $e', error: true);
+        _showToast(
+          rejection != null ? detail : 'Save failed: $detail',
+          error: true,
+        );
         setState(() => _isSaving = false);
       }
     }

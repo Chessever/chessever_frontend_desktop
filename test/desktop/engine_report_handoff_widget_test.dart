@@ -52,6 +52,7 @@ void main() {
         ),
       );
 
+      unawaited(controller.analyze(game));
       await tester.pump();
       await tester.pump();
       await tester.pump();
@@ -123,6 +124,7 @@ void main() {
       ),
     );
 
+    unawaited(controller.analyze(game));
     await tester.pump();
     await tester.pump();
     expect(harnessKey.currentState!.reportRunning, isTrue);
@@ -178,6 +180,7 @@ void main() {
         ),
       ),
     );
+    unawaited(controller.analyze(game));
     await tester.pump();
     await tester.pump();
     expect(controller.state.status, GameReportStatus.running);
@@ -356,7 +359,6 @@ class _EngineAndAutoAnalysisOnNotifier extends EngineSettingsNotifierNew {
   Future<EngineSettings> build() async {
     const settings = EngineSettings(
       showEngineAnalysis: true,
-      autoGameAnalysis: true,
     );
     state = const AsyncValue.data(settings);
     return settings;
