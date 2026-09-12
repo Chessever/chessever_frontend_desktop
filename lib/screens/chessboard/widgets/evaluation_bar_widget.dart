@@ -265,6 +265,10 @@ class EvaluationBarWidgetForGames extends ConsumerStatefulWidget {
   final bool allowStockfishFallback;
   final bool showText;
 
+  /// Optional rail decoration painted after the fills, before the opaque label.
+  /// The label rectangle is supplied in local rail coordinates (null if hidden).
+  final Widget Function(BuildContext, Rect?)? railDecorationBuilder;
+
   const EvaluationBarWidgetForGames({
     required this.width,
     required this.height,
@@ -273,6 +277,7 @@ class EvaluationBarWidgetForGames extends ConsumerStatefulWidget {
     this.isFlipped = false,
     this.allowStockfishFallback = true,
     this.showText = true,
+    this.railDecorationBuilder,
     super.key,
   });
 
@@ -408,6 +413,7 @@ class _EvalBarDisplay {
       playerView: widget.playerView,
       isFlipped: widget.isFlipped,
       showText: widget.showText,
+      railDecorationBuilder: widget.railDecorationBuilder,
     );
   }
 
@@ -435,6 +441,7 @@ class _Bars extends StatelessWidget {
   final bool isCheckmate;
   final bool hasEvaluationData;
   final bool showText;
+  final Widget Function(BuildContext, Rect?)? railDecorationBuilder;
 
   const _Bars({
     required this.width,
@@ -450,12 +457,15 @@ class _Bars extends StatelessWidget {
     this.isCheckmate = false,
     this.hasEvaluationData = true,
     this.showText = true,
+    this.railDecorationBuilder,
   });
 
   @override
   Widget build(BuildContext context) {
     final labelHeight = playerView == PlayerView.gridView ? 16.0 : 20.0;
     final labelFontSize = playerView == PlayerView.gridView ? 10.0 : 11.0;
+    final labelTop = ((isFlipped ? whiteHeight : blackHeight) - labelHeight / 2)
+        .clamp(0.0, height - labelHeight);
 
     return SizedBox(
       width: width,
@@ -479,11 +489,17 @@ class _Bars extends StatelessWidget {
             ),
           ),
           // Evaluation text positioned at the meeting point of black/white
+          if (railDecorationBuilder != null)
+            Positioned.fill(
+              child: railDecorationBuilder!(
+                context,
+                showText ? Rect.fromLTWH(0, labelTop, width, labelHeight) : null,
+              ),
+            ),
           if (showText) Positioned(
             left: 0,
             right: 0,
-            top: ((isFlipped ? whiteHeight : blackHeight) - labelHeight / 2)
-                .clamp(0.0, height - labelHeight),
+            top: labelTop,
             child: Container(
               width: width,
               height: labelHeight,
