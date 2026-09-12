@@ -22,6 +22,8 @@ import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 import 'package:chessever/desktop/widgets/library/my_likes/like_tags_dialog.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
@@ -555,7 +557,13 @@ Future<void> _exportLikes(
     );
     if (choice == null || !context.mounted) return;
     if (choice == _ExportChoice.premium) {
-      await showPremiumPaywallSheet(context: context);
+      await showPremiumPaywallSheet(
+        context: context,
+        desktopDecision: const DesktopAccessDecision(
+          DesktopAccess.premiumRequired,
+          DesktopAccessReason.premiumLikesOutsideWindow,
+        ),
+      );
       if (!context.mounted) return;
       // Re-evaluated after the sheet: a purchase exports everything, a
       // declined upgrade exports the free seven-day slice.

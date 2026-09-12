@@ -10,16 +10,18 @@ import 'package:motor/motor.dart';
 import 'package:chessever/chat/botvinnik_provider.dart';
 import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/chat/chat_references.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/widgets/botvinnik/botvinnik_mark.dart';
 import 'package:chessever/desktop/widgets/botvinnik/botvinnik_sign_in.dart';
 import 'package:chessever/desktop/state/botvinnik_chat.dart';
 import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/state/botvinnik_reference_router.dart';
-import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -128,8 +130,20 @@ class _BotvinnikDockState extends ConsumerState<BotvinnikDock> {
     _composerFocus.requestFocus();
   }
 
-  void _openPlans() {
-    ref.read(desktopTabsProvider.notifier).open(TabKind.settings);
+  Future<void> _openPlans() async {
+    final purchased = await showDesktopPremiumPaywall(
+      context,
+      decision: const DesktopAccessDecision(
+        DesktopAccess.premiumRequired,
+        DesktopAccessReason.premiumBotvinnikAllowance,
+      ),
+      surface: 'botvinnik',
+    );
+    if (!mounted) return;
+    if (purchased) {
+      unawaited(ref.read(botvinnikQuotaProvider.notifier).refresh());
+    }
+    _composerFocus.requestFocus();
   }
 
   @override
@@ -1306,7 +1320,7 @@ class _Composer extends StatelessWidget {
                       icon: Icons.workspace_premium_outlined,
                       height: 40,
                       tone: DesktopToolbarPillTone.primary,
-                      tooltip: 'Open plans in Settings',
+                      tooltip: 'See Premium plans',
                       onPress: onOpenPlans,
                     ),
                   ],

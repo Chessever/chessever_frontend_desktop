@@ -5,19 +5,23 @@ import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/chat/chat_references.dart';
 import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
 import 'package:chessever/desktop/state/active_player.dart';
+import 'package:chessever/desktop/state/desktop_smart_games.dart';
 
 /// Opens an opening (ECO code such as `B14`) in the desktop Smart Events
 /// destination.
 typedef BotvinnikOpeningReferenceOpener =
     Future<void> Function(WidgetRef ref, String ecoCode);
 
-/// Seam for opening references.
-///
-/// Desktop Smart Events is being rebuilt separately. Until that destination
-/// overrides this provider it stays null, and opening references render as
-/// plain text: an answer never shows a link that would do nothing.
+/// Seam for opening references: opens the Smart Events destination for the
+/// ECO code. It stays nullable so a surface without Smart Events can override
+/// it with null, and opening references then render as plain text rather than
+/// a link that would do nothing.
 final botvinnikOpeningReferenceOpenerProvider =
-    Provider<BotvinnikOpeningReferenceOpener?>((ref) => null);
+    Provider<BotvinnikOpeningReferenceOpener?>(
+      (ref) => (_, ecoCode) async {
+        ref.read(desktopSmartEventOpenerProvider).openOpeningCode(ecoCode);
+      },
+    );
 
 /// Decides which answer references are links and where each one goes.
 abstract class BotvinnikReferenceRouter {

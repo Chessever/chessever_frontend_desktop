@@ -36,7 +36,7 @@ class DesktopPaywallCopy {
 /// larger DAILY allowance, not unlimited. Keep the two distinct.
 const List<String> desktopPremiumIncludes = <String>[
   'Unlimited game reports, saved games, databases and favourite players',
-  'Full games from Countrymen, player profiles, TWIC and the ChessEver database',
+  'Full games from Countrymen, player profiles, TWIC and databases',
   'Explorer past move 10, player scope and exact position search',
   'Prepare, opening trees and engine tournaments',
   'A larger daily Botvinnik allowance',
@@ -304,8 +304,16 @@ DesktopPaywallCopy _premiumCopy(
       );
     case DesktopAccessReason.premiumMiniatureNotToday:
       return const DesktopPaywallCopy(
-        title: 'Earlier Miniatures are Premium',
-        body: 'Today\'s Miniatures are free.',
+        title: 'Only today\'s Miniatures are free',
+        body: 'Earlier, undated and upcoming games need Premium.',
+      );
+    case DesktopAccessReason.premiumBotvinnikAllowance:
+      // Never "unlimited": Botvinnik is a daily allowance set by the server.
+      return const DesktopPaywallCopy(
+        title: 'Botvinnik is part of Premium',
+        body:
+            'Your plan does not include Botvinnik messages. Premium adds a '
+            'daily Botvinnik allowance, and your chats and draft stay here.',
       );
     case DesktopAccessReason.quotaFavoritePlayers:
       return DesktopPaywallCopy(

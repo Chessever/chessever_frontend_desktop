@@ -39,6 +39,7 @@ enum DesktopAccessReason {
   premiumLocalPositionQuery('premium_local_position_query'),
   premiumLikesOutsideWindow('premium_likes_outside_window'),
   premiumMiniatureNotToday('premium_miniature_not_today'),
+  premiumBotvinnikAllowance('premium_botvinnik_allowance'),
   quotaFavoritePlayers('quota_favorite_players'),
   quotaCloudDatabases('quota_cloud_databases'),
   quotaCloudSavedGames('quota_cloud_saved_games'),

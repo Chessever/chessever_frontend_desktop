@@ -44,7 +44,10 @@ Future<bool> resolveDesktopDateGate(
           ) ??
           false;
       if (!wantsPremium || !context.mounted) return false;
-      await showPremiumPaywallSheet(context: context);
+      await showPremiumPaywallSheet(
+        context: context,
+        desktopDecision: decision,
+      );
       if (!context.mounted) return false;
       return evaluate().isAllowed;
     case DesktopAccess.accountRequired:

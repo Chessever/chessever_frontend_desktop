@@ -207,6 +207,9 @@ class _DesktopSmartEventPaneState extends ConsumerState<DesktopSmartEventPane> {
       routeTitle: request.displayName,
       routeGames: event.games,
       viewSource: ChessboardView.tour,
+      accessContext: smartCollectionAccessContext(
+        SmartCollectionContentAction.openGame,
+      ),
     );
   }
 
@@ -520,6 +523,9 @@ class _DesktopSmartEventPaneState extends ConsumerState<DesktopSmartEventPane> {
                           routeGames: event.games,
                           layout: DesktopCardLayout.grid,
                           viewSource: ChessboardView.tour,
+                          accessContext: smartCollectionAccessContext(
+                            SmartCollectionContentAction.openGame,
+                          ),
                           enableContextMenu: contextMenuAllowed,
                           onTap: () => _openGame(game, event, request),
                         );

@@ -1,6 +1,9 @@
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+
 /// Where a game was discovered, when it was discovered through a smart
 /// collection. The same game can be free through an ordinary broadcast and
 /// gated through a smart collection, so this travels with every content
@@ -50,18 +53,43 @@ typedef SmartCollectionContentGate =
       SmartCollectionContentAction action,
     );
 
-/// The seam the freemium policy layer overrides.
+/// The gate every smart-collection content action passes.
 ///
-/// `main` has no entitlement evaluator yet (the desktop subscription stub
-/// keeps every gate open), so the default allows. The policy PR replaces this
-/// provider; nothing in the smart-event surface calls a content action without
-/// going through it.
+/// Evaluates the request against the live membership and, when it is denied,
+/// presents the paywall in the window that owns [context]. It resolves `true`
+/// only when a re-read of the membership admits the action, never on the
+/// dialog's own say-so. Nothing in the smart-event surface calls a content
+/// action without going through it.
 final smartCollectionContentGateProvider = Provider<SmartCollectionContentGate>(
-  (ref) => (context, provenance, action) async => true,
+  (ref) => (context, provenance, action) {
+    return requireDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      smartCollectionAccessContext(action),
+      surface: 'smart_collection',
+    );
+  },
 );
 
-/// Synchronous view of the same decision for affordances that cannot await
-/// (whether a card offers its context menu at all). Defaults to the open
-/// stub; the policy PR overrides it alongside the gate.
+/// The access request a smart-collection content action makes. Provenance,
+/// not game identity, decides: the same game stays free through its broadcast.
+DesktopAccessContext smartCollectionAccessContext(
+  SmartCollectionContentAction action,
+) {
+  return DesktopAccessContext(
+    feature: DesktopFeature.smartCollection,
+    origin: DesktopDiscoveryOrigin.smartCollection,
+    action: switch (action) {
+      SmartCollectionContentAction.openGame => DesktopAction.openContent,
+      SmartCollectionContentAction.previewNavigate =>
+        DesktopAction.previewNavigate,
+      SmartCollectionContentAction.gameContextMenu => DesktopAction.copy,
+    },
+  );
+}
+
+/// Synchronous view for affordances that cannot await (whether a card offers
+/// its context menu at all). It stays open: each menu item is gated when it is
+/// chosen by the card's own access context, so the menu remains discoverable
+/// and rendering it never opens a paywall.
 final smartCollectionContextMenuAllowedProvider =
     Provider.family<bool, SmartCollectionProvenance>((ref, provenance) => true);

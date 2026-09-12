@@ -1,3 +1,6 @@
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/repository/freemium/freemium_quota.dart';
 import 'package:chessever/repository/freemium/freemium_quota_repository.dart';
 import 'package:chessever/widgets/paywall/premium_paywall_sheet.dart';
@@ -32,10 +35,47 @@ Future<FreemiumQuotaResult> requestFreemiumQuota(
   denial.state = result;
   final bool subscribed;
   try {
-    subscribed = await showPremiumPaywallSheet(context: context);
+    subscribed = await showPremiumPaywallSheet(
+      context: context,
+      desktopDecision: freemiumQuotaDesktopDecision(result),
+    );
   } finally {
     if (identical(denial.state, result)) denial.state = null;
   }
   if (!subscribed) return result;
   return repository.check(kind, additions: additions);
+}
+
+/// The desktop paywall decision for a spent allowance, so the dialog names the
+/// exact limit and can say "10 of 10 saved games used".
+DesktopAccessDecision freemiumQuotaDesktopDecision(FreemiumQuotaResult result) {
+  final (quota, reason) = switch (result.kind) {
+    FreemiumQuotaKind.savedGames => (
+      DesktopQuota.cloudSavedGames,
+      DesktopAccessReason.quotaCloudSavedGames,
+    ),
+    FreemiumQuotaKind.favoritePlayers => (
+      DesktopQuota.favoritePlayers,
+      DesktopAccessReason.quotaFavoritePlayers,
+    ),
+    FreemiumQuotaKind.ownedDatabases => (
+      DesktopQuota.cloudDatabases,
+      DesktopAccessReason.quotaCloudDatabases,
+    ),
+  };
+  final used = result.used;
+  final limit = result.limit;
+  return DesktopAccessDecision(
+    DesktopAccess.quotaExceeded,
+    reason,
+    capacity:
+        used == null || limit == null
+            ? null
+            : DesktopQuotaCapacity(
+              quota: quota,
+              used: used,
+              limit: limit,
+              requested: result.requested,
+            ),
+  );
 }

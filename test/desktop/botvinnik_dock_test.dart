@@ -261,10 +261,13 @@ void main() {
       expect(result.markdown, 'The Caro-Kann held.');
     });
 
-    test('the opening seam provider defaults to no destination', () {
+    test('the opening seam opens Smart Events by default', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      expect(container.read(botvinnikOpeningReferenceOpenerProvider), isNull);
+      expect(
+        container.read(botvinnikOpeningReferenceOpenerProvider),
+        isNotNull,
+      );
     });
   });
 
