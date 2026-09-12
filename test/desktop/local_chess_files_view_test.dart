@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/desktop_premium_test_overrides.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
@@ -917,6 +918,8 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            // Building an opening tree is Premium.
+            ...desktopPremiumTestOverrides,
             localChessDatabaseRepositoryProvider.overrideWithValue(repository),
             localChessLibraryProvider.overrideWith((ref) => notifier),
           ],

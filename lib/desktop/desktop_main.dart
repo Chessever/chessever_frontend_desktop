@@ -32,6 +32,7 @@ import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
 import 'package:chessever/desktop/services/desktop_file_open_service.dart';
 import 'package:chessever/desktop/services/desktop_picture_in_picture_channel.dart';
 import 'package:chessever/desktop/services/desktop_shutdown_coordinator.dart';
+import 'package:chessever/desktop/auth/desktop_player_profile_access.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_ui_stall_monitor.dart';
@@ -372,7 +373,11 @@ Future<void> _desktopBoot({
     // The desktop subscription notifier polls our /entitlement edge
     // function (backed by public.subscriptions, which mirrors both Stripe
     // web and RevenueCat mobile state). Replaces the stub-true override.
-    overrides: [desktopSubscriptionOverride],
+    overrides: [
+      desktopSubscriptionOverride,
+      // Combined player-game filters are Premium on every entry point.
+      desktopPlayerProfileGamesOverride,
+    ],
   );
   try {
     await registerPictureInPictureMainWindowHandler(
@@ -380,11 +385,14 @@ Future<void> _desktopBoot({
         final payload = DesktopBoardWindowPayload.decode(encodedBoardPayload);
         final args = payload.args;
         if (payload.kind != TabKind.board || args == null) return;
+        // Restoring a PiP board hands a board back from another window:
+        // the board admits it (or shows its locked surface), no paywall.
         openBoardGameTabFromContainer(
           container,
           args,
           reuseExisting: true,
           focus: true,
+          admission: DesktopBoardAdmission.deferred,
         );
       },
       onPictureInPictureDismissed: () async {
@@ -546,6 +554,8 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
   final container = ProviderContainer(
     overrides: [
       desktopSubscriptionOverride,
+      // Combined player-game filters are Premium on every entry point.
+      desktopPlayerProfileGamesOverride,
       // Board engines never prompt about the account; see DesktopWindowRole.
       desktopWindowRoleProvider.overrideWithValue(DesktopWindowRole.detached),
     ],
@@ -564,6 +574,10 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
             boardArgs,
             reuseExisting: false,
             focus: true,
+            // Detached boot: membership is still loading here. The board
+            // admits or locks itself once it resolves; nothing is fetched
+            // for a locked game.
+            admission: DesktopBoardAdmission.deferred,
           )
           : container
               .read(desktopTabsProvider.notifier)
@@ -607,6 +621,7 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
             reuseExisting: false,
             focus: true,
             replaceActive: true,
+            admission: DesktopBoardAdmission.deferred,
           );
           await windowManager.setTitle(replacement.title);
         },

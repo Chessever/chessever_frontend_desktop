@@ -24,6 +24,16 @@ import 'package:chessever/utils/responsive_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'support/desktop_premium_test_overrides.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
+import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
+import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
+import 'package:forui/forui.dart';
 
 void main() {
   test('finds an existing player workspace by exact FIDE identity', () {
@@ -119,6 +129,7 @@ void main() {
     final repository = _PaneFakePlayerWorkspaceRepository();
     final container = ProviderContainer(
       overrides: [
+          ...desktopPremiumTestOverrides,
         playerWorkspaceRepositoryProvider.overrideWithValue(repository),
         _playerWorkspaceOverride(repository),
       ],
@@ -367,6 +378,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -512,6 +524,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -615,6 +628,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+          ...desktopPremiumTestOverrides,
             playerWorkspaceRepositoryProvider.overrideWithValue(repository),
             _playerWorkspaceOverride(repository),
             localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -756,6 +770,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -856,6 +871,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -954,6 +970,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1007,6 +1024,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1050,6 +1068,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1110,6 +1129,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1173,6 +1193,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1215,6 +1236,133 @@ void main() {
     );
     expect(find.textContaining('Bad state:'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  group('Prepare access for a free user', () {
+    SubscriptionState premium() => SubscriptionState(
+      isSubscribed: true,
+      expirationDate: DateTime.now().add(const Duration(days: 365)),
+    );
+
+    Future<_FlippableSubscription> pumpGuardedPane(
+      WidgetTester tester, {
+      required SubscriptionState initial,
+    }) async {
+      desktopWindowIsForeground = () => true;
+      final repository = _PaneFakePlayerWorkspaceRepository();
+      final subscription = _FlippableSubscription(initial);
+      final navigatorKey = GlobalKey<NavigatorState>();
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      addTearDown(() async => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            subscriptionProvider.overrideWith((ref) => subscription),
+            desktopEntitlementProvider.overrideWithValue(
+              const DesktopEntitlementSnapshot(
+                accountId: 'free-user',
+                generation: 1,
+              ),
+            ),
+            desktopPricingProvider.overrideWith(
+              (ref) async => DesktopPricing.resolveForCountry('US'),
+            ),
+            playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+            _guardedPlayerWorkspaceOverride(repository),
+          ],
+          child: MaterialApp(
+            navigatorKey: navigatorKey,
+            builder:
+                (context, child) => FTheme(
+                  data: FThemes.zinc.dark,
+                  child: DesktopPaywallHost(
+                    navigatorKey: navigatorKey,
+                    child: child!,
+                  ),
+                ),
+            home: const SizedBox(
+              width: 1200,
+              height: 800,
+              child: PlayerWorkspacePane(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return subscription;
+    }
+
+    void expectNoToast(WidgetTester tester) {
+      expect(find.byType(SnackBar), findsNothing);
+      expect(
+        find.textContaining('DesktopPremiumRequiredException'),
+        findsNothing,
+      );
+      expect(find.textContaining('premium_prepare_target'), findsNothing);
+    }
+
+    testWidgets('clicking Add player shows only the paywall', (tester) async {
+      await pumpGuardedPane(tester, initial: SubscriptionState());
+
+      await tester.tap(find.text('Add player').first);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DesktopPaywallView), findsOneWidget);
+      expect(find.text('Adding preparation targets is Premium'), findsOneWidget);
+      expect(find.text('Create manual player'), findsNothing);
+      expectNoToast(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a denied add inside the dialog: one paywall, no toast', (
+      tester,
+    ) async {
+      final subscription = await pumpGuardedPane(tester, initial: premium());
+      await tester.tap(find.text('Add player').first);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'Magnus');
+      // Let the 240 ms search debounce run (and rebuild the enabled buttons)
+      // while membership still covers it.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(find.text('No ChessEver match'), findsOneWidget);
+
+      // Membership lapses while the dialog is open.
+      subscription.set(SubscriptionState());
+      await tester.pump();
+      await tester.tap(find.text('Create manual player'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DesktopPaywallView), findsOneWidget);
+      expectNoToast(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('search while denied renders a locked state, not no-match', (
+      tester,
+    ) async {
+      final subscription = await pumpGuardedPane(tester, initial: premium());
+      await tester.tap(find.text('Add player').first);
+      await tester.pumpAndSettle();
+
+      subscription.set(SubscriptionState());
+      await tester.pump();
+      await tester.enterText(find.byType(TextField).last, 'Carlsen');
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DesktopAccessLockedSurface), findsOneWidget);
+      expect(find.text('No ChessEver match'), findsNothing);
+      expect(
+        find.byType(DesktopPaywallView),
+        findsNothing,
+        reason: 'rendering the lock never opens the paywall',
+      );
+
+      await tester.tap(find.text('See Premium'));
+      await tester.pumpAndSettle();
+      expect(find.byType(DesktopPaywallView), findsOneWidget);
+      expectNoToast(tester);
+    });
   });
 }
 
@@ -1283,6 +1431,7 @@ Future<void> _pumpAndConnectOnlineAccount(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+          ...desktopPremiumTestOverrides,
         playerWorkspaceRepositoryProvider.overrideWithValue(repository),
         _playerWorkspaceOverride(repository),
       ],
@@ -1314,6 +1463,36 @@ Future<void> _pumpAndConnectOnlineAccount(
 
   await tester.tap(find.text('Add 1 username'));
   await tester.pumpAndSettle();
+
+}
+
+Override _guardedPlayerWorkspaceOverride(
+  _PaneFakePlayerWorkspaceRepository repository,
+) {
+  return playerWorkspaceProvider.overrideWith(
+    (ref) => PlayerWorkspaceNotifier(
+      accessGuard:
+          (action, {required interactive}) => admitDesktopAction(
+            ref.container,
+            DesktopAccessContext(
+              feature: DesktopFeature.prepare,
+              action: action,
+              origin: DesktopDiscoveryOrigin.localFile,
+            ),
+            surface: 'test_prepare',
+            interactive: interactive,
+          ),
+      workspaceRepository: repository,
+      gamebaseRepository: ref.watch(gamebaseRepositoryProvider),
+      localRepository: ref.watch(localChessDatabaseRepositoryProvider),
+    ),
+  );
+}
+
+class _FlippableSubscription extends SubscriptionNotifier {
+  _FlippableSubscription(super.initialState) : super.stub();
+
+  void set(SubscriptionState next) => state = next;
 }
 
 Override _playerWorkspaceOverride(

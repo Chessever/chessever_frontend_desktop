@@ -17,6 +17,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/desktop_premium_test_overrides.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 void main() {
@@ -212,6 +213,8 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          // Stepping through a smart collection's games is Premium content.
+          ...desktopPremiumTestOverrides,
           gameRepositoryProvider.overrideWithValue(repository),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},

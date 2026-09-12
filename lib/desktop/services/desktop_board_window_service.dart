@@ -533,8 +533,17 @@ final desktopBoardWindowServiceProvider = Provider<DesktopBoardWindowService>((
   );
 });
 
-Future<void> openBoardGameWindow(WidgetRef ref, BoardTabGameArgs args) {
-  return ref.read(desktopBoardWindowServiceProvider).openBoardGameWindow(args);
+/// Opens [args] in a new detached window after admitting it in THIS window.
+/// A denied open spawns no window and presents the decision here, where the
+/// user clicked. The child re-admits on boot without a paywall.
+Future<void> openBoardGameWindow(WidgetRef ref, BoardTabGameArgs args) async {
+  final container = ProviderScope.containerOf(ref.context, listen: false);
+  if (!admitBoardGameOpen(container, args, surface: 'board_window_open')) {
+    return;
+  }
+  await container.read(desktopBoardWindowServiceProvider).openBoardGameWindow(
+    args,
+  );
 }
 
 Future<void> openPictureInPictureWindow(WidgetRef ref, BoardTabGameArgs args) {

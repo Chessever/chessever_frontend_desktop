@@ -1,4 +1,7 @@
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'dart:math';
 
 import 'package:country_flags/country_flags.dart';
@@ -608,7 +611,23 @@ String _friendlyArenaError(String error) {
       .replaceAll('Start', 'Create');
 }
 
+/// Engine tournaments: create, restart and resume are Premium; viewing,
+/// exporting and stopping a run are free, and a downgrade never interrupts a
+/// run that is already going.
+bool _admitTournament(BuildContext context, DesktopAction action) =>
+    admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      DesktopAccessContext(
+        feature: DesktopFeature.engineTournament,
+        action: action,
+        origin: DesktopDiscoveryOrigin.localFile,
+      ),
+      surface: 'engine_tournament_${action.name}',
+    );
+
 Future<void> _openCreateTournament(BuildContext context, WidgetRef ref) async {
+  // Denied => the tournament server is not even started.
+  if (!_admitTournament(context, DesktopAction.create)) return;
   final state = ref.read(tournamentServerProvider);
   if (state.status != TournamentServerStatus.running) {
     final ready = await ref.read(tournamentServerProvider.notifier).start();
@@ -700,6 +719,7 @@ Future<void> _restartTournamentStream(
   BuildContext context,
   WidgetRef ref,
 ) async {
+  if (!_admitTournament(context, DesktopAction.recompute)) return;
   final ok = await showFDialog<bool>(
     context: context,
     builder:
@@ -735,6 +755,7 @@ Future<void> _continueTournamentStream(
   BuildContext context,
   WidgetRef ref,
 ) async {
+  if (!_admitTournament(context, DesktopAction.recompute)) return;
   await ref.read(tournamentServerProvider.notifier).continueTournamentStream();
 }
 

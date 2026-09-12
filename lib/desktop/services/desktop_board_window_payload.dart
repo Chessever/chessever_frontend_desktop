@@ -10,6 +10,7 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
 
 import 'package:flutter/foundation.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
@@ -233,6 +234,11 @@ Map<String, Object?> _argsToJson(BoardTabGameArgs args) => <String, Object?>{
   ),
   'gameListSelectedId': args.gameListSelectedId,
   'librarySaveOrigin': _librarySaveOriginToJson(args.librarySaveOrigin),
+  // Provenance survives the window boundary. Absent on payloads from builds
+  // before freemium; the decoder then leaves it null and the board infers it
+  // conservatively from the args shape.
+  if (args.accessContext != null)
+    'accessContext': args.accessContext!.toJson(),
 };
 
 BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
@@ -275,7 +281,13 @@ BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
     ),
     gameListSelectedId: _nullableString(json['gameListSelectedId']),
     librarySaveOrigin: _librarySaveOriginFromJson(json['librarySaveOrigin']),
+    accessContext: _accessContextFromJson(json['accessContext']),
   );
+}
+
+DesktopAccessContext? _accessContextFromJson(Object? value) {
+  if (value is! Map) return null;
+  return DesktopAccessContext.fromJson(value.cast<String, Object?>());
 }
 
 Map<String, Object?>? _eventGamesKeyToJson(BoardTabEventGamesKey? key) {
