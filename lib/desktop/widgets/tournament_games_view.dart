@@ -9,6 +9,9 @@ import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/services/desktop_like_actions.dart';
+import 'package:chessever/desktop/widgets/library/my_likes/like_tags_dialog.dart';
+import 'package:chessever/repository/liked_games/liked_games_provider.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
     show tournamentDetailGamesSearchByTabIdProvider;
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
@@ -2625,6 +2628,8 @@ enum _LiveGameContextAction {
   openNewWindow,
   openBackground,
   saveToLibrary,
+  toggleLike,
+  editLikeTags,
   share,
   copyShareLink,
   whiteProfile,
@@ -2651,6 +2656,7 @@ Future<void> _showLiveGameContextMenu({
 }) async {
   final shareUrl = buildDesktopGameShareUrl(game: game);
   final canSaveToLibrary = canSaveDesktopGameToLibrary(game);
+  final isLiked = ref.read(isGameLikedProvider(game.likeId));
   final picked = await showDesktopContextMenu<_LiveGameContextAction>(
     context: context,
     position: position,
@@ -2684,6 +2690,19 @@ Future<void> _showLiveGameContextMenu({
           label: 'Save to library',
         ),
       ],
+      const DesktopContextMenuDivider(),
+      DesktopContextMenuItem(
+        value: _LiveGameContextAction.toggleLike,
+        icon:
+            isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+        label: isLiked ? 'Remove from My Likes' : 'Like game',
+      ),
+      if (isLiked)
+        const DesktopContextMenuItem(
+          value: _LiveGameContextAction.editLikeTags,
+          icon: Icons.sell_outlined,
+          label: 'Edit like tags',
+        ),
       const DesktopContextMenuDivider(),
       const DesktopContextMenuItem(
         value: _LiveGameContextAction.share,
@@ -2822,6 +2841,10 @@ Future<void> _showLiveGameContextMenu({
         game: game,
         sourceLabel: tournamentTitle,
       );
+    case _LiveGameContextAction.toggleLike:
+      await toggleDesktopGameLike(context: context, ref: ref, game: game);
+    case _LiveGameContextAction.editLikeTags:
+      await showLikeTagsDialog(context, game.likeId);
     case _LiveGameContextAction.share:
       await showDesktopGameShareDialog(context: context, ref: ref, game: game);
     case _LiveGameContextAction.copyShareLink:

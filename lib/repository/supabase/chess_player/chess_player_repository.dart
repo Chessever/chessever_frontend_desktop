@@ -42,15 +42,22 @@ class ChessPlayerRepository extends BaseRepository {
   static final Map<int, ChessPlayer?> _playerByFideIdCache = {};
 
   /// Get top players (by rating)
+  ///
+  /// [titles] narrows to those FIDE titles (the Miniatures Players chips).
   Future<List<ChessPlayer>> getTopPlayers({
     int limit = 30,
     int offset = 0,
+    Iterable<String>? titles,
   }) async {
-    final data = await supabase
+    var query = supabase
         .from('chess_players')
         .select('fideid, name, title, rating, country')
         .gt('rating', 0)
-        .lt('rating', 3300)
+        .lt('rating', 3300);
+    if (titles != null && titles.isNotEmpty) {
+      query = query.inFilter('title', titles.toList(growable: false));
+    }
+    final data = await query
         .order('rating', ascending: false)
         .range(offset, offset + limit - 1);
 
@@ -62,18 +69,23 @@ class ChessPlayerRepository extends BaseRepository {
     required String query,
     int limit = 30,
     int offset = 0,
+    Iterable<String>? titles,
   }) async {
     if (query.trim().isEmpty) {
-      return getTopPlayers(limit: limit, offset: offset);
+      return getTopPlayers(limit: limit, offset: offset, titles: titles);
     }
 
     final term = '%${query.trim()}%';
-    final data = await supabase
+    var filtered = supabase
         .from('chess_players')
         .select('fideid, name, title, rating, country')
         .or('name.ilike.$term,title.ilike.$term')
         .gt('rating', 0)
-        .lt('rating', 3300)
+        .lt('rating', 3300);
+    if (titles != null && titles.isNotEmpty) {
+      filtered = filtered.inFilter('title', titles.toList(growable: false));
+    }
+    final data = await filtered
         .order('rating', ascending: false)
         .range(offset, offset + limit - 1);
 

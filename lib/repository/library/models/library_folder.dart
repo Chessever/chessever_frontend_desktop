@@ -36,6 +36,12 @@ class LibraryFolder with LibraryFolderMappable {
   /// Not stored in DB; set by the provider layer.
   final bool isSubscribed;
 
+  /// True for the per-user Likes collection. Persisted as `is_liked_games`.
+  /// This flag, never the display name, is how the Likes collection is
+  /// identified: likes do not spend the saved-game or database quotas and are
+  /// governed by the seven-day Likes window instead of generic folder access.
+  final bool isLikedGames;
+
   const LibraryFolder({
     required this.id,
     required this.userId,
@@ -49,9 +55,15 @@ class LibraryFolder with LibraryFolderMappable {
     this.ownerDisplayName,
     this.parentId,
     this.isSubscribed = false,
+    this.isLikedGames = false,
   });
 
-  bool get isPermanentLibraryFolder => isPermanentLibraryFolderName(name);
+  bool get isPermanentLibraryFolder =>
+      isLikedGames || isPermanentLibraryFolderName(name);
+
+  /// User-facing label. The Likes collection is branded "My Likes" whatever
+  /// its stored row name is (legacy rows were created as "Liked Games").
+  String get displayName => isLikedGames ? 'My Likes' : name;
 
   /// Convert Supabase JSON to LibraryFolder
   factory LibraryFolder.fromSupabase(Map<String, dynamic> json) {
@@ -66,6 +78,7 @@ class LibraryFolder with LibraryFolderMappable {
       updatedAt: DateTime.parse(json['updated_at'] as String),
       shareToken: json['share_token'] as String?,
       parentId: json['parent_id'] as String?,
+      isLikedGames: (json['is_liked_games'] as bool?) ?? false,
     );
   }
 

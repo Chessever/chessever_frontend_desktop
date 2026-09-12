@@ -186,8 +186,10 @@ List<LibraryFolder> librarySaveWritableCloudFolders({
   if (!librarySaveAllowsCloudDestinations(destinationMode)) {
     return const <LibraryFolder>[];
   }
+  // The Likes collection is written only by the like toggle. Saving into it
+  // here would create a like outside the Likes policy (flag, never name).
   return folders
-      .where((folder) => !folder.isSubscribed)
+      .where((folder) => !folder.isSubscribed && !folder.isLikedGames)
       .toList(growable: false);
 }
 
