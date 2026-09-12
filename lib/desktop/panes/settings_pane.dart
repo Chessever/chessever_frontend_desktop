@@ -8,7 +8,9 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/desktop/auth/desktop_guest_upgrade_dialog.dart';
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
+import 'package:chessever/desktop/services/auth/desktop_guest_upgrade.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
@@ -60,8 +62,14 @@ class SettingsPane extends HookConsumerWidget {
       lastError.value = null;
       signingIn.value = true;
       try {
-        final next = await DesktopAuthService.instance.signInWithGoogle();
-        session.value = next;
+        // Same path as the guest reminder: clears the guest clock only once
+        // a permanent account is confirmed.
+        await signInDesktopPermanentAccount(
+          ref,
+          DesktopAccountProvider.google,
+          surface: 'settings',
+        );
+        session.value = Supabase.instance.client.auth.currentSession;
       } catch (e) {
         lastError.value = e.toString();
       } finally {
@@ -73,8 +81,12 @@ class SettingsPane extends HookConsumerWidget {
       lastError.value = null;
       signingIn.value = true;
       try {
-        final next = await DesktopAuthService.instance.signInWithApple();
-        session.value = next;
+        await signInDesktopPermanentAccount(
+          ref,
+          DesktopAccountProvider.apple,
+          surface: 'settings',
+        );
+        session.value = Supabase.instance.client.auth.currentSession;
       } catch (e) {
         lastError.value = _friendlyAuthError(e);
       } finally {
@@ -309,21 +321,24 @@ class _AccountSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final email = session?.user.email;
+    final user = session?.user;
+    final isGuest = user?.isAnonymous == true;
+    final isPermanent = user != null && !isGuest;
+    final email = user?.email;
     return _Card(
       title: 'Account',
       icon: Icons.account_circle_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (email != null) ...[
+          if (isPermanent) ...[
             Row(
               children: [
                 const _StatusPill(label: 'Signed in', color: kGreenColor),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    email,
+                    email ?? 'Signed in',
                     style: const TextStyle(
                       color: kWhiteColor,
                       fontSize: 13,
@@ -335,7 +350,10 @@ class _AccountSection extends StatelessWidget {
               ],
             ),
           ] else ...[
-            const _StatusPill(label: 'Signed out', color: kLightGreyColor),
+            _StatusPill(
+              label: isGuest ? 'Guest' : 'Signed out',
+              color: kLightGreyColor,
+            ),
             const SizedBox(height: 12),
             const Text(
               'Sign in to sync favorites, library, and settings across '
@@ -394,6 +412,9 @@ class _SubscriptionSection extends HookConsumerWidget {
     final entitlement = live.value ?? snapshot.data;
 
     Future<void> upgrade() async {
+      // Purchasing needs a permanent account: a guest signs in first.
+      if (!await ensureDesktopPermanentAccountForPurchase(context)) return;
+      if (!context.mounted) return;
       error.value = null;
       loading.value = true;
       String token;

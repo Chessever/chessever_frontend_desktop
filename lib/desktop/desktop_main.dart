@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
+import 'package:chessever/desktop/state/desktop_window_role.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -542,7 +543,13 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
         : '[desktop] ⚠️ board window supabase unavailable',
   );
 
-  final container = ProviderContainer(overrides: [desktopSubscriptionOverride]);
+  final container = ProviderContainer(
+    overrides: [
+      desktopSubscriptionOverride,
+      // Board engines never prompt about the account; see DesktopWindowRole.
+      desktopWindowRoleProvider.overrideWithValue(DesktopWindowRole.detached),
+    ],
+  );
   container.read(boardPictureInPictureModeProvider.notifier).state =
       payload.pictureInPicture;
   await _preloadChessgroundPieceImages(
