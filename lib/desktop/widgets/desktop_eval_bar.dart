@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:motor/motor.dart';
+import 'package:chessever/desktop/widgets/desktop_eval_midpoint.dart';
 
 import 'package:chessever/theme/app_theme.dart';
 
@@ -34,6 +35,7 @@ class DesktopEvalBar extends StatefulWidget {
     required this.mate,
     required this.isEvaluating,
     this.positionKey,
+    this.retainWhileRetargeting = false,
   });
 
   final double width;
@@ -47,6 +49,9 @@ class DesktopEvalBar extends StatefulWidget {
   /// `…` placeholder while the next eval lands instead of pinning a
   /// stale number.
   final String? positionKey;
+
+  /// Display-only retention. Never supplied to saves or position annotations.
+  final bool retainWhileRetargeting;
 
   @override
   State<DesktopEvalBar> createState() => _DesktopEvalBarState();
@@ -80,7 +85,7 @@ class _DesktopEvalBarState extends State<DesktopEvalBar> {
         (widget.evaluation != _lastEval || positionChanged);
     var changed = false;
 
-    if (_awaiting && !widget.isEvaluating && !hasIncoming) {
+    if (!widget.isEvaluating && !hasIncoming) {
       _awaiting = false;
       _lastEval = null;
       _lastMate = null;
@@ -89,10 +94,15 @@ class _DesktopEvalBarState extends State<DesktopEvalBar> {
     }
     if (positionChanged) {
       _lastPositionKey = widget.positionKey;
-      _awaiting = true;
+      _awaiting =
+          widget.isEvaluating &&
+          !(widget.retainWhileRetargeting &&
+              (_lastEval != null || _lastMate != null));
       changed = true;
     }
-    if (mateChanged) _lastMate = widget.mate;
+    if (mateChanged && (hasIncoming || !widget.isEvaluating)) {
+      _lastMate = widget.mate;
+    }
     if (evalChanged) {
       _lastEval = widget.evaluation;
     }
@@ -101,7 +111,7 @@ class _DesktopEvalBarState extends State<DesktopEvalBar> {
     }
 
     final shouldUpdateRatio =
-        mateChanged ||
+        (mateChanged && hasIncoming) ||
         evalChanged ||
         (positionChanged && hasIncoming) ||
         (_awaiting && hasIncoming);
@@ -183,6 +193,12 @@ class _DesktopEvalBarState extends State<DesktopEvalBar> {
                     width: widget.width,
                     height: bottomHeight,
                     color: bottomColor,
+                  ),
+                ),
+                Positioned.fill(
+                  child: DesktopEvalMidpoint.behindLabel(
+                    context,
+                    Rect.fromLTWH(0, badgeTop, widget.width, badgeHeight),
                   ),
                 ),
                 Positioned(

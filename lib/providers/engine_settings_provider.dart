@@ -452,6 +452,9 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
         '🛑 EngineSettings: Stopping Stockfish engine (analysis disabled)',
       );
       await StockfishSingleton().cancelAllEvaluations();
+      // A stop barrier can outlive a newer toggle. The old off must not clear
+      // the replacement search's depth or persist itself over a newer on.
+      if (state.valueOrNull?.showEngineAnalysis != value) return;
       // Clear depth tracker since engine is stopped
       ref
           .read(engineDepthTrackerProvider.notifier)
@@ -463,6 +466,7 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
       try {
         // Reload latest settings to avoid clobbering other fields, then persist
         final latest = await _loadSettings();
+        if (state.valueOrNull?.showEngineAnalysis != value) return;
         final merged = latest.copyWith(showEngineAnalysis: value);
         state = AsyncValue.data(merged);
         await _persist(merged);
