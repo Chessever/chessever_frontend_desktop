@@ -15,6 +15,9 @@ import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
+import 'package:chessever/chat/botvinnik_provider.dart';
+import 'package:chessever/chat/chat_api.dart';
+import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -215,6 +218,7 @@ class SettingsPane extends HookConsumerWidget {
               const _SubscriptionSection(),
               const SizedBox(height: 16),
             ],
+            const _BotvinnikSection(),
             const _EngineSection(),
             const SizedBox(height: 16),
             const _UpdatesSection(),
@@ -1265,6 +1269,71 @@ class _SecondaryButtonState extends State<_SecondaryButton> {
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                 ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Botvinnik visibility. Hiding it removes the sidebar row, the page launch
+/// buttons and the dock; saved chats are untouched.
+class _BotvinnikSection extends ConsumerWidget {
+  const _BotvinnikSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ChatApi.buildEnabled) return const SizedBox.shrink();
+    final enabled = ref.watch(botvinnikEnabledProvider).valueOrNull ?? true;
+    void setEnabled(bool value) {
+      unawaited(ref.read(botvinnikEnabledProvider.notifier).setEnabled(value));
+      if (!value) ref.read(botvinnikDockProvider.notifier).close();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: _Card(
+        title: 'Botvinnik',
+        icon: Icons.forum_outlined,
+        child: ClickCursor(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setEnabled(!enabled),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 40),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Show Botvinnik',
+                          style: TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'The chess assistant in the sidebar and on event '
+                          'and player pages. Your chats stay saved while it '
+                          'is hidden.',
+                          style: TextStyle(color: kWhiteColor70, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  FTheme(
+                    data: FThemes.zinc.dark,
+                    child: FSwitch(value: enabled, onChange: setEnabled),
+                  ),
+                ],
               ),
             ),
           ),

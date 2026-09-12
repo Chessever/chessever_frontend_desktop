@@ -6,6 +6,9 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/chat/chat_api.dart';
+import 'package:chessever/desktop/state/botvinnik_dock.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_launch_button.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -172,6 +175,18 @@ class TournamentDetailPane extends HookConsumerWidget {
                                       selectedBroadcastWriterAttributionProvider,
                                     )
                                     : 'Powered by Lichess',
+                            botvinnikContext: botvinnikTournamentScreenContext(
+                              eventId: tournament.id,
+                              eventName: tournament.title,
+                              tournamentId: selectedTourId,
+                              tournamentName:
+                                  ownsSelectedContext
+                                      ? detailState
+                                          .valueOrNull
+                                          ?.aboutTourModel
+                                          .name
+                                      : null,
+                            ),
                           ),
                           _SegmentBar(
                             segments: visibleSegments,
@@ -509,10 +524,12 @@ class _DetailHeader extends StatelessWidget {
     required this.title,
     required this.dates,
     required this.writerLabel,
+    required this.botvinnikContext,
   });
   final String title;
   final String dates;
   final String writerLabel;
+  final ChatScreenContext botvinnikContext;
 
   @override
   Widget build(BuildContext context) {
@@ -562,6 +579,11 @@ class _DetailHeader extends StatelessWidget {
                 ],
               ],
             ),
+          ),
+          BotvinnikLaunchButton(
+            screenContext: botvinnikContext,
+            leadingGap: 12,
+            tooltip: 'Ask Botvinnik about this event',
           ),
           const SizedBox(width: 12),
           // Switcher hides itself when only one tour exists, so the
