@@ -37,6 +37,13 @@ class Games {
   final String? timeControlText;
   final int? avgElo; // From tours: average ELO of the tournament
 
+  /// `group_broadcasts.id` of the event this game belongs to, when the select
+  /// embedded it. Smart events group their games by it.
+  final String? groupBroadcastId;
+  final int? eventMaxAvgElo;
+  final DateTime? eventDateStart;
+  final DateTime? eventDateEnd;
+
   Games({
     required this.id,
     required this.roundId,
@@ -67,6 +74,10 @@ class Games {
     this.timeControl,
     this.timeControlText,
     this.avgElo,
+    this.groupBroadcastId,
+    this.eventMaxAvgElo,
+    this.eventDateStart,
+    this.eventDateEnd,
   });
 
   Games copyWith({
@@ -99,6 +110,10 @@ class Games {
     String? timeControl,
     String? timeControlText,
     int? avgElo,
+    String? groupBroadcastId,
+    int? eventMaxAvgElo,
+    DateTime? eventDateStart,
+    DateTime? eventDateEnd,
   }) {
     return Games(
       id: id ?? this.id,
@@ -130,6 +145,10 @@ class Games {
       timeControl: timeControl ?? this.timeControl,
       timeControlText: timeControlText ?? this.timeControlText,
       avgElo: avgElo ?? this.avgElo,
+      groupBroadcastId: groupBroadcastId ?? this.groupBroadcastId,
+      eventMaxAvgElo: eventMaxAvgElo ?? this.eventMaxAvgElo,
+      eventDateStart: eventDateStart ?? this.eventDateStart,
+      eventDateEnd: eventDateEnd ?? this.eventDateEnd,
     );
   }
 
@@ -140,6 +159,9 @@ class Games {
       String? timeControlText;
       int? avgElo;
       int? eventMaxAvgElo;
+      String? groupBroadcastId;
+      DateTime? eventDateStart;
+      DateTime? eventDateEnd;
       String? tourName;
       String? eventName;
       final tours = json['tours'];
@@ -150,7 +172,16 @@ class Games {
             tours['avg_elo'] != null ? (tours['avg_elo'] as num).toInt() : null;
         final groupBroadcasts = tours['group_broadcasts'];
         if (groupBroadcasts is Map<String, dynamic>) {
+          groupBroadcastId = groupBroadcasts['id'] as String?;
           eventName = groupBroadcasts['name'] as String?;
+          final startRaw = groupBroadcasts['date_start'];
+          final endRaw = groupBroadcasts['date_end'];
+          if (startRaw is String && startRaw.isNotEmpty) {
+            eventDateStart = DateTime.tryParse(startRaw);
+          }
+          if (endRaw is String && endRaw.isNotEmpty) {
+            eventDateEnd = DateTime.tryParse(endRaw);
+          }
           eventMaxAvgElo =
               groupBroadcasts['max_avg_elo'] != null
                   ? (groupBroadcasts['max_avg_elo'] as num).toInt()
@@ -163,6 +194,7 @@ class Games {
       timeControlText ??= json['time_control_text'] as String?;
       tourName ??= json['tour_name'] as String?;
       eventName ??= json['event_name'] as String?;
+      groupBroadcastId ??= json['group_broadcast_id'] as String?;
       avgElo ??=
           json['avg_elo'] != null ? (json['avg_elo'] as num).toInt() : null;
       avgElo ??= eventMaxAvgElo;
@@ -240,6 +272,10 @@ class Games {
         timeControl: timeControl,
         timeControlText: timeControlText,
         avgElo: avgElo,
+        groupBroadcastId: groupBroadcastId,
+        eventMaxAvgElo: eventMaxAvgElo,
+        eventDateStart: eventDateStart,
+        eventDateEnd: eventDateEnd,
       );
     } catch (e) {
       rethrow;
@@ -284,6 +320,7 @@ class Games {
       if (timeControl != null) 'time_control': timeControl,
       if (timeControlText != null) 'time_control_text': timeControlText,
       if (avgElo != null) 'avg_elo': avgElo,
+      if (groupBroadcastId != null) 'group_broadcast_id': groupBroadcastId,
     };
   }
 }

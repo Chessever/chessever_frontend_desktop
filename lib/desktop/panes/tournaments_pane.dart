@@ -24,6 +24,7 @@ import 'package:chessever/desktop/widgets/desktop_event_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_event_favorite_button.dart';
 import 'package:chessever/desktop/widgets/desktop_event_countdown.dart';
 import 'package:chessever/desktop/widgets/desktop_collection_cards.dart';
+import 'package:chessever/desktop/widgets/smart_event/desktop_smart_event_shelf.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_game_context.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_strip_layout.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
@@ -3200,7 +3201,11 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                 addAutomaticKeepAlives: false,
                 itemBuilder: (context, index) {
                   if (index == 0) {
-                    return DesktopCollectionCards(
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DesktopCollectionCards(
                       onFavoritesTap: () {
                         ref
                             .read(selectedFavoritesModeProvider.notifier)
@@ -3225,6 +3230,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                             .read(desktopSmartGamesTypeByTabIdProvider.notifier)
                             .update((types) => {...types, tabId: type});
                       },
+                        ),
+                        const DesktopSmartEventShelf(),
+                      ],
                     );
                   }
                   final eventIndex = index - 1;
