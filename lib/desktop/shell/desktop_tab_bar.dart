@@ -1473,6 +1473,8 @@ IconData _iconFor(TabKind kind) {
       return Icons.collections_bookmark_outlined;
     case TabKind.databaseWorkspace:
       return Icons.table_chart_outlined;
+    case TabKind.teamScoreCard:
+      return Icons.groups_2_outlined;
     case TabKind.favorites:
       return Icons.star_outline_outlined;
     case TabKind.players:
@@ -1501,8 +1503,6 @@ IconData _iconFor(TabKind kind) {
       return Icons.account_circle_outlined;
     case TabKind.boardSettings:
       return Icons.tune_outlined;
-    case TabKind.notificationSettings:
-      return Icons.notifications_outlined;
     case TabKind.play:
       return Icons.sports_esports_outlined;
   }

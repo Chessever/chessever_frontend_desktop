@@ -23,6 +23,7 @@ import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/desktop_delete_account_dialog.dart';
 import 'package:chessever/desktop/widgets/keyboard_shortcuts_section.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
@@ -213,8 +214,6 @@ class SettingsPane extends HookConsumerWidget {
             const SizedBox(height: 24),
             const _BoardSettingsSection(),
             const SizedBox(height: 16),
-            const _NotificationsSection(),
-            const SizedBox(height: 16),
             const KeyboardShortcutsSection(),
             const SizedBox(height: 16),
             _AccountSection(
@@ -351,6 +350,24 @@ class _AccountSection extends StatelessWidget {
                   ),
                 ),
                 _SecondaryButton(label: 'Sign out', onTap: onSignOut),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Permanently remove this account and its synced data.',
+                    style: TextStyle(color: kWhiteColor70, fontSize: 12),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                _SecondaryButton(
+                  label: 'Delete account',
+                  onTap: () => unawaited(
+                    showDesktopDeleteAccountDialog(context, email: email),
+                  ),
+                ),
               ],
             ),
           ] else ...[
@@ -695,25 +712,6 @@ class _LegalSection extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _NotificationsSection extends ConsumerWidget {
-  const _NotificationsSection();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final tabs = ref.read(desktopTabsProvider.notifier);
-    return _Card(
-      title: 'Notifications',
-      icon: Icons.notifications_outlined,
-      child: _SettingsLinkRow(
-        icon: Icons.notifications_outlined,
-        title: 'Open notification preferences',
-        subtitle: 'Push alerts and per-event notification preferences.',
-        onTap: () => tabs.open(TabKind.notificationSettings),
       ),
     );
   }

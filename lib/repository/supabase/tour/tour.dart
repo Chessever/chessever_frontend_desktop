@@ -349,6 +349,12 @@ class TourInfo {
   final String? standingsSource;
   final DateTime? standingsUpdatedAt;
 
+  /// Lichess `BroadcastTour.customScoring` — `{ white: {win, draw}, black: … }`.
+  final Map<String, dynamic>? customScoring;
+
+  /// ChessEver `tours.info.teamScoring` — board points plus match points.
+  final Map<String, dynamic>? teamScoring;
+
   const TourInfo({
     this.tc,
     this.fideTc,
@@ -361,6 +367,8 @@ class TourInfo {
     this.teamTable,
     this.standingsSource,
     this.standingsUpdatedAt,
+    this.customScoring,
+    this.teamScoring,
   });
 
   factory TourInfo.fromJson(Map<String, dynamic> json) {
@@ -376,7 +384,15 @@ class TourInfo {
       teamTable: json['teamTable'] as bool?,
       standingsSource: json['standingsSource'] as String?,
       standingsUpdatedAt: _parseTimestamp(json['standingsUpdatedAt']),
+      customScoring: _asStringKeyMap(json['customScoring']),
+      teamScoring: _asStringKeyMap(json['teamScoring']),
     );
+  }
+
+  static Map<String, dynamic>? _asStringKeyMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return null;
   }
 
   static DateTime? _parseTimestamp(dynamic v) {
@@ -398,6 +414,8 @@ class TourInfo {
       if (standingsSource != null) 'standingsSource': standingsSource,
       if (standingsUpdatedAt != null)
         'standingsUpdatedAt': standingsUpdatedAt!.toIso8601String(),
+      if (customScoring != null) 'customScoring': customScoring,
+      if (teamScoring != null) 'teamScoring': teamScoring,
     };
   }
 

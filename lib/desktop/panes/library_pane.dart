@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/services/shared_books.dart';
+import 'package:chessever/desktop/widgets/library/shared_book_dialogs.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
 
@@ -1143,6 +1145,7 @@ class _FolderRowState extends ConsumerState<_FolderRow>
       child: LibraryFolderContextMenu(
         folder: widget.folder,
         canCreateDatabase: !widget.folder.isSubscribed && isFolder,
+        canShare: libraryFolderIsShareable(widget.folder, isDatabase: !isFolder),
         hasGames: true, // count is unknown at rail level; menu still useful.
         includeLibraryHomeAction: !widget.folder.isPermanentLibraryFolder,
         isShownOnLibraryHome: isShownOnLibraryHome,
@@ -1580,7 +1583,15 @@ enum _LibraryDatabaseKind { cloud, local }
 
 enum _DatabaseBoardView { list, grid }
 
-enum _CloudDatabaseBoardAction { preview, open, pin, unpin, remove }
+enum _CloudDatabaseBoardAction {
+  preview,
+  open,
+  share,
+  pin,
+  unpin,
+  remove,
+  unsubscribe,
+}
 
 enum _LocalGroupBoardAction {
   open,
@@ -2812,6 +2823,14 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       final isPinned = pinnedDatabaseKeys.contains(pinKey);
       final canChangePin = !folder.isPermanentLibraryFolder;
       final canRemove = libraryCanRemoveCloudFolderFromBoard(folder);
+      final canShare = libraryFolderIsShareable(
+        folder,
+        isDatabase: libraryFolderIsDatabase(
+          folder,
+          folders,
+          gameCount: counts[folder.id],
+        ),
+      );
       final picked = await showDesktopContextMenu<_CloudDatabaseBoardAction>(
         context: context,
         position: position,
@@ -2827,6 +2846,12 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             icon: Icons.open_in_new_rounded,
             label: 'Open full database',
           ),
+          if (canShare)
+            const DesktopContextMenuItem(
+              value: _CloudDatabaseBoardAction.share,
+              icon: Icons.link_rounded,
+              label: 'Share database...',
+            ),
           if (canChangePin) ...[
             const DesktopContextMenuDivider(),
             DesktopContextMenuItem(
@@ -2846,6 +2871,15 @@ class _MyDatabasesBoard extends HookConsumerWidget {
               label: 'Remove from Library Home',
             ),
           ],
+          if (folder.isSubscribed) ...[
+            const DesktopContextMenuDivider(),
+            const DesktopContextMenuItem(
+              value: _CloudDatabaseBoardAction.unsubscribe,
+              icon: Icons.remove_circle_outline_rounded,
+              label: 'Remove from my library',
+              destructive: true,
+            ),
+          ],
         ],
       );
       if (picked == null || !context.mounted) return;
@@ -2854,6 +2888,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           onSelectFolder(folder);
         case _CloudDatabaseBoardAction.open:
           onOpenDatabase(folder);
+        case _CloudDatabaseBoardAction.share:
+          await showShareDatabaseDialog(context, folder: folder);
+        case _CloudDatabaseBoardAction.unsubscribe:
+          await _onUnsubscribe(context: context, ref: ref, folder: folder);
         case _CloudDatabaseBoardAction.pin:
           await updateDatabasePin(
             key: pinKey,
@@ -2885,6 +2923,14 @@ class _MyDatabasesBoard extends HookConsumerWidget {
               gameCount: counts[folder.id],
             ),
         hasGames: (counts[folder.id] ?? 0) > 0,
+        canShare: libraryFolderIsShareable(
+          folder,
+          isDatabase: libraryFolderIsDatabase(
+            folder,
+            folders,
+            gameCount: counts[folder.id],
+          ),
+        ),
         includeLibraryHomeAction: true,
         isShownOnLibraryHome: true,
         isPinned: pinnedDatabaseKeys.contains(pinKey),
@@ -8873,6 +8919,30 @@ Future<void> _onFolderAction({
       );
     case LibraryFolderAction.delete:
       await _onDelete(context: context, ref: ref, folder: folder);
+    case LibraryFolderAction.share:
+      await showShareDatabaseDialog(context, folder: folder);
+    case LibraryFolderAction.unsubscribe:
+      await _onUnsubscribe(context: context, ref: ref, folder: folder);
+  }
+}
+
+Future<void> _onUnsubscribe({
+  required BuildContext context,
+  required WidgetRef ref,
+  required LibraryFolder folder,
+}) async {
+  if (!folder.isSubscribed) return;
+  final confirmed = await confirmRemoveSharedBook(context, folder: folder);
+  if (!confirmed) return;
+  try {
+    await ref.read(libraryRepositoryProvider).unsubscribeFromBook(folder.id);
+    ref.invalidate(subscribedBooksProvider);
+    if (!context.mounted) return;
+    _toast(context, '"${folder.name}" removed from your library');
+  } catch (e, st) {
+    ErrorReporter.report(e, stackTrace: st, tag: 'library.unsubscribe_book');
+    if (!context.mounted) return;
+    _toast(context, 'Could not remove it. Please try again.', error: true);
   }
 }
 

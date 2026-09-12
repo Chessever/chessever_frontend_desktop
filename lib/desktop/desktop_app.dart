@@ -15,6 +15,10 @@ import 'package:chessever/utils/responsive_helper.dart';
 
 final _desktopNavigatorKey = GlobalKey<NavigatorState>();
 
+/// Root navigator of the desktop app. Services without a widget context
+/// (the deep link router) use it to present dialogs and toasts.
+GlobalKey<NavigatorState> get desktopRootNavigatorKey => _desktopNavigatorKey;
+
 /// Top-level widget for the desktop build of ChessEver.
 ///
 /// Mirrors `MyApp` from the mobile path but ships only the desktop-relevant

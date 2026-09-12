@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
 import 'package:chessever/desktop/state/desktop_window_role.dart';
 
@@ -377,6 +378,8 @@ Future<void> _desktopBoot({
       desktopSubscriptionOverride,
       // Combined player-game filters are Premium on every entry point.
       desktopPlayerProfileGamesOverride,
+      // Desktop never builds the shared push settings; see desktop_push_isolation.
+      ...desktopPushIsolationOverrides,
     ],
   );
   try {
@@ -558,6 +561,8 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
       desktopPlayerProfileGamesOverride,
       // Board engines never prompt about the account; see DesktopWindowRole.
       desktopWindowRoleProvider.overrideWithValue(DesktopWindowRole.detached),
+      // Desktop never builds the shared push settings; see desktop_push_isolation.
+      ...desktopPushIsolationOverrides,
     ],
   );
   container.read(boardPictureInPictureModeProvider.notifier).state =
