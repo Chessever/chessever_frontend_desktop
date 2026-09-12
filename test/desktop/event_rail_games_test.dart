@@ -1,3 +1,4 @@
+import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -3257,8 +3258,11 @@ class _FakeGameRepository implements GameRepository {
   Future<DateTime?> getCurrentSmartEventDay({
     bool liveOnly = false,
     bool requiresMove = false,
+    bool completedOnly = false,
     int? minGameAverageElo,
     DateTime? before,
+    String? searchQuery,
+    GameFilter? extraFilter,
   }) async {
     if (before != null) return null;
     return smartDay;
@@ -3269,8 +3273,13 @@ class _FakeGameRepository implements GameRepository {
     required DateTime day,
     bool liveOnly = false,
     bool requiresMove = false,
+    bool completedOnly = false,
     int? minGameAverageElo,
+    int? maxGameAverageElo,
     List<String>? eventTimeControls,
+    String? searchQuery,
+    GameFilter? extraFilter,
+    bool withBroadcastIdentity = false,
   }) async {
     return CurrentSmartEventDayPage(day: day, games: smartGames, nextDay: null);
   }
