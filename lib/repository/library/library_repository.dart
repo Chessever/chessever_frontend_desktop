@@ -99,12 +99,17 @@ class LibraryRepository extends BaseRepository {
   });
 
   /// Create a new folder
+  ///
+  /// [nodeType] is `'folder'` (organisation only, never counted against the
+  /// owned-database quota) or `'database'`. When omitted the column default
+  /// (`'database'`) applies, which is what older callers rely on.
   Future<LibraryFolder> createFolder({
     required String name,
     String? color,
     String? icon,
     int? orderIndex,
     String? parentId,
+    String? nodeType,
   }) => handleApiCall(() async {
     final userId = supabase.auth.currentUser?.id;
     if (userId == null) throw Exception('User not authenticated');
@@ -127,7 +132,10 @@ class LibraryRepository extends BaseRepository {
     final response =
         await supabase
             .from('user_folders')
-            .insert(folder.toSupabaseInsert())
+            .insert(<String, dynamic>{
+              ...folder.toSupabaseInsert(),
+              if (nodeType != null) 'node_type': nodeType,
+            })
             .select()
             .single();
 
