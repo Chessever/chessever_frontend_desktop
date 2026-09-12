@@ -5,42 +5,79 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:chessever/desktop/auth/desktop_premium_required_screen.dart';
+import 'package:chessever/desktop/auth/desktop_guest_gate.dart';
 import 'package:chessever/desktop/auth/desktop_welcome_screen.dart';
-import 'package:chessever/desktop/services/desktop_offline_access_cache.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
+import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/widgets/mandatory_update_gate.dart';
 import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
-import 'package:chessever/revenue_cat_service/subscribe_state.dart';
+import 'package:chessever/repository/authentication/auth_repository.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-/// Root content widget for the desktop build. ChessEver Desktop is
-/// **premium-only**. There is no local onboarding flow — country and
-/// favorite players are configured server-side and synced on sign-in.
+/// What the root of the main desktop window shows.
+enum DesktopAuthGateView { loading, welcome, shell }
+
+/// Progress of the automatic guest (anonymous) session for this launch.
+enum DesktopGuestBootstrap { idle, inFlight, failed }
+
+/// Root content widget for the main desktop window.
 ///
-/// 1. **Signed out** → [DesktopWelcomeScreen]. Sign in.
-/// 2. **Signed in but not premium** → [DesktopPremiumRequiredScreen].
-/// 3. **Signed in and premium** → [DesktopShell]. Normal app.
+/// ChessEver Desktop is free to use. Guests and signed-in free users reach
+/// the same shell as subscribers; premium decisions happen per feature, never
+/// at the entrance, and entitlement refreshes, purchases, expiry or a network
+/// failure never swap the shell out for a wall.
+///
+/// 1. **Restoring** the persisted session: a short loading frame.
+/// 2. **Any session** (guest or permanent) → [DesktopShell].
+/// 3. **No session on launch** → a guest session is created automatically,
+///    reusing [AuthController.signInAnonymously].
+/// 4. **Explicit sign-out, or guest creation failed** → [DesktopWelcomeScreen],
+///    which offers sign-in and "Continue as guest".
 class DesktopAuthGate extends HookConsumerWidget {
   const DesktopAuthGate({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (!DesktopSupabaseInit.isInitialized) {
-      // No backend available — surface the shell so we can still develop
-      // panes locally. Premium gating will refuse anyway once backend is
-      // wired up, so this only matters in development.
+      // No backend available: surface the shell so panes can still be
+      // developed locally.
       return const DesktopShell();
     }
 
     final auth = Supabase.instance.client.auth;
     final session = useState<Session?>(auth.currentSession);
-    final loading = useState<bool>(true);
+    final restoring = useState<bool>(true);
+    final bootstrap = useState<DesktopGuestBootstrap>(
+      DesktopGuestBootstrap.idle,
+    );
+    final signedOutThisRun = useRef<bool>(false);
+    final container = ProviderScope.containerOf(context, listen: false);
+
+    Future<void> startGuestSession() async {
+      if (bootstrap.value == DesktopGuestBootstrap.inFlight) return;
+      // Never mint a second guest while any user (anonymous or not) exists.
+      if (auth.currentUser != null) return;
+      bootstrap.value = DesktopGuestBootstrap.inFlight;
+      // authStateProvider auto-disposes; hold it for the length of the call.
+      final keepAlive = container.listen(authStateProvider, (_, _) {});
+      try {
+        await container.read(authStateProvider.notifier).signInAnonymously();
+        if (context.mounted) bootstrap.value = DesktopGuestBootstrap.idle;
+      } catch (e, st) {
+        ErrorReporter.report(e, stackTrace: st, tag: 'auth.guest_bootstrap');
+        if (context.mounted) bootstrap.value = DesktopGuestBootstrap.failed;
+      } finally {
+        keepAlive.close();
+      }
+    }
 
     useEffect(() {
       var disposed = false;
       final sub = auth.onAuthStateChange.listen((event) {
+        if (!restoring.value && event.event == AuthChangeEvent.signedOut) {
+          signedOutThisRun.value = true;
+        }
         session.value = event.session;
       });
 
@@ -49,7 +86,15 @@ class DesktopAuthGate extends HookConsumerWidget {
           final restoredSession = await _restoreDesktopSession();
           if (disposed) return;
           session.value = restoredSession;
-          if (!disposed) loading.value = false;
+          restoring.value = false;
+          if (shouldBootstrapDesktopGuest(
+            hasSession: restoredSession != null,
+            hasCurrentUser: auth.currentUser != null,
+            signedOutThisRun: signedOutThisRun.value,
+            bootstrap: bootstrap.value,
+          )) {
+            await startGuestSession();
+          }
         }),
       );
 
@@ -59,37 +104,54 @@ class DesktopAuthGate extends HookConsumerWidget {
       };
     }, const []);
 
-    if (loading.value) {
-      return const DesktopStandaloneWindowChrome(child: _GateLoading());
+    switch (resolveDesktopAuthGateView(
+      restoring: restoring.value,
+      hasSession: session.value != null,
+      bootstrap: bootstrap.value,
+    )) {
+      case DesktopAuthGateView.loading:
+        return const DesktopStandaloneWindowChrome(child: _GateLoading());
+      case DesktopAuthGateView.welcome:
+        return DesktopStandaloneWindowChrome(
+          child: DesktopWelcomeScreen(onContinueAsGuest: startGuestSession),
+        );
+      case DesktopAuthGateView.shell:
+        return const MandatoryUpdateGate(
+          child: DesktopGuestGateListener(child: DesktopShell()),
+        );
     }
-
-    final s = session.value;
-
-    if (s == null) {
-      return const DesktopStandaloneWindowChrome(child: DesktopWelcomeScreen());
-    }
-
-    final subscription = ref.watch(subscriptionProvider);
-    if (shouldShowDesktopSubscriptionGateLoading(subscription)) {
-      return const DesktopStandaloneWindowChrome(child: _GateLoading());
-    }
-    if (!subscription.isSubscribed) {
-      return const DesktopStandaloneWindowChrome(
-        child: DesktopPremiumRequiredScreen(),
-      );
-    }
-
-    return const MandatoryUpdateGate(child: DesktopShell());
   }
 }
 
+/// Routing for the main window. Subscription state is deliberately absent:
+/// the entrance never depends on entitlement.
 @visibleForTesting
-bool shouldShowDesktopSubscriptionGateLoading(SubscriptionState subscription) {
-  // Desktop entitlement refreshes run periodically while the shell is open.
-  // If we replace the shell with the loading screen during those refreshes,
-  // board panes are unmounted and their local cursor/analysis state snaps
-  // back to the last persisted game position when the shell mounts again.
-  return subscription.isLoading && !subscription.isSubscribed;
+DesktopAuthGateView resolveDesktopAuthGateView({
+  required bool restoring,
+  required bool hasSession,
+  required DesktopGuestBootstrap bootstrap,
+}) {
+  if (restoring) return DesktopAuthGateView.loading;
+  if (hasSession) return DesktopAuthGateView.shell;
+  if (bootstrap == DesktopGuestBootstrap.inFlight) {
+    return DesktopAuthGateView.loading;
+  }
+  return DesktopAuthGateView.welcome;
+}
+
+/// A guest session is created automatically only on launch with no user at
+/// all. After an explicit sign-out the user chose to leave, so the welcome
+/// screen is shown and a guest is created only if they ask for it.
+@visibleForTesting
+bool shouldBootstrapDesktopGuest({
+  required bool hasSession,
+  required bool hasCurrentUser,
+  required bool signedOutThisRun,
+  required DesktopGuestBootstrap bootstrap,
+}) {
+  if (hasSession || hasCurrentUser) return false;
+  if (signedOutThisRun) return false;
+  return bootstrap == DesktopGuestBootstrap.idle;
 }
 
 Future<Session?> _restoreDesktopSession() async {
@@ -104,11 +166,10 @@ Future<Session?> _restoreDesktopSession() async {
     );
     return refreshed.session ?? auth.currentSession;
   } catch (e) {
-    if (isLikelyOfflineAuthRefreshFailure(e) &&
-        await DesktopOfflineAccessCache.canUseOfflineAccess()) {
-      // Keep the cached session mounted while offline so already-open boards,
-      // local files, and cached games remain usable. Online entitlement/auth
-      // refreshes will run again when connectivity returns.
+    if (isLikelyOfflineAuthRefreshFailure(e)) {
+      // Keep the cached session mounted while offline. The shell is free, so
+      // this no longer depends on a cached entitlement, and signing a guest
+      // out here would orphan everything tied to their anonymous user id.
       return session;
     }
     try {

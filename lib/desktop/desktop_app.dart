@@ -3,6 +3,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_auth_gate.dart';
+import 'package:chessever/desktop/auth/desktop_guest_gate.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/engine/macos_chip_guard.dart';
 import 'package:chessever/desktop/widgets/desktop_native_update_menu_bridge.dart';
@@ -44,7 +45,11 @@ class _DesktopAppState extends ConsumerState<DesktopApp> {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
       navigatorKey: _desktopNavigatorKey,
-      navigatorObservers: [AnalyticsService.instance.routeObserver],
+      navigatorObservers: [
+        AnalyticsService.instance.routeObserver,
+        // Lets the guest reminder see open dialogs so it never stacks on one.
+        DesktopGuestGateObserver.instance,
+      ],
       builder: (context, child) {
         // Init ResponsiveHelper so widgets that share with the mobile app
         // (EventCard's tablet grid layout, tablet-style tournament cards,

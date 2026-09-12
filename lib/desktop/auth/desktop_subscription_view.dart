@@ -5,6 +5,7 @@ import 'package:forui/forui.dart' as forui;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/desktop/auth/desktop_guest_upgrade_dialog.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
@@ -18,7 +19,7 @@ import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// The desktop subscription body, reused by both the onboarding "Subscribe"
-/// step and the standalone [DesktopPremiumRequiredScreen].
+/// step and the standalone paywall surfaces.
 ///
 /// Listens to [subscriptionProvider] and, the moment the user becomes
 /// premium (either via deep-link from Stripe or the polled refresh from
@@ -50,7 +51,7 @@ class DesktopSubscriptionView extends ConsumerStatefulWidget {
   final String? reason;
 
   /// Optional widget rendered below the "I already subscribed" refresh
-  /// button. Used by [DesktopPremiumRequiredScreen] to host a sign-out
+  /// button. Used by paywall surfaces to host a sign-out
   /// action without re-rendering a top-bar.
   final Widget? trailing;
 
@@ -189,6 +190,10 @@ class _DesktopSubscriptionViewState
   }
 
   Future<void> _continueInApp(int tier) async {
+    // Purchasing needs a permanent account: a guest signs in first, then the
+    // checkout they asked for continues.
+    if (!await ensureDesktopPermanentAccountForPurchase(context)) return;
+    if (!mounted) return;
     AnalyticsService.instance.trackEventDetached(
       'Desktop Checkout Started',
       properties: {
@@ -271,6 +276,10 @@ class _DesktopSubscriptionViewState
   }
 
   Future<void> _openWebsite() async {
+    // Purchasing needs a permanent account: a guest signs in first, then the
+    // checkout they asked for continues.
+    if (!await ensureDesktopPermanentAccountForPurchase(context)) return;
+    if (!mounted) return;
     AnalyticsService.instance.trackEventDetached(
       'Desktop Web Checkout Opened',
       properties: {'interval': _interval},
