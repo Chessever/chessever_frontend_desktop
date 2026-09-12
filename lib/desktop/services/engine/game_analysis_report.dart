@@ -255,6 +255,28 @@ class GameAnalysisReportController extends ChangeNotifier {
     _setState(const GameReportState());
   }
 
+  /// Shows [report] as this tab's completed report without running anything.
+  ///
+  /// Used to restore a session or cached report, which must never spend a
+  /// daily claim. Returns false while a run is in flight.
+  bool adoptCompletedReport(GameAnalysisReport report) {
+    if (_disposed || _state.isRunning) return false;
+    _generation++;
+    _stopRemoteProgress();
+    _setState(
+      GameReportState(
+        status: GameReportStatus.completed,
+        progress: 1,
+        completedPositions: report.positions.length,
+        totalPositions: report.positions.length,
+        report: report,
+      ),
+    );
+    return true;
+  }
+
+  /// Stops the running report. Cancelling never refunds the day's report
+  /// claim: the slot was spent when the server said yes.
   Future<void> cancel() async {
     if (!_state.isRunning) return;
     _generation++;

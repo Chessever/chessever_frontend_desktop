@@ -47,6 +47,8 @@ import 'package:chessever/desktop/state/my_databases_focus.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
+import 'package:chessever/repository/freemium/freemium_quota.dart';
+import 'package:chessever/utils/freemium_quota_guard.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
@@ -8608,16 +8610,28 @@ Future<void> _onCreateFolder({
     allowKindSelection: allowKindSelection,
   );
   if (draft == null) return;
+  final isDatabase = draft.kind == LibraryFolderCreateKind.database;
+  // Folders are unlimited; only a new database asks for a slot.
+  if (isDatabase) {
+    if (!context.mounted) return;
+    final quota = await requestFreemiumQuota(
+      context,
+      FreemiumQuotaKind.ownedDatabases,
+    );
+    if (!context.mounted) return;
+    if (!quota.isAllowed) {
+      _toast(context, freemiumQuotaBlockedMessage(quota), error: true);
+      return;
+    }
+  }
   try {
     await ref
         .read(libraryRepositoryProvider)
         .createFolder(
           name: draft.name,
           parentId: draft.parentId,
-          icon:
-              draft.kind == LibraryFolderCreateKind.database
-                  ? 'database'
-                  : 'folder_container',
+          icon: isDatabase ? 'database' : 'folder_container',
+          nodeType: isDatabase ? 'database' : 'folder',
         );
     ref.invalidate(libraryFoldersStreamProvider);
     ref.invalidate(subscribedBooksProvider);
@@ -8626,6 +8640,15 @@ Future<void> _onCreateFolder({
         draft.kind == LibraryFolderCreateKind.database ? 'Database' : 'Folder';
     _toast(context, '$noun "${draft.name}" created');
   } catch (e, st) {
+    final rejection = freemiumQuotaRejection(
+      e,
+      fallbackKind: FreemiumQuotaKind.ownedDatabases,
+    );
+    if (rejection != null) {
+      if (!context.mounted) return;
+      _toast(context, freemiumQuotaBlockedMessage(rejection), error: true);
+      return;
+    }
     ErrorReporter.report(e, stackTrace: st, tag: 'library.create_folder');
     if (!context.mounted) return;
     _toast(context, 'Failed to create folder. Please try again.', error: true);
