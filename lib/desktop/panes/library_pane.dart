@@ -50,6 +50,7 @@ import 'package:chessever/desktop/utils/library_multi_select.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/widgets/library/my_likes/my_likes_view.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
@@ -129,7 +130,17 @@ class LibraryPane extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final foldersAsync = ref.watch(libraryFoldersStreamProvider);
     final subscribedAsync = ref.watch(subscribedBooksProvider);
-    final ownedFolders = foldersAsync.valueOrNull ?? const <LibraryFolder>[];
+    // The Likes collection is its own destination with its own access policy
+    // (the seven-day window), so it never appears as a generic cloud folder,
+    // database tile or preview. Identified by flag, never by name.
+    final ownedFolders = useMemoized(
+      () => <LibraryFolder>[
+        for (final folder
+            in foldersAsync.valueOrNull ?? const <LibraryFolder>[])
+          if (!folder.isLikedGames) folder,
+      ],
+      [foldersAsync.valueOrNull],
+    );
     final subscribedFolders =
         subscribedAsync.valueOrNull ?? const <LibraryFolder>[];
 
@@ -145,6 +156,15 @@ class LibraryPane extends HookConsumerWidget {
     final allFolders = useMemoized(
       () => [kTwicFolder, ...ownedSorted, ...subscribedSorted],
       [ownedSorted, subscribedSorted],
+    );
+
+    // Regular databases a like can be copied or moved into.
+    final likesDatabaseTargets = useMemoized(
+      () => <LibraryFolder>[
+        for (final folder in ownedSorted)
+          if (libraryFolderIsDatabase(folder, allFolders)) folder,
+      ],
+      [ownedSorted, allFolders],
     );
 
     final import = ref.watch(libraryImportBufferProvider);
@@ -470,6 +490,18 @@ class LibraryPane extends HookConsumerWidget {
                             selectedPath: localFullViewPath.value!,
                             onSelectPath: openLocalFullView,
                           )
+                          : selectedFolderId.value == kMyLikesDestinationId
+                          ? MyLikesView(
+                            databaseTargets: likesDatabaseTargets,
+                            onOpen:
+                                (analysis, openable, {newWindow = false}) =>
+                                    openLibraryLikedAnalysis(
+                                      ref,
+                                      analysis,
+                                      openable: openable,
+                                      newWindow: newWindow,
+                                    ),
+                          )
                           : _MyDatabasesHomeView(
                             folders: allFolders,
                             onPastePgn: () {
@@ -635,12 +667,22 @@ class _FolderRail extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 12),
       children: [
         if (error != null) _RailSyncWarning(error: error!),
-        const _RailGroupHeader(label: 'System', count: 1),
+        const _RailGroupHeader(label: 'System', count: 2),
         _PinnedSystemFolderRow(
-          folder: kTwicFolder,
+          label: kTwicFolder.name,
+          icon: Icons.public_rounded,
+          trailingIcon: Icons.lock_outline_rounded,
+          trailingTooltip: 'System database (read-only)',
           selected: kTwicBookId == selectedId,
           onTap: () => onSelect(kTwicBookId),
           onOpen: () => onOpen(kTwicFolder),
+        ),
+        _PinnedSystemFolderRow(
+          label: 'My Likes',
+          icon: Icons.favorite_rounded,
+          selected: kMyLikesDestinationId == selectedId,
+          onTap: () => onSelect(kMyLikesDestinationId),
+          onOpen: () => onSelect(kMyLikesDestinationId),
         ),
         if (ownedFolders.isNotEmpty) ...[
           const SizedBox(height: 14),
@@ -752,16 +794,22 @@ class _RailHeader extends StatelessWidget {
   }
 }
 
-/// Rail row for the pinned TWIC database. No right-click menu — TWIC is
-/// non-deletable and not renamable.
+/// Rail row for a pinned system destination (TWIC, My Likes). No right-click
+/// menu: neither is deletable or renamable.
 class _PinnedSystemFolderRow extends StatefulWidget {
   const _PinnedSystemFolderRow({
-    required this.folder,
+    required this.label,
+    required this.icon,
     required this.selected,
     required this.onTap,
     required this.onOpen,
+    this.trailingIcon,
+    this.trailingTooltip,
   });
-  final LibraryFolder folder;
+  final String label;
+  final IconData icon;
+  final IconData? trailingIcon;
+  final String? trailingTooltip;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onOpen;
@@ -825,11 +873,11 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
                         Transform.translate(offset: Offset(x, 0), child: child),
                 child: Row(
                   children: [
-                    Icon(Icons.public_rounded, size: 14, color: fg),
+                    Icon(widget.icon, size: 14, color: fg),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        widget.folder.name,
+                        widget.label,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: fg,
@@ -841,14 +889,15 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
                         ),
                       ),
                     ),
-                    DesktopTooltip(
-                      message: 'System database (read-only)',
-                      child: Icon(
-                        Icons.lock_outline_rounded,
-                        size: 11,
-                        color: kLightGreyColor,
+                    if (widget.trailingIcon != null)
+                      DesktopTooltip(
+                        message: widget.trailingTooltip ?? '',
+                        child: Icon(
+                          widget.trailingIcon,
+                          size: 11,
+                          color: kLightGreyColor,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -8320,6 +8369,34 @@ void _openAnalysis(
     ),
     reuseExisting: false,
     focus: focus,
+  );
+}
+
+/// Opens a liked game that the My Likes destination has already admitted at
+/// tap time. [openable] is the board's game list: likes outside the free window
+/// are not in it, so stepping between games cannot cross the window.
+void openLibraryLikedAnalysis(
+  WidgetRef ref,
+  SavedAnalysis analysis, {
+  required List<SavedAnalysis> openable,
+  bool newWindow = false,
+}) {
+  if (newWindow) {
+    unawaited(
+      _openAnalysisWindow(
+        ref,
+        analysis,
+        databaseTitle: 'My Likes',
+        databaseAnalyses: openable,
+      ),
+    );
+    return;
+  }
+  _openAnalysis(
+    ref,
+    analysis,
+    databaseTitle: 'My Likes',
+    databaseAnalyses: openable,
   );
 }
 

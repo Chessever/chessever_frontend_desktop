@@ -74,6 +74,13 @@ class LibraryFolderMapper extends ClassMapperBase<LibraryFolder> {
     opt: true,
     def: false,
   );
+  static bool _$isLikedGames(LibraryFolder v) => v.isLikedGames;
+  static const Field<LibraryFolder, bool> _f$isLikedGames = Field(
+    'isLikedGames',
+    _$isLikedGames,
+    opt: true,
+    def: false,
+  );
 
   @override
   final MappableFields<LibraryFolder> fields = const {
@@ -89,6 +96,7 @@ class LibraryFolderMapper extends ClassMapperBase<LibraryFolder> {
     #ownerDisplayName: _f$ownerDisplayName,
     #parentId: _f$parentId,
     #isSubscribed: _f$isSubscribed,
+    #isLikedGames: _f$isLikedGames,
   };
 
   static LibraryFolder _instantiate(DecodingData data) {
@@ -105,6 +113,7 @@ class LibraryFolderMapper extends ClassMapperBase<LibraryFolder> {
       ownerDisplayName: data.dec(_f$ownerDisplayName),
       parentId: data.dec(_f$parentId),
       isSubscribed: data.dec(_f$isSubscribed),
+      isLikedGames: data.dec(_f$isLikedGames),
     );
   }
 
@@ -183,6 +192,7 @@ abstract class LibraryFolderCopyWith<$R, $In extends LibraryFolder, $Out>
     String? ownerDisplayName,
     String? parentId,
     bool? isSubscribed,
+    bool? isLikedGames,
   });
   LibraryFolderCopyWith<$R2, $In, $Out2> $chain<$R2, $Out2>(Then<$Out2, $R2> t);
 }
@@ -209,6 +219,7 @@ class _LibraryFolderCopyWithImpl<$R, $Out>
     Object? ownerDisplayName = $none,
     Object? parentId = $none,
     bool? isSubscribed,
+    bool? isLikedGames,
   }) => $apply(
     FieldCopyWithData({
       if (id != null) #id: id,
@@ -223,6 +234,7 @@ class _LibraryFolderCopyWithImpl<$R, $Out>
       if (ownerDisplayName != $none) #ownerDisplayName: ownerDisplayName,
       if (parentId != $none) #parentId: parentId,
       if (isSubscribed != null) #isSubscribed: isSubscribed,
+      if (isLikedGames != null) #isLikedGames: isLikedGames,
     }),
   );
   @override
@@ -239,6 +251,7 @@ class _LibraryFolderCopyWithImpl<$R, $Out>
     ownerDisplayName: data.get(#ownerDisplayName, or: $value.ownerDisplayName),
     parentId: data.get(#parentId, or: $value.parentId),
     isSubscribed: data.get(#isSubscribed, or: $value.isSubscribed),
+    isLikedGames: data.get(#isLikedGames, or: $value.isLikedGames),
   );
 
   @override
