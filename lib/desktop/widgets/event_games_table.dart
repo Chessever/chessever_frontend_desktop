@@ -1,4 +1,6 @@
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'dart:math' as math;
 
 import 'package:chessever/desktop/services/retained_local_pgn.dart';
@@ -4614,6 +4616,19 @@ Future<void> _openEventGame({
             container: container,
           );
 
+  // The next game of a rail keeps the rail's SOURCE provenance; owning the
+  // current document never carries to it. Denied => no replace prompt, no
+  // local hydrate, no open-seed fetch, and the active board is untouched.
+  final DesktopAccessContext? railAccess = activeArgs?.sourceAccessContext;
+  if (railAccess != null &&
+      !(kind == _GameListKind.database && game.localPgnSource != null) &&
+      !admitBoardSourceOpen(
+        ownerContainer,
+        railAccess,
+        surface: 'board_rail_open',
+      )) {
+    return;
+  }
   if (!await _confirmReplaceActiveBoardGameIfNeeded(
     ref: ref,
     context: context,
@@ -4692,6 +4707,7 @@ Future<void> _openEventGame({
           activeArgs?.hideLocalOpeningTreePicker ?? false,
       gameListSelectedId: openGame.id,
       librarySaveOrigin: localPgnSaveOrigin,
+      accessContext: railAccess,
     );
 
     if (inNewWindow) {
@@ -4745,6 +4761,7 @@ Future<void> _openEventGame({
       routeGames: openEventGames,
       routeGamesContinuation: activeArgs?.routeGamesContinuation,
       gameListSelectedId: openGame.id,
+      accessContext: railAccess,
     );
 
     if (inNewWindow) {
@@ -4795,6 +4812,7 @@ Future<void> _openEventGame({
     routeGames: activeArgs?.routeGames ?? const <TournamentGameSummary>[],
     routeGamesContinuation: activeArgs?.routeGamesContinuation,
     gameListSelectedId: openGame.id,
+    accessContext: railAccess,
   );
 
   if (inNewWindow) {

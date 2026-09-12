@@ -5,10 +5,14 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/responsive_helper.dart';
+
+/// One board window per engine, so one navigator key per engine.
+final _boardWindowNavigatorKey = GlobalKey<NavigatorState>();
 
 class DesktopBoardWindowApp extends ConsumerWidget {
   const DesktopBoardWindowApp({
@@ -28,16 +32,20 @@ class DesktopBoardWindowApp extends ConsumerWidget {
       theme: AppTheme.darkTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
+      navigatorKey: _boardWindowNavigatorKey,
       navigatorObservers: [AnalyticsService.instance.routeObserver],
       builder: (context, child) {
         ResponsiveHelper.init(context);
         return FTheme(
           data: FThemes.zinc.dark,
           child: FToaster(
-            child: DesktopWindowFrame(
-              allowMaximize: !payload.pictureInPicture,
-              framelessContent: payload.pictureInPicture,
-              child: child ?? const SizedBox.shrink(),
+            child: DesktopPaywallHost(
+              navigatorKey: _boardWindowNavigatorKey,
+              child: DesktopWindowFrame(
+                allowMaximize: !payload.pictureInPicture,
+                framelessContent: payload.pictureInPicture,
+                child: child ?? const SizedBox.shrink(),
+              ),
             ),
           ),
         );

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
@@ -360,6 +361,13 @@ class DesktopDeepLinkRouter {
       tournamentTitle: link.tour ?? game.tourSlug ?? game.tourId,
       eventGames: [TournamentGameSummary.fromGamesTourModel(game)],
       gameListSelectedId: game.gameId,
+      // A website share link resolves to an ordinary broadcast game: free.
+      // The provenance is still recorded so the tab carries it everywhere.
+      accessContext: const DesktopAccessContext(
+        feature: DesktopFeature.broadcast,
+        action: DesktopAction.openContent,
+        origin: DesktopDiscoveryOrigin.deepLink,
+      ),
     );
 
     container.read(chessboardViewFromProviderNew.notifier).state =
