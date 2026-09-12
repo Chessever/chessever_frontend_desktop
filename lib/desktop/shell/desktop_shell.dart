@@ -23,7 +23,7 @@ import 'package:chessever/desktop/panes/play_pane.dart';
 import 'package:chessever/desktop/panes/play_profile_pane.dart';
 import 'package:chessever/desktop/panes/players_pane.dart';
 import 'package:chessever/desktop/panes/settings_pane.dart';
-import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart';
+import 'package:chessever/desktop/panes/desktop_smart_event_pane.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
@@ -988,7 +988,7 @@ Widget resolveDesktopTabContent(
     case TabKind.tournamentDetail:
       return TournamentDetailPane(tabId: tab.id);
     case TabKind.smartGames:
-      return DesktopSmartGamesPane(tabId: tab.id);
+      return DesktopSmartGamesTabContent(tabId: tab.id);
     case TabKind.library:
       return const LibraryPane();
     case TabKind.databaseWorkspace:
