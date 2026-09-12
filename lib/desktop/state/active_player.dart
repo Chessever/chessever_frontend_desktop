@@ -98,10 +98,36 @@ String openPlayerScoreCard(
   PlayerStandingModel player, {
   bool fromTournamentContext = true,
   bool focus = true,
+}) => _openPlayerScoreCard(
+  ref.read,
+  player,
+  fromTournamentContext: fromTournamentContext,
+  focus: focus,
+);
+
+/// Container variant of [openPlayerScoreCard] for code without a widget,
+/// such as the deep link router.
+String openPlayerScoreCardFromContainer(
+  ProviderContainer container,
+  PlayerStandingModel player, {
+  bool fromTournamentContext = true,
+  bool focus = true,
+}) => _openPlayerScoreCard(
+  container.read,
+  player,
+  fromTournamentContext: fromTournamentContext,
+  focus: focus,
+);
+
+String _openPlayerScoreCard(
+  T Function<T>(ProviderListenable<T> provider) read,
+  PlayerStandingModel player, {
+  required bool fromTournamentContext,
+  required bool focus,
 }) {
-  final tabsNotifier = ref.read(desktopTabsProvider.notifier);
-  final tabsState = ref.read(desktopTabsProvider);
-  final byTab = ref.read(playerScoreCardByTabIdProvider);
+  final tabsNotifier = read(desktopTabsProvider.notifier);
+  final tabsState = read(desktopTabsProvider);
+  final byTab = read(playerScoreCardByTabIdProvider);
 
   String? existingTabId;
   for (final entry in byTab.entries) {
@@ -127,31 +153,26 @@ String openPlayerScoreCard(
     );
   }
 
-  ref
-      .read(playerScoreCardByTabIdProvider.notifier)
-      .update((m) => <String, PlayerStandingModel>{...m, tabId: player});
-  ref
-      .read(playerScoreCardContextByTabIdProvider.notifier)
-      .update(
-        (m) => <String, PlayerScoreCardTabContext>{
-          ...m,
-          tabId: PlayerScoreCardTabContext(
-            gamesContext: ref.read(scoreCardGamesContextProvider),
-            hasEventContext: fromTournamentContext,
-            profileDataSource: ref.read(
-              scoreCardPlayerProfileDataSourceProvider,
-            ),
-            selectedBroadcast: ref.read(selectedBroadcastModelProvider),
-          ),
-        },
-      );
+  read(
+    playerScoreCardByTabIdProvider.notifier,
+  ).update((m) => <String, PlayerStandingModel>{...m, tabId: player});
+  read(playerScoreCardContextByTabIdProvider.notifier).update(
+    (m) => <String, PlayerScoreCardTabContext>{
+      ...m,
+      tabId: PlayerScoreCardTabContext(
+        gamesContext: read(scoreCardGamesContextProvider),
+        hasEventContext: fromTournamentContext,
+        profileDataSource: read(scoreCardPlayerProfileDataSourceProvider),
+        selectedBroadcast: read(selectedBroadcastModelProvider),
+      ),
+    },
+  );
 
   // Mirror onto the legacy global the shared `ScoreCardScreen` reads.
-  ref.read(selectedPlayerProvider.notifier).state = player;
+  read(selectedPlayerProvider.notifier).state = player;
   // Tournament context drives whether the score card calculates per-event
   // performance. Tapping a player from a board game is "from tournament".
-  ref.read(scoreCardHasEventContextProvider.notifier).state =
-      fromTournamentContext;
+  read(scoreCardHasEventContextProvider.notifier).state = fromTournamentContext;
   return tabId;
 }
 
@@ -162,10 +183,36 @@ String openPlayerProfile(
   PlayerProfileArgs args, {
   bool focus = true,
   bool reuseExisting = true,
+}) => _openPlayerProfile(
+  ref.read,
+  args,
+  focus: focus,
+  reuseExisting: reuseExisting,
+);
+
+/// Container variant of [openPlayerProfile] for code without a widget, such
+/// as the deep link router.
+String openPlayerProfileFromContainer(
+  ProviderContainer container,
+  PlayerProfileArgs args, {
+  bool focus = true,
+  bool reuseExisting = true,
+}) => _openPlayerProfile(
+  container.read,
+  args,
+  focus: focus,
+  reuseExisting: reuseExisting,
+);
+
+String _openPlayerProfile(
+  T Function<T>(ProviderListenable<T> provider) read,
+  PlayerProfileArgs args, {
+  required bool focus,
+  required bool reuseExisting,
 }) {
-  final tabsNotifier = ref.read(desktopTabsProvider.notifier);
-  final tabsState = ref.read(desktopTabsProvider);
-  final byTab = ref.read(playerProfileByTabIdProvider);
+  final tabsNotifier = read(desktopTabsProvider.notifier);
+  final tabsState = read(desktopTabsProvider);
+  final byTab = read(playerProfileByTabIdProvider);
   final tabTitle = _playerProfileTabTitle(args);
 
   String? existingTabId;
@@ -196,9 +243,9 @@ String openPlayerProfile(
     );
   }
 
-  ref
-      .read(playerProfileByTabIdProvider.notifier)
-      .update((m) => <String, PlayerProfileArgs>{...m, tabId: args});
+  read(
+    playerProfileByTabIdProvider.notifier,
+  ).update((m) => <String, PlayerProfileArgs>{...m, tabId: args});
   return tabId;
 }
 

@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/tab_kind_restore.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
@@ -147,11 +148,13 @@ class DesktopBoardWindowPayload {
 
   factory DesktopBoardWindowPayload.fromJson(Map<String, Object?> json) {
     final argsJson = json['args'];
-    final kind = _kind(json['kind']);
+    final restoredKind = restoreTabKindByName(json['kind']);
+    final kind = restoredKind.kind;
     final metadataJson = json['metadata'];
     return DesktopBoardWindowPayload(
       title:
-          (json['title'] as String?)?.trim().isNotEmpty == true
+          !restoredKind.retired &&
+                  (json['title'] as String?)?.trim().isNotEmpty == true
               ? (json['title'] as String).trim()
               : kind.defaultTitle,
       kind: kind,
@@ -567,12 +570,4 @@ PlayerProfileDataSource _playerProfileDataSource(Object? value) {
     if (source.name == name) return source;
   }
   return PlayerProfileDataSource.supabase;
-}
-
-TabKind _kind(Object? value) {
-  final name = value?.toString();
-  for (final kind in TabKind.values) {
-    if (kind.name == name) return kind;
-  }
-  return TabKind.board;
 }

@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
 
 import 'package:flutter/foundation.dart';
@@ -371,7 +372,7 @@ Future<void> _desktopBoot({
     // The desktop subscription notifier polls our /entitlement edge
     // function (backed by public.subscriptions, which mirrors both Stripe
     // web and RevenueCat mobile state). Replaces the stub-true override.
-    overrides: [desktopSubscriptionOverride],
+    overrides: [desktopSubscriptionOverride, ...desktopPushIsolationOverrides],
   );
   try {
     await registerPictureInPictureMainWindowHandler(
@@ -542,7 +543,9 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
         : '[desktop] ⚠️ board window supabase unavailable',
   );
 
-  final container = ProviderContainer(overrides: [desktopSubscriptionOverride]);
+  final container = ProviderContainer(
+    overrides: [desktopSubscriptionOverride, ...desktopPushIsolationOverrides],
+  );
   container.read(boardPictureInPictureModeProvider.notifier).state =
       payload.pictureInPicture;
   await _preloadChessgroundPieceImages(

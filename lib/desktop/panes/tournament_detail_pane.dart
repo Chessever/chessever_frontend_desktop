@@ -6,6 +6,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/widgets/desktop_team_standings_view.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -282,6 +283,7 @@ class TournamentDetailPane extends HookConsumerWidget {
                         tournament.title,
                         selectedTourId,
                         gamesHeaderCollapsed,
+                        isTeamEvent: layout == TournamentDetailLayout.team,
                       ),
                     ),
                   ),
@@ -299,8 +301,9 @@ class TournamentDetailPane extends HookConsumerWidget {
     String tournamentId,
     String tournamentTitle,
     String? selectedTourId,
-    ValueNotifier<bool> gamesHeaderCollapsed,
-  ) {
+    ValueNotifier<bool> gamesHeaderCollapsed, {
+    bool isTeamEvent = false,
+  }) {
     switch (segment) {
       case TournamentDetailSegment.about:
         return TournamentAboutView(tabId: tabId, tournamentId: tournamentId);
@@ -319,10 +322,15 @@ class TournamentDetailPane extends HookConsumerWidget {
           selectedTourId: selectedTourId,
         );
       case TournamentDetailSegment.standings:
-        return TournamentStandingsView(
+        final playersView = TournamentStandingsView(
           tabId: tabId,
           tournamentId: tournamentId,
           tournamentTitle: tournamentTitle,
+        );
+        if (!isTeamEvent) return playersView;
+        return DesktopTeamStandingsSection(
+          tabId: tabId,
+          playersView: playersView,
         );
     }
   }

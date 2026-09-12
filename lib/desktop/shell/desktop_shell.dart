@@ -14,7 +14,6 @@ import 'package:chessever/desktop/panes/countrymen_pane.dart';
 import 'package:chessever/desktop/panes/favorites_pane.dart';
 import 'package:chessever/desktop/panes/board_settings_pane.dart';
 import 'package:chessever/desktop/panes/library_pane.dart';
-import 'package:chessever/desktop/panes/notification_settings_pane.dart';
 import 'package:chessever/desktop/panes/placeholder_pane.dart';
 import 'package:chessever/desktop/panes/player_profile_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
@@ -23,6 +22,7 @@ import 'package:chessever/desktop/panes/play_pane.dart';
 import 'package:chessever/desktop/panes/play_profile_pane.dart';
 import 'package:chessever/desktop/panes/players_pane.dart';
 import 'package:chessever/desktop/panes/settings_pane.dart';
+import 'package:chessever/desktop/panes/team_score_card_pane.dart';
 import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
@@ -993,6 +993,8 @@ Widget resolveDesktopTabContent(
       return const LibraryPane();
     case TabKind.databaseWorkspace:
       return DatabaseWorkspacePane(tabId: tab.id);
+    case TabKind.teamScoreCard:
+      return TeamScoreCardPane(tabId: tab.id);
     case TabKind.favorites:
       return const FavoritesPane();
     case TabKind.players:
@@ -1038,8 +1040,6 @@ Widget resolveDesktopTabContent(
       return const PlayProfilePane();
     case TabKind.boardSettings:
       return const BoardSettingsPane();
-    case TabKind.notificationSettings:
-      return const NotificationSettingsPane();
     case TabKind.play:
       return PlayPane(tabId: tab.id);
   }
