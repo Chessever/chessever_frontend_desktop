@@ -7,6 +7,9 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/chat/chat_api.dart';
+import 'package:chessever/desktop/state/botvinnik_dock.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_launch_button.dart';
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/repository/gamebase/memorial_player.dart';
 import 'package:chessever/desktop/panes/player_workspace_pane.dart';
@@ -484,6 +487,12 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
             isBuildingTree: _isBuildingTree,
             hasBuildTree: hasFideId || hasMemorialIdentity,
             onToggleFavorite: _toggleFavorite,
+            botvinnikContext: botvinnikPlayerScreenContext(
+              playerName: effectiveName,
+              fideId: effectiveFideId,
+              gamebasePlayerId: widget.args.gamebasePlayerId,
+              memorialRouteId: widget.args.memorialRouteId,
+            ),
             onOpenPlayerWorkspace:
                 hasFideId
                     ? () => _openOrBuildPlayerWorkspace(effectiveFideId)
@@ -597,6 +606,7 @@ class _Header extends StatelessWidget {
     required this.onToggleFavorite,
     required this.onOpenPlayerWorkspace,
     required this.onBuildTree,
+    required this.botvinnikContext,
   });
 
   final String name;
@@ -616,6 +626,7 @@ class _Header extends StatelessWidget {
   final VoidCallback onToggleFavorite;
   final VoidCallback? onOpenPlayerWorkspace;
   final VoidCallback onBuildTree;
+  final ChatScreenContext botvinnikContext;
 
   @override
   Widget build(BuildContext context) {
@@ -731,6 +742,11 @@ class _Header extends StatelessWidget {
           DesktopFavoriteButton(
             selected: isFavorite,
             onPress: onToggleFavorite,
+          ),
+          BotvinnikLaunchButton(
+            screenContext: botvinnikContext,
+            leadingGap: 8,
+            tooltip: 'Ask Botvinnik about this player',
           ),
           if (hasFideId) ...[
             const SizedBox(width: 8),

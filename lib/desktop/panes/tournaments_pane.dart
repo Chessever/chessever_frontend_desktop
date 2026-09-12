@@ -10,6 +10,8 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/state/botvinnik_dock.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_launch_button.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/global_search_query.dart';
@@ -251,6 +253,13 @@ class TournamentsPane extends HookConsumerWidget {
                     const SizedBox(width: 8),
                     const GameViewModeToggle(buttonSize: 38),
                   ],
+                  const BotvinnikLaunchButton(
+                    screenContext: botvinnikHomeScreenContext,
+                    variant: BotvinnikLaunchVariant.toolbar,
+                    toolbarHeight: 40,
+                    leadingGap: 8,
+                    tooltip: 'Ask Botvinnik about live chess',
+                  ),
                 ],
               ),
             ],

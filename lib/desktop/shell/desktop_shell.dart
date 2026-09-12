@@ -42,6 +42,7 @@ import 'package:chessever/desktop/shell/desktop_shell_intents.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_dock.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/editable_aware_shortcut_activator.dart';
 import 'package:chessever/desktop/widgets/pane_keyboard_scroll.dart';
@@ -773,14 +774,28 @@ class DesktopShell extends HookConsumerWidget {
                                       onToggleSidebar: toggleSidebar,
                                     ),
                                   Expanded(
-                                    child: PageStorage(
-                                      bucket: tabPageStorageBucket,
-                                      child: _DesktopTabStack(
-                                        tabs: tabsState.tabs,
-                                        activeId: tabsState.activeId,
-                                        feedbackScreenshotKey:
-                                            feedbackScreenshotKey,
-                                      ),
+                                    // The Botvinnik dock sits beside the tab
+                                    // stack, outside it, so tab switches never
+                                    // rebuild the conversation.
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Expanded(
+                                          child: PageStorage(
+                                            bucket: tabPageStorageBucket,
+                                            child: _DesktopTabStack(
+                                              tabs: tabsState.tabs,
+                                              activeId: tabsState.activeId,
+                                              feedbackScreenshotKey:
+                                                  feedbackScreenshotKey,
+                                            ),
+                                          ),
+                                        ),
+                                        BotvinnikDockHost(
+                                          visible: !boardFocusActive,
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ],
