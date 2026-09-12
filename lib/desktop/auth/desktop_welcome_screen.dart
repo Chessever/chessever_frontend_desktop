@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
@@ -7,16 +9,21 @@ import 'package:motor/motor.dart';
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_icon.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/svg_asset.dart';
 
-/// First-launch welcome for signed-out desktop users.
+/// Welcome for a desktop window with no session at all: after an explicit
+/// sign-out, or when the automatic guest session could not be created.
 ///
-/// Minimal: brand logo + Google/Apple sign-in buttons. No copy.
+/// Minimal: brand logo, Google/Apple sign-in, and a quiet guest fallback.
 class DesktopWelcomeScreen extends HookConsumerWidget {
-  const DesktopWelcomeScreen({super.key});
+  const DesktopWelcomeScreen({super.key, this.onContinueAsGuest});
+
+  /// Creates a guest session. Hidden when null.
+  final Future<void> Function()? onContinueAsGuest;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -100,6 +107,19 @@ class DesktopWelcomeScreen extends HookConsumerWidget {
                   disabled: signingIn.value,
                   onTap: handleAppleSignIn,
                 ),
+                if (onContinueAsGuest != null) ...[
+                  const SizedBox(height: 16),
+                  Center(
+                    child: DesktopDialogButton(
+                      label: 'Continue as guest',
+                      tone: DesktopDialogButtonTone.ghost,
+                      onPress:
+                          signingIn.value
+                              ? null
+                              : () => unawaited(onContinueAsGuest!()),
+                    ),
+                  ),
+                ],
                 if (lastError.value != null) ...[
                   const SizedBox(height: 16),
                   Container(
