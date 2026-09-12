@@ -1,4 +1,6 @@
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -239,6 +241,10 @@ class DesktopShell extends HookConsumerWidget {
             if (!m.containsKey(t.id)) return m;
             final next = <String, dynamic>{...m}..remove(t.id);
             return Map<String, BoardTabGameArgs>.from(next);
+          });
+          ref.read(boardTabAdmissionByTabIdProvider.notifier).update((m) {
+            if (!m.containsKey(t.id)) return m;
+            return <String, String>{...m}..remove(t.id);
           });
           ref.read(boardExplorerScopeByTabIdProvider.notifier).update((m) {
             if (!m.containsKey(t.id)) return m;
@@ -1018,7 +1024,12 @@ Widget resolveDesktopTabContent(
         key: ValueKey('opening-explorer-scope-${tab.id}'),
         overrides: [
           gamebaseExplorerProvider.overrideWith(
-            (ref) => GamebaseExplorerNotifier(ref),
+            (ref) => GamebaseExplorerNotifier(
+              ref,
+              accessCheck:
+                  (state, advance) =>
+                      desktopExplorerFetchAllowed(ref.read, state, advance),
+            ),
           ),
         ],
         child: OpeningExplorerPane(tabId: tab.id),

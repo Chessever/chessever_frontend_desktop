@@ -1,6 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
@@ -89,6 +94,7 @@ class BoardTabGameArgs {
     this.gameListSelectedId,
     this.librarySaveOrigin,
     this.retainedSeedIdentity,
+    this.accessContext,
   });
 
   /// Supabase game id, when this tab is bound to a tournament game. Null
@@ -210,6 +216,113 @@ class BoardTabGameArgs {
   /// game replacement/copyWith starts a new seed lifetime, even for equal PGN.
   final Object? retainedSeedIdentity;
 
+  /// Where this game was discovered, carried through tabs, rails, drag
+  /// payloads, detached windows and restored state. Null on args built before
+  /// provenance existed; [admissionContext] then infers it conservatively.
+  final DesktopAccessContext? accessContext;
+
+  /// The request opening this board makes: [accessContext] (or the
+  /// conservative inference for legacy args) as an `openContent` action, with
+  /// ownership granted only by an explicit retained personal row.
+  DesktopAccessContext get admissionContext {
+    final base = (accessContext ?? _inferredAccessContext()).copyWith(
+      action: DesktopAction.openContent,
+    );
+    final origin = librarySaveOrigin;
+    if (origin == null) return base;
+    if (origin.kind == BoardTabLibrarySaveOriginKind.localPgnFile) {
+      return base.copyWith(
+        feature: DesktopFeature.localFiles,
+        ownedDocument: true,
+        retainedSaveId: '${origin.sourcePath}#${origin.sourceIndex}',
+      );
+    }
+    final analysisId = origin.analysisId?.trim();
+    return base.copyWith(
+      ownedDocument: true,
+      retainedSaveId: analysisId == null || analysisId.isEmpty
+          ? null
+          : analysisId,
+    );
+  }
+
+  /// Provenance for the NEXT game a rail, continuation or insert pulls from
+  /// this board's source. Ownership of the current document never carries:
+  /// fetching the next game of a saved copy asks the paid source again.
+  DesktopAccessContext get sourceAccessContext =>
+      (accessContext ?? _inferredAccessContext()).copyWith(
+        action: DesktopAction.openContent,
+        ownedDocument: false,
+        clearRetainedSaveId: true,
+      );
+
+  /// Legacy inference, erring toward the gated source. Only the shapes that
+  /// can ONLY come from a paid surface are gated; an ordinary broadcast board
+  /// stays free.
+  DesktopAccessContext _inferredAccessContext() {
+    DesktopAccessContext source(
+      DesktopFeature feature,
+      DesktopDiscoveryOrigin origin,
+    ) => DesktopAccessContext(
+      feature: feature,
+      action: DesktopAction.openContent,
+      origin: origin,
+    );
+
+    final continuations = <BoardTabGamesContinuation?>[
+      eventGamesContinuation,
+      routeGamesContinuation,
+      databaseGamesContinuation,
+    ];
+    if (viewSource == ChessboardView.countryman ||
+        continuations.any(
+          (c) => c?.kind == BoardTabGamesContinuationKind.countrymen,
+        )) {
+      return source(
+        DesktopFeature.countrymen,
+        DesktopDiscoveryOrigin.countrymen,
+      );
+    }
+    if (viewSource == ChessboardView.playerProfile ||
+        continuations.any(
+          (c) => c?.kind == BoardTabGamesContinuationKind.playerProfile,
+        )) {
+      return source(
+        DesktopFeature.playerProfile,
+        DesktopDiscoveryOrigin.playerProfile,
+      );
+    }
+    if (continuations.any(
+      (c) => c?.kind == BoardTabGamesContinuationKind.smartGames,
+    )) {
+      return source(
+        DesktopFeature.smartCollection,
+        DesktopDiscoveryOrigin.smartCollection,
+      );
+    }
+    if (continuations.any(
+      (c) => c?.kind == BoardTabGamesContinuationKind.twicDatabase,
+    )) {
+      return source(DesktopFeature.twic, DesktopDiscoveryOrigin.twic);
+    }
+    if (hideLocalOpeningTreePicker && localOpeningTreeIndex != null) {
+      return source(
+        DesktopFeature.openingTree,
+        DesktopDiscoveryOrigin.localFile,
+      );
+    }
+    if (databaseGamesPagination != null && localOpeningTreeIndex == null) {
+      return source(DesktopFeature.gamebase, DesktopDiscoveryOrigin.gamebase);
+    }
+    if (gameId == null &&
+        eventBroadcastId == null &&
+        eventGamesKey == null &&
+        sourceGame == null) {
+      return source(DesktopFeature.localFiles, DesktopDiscoveryOrigin.localFile);
+    }
+    return source(DesktopFeature.broadcast, DesktopDiscoveryOrigin.broadcast);
+  }
+
   BoardTabGameArgs copyWith({
     String? gameId,
     String? pgn,
@@ -252,6 +365,7 @@ class BoardTabGameArgs {
     BoardTabLibrarySaveOrigin? librarySaveOrigin,
     Object? retainedSeedIdentity,
     bool clearRetainedSeedIdentity = false,
+    DesktopAccessContext? accessContext,
   }) {
     return BoardTabGameArgs(
       gameId: gameId ?? this.gameId,
@@ -307,6 +421,9 @@ class BoardTabGameArgs {
           clearRetainedSeedIdentity
               ? null
               : retainedSeedIdentity ?? this.retainedSeedIdentity,
+      // Provenance is never dropped by a copy; a rail step that changes
+      // source passes a new context explicitly.
+      accessContext: accessContext ?? this.accessContext,
     );
   }
 }
@@ -452,6 +569,51 @@ final boardTabGameArgsByTabIdProvider =
     StateProvider<Map<String, BoardTabGameArgs>>(
       (_) => const <String, BoardTabGameArgs>{},
     );
+
+/// Sticky board admission: tab id -> [boardAdmissionKey] of the game that was
+/// admitted in it. Once a game is admitted its board stays mounted for that
+/// game's lifetime, so an entitlement poll, a routine refresh or an expiry
+/// can never unmount an unsaved draft. New requests (a different game, the
+/// next rail game, an explorer query) are admitted individually.
+final boardTabAdmissionByTabIdProvider = StateProvider<Map<String, String>>(
+  (_) => const <String, String>{},
+);
+
+/// Identity of the game a board tab holds, stable across live PGN updates.
+String boardAdmissionKey(BoardTabGameArgs args) {
+  final origin = args.librarySaveOrigin;
+  final parts = <String>[
+    args.gameId ?? '',
+    args.gameListSelectedId ?? '',
+    origin?.analysisId ?? '',
+    origin == null ? '' : '${origin.sourcePath}#${origin.sourceIndex}',
+  ];
+  final identity = parts.join('|');
+  return identity == '|||' ? 'label:${args.label}' : identity;
+}
+
+void _latchBoardAdmission(
+  ProviderContainer container,
+  String tabId,
+  BoardTabGameArgs args,
+) {
+  final key = boardAdmissionKey(args);
+  final notifier = container.read(boardTabAdmissionByTabIdProvider.notifier);
+  if (notifier.state[tabId] == key) return;
+  notifier.update((m) => <String, String>{...m, tabId: key});
+}
+
+/// How [openBoardGameTabFromContainer] admits the game it opens.
+enum DesktopBoardAdmission {
+  /// An explicit user action in this window. A known denial opens no tab and
+  /// presents the decision; an unknown entitlement opens the tab un-admitted
+  /// so the board shows progress or Retry without loading the game.
+  interactive,
+
+  /// Boot, restore or a hand-off from another window. The tab always opens;
+  /// the board admits it, or shows a locked surface, without a paywall.
+  deferred,
+}
 
 /// Mutable save identity attached after a scratch/detached Board tab saves
 /// one game to one local PGN or cloud row, or after an existing local game is
@@ -654,6 +816,35 @@ String openBoardGameTab(
   );
 }
 
+/// Whether [args] may be opened right now, without opening anything.
+/// Callers that fetch before opening check this FIRST, so a denied open never
+/// starts the fetch. When [interactive], a denial presents the decision.
+bool admitBoardGameOpen(
+  ProviderContainer container,
+  BoardTabGameArgs args, {
+  bool interactive = true,
+  String surface = 'board_open',
+}) => admitDesktopAction(
+  container,
+  args.admissionContext,
+  surface: surface,
+  interactive: interactive,
+);
+
+/// [admitBoardGameOpen] for a context that has not been folded into args yet
+/// (a fetch that will BUILD the args). Unknown entitlement admits nothing.
+bool admitBoardSourceOpen(
+  ProviderContainer container,
+  DesktopAccessContext context, {
+  bool interactive = true,
+  String surface = 'board_open',
+}) => admitDesktopAction(
+  container,
+  context.copyWith(action: DesktopAction.openContent),
+  surface: surface,
+  interactive: interactive,
+);
+
 /// Container-flavored variant of [openBoardGameTab] for callers that need
 /// to survive widget disposal — e.g. async tap handlers whose source
 /// `WidgetRef` (a live-game card) can be unmounted mid-await. The
@@ -665,6 +856,43 @@ String openBoardGameTabFromContainer(
   bool reuseExisting = true,
   bool focus = true,
   bool replaceActive = false,
+  DesktopBoardAdmission admission = DesktopBoardAdmission.interactive,
+}) {
+  final decision = readDesktopAccess(container.read, args.admissionContext);
+  if (admission == DesktopBoardAdmission.interactive &&
+      (decision.mayOfferPurchase ||
+          decision.outcome == DesktopAccess.accountRequired)) {
+    // A known denial: no tab, no replacement of the active board (its draft
+    // stays), no fetch. The window that took the click presents it.
+    unawaited(
+      presentDesktopAccessDecision(
+        container,
+        decision,
+        context: args.admissionContext,
+        surface: 'board_open',
+      ),
+    );
+    return '';
+  }
+  final tabId = _openBoardGameTabUnchecked(
+    container,
+    args,
+    reuseExisting: reuseExisting,
+    focus: focus,
+    replaceActive: replaceActive,
+  );
+  if (decision.isAllowed && tabId.isNotEmpty) {
+    _latchBoardAdmission(container, tabId, args);
+  }
+  return tabId;
+}
+
+String _openBoardGameTabUnchecked(
+  ProviderContainer container,
+  BoardTabGameArgs args, {
+  required bool reuseExisting,
+  required bool focus,
+  required bool replaceActive,
 }) {
   final tabsNotifier = container.read(desktopTabsProvider.notifier);
   final byTab = container.read(boardTabGameArgsByTabIdProvider);

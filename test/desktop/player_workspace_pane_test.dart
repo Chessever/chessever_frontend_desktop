@@ -24,6 +24,7 @@ import 'package:chessever/utils/responsive_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'support/desktop_premium_test_overrides.dart';
 
 void main() {
   test('finds an existing player workspace by exact FIDE identity', () {
@@ -119,6 +120,7 @@ void main() {
     final repository = _PaneFakePlayerWorkspaceRepository();
     final container = ProviderContainer(
       overrides: [
+          ...desktopPremiumTestOverrides,
         playerWorkspaceRepositoryProvider.overrideWithValue(repository),
         _playerWorkspaceOverride(repository),
       ],
@@ -367,6 +369,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -512,6 +515,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -615,6 +619,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+          ...desktopPremiumTestOverrides,
             playerWorkspaceRepositoryProvider.overrideWithValue(repository),
             _playerWorkspaceOverride(repository),
             localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -756,6 +761,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -856,6 +862,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -954,6 +961,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1007,6 +1015,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1050,6 +1059,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1110,6 +1120,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1173,6 +1184,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          ...desktopPremiumTestOverrides,
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
           _playerWorkspaceOverride(repository),
         ],
@@ -1283,6 +1295,7 @@ Future<void> _pumpAndConnectOnlineAccount(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+          ...desktopPremiumTestOverrides,
         playerWorkspaceRepositoryProvider.overrideWithValue(repository),
         _playerWorkspaceOverride(repository),
       ],

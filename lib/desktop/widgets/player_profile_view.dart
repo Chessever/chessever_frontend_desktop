@@ -1,5 +1,11 @@
 import 'dart:async';
 
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -191,6 +197,19 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   }
 
   Future<void> _buildChessEverPlayerTree(int fideId) async {
+    // Building a player's opening tree is Premium; denied => no download,
+    // no workspace creation, no build.
+    if (!admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      const DesktopAccessContext(
+        feature: DesktopFeature.openingTree,
+        action: DesktopAction.recompute,
+        origin: DesktopDiscoveryOrigin.playerProfile,
+      ),
+      surface: 'player_profile_build_tree',
+    )) {
+      return;
+    }
     if (_isBuildingProfile || _isBuildingTree) return;
     setState(() => _isBuildingTree = true);
     try {
@@ -323,14 +342,25 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
             memorialSourceIdentity: widget.args.memorialSourceIdentity,
             memorialRouteId: widget.args.memorialRouteId,
           );
-    } on FavoriteLimitExceededException {
-      // Desktop is premium-only, so this branch should never trip in
-      // production. Surface a toast as a defensive fallback if it does.
+    } on FavoriteLimitExceededException catch (limitReached) {
+      // Freemium: the server refused a favourite PLAYER past the free limit.
+      // Show the specific limit, not a generic failure. Events are unlimited.
       if (mounted) {
-        showDesktopToast(
-          context,
-          'Could not add favorite. Please try again.',
-          error: true,
+        unawaited(
+          showDesktopPaywall(
+            context,
+            DesktopAccessDecision(
+              DesktopAccess.quotaExceeded,
+              DesktopAccessReason.quotaFavoritePlayers,
+              capacity: DesktopQuotaCapacity(
+                quota: DesktopQuota.favoritePlayers,
+                used: limitReached.limit,
+                limit: limitReached.limit,
+                requested: 1,
+              ),
+            ),
+            surface: 'favorite_player_limit',
+          ),
         );
       }
     } catch (_) {
@@ -3804,6 +3834,30 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
     final routeGamesContinuation = BoardTabGamesContinuation.playerProfile(
       widget.activeKey,
     );
+    // Opens admit themselves (player-profile provenance). Save, share and the
+    // share link are content actions on the same provenance; the saved-game
+    // quota is decided by the save flow itself.
+    final contentAction = switch (picked) {
+      _RowAction.saveToLibrary => DesktopAction.save,
+      _RowAction.share || _RowAction.copyShareLink => DesktopAction.share,
+      _ => null,
+    };
+    if (contentAction != null &&
+        !admitDesktopAction(
+          ProviderScope.containerOf(context, listen: false),
+          const DesktopAccessContext(
+            feature: DesktopFeature.playerProfile,
+            action: DesktopAction.share,
+            origin: DesktopDiscoveryOrigin.playerProfile,
+          ).copyWith(
+            action: contentAction,
+            quota: DesktopQuota.none,
+            additions: 0,
+          ),
+          surface: 'player_profile_context_menu',
+        )) {
+      return;
+    }
     switch (picked) {
       case _RowAction.open:
         await openTournamentGameTab(
@@ -3887,6 +3941,19 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
   }
 
   Future<void> _selectAllFilteredGames(PlayerProfileGamesState state) async {
+    // Selecting every game of a profile (and paging the rest in) is a bulk
+    // operation: denied => no page loads.
+    if (!admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      const DesktopAccessContext(
+        feature: DesktopFeature.playerProfile,
+        action: DesktopAction.bulkSelect,
+        origin: DesktopDiscoveryOrigin.playerProfile,
+      ),
+      surface: 'player_profile_select_all',
+    )) {
+      return;
+    }
     if (_isLoadingAllPagesForSelection) return;
     if (!mounted) return;
 
@@ -3927,6 +3994,26 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
   }
 
   Future<void> _addSelectedToLibrary(PlayerProfileGamesState state) async {
+    // Saving profile games is a content action on player-profile provenance
+    // (several at once is a bulk operation). The saved-game quota is the save
+    // flow's own decision.
+    if (_selectedGameIds.isNotEmpty &&
+        !admitDesktopAction(
+          ProviderScope.containerOf(context, listen: false),
+          DesktopAccessContext(
+            feature: DesktopFeature.playerProfile,
+            action:
+                _selectedGameIds.length > 1
+                    ? DesktopAction.bulkSelect
+                    : DesktopAction.save,
+            origin: DesktopDiscoveryOrigin.playerProfile,
+            quota: DesktopQuota.none,
+            additions: 0,
+          ),
+          surface: 'player_profile_add_selected',
+        )) {
+      return;
+    }
     final selected = state.filteredGames
         .where((game) => _selectedGameIds.contains(game.gameId))
         .toList(growable: false);

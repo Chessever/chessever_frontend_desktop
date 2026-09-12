@@ -12,6 +12,11 @@ import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/player_score_card_board_context.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -563,7 +568,28 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
     bool background = false,
     List<GamesTourModel> eventGames = const <GamesTourModel>[],
   }) async {
+    final container = ProviderScope.containerOf(context, listen: false);
+    final admission =
+        buildTournamentBoardTabArgs(
+          game,
+          tournamentTitle,
+          viewSource: playerScoreCardBoardViewSource(
+            tabContext: widget.tabContext,
+            hasSelectedBroadcast:
+                ref.read(selectedBroadcastModelProvider) != null,
+          ),
+          includeServerEventRail: false,
+        ).admissionContext;
+    // Denied => the PGN hydrate never starts.
+    if (!admitBoardSourceOpen(
+      container,
+      admission,
+      surface: 'score_card_open',
+    )) {
+      return;
+    }
     final openedGame = await _hydrateGameForBoardOpen(game);
+    if (!readDesktopAccess(container.read, admission).isAllowed) return;
     final contextGames = _replaceGameInContext(
       eventGames.isEmpty ? <GamesTourModel>[game] : eventGames,
       openedGame,
@@ -582,6 +608,7 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       eventGames: contextGames,
       viewSource: boardViewSource,
       includeServerEventRail: false,
+      accessContext: admission,
     );
     // Keep the legacy board provider in sync with the same resolved source.
     ref.read(chessboardViewFromProviderNew.notifier).state = boardViewSource;
@@ -789,14 +816,25 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
             rating: hydrated.score,
             title: hydrated.title,
           );
-    } on FavoriteLimitExceededException {
-      // Desktop is premium-only — this branch should never trip in
-      // production. Toast as a defensive fallback if it does.
+    } on FavoriteLimitExceededException catch (limitReached) {
+      // Freemium: the server refused a favourite PLAYER past the free limit.
+      // Show the specific limit, not a generic failure. Events are unlimited.
       if (mounted) {
-        showDesktopToast(
-          context,
-          'Could not add favorite. Please try again.',
-          error: true,
+        unawaited(
+          showDesktopPaywall(
+            context,
+            DesktopAccessDecision(
+              DesktopAccess.quotaExceeded,
+              DesktopAccessReason.quotaFavoritePlayers,
+              capacity: DesktopQuotaCapacity(
+                quota: DesktopQuota.favoritePlayers,
+                used: limitReached.limit,
+                limit: limitReached.limit,
+                requested: 1,
+              ),
+            ),
+            surface: 'favorite_player_limit',
+          ),
         );
       }
     } catch (_) {

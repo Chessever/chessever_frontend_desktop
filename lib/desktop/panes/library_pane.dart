@@ -1,5 +1,9 @@
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
 
@@ -568,9 +572,19 @@ final _twicPreviewPgnProvider = FutureProvider.autoDispose
 ) {
   if (selected == null) return (game: null, isLoading: false);
 
+  // The static teaser is free; fetching the game's PGN is a content action.
+  // A free user's selection never starts the fetch.
+  final canFetchPgn =
+      ref
+          .watch(
+            desktopAccessDecisionProvider(
+              _twicAccessContext.copyWith(action: DesktopAction.fetchPgn),
+            ),
+          )
+          .isAllowed;
   final hasInitialMoves = pgnHasMoves(selected.pgn);
   final hydratedPgnAsync =
-      hasInitialMoves
+      hasInitialMoves || !canFetchPgn
           ? null
           : ref.watch(_twicPreviewPgnProvider(selected.gameId));
   final hydratedPgn = hydratedPgnAsync?.valueOrNull;
@@ -4994,7 +5008,12 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
                           selectedId: selectedId.value,
                           selectedIds: clampedSelectedIds,
                           scrollController: scrollController,
-                          onSortChange: (next) => sort.value = next,
+                          onSortChange:
+                            (next) => _gateCloudSort(
+                              context,
+                              next,
+                              () => sort.value = next,
+                            ),
                           onRangeSelect: rangeSelectSavedRow,
                           onSelect: (analysis) {
                             final index = rows.indexWhere(
@@ -5089,6 +5108,14 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
     }, [selectedId.value, selectedPlyCount]);
 
     bool setSelectedTwicPly(int next) {
+      // Stepping through a TWIC game is interactive preview navigation.
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        _twicAccessContext.copyWith(action: DesktopAction.previewNavigate),
+        surface: 'twic_preview_navigate',
+      )) {
+        return true;
+      }
       final clamped = _clampLibraryPreviewPly(selectedPreviewGame, next);
       if (clamped == plyIndex.value) return true;
       plyIndex.value = clamped;
@@ -5177,6 +5204,13 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
     }
 
     void copySelectedTwic() {
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        _twicAccessContext.copyWith(action: DesktopAction.copy),
+        surface: 'twic_copy',
+      )) {
+        return;
+      }
       final copyGames = _selectedTwicGamesForCopy(
         games: games,
         selectedIds: clampedSelectedIds,
@@ -6303,7 +6337,12 @@ class _FolderContentView extends HookConsumerWidget {
                   query: query.value,
                   viewMode: viewMode.value,
                   sort: sort.value,
-                  onSortChange: (next) => sort.value = next,
+                  onSortChange:
+                            (next) => _gateCloudSort(
+                              context,
+                              next,
+                              () => sort.value = next,
+                            ),
                   selectedIds: clampedSelected,
                   onPrimeSelectionAnchor: primeSelectionAnchor,
                   onRangeSelect: setRangeSelection,
@@ -9277,6 +9316,46 @@ class _TwicContentView extends HookConsumerWidget {
   }
 }
 
+/// Cloud databases and shared books: the default order is free; any other
+/// sort is Premium even on owned data. A denied sort leaves the list as it
+/// is and replays once after a verified purchase.
+void _gateCloudSort(
+  BuildContext context,
+  _SortConfig next,
+  VoidCallback apply,
+) {
+  if (next.key == _SortKey.saved && next.dir == _SortDir.desc) {
+    apply();
+    return;
+  }
+  if (admitDesktopAction(
+    ProviderScope.containerOf(context, listen: false),
+    const DesktopAccessContext(
+      feature: DesktopFeature.ownedDocument,
+      action: DesktopAction.sort,
+      origin: DesktopDiscoveryOrigin.ownedDocument,
+      ownedDocument: true,
+      sortKeyCount: 1,
+    ),
+    surface: 'cloud_database_sort',
+    resume: DesktopAccessResume(
+      run: apply,
+      stillMatches: () => context.mounted,
+    ),
+  )) {
+    apply();
+  }
+}
+
+/// TWIC / system database provenance. The list and a static preview are free;
+/// every content action (open, preview navigation, PGN fetch, copy, save,
+/// share) is Premium.
+const DesktopAccessContext _twicAccessContext = DesktopAccessContext(
+  feature: DesktopFeature.twic,
+  action: DesktopAction.openContent,
+  origin: DesktopDiscoveryOrigin.twic,
+);
+
 BoardTabGameArgs _buildTwicBoardArgs(
   WidgetRef ref,
   GamesTourModel game, {
@@ -9287,6 +9366,7 @@ BoardTabGameArgs _buildTwicBoardArgs(
     ref.read(gamebaseDatabaseGamesPaginatedProvider).games,
   ).map(TournamentGameSummary.fromGamesTourModel).toList(growable: false);
   return BoardTabGameArgs(
+    accessContext: _twicAccessContext,
     gameId: game.gameId,
     pgn: game.pgn ?? '',
     label: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
@@ -9420,6 +9500,27 @@ Future<void> _showTwicGameContextMenu({
     ],
   );
   if (picked == null || !context.mounted) return;
+
+  // Opens admit through the board. Save, share and the share link are content
+  // actions on TWIC provenance; the saved-game quota is the save flow's.
+  final contentAction = switch (picked) {
+    _TwicGameContextAction.saveToLibrary => DesktopAction.save,
+    _TwicGameContextAction.share ||
+    _TwicGameContextAction.copyShareLink => DesktopAction.share,
+    _ => null,
+  };
+  if (contentAction != null &&
+      !admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        _twicAccessContext.copyWith(
+          action: contentAction,
+          quota: DesktopQuota.none,
+          additions: 0,
+        ),
+        surface: 'twic_context_menu',
+      )) {
+    return;
+  }
 
   switch (picked) {
     case _TwicGameContextAction.open:
@@ -11347,7 +11448,12 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
                         selectedId: selectedId.value,
                         selectedIds: clampedSelectedIds,
                         scrollController: listScrollController,
-                        onSortChange: (next) => sort.value = next,
+                        onSortChange:
+                            (next) => _gateCloudSort(
+                              context,
+                              next,
+                              () => sort.value = next,
+                            ),
                         onRangeSelect: rangeSelectSavedIndex,
                         onSelect: (analysis) {
                           final index = filtered.indexWhere(
@@ -11475,6 +11581,14 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
     }, [selectedId.value, selectedPlyCount]);
 
     bool setSelectedTwicPly(int next) {
+      // Stepping through a TWIC game is interactive preview navigation.
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        _twicAccessContext.copyWith(action: DesktopAction.previewNavigate),
+        surface: 'twic_preview_navigate',
+      )) {
+        return true;
+      }
       final clamped = _clampLibraryPreviewPly(selectedPreviewGame, next);
       if (clamped == plyIndex.value) return true;
       plyIndex.value = clamped;
@@ -11571,6 +11685,13 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
             : '${formatCompactCount(totalCount)} games';
 
     void copySelectedTwic() {
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        _twicAccessContext.copyWith(action: DesktopAction.copy),
+        surface: 'twic_copy',
+      )) {
+        return;
+      }
       final copyGames = _selectedTwicGamesForCopy(
         games: games,
         selectedIds: clampedSelectedIds,

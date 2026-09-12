@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'support/desktop_premium_test_overrides.dart';
 
 const _initialFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -2111,6 +2112,7 @@ Widget _harness({
 }) {
   return ProviderScope(
     overrides: [
+          ...desktopPremiumTestOverrides,
       gamebaseRepositoryProvider.overrideWithValue(repository),
       boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
       keyboardShortcutsProvider.overrideWith(
@@ -2260,6 +2262,7 @@ class _PositionChangingHarnessState extends State<_PositionChangingHarness> {
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
+          ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
@@ -2329,6 +2332,7 @@ class _ExternalBoardMoveHarnessState extends State<_ExternalBoardMoveHarness> {
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
+          ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
@@ -2397,6 +2401,7 @@ class _PreviewFeedbackHarnessState extends State<_PreviewFeedbackHarness> {
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
+          ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
@@ -2451,6 +2456,7 @@ class _NotationTapHarnessState extends State<_NotationTapHarness> {
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
+          ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
@@ -2525,6 +2531,7 @@ class _StatefulExplorerHarnessState extends State<_StatefulExplorerHarness> {
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
+          ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
@@ -2591,6 +2598,7 @@ class _StatefulLineInsertionHarnessState
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
+          ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
