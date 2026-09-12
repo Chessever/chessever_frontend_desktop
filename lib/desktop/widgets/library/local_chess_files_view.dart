@@ -17,6 +17,8 @@ import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
@@ -560,6 +562,19 @@ class LocalChessFilesView extends HookConsumerWidget {
     }
 
     void rebuildDatabaseTree() {
+      // Building an opening tree is Premium; the database and its games stay
+      // free. Denied => no build starts.
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        const DesktopAccessContext(
+          feature: DesktopFeature.openingTree,
+          action: DesktopAction.recompute,
+          origin: DesktopDiscoveryOrigin.localFile,
+        ),
+        surface: 'local_files_build_tree',
+      )) {
+        return;
+      }
       final override = onBuildTreeOverride;
       if (override != null) {
         override();
@@ -2993,9 +3008,16 @@ void _openLocalDatabaseTree(
       localOpeningTreeIndex: _localOpeningTreeHandle(index),
       localOpeningTreeTitle: sourceLabel,
       enableLocalOpeningTreePicker: true,
+      // Exploring a local tree is Premium; the board admission decides.
+      accessContext: const DesktopAccessContext(
+        feature: DesktopFeature.openingTree,
+        action: DesktopAction.previewNavigate,
+        origin: DesktopDiscoveryOrigin.localFile,
+      ),
     ),
     reuseExisting: false,
   );
+  if (tabId.isEmpty) return;
   ref.read(rightRailActivePageProvider(tabId).notifier).state = 1;
 }
 

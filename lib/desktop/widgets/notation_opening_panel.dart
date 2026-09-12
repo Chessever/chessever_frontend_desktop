@@ -1,4 +1,10 @@
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'dart:io' show Platform;
 
 import 'package:dartchess/dartchess.dart';
@@ -1882,6 +1888,26 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       targetContext: context,
     );
     if (!mounted || picked == null) return;
+    // Inserting a database game's moves reaches back to its source; a local
+    // file's tree row is the user's own data.
+    if (picked == GameContinuationAction.insertMoves &&
+        !admitDesktopAction(
+          ProviderScope.containerOf(context, listen: false),
+          widget.localOpeningTreeIndex != null && widget.explorerScope == null
+              ? const DesktopAccessContext(
+                  feature: DesktopFeature.localFiles,
+                  action: DesktopAction.insertMove,
+                  origin: DesktopDiscoveryOrigin.localFile,
+                )
+              : const DesktopAccessContext(
+                  feature: DesktopFeature.gamebase,
+                  action: DesktopAction.insertMove,
+                  origin: DesktopDiscoveryOrigin.gamebase,
+                ),
+          surface: 'explorer_insert_moves',
+        )) {
+      return;
+    }
     switch (picked) {
       case GameContinuationAction.insertMoves:
         widget.onPlayUciLine?.call(
@@ -2149,6 +2175,33 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     super.build(context);
     if (!widget.active) return const SizedBox.expand();
     final effectiveLocalTree = _effectiveLocalOpeningTreeIndex;
+    // Statistics for this position: a local tree is opening-tree
+    // exploration; the ChessEver database is explorer depth / player scope.
+    // Rendering the lock opens nothing; the notifier already refused the
+    // fetch. Moving pieces on the board stays free either way.
+    final explorerAccessContext =
+        effectiveLocalTree != null && widget.explorerScope == null
+            ? const DesktopAccessContext(
+              feature: DesktopFeature.openingTree,
+              action: DesktopAction.previewNavigate,
+              origin: DesktopDiscoveryOrigin.localFile,
+            )
+            : desktopExplorerAccessContext(
+              ref.watch(gamebaseExplorerProvider),
+              exactPosition: widget.exactFenSearch,
+            );
+    final explorerFree = desktopAccessWithoutMembership(explorerAccessContext);
+    final explorerDecision =
+        explorerFree.isAllowed
+            ? explorerFree
+            : ref.watch(desktopAccessDecisionProvider(explorerAccessContext));
+    if (!explorerDecision.isAllowed) {
+      return DesktopAccessLockedSurface(
+        decision: explorerDecision,
+        accessContext: explorerAccessContext,
+        surface: 'board_explorer_locked',
+      );
+    }
     final localTreeCatalog =
         widget.enableLocalOpeningTreePicker
             ? ref.watch(localOpeningTreeCatalogProvider)
@@ -2698,6 +2751,26 @@ class _PositionGamesPageState extends ConsumerState<_PositionGamesPage>
       targetContext: context,
     );
     if (!mounted || picked == null) return;
+    // Inserting a database game's moves reaches back to its source; a local
+    // file's tree row is the user's own data.
+    if (picked == GameContinuationAction.insertMoves &&
+        !admitDesktopAction(
+          ProviderScope.containerOf(context, listen: false),
+          widget.localOpeningTreeIndex != null && widget.explorerScope == null
+              ? const DesktopAccessContext(
+                  feature: DesktopFeature.localFiles,
+                  action: DesktopAction.insertMove,
+                  origin: DesktopDiscoveryOrigin.localFile,
+                )
+              : const DesktopAccessContext(
+                  feature: DesktopFeature.gamebase,
+                  action: DesktopAction.insertMove,
+                  origin: DesktopDiscoveryOrigin.gamebase,
+                ),
+          surface: 'explorer_insert_moves',
+        )) {
+      return;
+    }
     switch (picked) {
       case GameContinuationAction.insertMoves:
         widget.onPlayUciLine?.call(

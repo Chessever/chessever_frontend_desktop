@@ -1,4 +1,9 @@
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -183,6 +188,20 @@ typedef PlayerWorkspaceLocalDatabasePlayerUnregistrar =
 final playerWorkspaceProvider =
     StateNotifierProvider<PlayerWorkspaceNotifier, PlayerWorkspaceState>((ref) {
       return PlayerWorkspaceNotifier(
+        // Explicit create/source/compute actions present the decision in the
+        // window that owns this container; implicit load-time work asks
+        // silently and simply skips.
+        accessGuard:
+            (action, {required interactive}) => admitDesktopAction(
+              ref.container,
+              DesktopAccessContext(
+                feature: DesktopFeature.prepare,
+                action: action,
+                origin: DesktopDiscoveryOrigin.localFile,
+              ),
+              surface: 'prepare_${action.name}',
+              interactive: interactive,
+            ),
         workspaceRepository: ref.watch(playerWorkspaceRepositoryProvider),
         gamebaseRepository: ref.watch(gamebaseRepositoryProvider),
         localRepository: ref.watch(localChessDatabaseRepositoryProvider),
@@ -220,8 +239,14 @@ class _PlayerWorkspaceOperationScope {
   }
 }
 
+/// Prepare admission for one action. Returns whether it may proceed; when
+/// [interactive], a denial has already been presented to the user.
+typedef PlayerWorkspaceAccessGuard =
+    bool Function(DesktopAction action, {required bool interactive});
+
 class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   PlayerWorkspaceNotifier({
+    PlayerWorkspaceAccessGuard? accessGuard,
     required PlayerWorkspaceRepository workspaceRepository,
     required GamebaseRepository gamebaseRepository,
     required LocalChessDatabaseRepository localRepository,
@@ -229,7 +254,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     PlayerWorkspaceLocalDatabaseUnregistrar? localDatabaseUnregistrar,
     PlayerWorkspaceLocalDatabasePlayerUnregistrar?
     localDatabasePlayerUnregistrar,
-  }) : _workspaceRepository = workspaceRepository,
+  }) : _accessGuard = accessGuard,
+       _workspaceRepository = workspaceRepository,
        _gamebaseRepository = gamebaseRepository,
        _localRepository = localRepository,
        _localDatabaseRegistrar = localDatabaseRegistrar,
@@ -238,6 +264,15 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
        super(const PlayerWorkspaceState(isLoading: true)) {
     _initialLoadFuture = load();
   }
+
+  /// Null (tests, legacy hosts) admits everything. Prepare semantics:
+  /// browsing the roster, rename, remove, export, cancel and recover are
+  /// free; creating targets, acquiring sources and computed analysis are
+  /// Premium. There is no whole-pane gate.
+  final PlayerWorkspaceAccessGuard? _accessGuard;
+
+  bool _admits(DesktopAction action, {bool interactive = true}) =>
+      _accessGuard?.call(action, interactive: interactive) ?? true;
 
   final PlayerWorkspaceRepository _workspaceRepository;
   final GamebaseRepository _gamebaseRepository;
@@ -363,7 +398,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
           const <_PlayerWorkspaceOperationScope>[],
         );
       }
-      await _repairPersistedDownloadedStatsBestEffort();
+      // Stats repair is computed analysis: a free user's load only reads what
+      // is already on disk.
+      if (_admits(DesktopAction.recompute, interactive: false)) {
+        await _repairPersistedDownloadedStatsBestEffort();
+      }
       await _registerPlayersGeneratedDatabasesBestEffort(state.players);
       await _rebuildSelectedCombinedIfStaleBestEffort();
     } catch (error) {
@@ -375,6 +414,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<List<GamebasePlayer>> searchChessEverPlayers(String query) {
+    if (!_admits(DesktopAction.create, interactive: false)) {
+      return Future<List<GamebasePlayer>>.value(const <GamebasePlayer>[]);
+    }
     return _workspaceRepository.searchChessEverPlayers(
       _gamebaseRepository,
       query,
@@ -384,6 +426,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// Adds a free-text prep target and returns its new player id so callers can
   /// open it and chain straight into connecting online usernames.
   Future<String> addManualPlayer(String name) async {
+    if (!_admits(DesktopAction.create)) {
+      throw DesktopPremiumRequiredException(
+        DesktopAccessReason.premiumPrepareTarget.code,
+      );
+    }
     final player = _workspaceRepository.manualPlayer(name);
     await _upsertPlayer(player, select: false);
     return player.id;
@@ -392,6 +439,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// Adds a ChessEver-indexed player and returns its new player id (see
   /// [addManualPlayer]).
   Future<String> addChessEverPlayer(GamebasePlayer gamebasePlayer) async {
+    if (!_admits(DesktopAction.create)) {
+      throw DesktopPremiumRequiredException(
+        DesktopAccessReason.premiumPrepareTarget.code,
+      );
+    }
     final existing = _canonicalChessEverPlayer(gamebasePlayer);
     if (existing != null) {
       await selectPlayer(existing.id);
@@ -410,6 +462,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// by FIDE ID. An existing FIDE-only workspace is upgraded by attaching its
   /// exact ChessEver source.
   Future<String> ensurePlayerWorkspaceByFideId(String fideId) async {
+    if (!_admits(DesktopAction.create)) {
+      throw DesktopPremiumRequiredException(
+        DesktopAccessReason.premiumPrepareTarget.code,
+      );
+    }
     await _initialLoadFuture;
     final normalized = _normalizedPlayerFideId(fideId);
     if (normalized == null) {
@@ -461,6 +518,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   Future<int> attachFetchedAccounts(
     List<PlayerWorkspaceAccount> accounts,
   ) async {
+    if (!_admits(DesktopAction.acquireSource)) return 0;
     if (accounts.isEmpty) return 0;
     final player = state.selectedPlayer;
     if (player == null) return 0;
@@ -485,6 +543,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> connectChessEverPlayer(GamebasePlayer gamebasePlayer) async {
+    if (!_admits(DesktopAction.acquireSource)) return;
     final player = state.selectedPlayer;
     if (player == null) return;
     final lockedFideId = _normalizedPlayerFideId(player.fideId);
@@ -521,6 +580,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// immediately downloads its games. FIDE-less workspaces intentionally keep
   /// using the searchable connect dialog instead.
   Future<void> reconnectLockedChessEverSource() async {
+    if (!_admits(DesktopAction.acquireSource)) return;
     final player = state.selectedPlayer;
     if (player == null) return;
     final lockedFideId = _normalizedPlayerFideId(player.fideId);
@@ -575,6 +635,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> _rebuildSelectedCombinedIfStaleBestEffort() async {
+    // Implicit (load, select): never a paywall, never a rebuild for free.
+    if (!_admits(DesktopAction.recompute, interactive: false)) return;
     final player = state.selectedPlayer;
     if (player == null) return;
     final combinedPath = player.combinedPgnPath?.trim();
@@ -817,6 +879,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     required PlayerWorkspaceSource source,
     required String username,
   }) async {
+    if (!_admits(DesktopAction.acquireSource)) return;
     if (source == PlayerWorkspaceSource.chessever ||
         source == PlayerWorkspaceSource.manual ||
         source == PlayerWorkspaceSource.combined) {
@@ -876,6 +939,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     required PlayerWorkspaceAccount account,
     required String username,
   }) async {
+    if (!_admits(DesktopAction.acquireSource)) return;
     if (account.source != PlayerWorkspaceSource.lichess &&
         account.source != PlayerWorkspaceSource.chesscom) {
       throw StateError('Only online usernames can be edited here.');
@@ -971,6 +1035,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> refreshAccount(PlayerWorkspaceSource source) async {
+    if (!_admits(DesktopAction.acquireSource)) return;
     final player = state.selectedPlayer;
     if (player == null) return;
     if (source == PlayerWorkspaceSource.combined) {
@@ -985,6 +1050,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> refreshAccountEntry(PlayerWorkspaceAccount account) async {
+    if (!_admits(DesktopAction.acquireSource)) return;
     final player = state.selectedPlayer;
     if (player == null) return;
     final existing = _matchingAccount(player, account);
@@ -1104,6 +1170,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> syncSource(PlayerWorkspaceSource source) async {
+    if (!_admits(DesktopAction.acquireSource)) return;
     final player = state.selectedPlayer;
     if (player == null) return;
     if (source == PlayerWorkspaceSource.combined) {
@@ -1125,6 +1192,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     PlayerWorkspaceAccount account, {
     bool reinstall = false,
   }) async {
+    if (!_admits(DesktopAction.acquireSource)) return;
     final player = state.selectedPlayer;
     if (player == null) return;
     final existing = _matchingAccount(player, account);
@@ -1391,6 +1459,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     required String label,
     required String pgn,
   }) async {
+    if (!_admits(DesktopAction.acquireSource)) return;
     final cleanLabel = label.trim().isEmpty ? 'Manual PGN' : label.trim();
     await _importManualDownloadedPgn(
       label: cleanLabel,
@@ -1403,6 +1472,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> importManualPgnPaths({required List<String> paths}) async {
+    if (!_admits(DesktopAction.acquireSource)) return;
     final player = state.selectedPlayer;
     if (player == null) return;
     final cleanLabel = localChessDatabaseDisplayNameForPaths(paths);
@@ -1525,6 +1595,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> rebuildCombinedDatabase() async {
+    if (!_admits(DesktopAction.recompute)) return;
     final player = state.selectedPlayer;
     if (player == null) return;
     if (_hasActiveSourceOperations(player.id)) {
@@ -1548,6 +1619,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   Future<PlayerWorkspacePlayer?> prepareCombinedDatabaseForTree(
     String playerId,
   ) async {
+    if (!_admits(DesktopAction.recompute)) return null;
     _canceledCombinedPreparationPlayerIds.remove(playerId);
     final inFlightAtClick = _combinedRebuildFutures[playerId];
     if (inFlightAtClick != null) {

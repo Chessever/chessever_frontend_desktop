@@ -57,7 +57,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
   static const String _kInitialFen =
       'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
-  GamebaseExplorerNotifier(this.ref)
+  GamebaseExplorerNotifier(this.ref, {this.accessCheck})
     : super(
         GamebaseExplorerState(
           currentFen: _kInitialFen,
@@ -79,6 +79,23 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       );
 
   final Ref ref;
+
+  /// Optional host admission for statistics fetches. `advance` is how many
+  /// plies ahead of [state] the fetch looks (prefetch asks about +1). Null on
+  /// mobile, which keeps its existing contract.
+  final bool Function(GamebaseExplorerState state, int advance)? accessCheck;
+
+  bool _fetchDenied(int advance) => accessCheck?.call(state, advance) == false;
+
+  /// Denied: drop statistics for the new position (never leave the previous
+  /// position's numbers on screen) and start no request.
+  void _clearDeniedStatistics() {
+    state = state.copyWith(
+      moveAggregates: const [],
+      isLoading: false,
+      error: null,
+    );
+  }
 
   /// Internal position tracking using dartchess (consistent with ChessGame)
   Position get currentPosition =>
@@ -213,6 +230,12 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
 
   /// Fetch move aggregates for current position
   Future<void> _fetchMoveAggregates() async {
+    if (!mounted) return;
+    if (_fetchDenied(0)) {
+      ++_fetchToken;
+      _clearDeniedStatistics();
+      return;
+    }
     final fetchId = ++_fetchToken;
     final requestedFen = state.currentFen;
     final filtersSnapshot = state.filters;
@@ -282,7 +305,16 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       );
 
       // Ignore if a newer request started or FEN changed while awaiting.
-      if (fetchId != _fetchToken || requestedFen != state.currentFen) return;
+      if (!mounted ||
+          fetchId != _fetchToken ||
+          requestedFen != state.currentFen) {
+        return;
+      }
+      // Membership moved while the request was in flight.
+      if (_fetchDenied(0)) {
+        _clearDeniedStatistics();
+        return;
+      }
 
       _putCacheEntry(cacheKey, aggregates);
       state = state.copyWith(moveAggregates: aggregates, isLoading: false);
@@ -290,8 +322,9 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       // Opportunistically prefetch a few likely next positions to make the
       // explorer feel instantaneous even when backend caches are cold.
       // Skip prefetch when filters are active because those paths can be slow.
-      if (!_hasActiveFilters(filtersSnapshot) ||
-          _isPlayerScopedOnlyFilter(filtersSnapshot)) {
+      if (!_fetchDenied(1) &&
+          (!_hasActiveFilters(filtersSnapshot) ||
+              _isPlayerScopedOnlyFilter(filtersSnapshot))) {
         _prefetchNextPositions(
           repository: repository,
           baseFen: requestedFen,
@@ -301,7 +334,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
         );
       }
     } catch (e) {
-      if (fetchId != _fetchToken) return;
+      if (!mounted || fetchId != _fetchToken) return;
       state = state.copyWith(isLoading: false, error: e.toString());
     }
   }

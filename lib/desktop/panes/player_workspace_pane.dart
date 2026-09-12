@@ -1,4 +1,7 @@
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -3950,6 +3953,21 @@ String _disabledTreeActionLabel(String reason) {
 /// Opens the same per-source tree used by the Players Build Tree tab, building
 /// its local index first when needed. If the source has not been downloaded
 /// yet, it is synced through [PlayerWorkspaceNotifier] before tree generation.
+/// Opening trees: tree files are kept and stay exportable and removable;
+/// building a tree and exploring one interactively are Premium.
+const DesktopAccessContext _openingTreeExplore = DesktopAccessContext(
+  feature: DesktopFeature.openingTree,
+  action: DesktopAction.previewNavigate,
+  origin: DesktopDiscoveryOrigin.localFile,
+);
+
+bool _admitOpeningTree(BuildContext context, DesktopAction action) =>
+    admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      _openingTreeExplore.copyWith(action: action),
+      surface: 'opening_tree_${action.name}',
+    );
+
 Future<void> openOrBuildPlayerWorkspaceSourceTree({
   required BuildContext context,
   required WidgetRef ref,
@@ -3957,6 +3975,8 @@ Future<void> openOrBuildPlayerWorkspaceSourceTree({
   required PlayerWorkspaceSource source,
   required PlayerBuildTreePreparationSide preparationSide,
 }) async {
+  // Denied => no player selection side effects, no combined rebuild, no build.
+  if (!_admitOpeningTree(context, DesktopAction.previewNavigate)) return;
   final workspaceNotifier = ref.read(playerWorkspaceProvider.notifier);
   await workspaceNotifier.selectPlayer(player.id);
 
@@ -4078,6 +4098,7 @@ Future<void> _buildLocalTree(
   required PlayerBuildTreePreparationSide preparationSide,
   OperationCancellationToken? cancellationToken,
 }) async {
+  if (!_admitOpeningTree(context, DesktopAction.recompute)) return;
   cancellationToken?.throwIfCanceled();
   final index = await ref
       .read(_playerTreeBuildProvider.notifier)
@@ -4102,6 +4123,7 @@ Future<void> _openOrBuildLocalTreeTarget(
   required PlayerBuildTreePreparationSide preparationSide,
   OperationCancellationToken? cancellationToken,
 }) async {
+  if (!_admitOpeningTree(context, DesktopAction.previewNavigate)) return;
   cancellationToken?.throwIfCanceled();
   PlayerOpeningTreeIndex? cachedIndex;
   try {
@@ -4157,9 +4179,11 @@ void _openLocalTree(
       // library keeps its picker, but switching to Global or another tree here
       // would silently break the player's prep scope.
       hideLocalOpeningTreePicker: true,
+      accessContext: _openingTreeExplore,
     ),
     reuseExisting: false,
   );
+  if (tabId.isEmpty) return;
   // Seed the opening explorer with the chosen prep colour. Local trees carry
   // per-colour buckets, so this filters the tree by side via the same
   // BoardExplorerScope → gamebase filter seam used by Players tree actions

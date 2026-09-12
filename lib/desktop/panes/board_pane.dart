@@ -25,6 +25,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart' show DragToMoveArea;
 
+import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_clipboard.dart';
@@ -47,6 +48,7 @@ import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_board_shortcuts.dart';
+import 'package:chessever/desktop/widgets/desktop_board_access_gate.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
@@ -656,11 +658,22 @@ class BoardPane extends ConsumerWidget {
       key: ValueKey<String>('board-explorer-scope:$activeTabId'),
       overrides: [
         gamebaseExplorerProvider.overrideWith(
-          (ref) => GamebaseExplorerNotifier(ref),
+          (ref) => GamebaseExplorerNotifier(
+            ref,
+            accessCheck:
+                (state, advance) =>
+                    desktopExplorerFetchAllowed(ref.read, state, advance),
+          ),
         ),
         appliedBoardExplorerScopeKeyProvider.overrideWith((ref) => null),
       ],
-      child: _BoardPaneContent(tabId: activeTabId),
+      // Admission is per game lifetime: a locked game never builds the board
+      // content (no PGN hydrate, stream or engine), an admitted one is never
+      // unmounted by an entitlement change.
+      child: DesktopBoardAccessGate(
+        tabId: activeTabId,
+        child: _BoardPaneContent(tabId: activeTabId),
+      ),
     );
   }
 }
@@ -9769,6 +9782,8 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           hideLocalOpeningTreePicker: args.hideLocalOpeningTreePicker,
           gameListSelectedId: selected.id,
           librarySaveOrigin: localPgnSaveOrigin,
+          // Source provenance only: the next rail game is a fresh request.
+          accessContext: args.sourceAccessContext,
         ),
         focus: true,
         reuseExisting: false,
@@ -9824,6 +9839,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         replaceActive: false,
         viewSource: viewSource,
         eventBroadcastId: args?.eventBroadcastId,
+        accessContext: args?.sourceAccessContext,
       ),
     );
   }

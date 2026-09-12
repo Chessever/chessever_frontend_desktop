@@ -1,5 +1,10 @@
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'dart:convert';
 import 'dart:io' as io;
 
@@ -307,6 +312,10 @@ class _DesktopPositionGamesTableState
   bool _lastPreviewAutoplay = true;
   int? _lastPreviewStep;
   bool _isInitialLoading = true;
+
+  /// The last fetch was refused by access. The table renders a locked
+  /// surface instead of an empty result or an error.
+  bool _queryLocked = false;
   bool _isLoadingMore = false;
   bool _hasMore = true;
   int _nextPageNumber = 0;
@@ -482,10 +491,70 @@ class _DesktopPositionGamesTableState
           ? const Duration(seconds: 2)
           : const Duration(milliseconds: 120);
 
+  /// The request listing games at this position makes. A local file's tree
+  /// is opening-tree exploration; the ChessEver database is explorer depth,
+  /// player scope and exact-position search.
+  DesktopAccessContext get _positionQueryContext {
+    final localTree = widget.localOpeningTreeIndex;
+    if (localTree != null && widget.playerOpeningTreePlayerId == null) {
+      return const DesktopAccessContext(
+        feature: DesktopFeature.openingTree,
+        action: DesktopAction.previewNavigate,
+        origin: DesktopDiscoveryOrigin.localFile,
+      );
+    }
+    return DesktopAccessContext(
+      feature: DesktopFeature.openingExplorer,
+      action: widget.exactFenSearch
+          ? DesktopAction.acquireSource
+          : DesktopAction.previewNavigate,
+      origin: DesktopDiscoveryOrigin.gamebase,
+      playedPlies: widget.moves.length,
+      playerScoped:
+          widget.playerOpeningTreePlayerId != null ||
+          ref.read(gamebaseExplorerProvider).filters.playerIds.isNotEmpty,
+    );
+  }
+
+  bool get _positionQueryAllowed =>
+      readDesktopAccess(ref.read, _positionQueryContext).isAllowed;
+
+  /// Rows from a ChessEver database position carry gamebase provenance.
+  DesktopAccessContext get _rowAccessContext =>
+      widget.localOpeningTreeIndex != null &&
+          widget.playerOpeningTreePlayerId == null
+      ? const DesktopAccessContext(
+          feature: DesktopFeature.localFiles,
+          action: DesktopAction.openContent,
+          origin: DesktopDiscoveryOrigin.localFile,
+        )
+      : const DesktopAccessContext(
+          feature: DesktopFeature.gamebase,
+          action: DesktopAction.openContent,
+          origin: DesktopDiscoveryOrigin.gamebase,
+        );
+
   Future<void> _fetchPage({
     required bool reset,
     bool preserveRows = false,
   }) async {
+    if (!mounted) return;
+    // Denied => no request, no rows from a previous (free) position.
+    if (!_positionQueryAllowed) {
+      _requestToken += 1;
+      _cancelPendingResetFetch();
+      setState(() {
+        _rows.clear();
+        _isInitialLoading = false;
+        _isLoadingMore = false;
+        _hasMore = false;
+        _totalCount = null;
+        _error = null;
+        _queryLocked = true;
+      });
+      return;
+    }
+    if (_queryLocked) setState(() => _queryLocked = false);
     if (!widget.active) {
       _needsRefresh = true;
       return;
@@ -914,6 +983,14 @@ class _DesktopPositionGamesTableState
   Future<void> _insertGame(Map<String, dynamic> row) async {
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
+    // Inserting moves from a database game reaches back to its source.
+    if (!admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      _rowAccessContext.copyWith(action: DesktopAction.insertMove),
+      surface: 'position_games_insert',
+    )) {
+      return;
+    }
     try {
       final openedRow =
           widget.localOpeningTreeIndex == null
@@ -1030,6 +1107,13 @@ class _DesktopPositionGamesTableState
   }
 
   Future<void> _loadFullContinuation(String id, List<String> fallback) async {
+    // A hover/preview continuation is a PGN fetch: never started when denied.
+    if (!readDesktopAccess(
+      ref.read,
+      _rowAccessContext.copyWith(action: DesktopAction.fetchPgn),
+    ).isAllowed) {
+      return;
+    }
     try {
       final gameWithPgn = await ref
           .read(gamebaseRepositoryProvider)
@@ -1106,6 +1190,15 @@ class _DesktopPositionGamesTableState
   }) async {
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
+    // Denied => no local hydrate and no board. The central board admission
+    // re-checks with the same provenance.
+    if (!admitBoardSourceOpen(
+      ProviderScope.containerOf(context, listen: false),
+      _rowAccessContext,
+      surface: 'position_games_open',
+    )) {
+      return;
+    }
     final sourceRows = <Map<String, dynamic>>[
       for (final current in _rows) Map<String, dynamic>.from(current),
     ];
@@ -1169,6 +1262,7 @@ class _DesktopPositionGamesTableState
       localOpeningTreeTitle: widget.localOpeningTreeTitle,
       gameListSelectedId: id,
       librarySaveOrigin: _localLibrarySaveOriginForRow(openedRow),
+      accessContext: _rowAccessContext,
     );
     if (inNewWindow) {
       unawaited(openBoardGameWindow(ref, args));
@@ -1313,6 +1407,13 @@ class _DesktopPositionGamesTableState
 
   @override
   Widget build(BuildContext context) {
+    // A purchase, a restore or an offline-grace change can unlock the
+    // position: re-run the query once membership moves.
+    ref.listen(subscriptionProvider, (_, _) {
+      if (_queryLocked && _positionQueryAllowed) {
+        unawaited(_fetchPage(reset: true));
+      }
+    });
     // Re-run the query whenever the explorer's filter slice changes
     // (toggle a chip, set a rating range, pick a player, etc).
     ref.listen<GamebaseFilters>(
@@ -1395,6 +1496,14 @@ class _DesktopPositionGamesTableState
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
         ),
+      );
+    }
+    if (_queryLocked && _rows.isEmpty) {
+      final lockedContext = _positionQueryContext;
+      return DesktopAccessLockedSurface(
+        decision: readDesktopAccess(ref.read, lockedContext),
+        accessContext: lockedContext,
+        surface: 'position_games_locked',
       );
     }
     if (_error != null && _rows.isEmpty) {
