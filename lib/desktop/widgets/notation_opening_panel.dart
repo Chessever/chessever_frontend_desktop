@@ -2195,13 +2195,8 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
         explorerFree.isAllowed
             ? explorerFree
             : ref.watch(desktopAccessDecisionProvider(explorerAccessContext));
-    if (!explorerDecision.isAllowed) {
-      return DesktopAccessLockedSurface(
-        decision: explorerDecision,
-        accessContext: explorerAccessContext,
-        surface: 'board_explorer_locked',
-      );
-    }
+    // Publish the source chip before any lock, so a locked local tree
+    // still offers the free Global explorer instead of a dead end.
     final localTreeCatalog =
         widget.enableLocalOpeningTreePicker
             ? ref.watch(localOpeningTreeCatalogProvider)
@@ -2224,6 +2219,13 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
         if (!mounted) return;
         widget.sourceController.clear();
       });
+    }
+    if (!explorerDecision.isAllowed) {
+      return DesktopAccessLockedSurface(
+        decision: explorerDecision,
+        accessContext: explorerAccessContext,
+        surface: 'board_explorer_locked',
+      );
     }
     final activeContinuationStep = _activeGameContinuationStep();
     final gamesPanelActive = debugShouldActivateExplorerGamesPanel(

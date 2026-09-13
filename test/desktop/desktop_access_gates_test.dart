@@ -594,6 +594,69 @@ void main() {
       );
     });
 
+    test('lock copy names what was actually refused, in one unit', () {
+      String body(DesktopAccessDecision decision) =>
+          desktopPaywallCopyFor(decision).body;
+      const unknown = DesktopAccessDecision(
+        DesktopAccess.temporarilyUnavailable,
+        DesktopAccessReason.entitlementUnknown,
+      );
+      expect(body(unknown), isNot(contains('saved work')));
+      expect(
+        body(
+          const DesktopAccessDecision(
+            DesktopAccess.temporarilyUnavailable,
+            DesktopAccessReason.entitlementUnknown,
+            capacity: DesktopQuotaCapacity(
+              quota: DesktopQuota.cloudSavedGames,
+              used: 10,
+              limit: 10,
+              requested: 1,
+            ),
+          ),
+        ),
+        startsWith('Nothing was changed.'),
+      );
+      final depth = desktopPaywallCopyFor(
+        const DesktopAccessDecision(
+          DesktopAccess.premiumRequired,
+          DesktopAccessReason.premiumExplorerDepth,
+        ),
+      );
+      expect('${depth.title} ${depth.body}', isNot(contains('plies')));
+      final setUp = desktopPaywallCopyFor(
+        const DesktopAccessDecision(
+          DesktopAccess.premiumRequired,
+          DesktopAccessReason.premiumExplorerExactPosition,
+        ),
+      );
+      expect(setUp.title, contains('set-up positions'));
+    });
+
+    testWidgets('checking says its line once, beside the spinner', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: DesktopAccessLockedSurface(
+                decision: DesktopAccessDecision(
+                  DesktopAccess.checking,
+                  DesktopAccessReason.entitlementChecking,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Checking your membership'), findsOneWidget);
+      expect(find.text('This usually takes a moment.'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('See Premium'), findsNothing);
+      expect(find.text('Retry'), findsNothing);
+    });
+
     test('profile filter criteria count one free, two combined', () {
       final base = GameFilter.defaultFilter();
       expect(

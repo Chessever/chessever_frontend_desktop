@@ -354,6 +354,57 @@ void main() {
     );
   });
 
+  test('a background re-check keeps a known free result, never checking',
+      () async {
+    start();
+    await _settle();
+    backend.requests.first.complete(const EntitlementSnapshot(isActive: false));
+    await _settle();
+    expect(notifier.state.isLoading, isFalse);
+    expect(desktopPremiumAccess(notifier.state), DesktopAccess.premiumRequired);
+
+    final published = <SubscriptionState>[];
+    final removeListener = notifier.addListener(
+      published.add,
+      fireImmediately: false,
+    );
+    addTearDown(removeListener);
+
+    // The periodic poll and Retry both land here.
+    unawaited(notifier.refreshFromBackend());
+    await _settle();
+    expect(backend.requests, hasLength(2));
+    expect(published, isEmpty, reason: 'a known denial must not blink');
+    expect(desktopPremiumAccess(notifier.state), DesktopAccess.premiumRequired);
+
+    // A purchase made elsewhere still unlocks as soon as the response lands.
+    backend.requests.last.complete(_active(backend.clock));
+    await _settle();
+    expect(desktopPremiumAccess(notifier.state), DesktopAccess.allowed);
+  });
+
+  test('a re-check after a failed lookup shows checking, never Premium',
+      () async {
+    start();
+    await _settle();
+    backend.requests.first.completeError(Exception('offline'));
+    await _settle();
+    expect(
+      desktopPremiumAccess(notifier.state),
+      DesktopAccess.temporarilyUnavailable,
+    );
+
+    unawaited(notifier.refreshFromBackend());
+    await _settle();
+    expect(notifier.state.isLoading, isTrue);
+    expect(desktopPremiumAccess(notifier.state), DesktopAccess.checking);
+    expect(notifier.state.isSubscribed, isFalse);
+
+    backend.requests.last.complete(const EntitlementSnapshot(isActive: false));
+    await _settle();
+    expect(desktopPremiumAccess(notifier.state), DesktopAccess.premiumRequired);
+  });
+
   test('providers expose the lifecycle to access decisions', () async {
     final container = ProviderContainer(
       overrides: [

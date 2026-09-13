@@ -1,14 +1,18 @@
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
@@ -285,6 +289,64 @@ void main() {
           .localOpeningTreeIndex,
       same(localIndex),
     );
+  });
+
+  testWidgets('a locked local tree keeps the Global source switch', (
+    tester,
+  ) async {
+    final repository = _FakeExplorerRepository();
+    final localIndex = _testLocalOpeningTreeIndex();
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        localOpeningTreeIndex: localIndex,
+        localOpeningTreeTitle: 'Hikaru Chesscom',
+        accessOverrides: [
+          subscriptionProvider.overrideWith(
+            (ref) => SubscriptionNotifier.stub(SubscriptionState()),
+          ),
+          desktopEntitlementProvider.overrideWithValue(
+            const DesktopEntitlementSnapshot(
+              accountId: 'free-user',
+              generation: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(NotationOpeningPanel)),
+    );
+    container.read(rightRailActivePageProvider('__none__').notifier).state = 1;
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Exploring opening trees is Premium'), findsOneWidget);
+    expect(find.byType(DesktopOpeningExplorer), findsNothing);
+    expect(
+      find.byKey(const ValueKey('opening-explorer-source-button')),
+      findsOneWidget,
+      reason: 'the lock must not remove the free way out',
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('opening-explorer-source-button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Global'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(DesktopAccessLockedSurface), findsNothing);
+    expect(
+      tester
+          .widget<DesktopOpeningExplorer>(find.byType(DesktopOpeningExplorer))
+          .localOpeningTreeIndex,
+      isNull,
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('local Explorer game rows show year and notation', (
@@ -2109,10 +2171,11 @@ Widget _harness({
   Widget? enginePanel,
   bool showEngine = true,
   bool reportSelected = false,
+  List<Override>? accessOverrides,
 }) {
   return ProviderScope(
     overrides: [
-          ...desktopPremiumTestOverrides,
+          ...(accessOverrides ?? desktopPremiumTestOverrides),
       gamebaseRepositoryProvider.overrideWithValue(repository),
       boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
       keyboardShortcutsProvider.overrideWith(
