@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'event_player_board_scope.dart';
+export 'event_player_board_scope.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
@@ -79,6 +81,7 @@ class BoardTabGameArgs {
     this.eventGames = const <TournamentGameSummary>[],
     this.eventGamesLoading = false,
     this.eventGamesKey,
+    this.eventPlayerScope,
     this.routeTitle = '',
     this.routeGames = const <TournamentGameSummary>[],
     this.routeGamesContinuation,
@@ -167,6 +170,9 @@ class BoardTabGameArgs {
   /// the rail loads bounded metadata pages around it. Detached, Favorites,
   /// and database tabs leave this null and keep their existing local context.
   final BoardTabEventGamesKey? eventGamesKey;
+
+  /// Ordinary event-player subset, not a Premium player database source.
+  final EventPlayerBoardScope? eventPlayerScope;
 
   /// Route/source context that produced the Board tab.
   ///
@@ -348,6 +354,7 @@ class BoardTabGameArgs {
     List<TournamentGameSummary>? eventGames,
     bool? eventGamesLoading,
     BoardTabEventGamesKey? eventGamesKey,
+    EventPlayerBoardScope? eventPlayerScope,
     bool clearEventGamesKey = false,
     String? routeTitle,
     List<TournamentGameSummary>? routeGames,
@@ -389,6 +396,7 @@ class BoardTabGameArgs {
       eventBroadcastId: eventBroadcastId ?? this.eventBroadcastId,
       tournamentTitle: tournamentTitle ?? this.tournamentTitle,
       eventGames: eventGames ?? this.eventGames,
+      eventPlayerScope: eventPlayerScope ?? this.eventPlayerScope,
       eventGamesLoading: eventGamesLoading ?? this.eventGamesLoading,
       eventGamesKey:
           clearEventGamesKey ? null : eventGamesKey ?? this.eventGamesKey,
@@ -508,6 +516,8 @@ class BoardTabGamesContinuation {
     : kind = BoardTabGamesContinuationKind.twicDatabase,
       argument = null;
 
+
+
   final BoardTabGamesContinuationKind kind;
 
   /// Provider-family argument for keyed sources. Kept intentionally loose so
@@ -516,6 +526,7 @@ class BoardTabGamesContinuation {
   final Object? argument;
 
   String get signature => switch (kind) {
+
     BoardTabGamesContinuationKind.smartGames => 'smartGames:$argument',
     BoardTabGamesContinuationKind.favorites => 'favorites',
     BoardTabGamesContinuationKind.countrymen => 'countrymen',
@@ -894,6 +905,10 @@ String _openBoardGameTabUnchecked(
   required bool focus,
   required bool replaceActive,
 }) {
+  final eventPlayerScope = args.eventPlayerScope;
+  if (eventPlayerScope is EventPlayerBoardScope) {
+    args = args.copyWith(label: eventPlayerScope.title, clearEventGamesKey: true);
+  }
   final tabsNotifier = container.read(desktopTabsProvider.notifier);
   final byTab = container.read(boardTabGameArgsByTabIdProvider);
 
@@ -912,7 +927,9 @@ String _openBoardGameTabUnchecked(
 
   if (reuseExisting && args.gameId != null) {
     for (final entry in byTab.entries) {
-      if (entry.value.gameId == args.gameId) {
+      if (entry.value.gameId == args.gameId &&
+          entry.value.eventGamesContinuation?.signature == args.eventGamesContinuation?.signature &&
+          entry.value.eventPlayerScope?.toString() == args.eventPlayerScope?.toString()) {
         if (focus) tabsNotifier.activate(entry.key);
         // Refresh args so changing PGN (live update arrived since first
         // open) sticks. Keeps the tab chip + board synced.

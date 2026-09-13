@@ -31,7 +31,8 @@ import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
-    show buildTournamentBoardTabArgs;
+    show buildTournamentBoardTabArgs, openTournamentGameTab;
+
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
@@ -222,12 +223,15 @@ class EventPlayerGamesNotifier
       _stopRefreshTimer();
     });
 
-    final loaded = await _loadRows();
-    if (!_disposed) {
-      _initialLoadComplete = true;
-      _startRefreshTimer();
+    try {
+      return await _loadRows();
+    } finally {
+      // A first-load error must remain retryable while the owning tab is open.
+      if (!_disposed) {
+        _initialLoadComplete = true;
+        _startRefreshTimer();
+      }
     }
-    return loaded;
   }
 
   Future<bool> refresh() async {
@@ -358,7 +362,6 @@ bool _eventPlayerGameListsEqual(
 /// 1-66" and "Open Boards 67-126". A player scorecard must query each of
 /// those siblings, but no unrelated category, to retain every round without
 /// loading every board in the event.
-@visibleForTesting
 List<String> resolveEventPlayerTourIds({
   required String selectedTourId,
   required String selectedTourName,
@@ -568,6 +571,56 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
     bool background = false,
     List<GamesTourModel> eventGames = const <GamesTourModel>[],
   }) async {
+    // Capture the card's event identity before hydration can dispose its ref.
+    // This is the expanded Tournament games card, not the Board hover card.
+    final tabContext = widget.tabContext;
+    final broadcast =
+        tabContext == null
+            ? ref.read(selectedBroadcastModelProvider)
+            : tabContext.selectedBroadcast;
+    final hasEventContext =
+        tabContext?.hasEventContext ??
+        (broadcast != null || ref.read(scoreCardHasEventContextProvider));
+    if (hasEventContext &&
+        game.source == GameSource.supabase &&
+        game.tourId.trim().isNotEmpty) {
+      final player =
+          ref
+              .read(backfilledStandingPlayerProvider(widget.player))
+              .valueOrNull ??
+          widget.player;
+      final scope = EventPlayerBoardScope(
+        tourIds: [game.tourId],
+        playerName: player.name,
+        fideId: player.fideId,
+        eventTitle: tournamentTitle,
+        eventBroadcastId: broadcast?.id,
+      );
+      try {
+        await openTournamentGameTab(
+          ref,
+          game,
+          tournamentTitle,
+          eventGames: eventGames,
+          eventPlayerScope: scope,
+          accessContext: tabContext?.accessContext,
+          eventBroadcastId: scope.eventBroadcastId,
+          viewSource: ChessboardView.tour,
+          focus: !background,
+          reuseExisting: false,
+          replaceActive: false,
+        );
+      } catch (_) {
+        if (mounted) {
+          showDesktopToast(
+            context,
+            'Could not open event games. Please retry.',
+            error: true,
+          );
+        }
+      }
+      return;
+    }
     final container = ProviderScope.containerOf(context, listen: false);
     final admission =
         buildTournamentBoardTabArgs(
@@ -579,6 +632,7 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
                 ref.read(selectedBroadcastModelProvider) != null,
           ),
           includeServerEventRail: false,
+          accessContext: widget.tabContext?.accessContext,
         ).admissionContext;
     // Denied => the PGN hydrate never starts.
     if (!admitBoardSourceOpen(
@@ -2040,7 +2094,10 @@ class _GamesPanel extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _GamesHeader(gameCount: games.length, isLoading: isLoading),
+        _GamesHeader(
+          gameCount: games.length,
+          isLoading: isLoading,
+        ),
         const Divider(height: 1, thickness: 1, color: kDividerColor),
         Expanded(child: _buildBody(context, ref)),
       ],
@@ -2201,7 +2258,10 @@ class _GamesPanel extends ConsumerWidget {
 }
 
 class _GamesHeader extends StatelessWidget {
-  const _GamesHeader({required this.gameCount, required this.isLoading});
+  const _GamesHeader({
+    required this.gameCount,
+    required this.isLoading,
+  });
 
   final int gameCount;
   final bool isLoading;

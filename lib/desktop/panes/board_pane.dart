@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../state/event_player_board_games.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -750,6 +751,10 @@ class _BoardPaneContent extends HookConsumerWidget {
             : ref.watch(
               boardTabGameArgsByTabIdProvider.select((m) => m[activeTabId]),
             );
+    final eventPlayerScope = boardArgs?.eventPlayerScope;
+    if (eventPlayerScope is EventPlayerBoardScope && activeTabId != null) {
+      ref.watch(eventPlayerBoardGamesProvider(eventPlayerBoardGamesKey(eventPlayerScope, activeTabId)));
+    }
     final attachedLibrarySaveOrigin =
         activeTabId == null
             ? null
@@ -9229,7 +9234,8 @@ EventPlayerGamesKey? boardPlayerHistoryKey({
   required String ownerId,
   GamesTourModel? sourceGame,
 }) {
-  final primaryTourId = eventKey?.tourId.trim() ?? '';
+  final primaryTourId = eventKey?.tourId.trim() ??
+      (sourceGame?.source == GameSource.supabase ? sourceGame?.tourId.trim() : null) ?? '';
   if (primaryTourId.isEmpty || playerName.trim().isEmpty) return null;
 
   final additionalTourIds = <String>{};
@@ -9363,7 +9369,13 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     // ids. Live clocks now rebuild below this header, while other header state
     // changes still avoid an O(eventGames) scan plus a UI-isolate string join.
     final historyKey = useMemoized(
-      () => boardPlayerHistoryKey(
+      () => boardArgs?.eventPlayerScope is EventPlayerBoardScope
+          ? EventPlayerGamesKey(
+              tourId: (boardArgs!.eventPlayerScope!).tourIds.first,
+              additionalTourIds: (boardArgs!.eventPlayerScope!).tourIds.skip(1),
+              playerName: name, fideId: fideId, ownerId: historyOwnerId ?? '',
+            )
+          : boardPlayerHistoryKey(
         eventKey: eventKey,
         eventGames: hydratedEventGames,
         sourceGame: sourceGame,
@@ -9371,7 +9383,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         fideId: fideId,
         ownerId: historyOwnerId ?? '',
       ),
-      [eventKey, hydratedEventGames, sourceGame, name, fideId, historyOwnerId],
+      [boardArgs?.eventPlayerScope, eventKey, hydratedEventGames, sourceGame, name, fideId, historyOwnerId],
     );
     final requestedHistoryContext = useState<String?>(null);
     final historyRequestContext = useMemoized(
@@ -9448,7 +9460,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           games: hoverGames,
           isLoading: hoverIsLoading,
           openAbove: openAbove,
-          contextKey: hoverContextKey,
+          contextKey: '$hoverContextKey|$historyRequestContext',
           onPreviewOpened:
               historyRequestContext == null
                   ? null
@@ -9470,10 +9482,11 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             fontWeight: FontWeight.w600,
           ),
           onOpenPlayerInNewTab: (player) => _openProfileInNewTab(ref, player),
+          onOpenScoreCard: () => _openPlayer(ref, name),
           onOpenOpponentInNewTab:
               (opponent) => _openProfileInNewTab(ref, opponent),
           onOpenGameInNewTab:
-              (game) => _openPreviewGameInNewTab(ref, game, hoverGames),
+              (game) => _openPreviewGameInNewTab(ref, game, hoverGames, historyKey),
         );
       },
       [
@@ -9733,12 +9746,51 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     );
   }
 
+  bool get _canOpenEventPlayerGames {
+    final args = boardArgs;
+    return args != null &&
+        (args.viewSource == ChessboardView.tour ||
+            args.viewSource == ChessboardView.forYou ||
+            args.viewSource == ChessboardView.countryman) &&
+        args.databaseGames.isEmpty &&
+        args.databaseGamesContinuation == null &&
+        (sourceGame ?? args.sourceGame)?.source == GameSource.supabase;
+  }
+
   void _openPreviewGameInNewTab(
     WidgetRef ref,
     TournamentGameSummary selected,
     List<TournamentGameSummary> previewGames,
+    EventPlayerGamesKey? historyKey,
   ) {
     final args = boardArgs;
+    if (historyKey != null && args != null && _canOpenEventPlayerGames) {
+      final priorScope = args.eventPlayerScope;
+      final scope = EventPlayerBoardScope(
+        tourIds: historyKey.tourIds,
+        playerName: name, fideId: fideId,
+        eventTitle: priorScope is EventPlayerBoardScope ? priorScope.eventTitle : args.tournamentTitle,
+        eventBroadcastId: args.eventBroadcastId,
+      );
+      final games = eventPlayerBoardGames(scope, previewGames);
+      if (!games.any((game) => game.id == selected.id)) return;
+      final openContext = ref.context;
+      unawaited(openTournamentGameTab(
+        ref,
+        _gamesTourModelFromSummary(selected, source: sourceGame?.source ?? GameSource.supabase),
+        scope.title,
+        eventGames: [for (final game in games) _gamesTourModelFromSummary(game, source: sourceGame?.source ?? GameSource.supabase)],
+        eventPlayerScope: scope,
+        eventBroadcastId: scope.eventBroadcastId,
+        // A player subset changes the rail, never its source entitlement.
+        accessContext: args.sourceAccessContext,
+        viewSource: ChessboardView.tour,
+        focus: true, reuseExisting: false, replaceActive: false,
+      ).catchError((Object error) {
+        if (openContext.mounted) showDesktopToast(openContext, 'Could not open event games. Please retry.', error: true);
+      }));
+      return;
+    }
     if (args?.databaseGames.isNotEmpty == true) {
       final pgn = selected.pgn?.trim() ?? '';
       final localPgnSaveOrigin = _boardLibrarySaveOriginForSummary(selected);
@@ -9942,7 +9994,10 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         .read(scoreCardGamesContextProvider.notifier)
         .state = _scoreCardGamesContextForBoardTap(eventGame, boardArgs);
 
-    openPlayerScoreCard(ref, player, fromTournamentContext: true);
+    openPlayerScoreCard(
+      ref, player, fromTournamentContext: true,
+      accessContext: boardArgs?.sourceAccessContext,
+    );
   }
 
   PlayerProfileDataSource _profileSourceFor(GameSource source) {

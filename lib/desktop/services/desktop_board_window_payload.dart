@@ -226,6 +226,7 @@ Map<String, Object?> _argsToJson(BoardTabGameArgs args) => <String, Object?>{
   'eventGames': _summariesToJson(args.eventGames),
   'eventGamesLoading': args.eventGamesLoading,
   'eventGamesKey': _eventGamesKeyToJson(args.eventGamesKey),
+  'eventPlayerScope': args.eventPlayerScope?.toJson(),
   'eventGamesContinuation': _continuationToJson(args.eventGamesContinuation),
   'routeTitle': args.routeTitle,
   'routeGames': _summariesToJson(args.routeGames),
@@ -269,6 +270,7 @@ BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
     eventGames: _summariesFromJson(json['eventGames']),
     eventGamesLoading: json['eventGamesLoading'] == true,
     eventGamesKey: _eventGamesKeyFromJson(json['eventGamesKey']),
+    eventPlayerScope: EventPlayerBoardScope.fromJson(json['eventPlayerScope']),
     eventGamesContinuation: _continuationFromJson(
       json['eventGamesContinuation'],
     ),
@@ -479,6 +481,7 @@ Map<String, Object?>? _continuationToJson(
   if (continuation == null) return null;
   return <String, Object?>{
     'kind': continuation.kind.name,
+
     if (continuation.argument is PremiumGamesType)
       'premiumGamesType': (continuation.argument! as PremiumGamesType).name,
     if (continuation.argument is PlayerProfileKey)
@@ -508,6 +511,7 @@ BoardTabGamesContinuation? _continuationFromJson(Object? value) {
           .firstOrNull;
   if (kind == null) return null;
   switch (kind) {
+
     case BoardTabGamesContinuationKind.smartGames:
       final typeName = json['premiumGamesType']?.toString();
       final type =

@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../state/event_player_board_games.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
@@ -1818,6 +1819,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
   String? eventBroadcastId,
   bool includeServerEventRail = true,
   DesktopAccessContext? accessContext,
+  EventPlayerBoardScope? eventPlayerScope,
 }) {
   final pgn = pgnHasMoves(game.pgn) ? game.pgn!.trim() : '';
   final normalizedGame = _withFreshestFen(game, pgnOverride: pgn);
@@ -1826,6 +1828,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
       routeGamesContinuation?.kind == BoardTabGamesContinuationKind.smartGames;
   final eventGamesKey =
       !includeServerEventRail ||
+              eventPlayerScope != null ||
               sourceOwnsSmartCollection ||
               viewSource == ChessboardView.favScorecard ||
               eventTourId.isEmpty
@@ -1836,6 +1839,16 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
             selectedRoundId: normalizedGame.roundId,
             selectedBoardNumber: normalizedGame.boardNr,
           );
+  if (eventPlayerScope != null) {
+    final modelsById = {for (final row in eventGames) row.gameId: row};
+    eventGames = [
+      for (final row in eventPlayerBoardGames(
+        eventPlayerScope,
+        eventGames.map(TournamentGameSummary.fromGamesTourModel),
+      ))
+        modelsById[row.id]!,
+    ];
+  }
   final eventContextGames = _boardRailContextGames(
     normalizedGame,
     eventGames,
@@ -1870,7 +1883,9 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
     gameId: normalizedGame.gameId,
     pgn: pgn,
     label:
-        '${normalizedGame.whitePlayer.name} vs ${normalizedGame.blackPlayer.name}',
+        eventPlayerScope != null
+            ? eventPlayerScope.title
+            : '${normalizedGame.whitePlayer.name} vs ${normalizedGame.blackPlayer.name}',
     whiteName: normalizedGame.whitePlayer.name,
     blackName: normalizedGame.blackPlayer.name,
     whiteFederation: normalizedGame.whitePlayer.federation,
@@ -1889,6 +1904,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
     eventGames: eventSummaries,
     eventGamesLoading: false,
     eventGamesKey: eventGamesKey,
+    eventPlayerScope: eventPlayerScope,
     eventGamesContinuation: eventGamesContinuation,
     routeTitle: routeTitle,
     routeGames: routeSummaries,
@@ -1942,6 +1958,7 @@ Future<void> openTournamentGameTab(
   String? eventBroadcastId,
   bool Function(ProviderContainer container)? canCommitOpen,
   DesktopAccessContext? accessContext,
+  EventPlayerBoardScope? eventPlayerScope,
 }) async {
   // Capture the ProviderContainer up front. `ref` belongs to the widget
   // that owns the tap (often a LiveDesktopGameCard whose live-stream
@@ -1969,6 +1986,13 @@ Future<void> openTournamentGameTab(
     return;
   }
   final gameRepo = container.read(gameRepositoryProvider);
+  if (eventPlayerScope != null) {
+    eventPlayerScope = await resolveEventPlayerBoardScope(
+      container,
+      eventPlayerScope,
+    );
+    eventBroadcastId = eventPlayerScope.eventBroadcastId;
+  }
 
   final hydratedGame = await _hydrateTournamentGameForBoardOpen(
     gameRepo: gameRepo,
@@ -1982,6 +2006,7 @@ Future<void> openTournamentGameTab(
   final args = buildTournamentBoardTabArgs(
     hydratedGame,
     tournamentTitle,
+    eventPlayerScope: eventPlayerScope,
     eventGames: _replaceGameInModels(eventGames, hydratedGame),
     routeTitle: routeTitle,
     routeGames: _replaceGameInModels(routeGames, hydratedGame),

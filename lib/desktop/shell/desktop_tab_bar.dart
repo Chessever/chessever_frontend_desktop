@@ -905,7 +905,7 @@ class _GameTabChipContent extends StatelessWidget {
         final rightInset =
             reserveClose ? (muted ? 40.0 : 22.0) : (muted ? 18.0 : 0.0);
 
-        if (!hasNamedSides) {
+        if (!hasNamedSides || args.eventPlayerScope != null) {
           final label = args.label.trim().isEmpty ? 'Board' : args.label.trim();
           final content = Row(
             mainAxisAlignment: MainAxisAlignment.center,

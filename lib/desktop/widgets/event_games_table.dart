@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import '../state/event_player_board_games.dart';
 import 'dart:math' as math;
 
 import 'package:chessever/desktop/services/retained_local_pgn.dart';
@@ -1253,6 +1254,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     }
 
     switch (continuation.kind) {
+
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return null;
@@ -1330,6 +1332,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
 
   bool _canLoadMoreContinuation(BoardTabGamesContinuation continuation) {
     switch (continuation.kind) {
+
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return false;
@@ -1369,6 +1372,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     BoardTabGamesContinuation continuation,
   ) async {
     switch (continuation.kind) {
+
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return;
@@ -1470,7 +1474,16 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       fallbackGames: activeArgs?.routeGames ?? const <TournamentGameSummary>[],
       selectedGameId: activeSelectedGameId,
     );
-    final eventContinuationSnapshot = _watchContinuationSnapshot(
+    final playerScope = activeArgs?.eventPlayerScope;
+    final playerRows = playerScope == null ? null : ref.watch(eventPlayerBoardGamesProvider(eventPlayerBoardGamesKey(playerScope, activeTabId)));
+    final eventContinuationSnapshot = playerScope != null
+        ? _ContinuationSnapshot(
+            games: _mergeEventPlayerGames(playerScope, activeArgs!.eventGames, playerRows?.valueOrNull),
+            isLoading: playerRows?.isLoading ?? false,
+            hasMore: false, totalCount: playerRows?.valueOrNull?.length,
+            error: playerRows?.hasError == true ? playerRows!.error.toString() : null,
+          )
+        : _watchContinuationSnapshot(
       activeArgs?.eventGamesContinuation,
       fallbackGames: activeArgs?.eventGames ?? const <TournamentGameSummary>[],
       selectedGameId: activeSelectedGameId,
@@ -1556,7 +1569,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     }
     final preserveEventInputOrder =
         resolved.kind == _GameListKind.event &&
-        effectiveArgs?.viewSource == ChessboardView.playerProfile;
+        (effectiveArgs?.viewSource == ChessboardView.playerProfile ||
+          effectiveArgs?.eventPlayerScope != null);
 
     // The rail seeds from the games handed over when the board opened, then the
     // provider resolves with the authoritative round catalog. Painting headings
@@ -2491,7 +2505,8 @@ Future<void> _navigateActiveEventGameNow(
 
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
-      activeArgs?.viewSource == ChessboardView.playerProfile;
+      (activeArgs?.viewSource == ChessboardView.playerProfile ||
+          activeArgs?.eventPlayerScope != null);
 
   final nextGame = orderedGames[nextIdx];
 
@@ -2561,7 +2576,11 @@ BoardTabGameArgs? _readNavigationBoardArgs(WidgetRef ref, String activeTabId) {
 
   List<TournamentGameSummary>? eventGames;
   final eventKey = raw.eventGamesKey;
-  if (eventKey != null) {
+  final playerScope = raw.eventPlayerScope;
+  if (playerScope != null) {
+    eventGames = _mergeEventPlayerGames(playerScope, raw.eventGames,
+      ref.read(eventPlayerBoardGamesProvider(eventPlayerBoardGamesKey(playerScope, activeTabId))).valueOrNull);
+  } else if (eventKey != null) {
     final fallbackRail = _resolveGameRail(raw, null);
     final selected =
         fallbackRail.isEmpty
@@ -2627,7 +2646,8 @@ _navigationOrdering(
 }) {
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
-      activeArgs?.viewSource == ChessboardView.playerProfile;
+      (activeArgs?.viewSource == ChessboardView.playerProfile ||
+          activeArgs?.eventPlayerScope != null);
   final groups = switch (resolved.kind) {
     _GameListKind.favorites => _buildDateGroups(resolved.games),
     // Player-profile event rails mirror the source list's own ordering.
@@ -2812,6 +2832,7 @@ String? _selectedGameIdForArgs(BoardTabGameArgs? args) {
 /// as a cross-event source list, so it must never be refreshed as though it
 /// were one tournament rail.
 String _eventTourIdForArgs(BoardTabGameArgs? args) {
+  if (args?.eventPlayerScope != null) return '';
   if (args == null ||
       args.viewSource == ChessboardView.favScorecard ||
       args.eventGames.isEmpty) {
@@ -2877,6 +2898,7 @@ List<TournamentGameSummary>? _readContinuationGames(
 }) {
   if (continuation == null) return null;
 
+
   return _windowContinuationGames(
     fallbackGames: fallbackGames,
     providerGames: _readContinuationProviderGames(ref, continuation),
@@ -2893,6 +2915,7 @@ List<TournamentGameSummary> _readContinuationProviderGames(
   BoardTabGamesContinuation continuation,
 ) {
   return switch (continuation.kind) {
+
     BoardTabGamesContinuationKind.smartGames => () {
       final argument = continuation.argument;
       if (argument is! PremiumGamesType) {
@@ -3021,6 +3044,11 @@ List<TournamentGameSummary> _mergeFreshTournamentProviderGames(
     for (final game in freshGames) TournamentGameSummary.fromGame(game),
   ]);
 }
+
+List<TournamentGameSummary> _mergeEventPlayerGames(
+  EventPlayerBoardScope scope, List<TournamentGameSummary> fallback,
+  List<TournamentGameSummary>? fresh,
+) => eventPlayerBoardGames(scope, fresh == null ? fallback : _mergeFreshEventGameSummaries(fallback, fresh));
 
 List<TournamentGameSummary> _mergeFreshEventGameSummaries(
   List<TournamentGameSummary> fallbackGames,
@@ -4678,8 +4706,9 @@ Future<void> _openEventGame({
               ? null
               : openGame.id,
       pgn: pgn,
-      label:
-          openGame.name.isEmpty
+      label: activeArgs?.eventPlayerScope != null
+          ? (activeArgs!.eventPlayerScope!).title
+          : openGame.name.isEmpty
               ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
               : openGame.name,
       whiteName: openGame.whitePlayer,
@@ -4734,8 +4763,9 @@ Future<void> _openEventGame({
     final args = BoardTabGameArgs(
       gameId: openGame.id,
       pgn: pgn,
-      label:
-          openGame.name.isEmpty
+      label: activeArgs?.eventPlayerScope != null
+          ? (activeArgs!.eventPlayerScope!).title
+          : openGame.name.isEmpty
               ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
               : openGame.name,
       whiteName: openGame.whitePlayer,
@@ -4751,12 +4781,14 @@ Future<void> _openEventGame({
       fenSeed: openGame.fen,
       initialFen: activeArgs?.initialFen ?? openGame.fen,
       sourceGame: openSeed.sourceGame,
+      eventBroadcastId: activeArgs?.eventBroadcastId,
       viewSource: activeArgs?.viewSource ?? ChessboardView.tour,
       tournamentTitle: _eventTitleForGame(openGame, activeArgs),
       eventGames: eventSeed,
       eventGamesLoading: false,
       eventGamesKey: _eventGamesKeyForSummary(openGame, activeArgs),
       eventGamesContinuation: activeArgs?.eventGamesContinuation,
+      eventPlayerScope: activeArgs?.eventPlayerScope,
       routeTitle: tournamentTitle,
       routeGames: openEventGames,
       routeGamesContinuation: activeArgs?.routeGamesContinuation,
@@ -4780,15 +4812,16 @@ Future<void> _openEventGame({
   }
 
   final pgn = openGame.pgn?.trim() ?? '';
-  if (!inNewTab && !inNewWindow) {
+  if (!inNewTab && !inNewWindow && activeArgs?.eventPlayerScope == null) {
     ref.read(tournamentGamesProvider.notifier).markActive(openGame.id);
   }
 
   final args = BoardTabGameArgs(
     gameId: openGame.id,
     pgn: pgn,
-    label:
-        openGame.name.isEmpty
+    label: activeArgs?.eventPlayerScope != null
+        ? (activeArgs!.eventPlayerScope!).title
+        : openGame.name.isEmpty
             ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
             : openGame.name,
     whiteName: openGame.whitePlayer,
@@ -4803,11 +4836,13 @@ Future<void> _openEventGame({
     blackFideId: openGame.blackFideId,
     fenSeed: openGame.fen,
     sourceGame: openSeed.sourceGame,
+    eventBroadcastId: activeArgs?.eventBroadcastId,
     viewSource: activeArgs?.viewSource ?? ChessboardView.tour,
     tournamentTitle: tournamentTitle,
     eventGames: openEventGames,
     eventGamesKey: _eventGamesKeyForSummary(openGame, activeArgs),
     eventGamesContinuation: activeArgs?.eventGamesContinuation,
+      eventPlayerScope: activeArgs?.eventPlayerScope,
     routeTitle: activeArgs?.routeTitle ?? '',
     routeGames: activeArgs?.routeGames ?? const <TournamentGameSummary>[],
     routeGamesContinuation: activeArgs?.routeGamesContinuation,
@@ -4837,6 +4872,7 @@ BoardTabEventGamesKey? _eventGamesKeyForSummary(
       activeArgs?.routeGamesContinuation?.kind ==
       BoardTabGamesContinuationKind.smartGames;
   if (sourceOwnsSmartCollection ||
+      activeArgs?.eventPlayerScope != null ||
       activeArgs?.viewSource == ChessboardView.favScorecard) {
     return null;
   }

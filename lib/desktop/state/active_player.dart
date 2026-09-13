@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -43,18 +44,21 @@ final playerScoreCardByTabIdProvider =
       (_) => const <String, PlayerStandingModel>{},
     );
 
+// Source admission survives the compact -> full card -> game path.
 class PlayerScoreCardTabContext {
   const PlayerScoreCardTabContext({
     required this.hasEventContext,
     required this.profileDataSource,
     this.gamesContext,
     this.selectedBroadcast,
+    this.accessContext,
   });
 
   final List<GamesTourModel>? gamesContext;
   final bool hasEventContext;
   final PlayerProfileDataSource profileDataSource;
   final GroupBroadcast? selectedBroadcast;
+  final DesktopAccessContext? accessContext;
 }
 
 /// Per-tab score-card context. The legacy mobile score card stores the active
@@ -98,11 +102,13 @@ String openPlayerScoreCard(
   PlayerStandingModel player, {
   bool fromTournamentContext = true,
   bool focus = true,
+  DesktopAccessContext? accessContext,
 }) => _openPlayerScoreCard(
   ref.read,
   player,
   fromTournamentContext: fromTournamentContext,
   focus: focus,
+  accessContext: accessContext,
 );
 
 /// Container variant of [openPlayerScoreCard] for code without a widget,
@@ -112,11 +118,13 @@ String openPlayerScoreCardFromContainer(
   PlayerStandingModel player, {
   bool fromTournamentContext = true,
   bool focus = true,
+  DesktopAccessContext? accessContext,
 }) => _openPlayerScoreCard(
   container.read,
   player,
   fromTournamentContext: fromTournamentContext,
   focus: focus,
+  accessContext: accessContext,
 );
 
 String _openPlayerScoreCard(
@@ -124,6 +132,7 @@ String _openPlayerScoreCard(
   PlayerStandingModel player, {
   required bool fromTournamentContext,
   required bool focus,
+  DesktopAccessContext? accessContext,
 }) {
   final tabsNotifier = read(desktopTabsProvider.notifier);
   final tabsState = read(desktopTabsProvider);
@@ -164,6 +173,7 @@ String _openPlayerScoreCard(
         hasEventContext: fromTournamentContext,
         profileDataSource: read(scoreCardPlayerProfileDataSourceProvider),
         selectedBroadcast: read(selectedBroadcastModelProvider),
+        accessContext: accessContext,
       ),
     },
   );

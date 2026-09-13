@@ -665,50 +665,39 @@ class GameRepository extends BaseRepository {
   }) async {
     final normalizedTourId = tourId.trim();
     if (normalizedTourId.isEmpty) return const <Games>[];
+    final normalizedName = _stripTitlePrefix(playerName);
+    final escapedName = normalizedName.replaceAll('"', r'\"');
+
+    Future<List<Games>> loadPages({required bool byId}) => handleApiCall(() async {
+      const pageSize = 500;
+      final games = <Games>[];
+      for (var offset = 0; ; offset += pageSize) {
+        final query = supabase.from('games').select(_gameListSelectColumns)
+            .eq('tour_id', normalizedTourId);
+        final filtered = byId
+            ? query.contains('player_fide_ids', <int>[fideId!])
+            : query.or('player_white.eq."$escapedName",player_black.eq."$escapedName"');
+        final response = await filtered
+            .order('round_id', ascending: true)
+            .order('board_nr', ascending: true, nullsFirst: false)
+            .order('id', ascending: true)
+            .range(offset, offset + pageSize - 1);
+        games.addAll((response as List).map((json) => Games.fromJson(json)));
+        if (response.length < pageSize) return games;
+      }
+    });
 
     var byFide = const <Games>[];
     if (fideId != null && fideId > 0) {
       try {
-        byFide = await handleApiCall(() async {
-          final response = await supabase
-              .from('games')
-              .select(_gameListSelectColumns)
-              .eq('tour_id', normalizedTourId)
-              .contains('player_fide_ids', <int>[fideId])
-              .order('round_id', ascending: true)
-              .order('board_nr', ascending: true, nullsFirst: false)
-              .order('id', ascending: true);
-          return (response as List)
-              .map((json) => Games.fromJson(json))
-              .toList(growable: false);
-        });
+        byFide = await loadPages(byId: true);
       } catch (_) {
-        // Older schemas/rows can lack the generated FIDE-id array. The exact
-        // canonical-name query below remains a complete fallback in that case.
+        // Legacy rows can lack the FIDE array; exact canonical-name fallback
+        // remains subject to identity checks at the consumer boundary.
       }
     }
-
-    final normalizedName = _stripTitlePrefix(playerName);
-    if (normalizedName.isEmpty) {
-      return mergeEventPlayerGameQueryResults(byFide: byFide);
-    }
-    final escapedName = normalizedName.replaceAll('"', r'\"');
-    final byName = await handleApiCall(() async {
-      final response = await supabase
-          .from('games')
-          .select(_gameListSelectColumns)
-          .eq('tour_id', normalizedTourId)
-          .or(
-            'player_white.eq."$escapedName",'
-            'player_black.eq."$escapedName"',
-          )
-          .order('round_id', ascending: true)
-          .order('board_nr', ascending: true, nullsFirst: false)
-          .order('id', ascending: true);
-      return (response as List)
-          .map((json) => Games.fromJson(json))
-          .toList(growable: false);
-    });
+    if (normalizedName.isEmpty) return mergeEventPlayerGameQueryResults(byFide: byFide);
+    final byName = await loadPages(byId: false);
     return mergeEventPlayerGameQueryResults(byFide: byFide, byName: byName);
   }
 

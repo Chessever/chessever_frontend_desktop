@@ -64,6 +64,7 @@ class PlayerHoverPreview extends StatefulWidget {
     required this.onOpenOpponentInNewTab,
     required this.onOpenGameInNewTab,
     this.onOpenPlayerInNewTab,
+    this.onOpenScoreCard,
     this.onPreviewOpened,
     this.onPreviewClosed,
     this.isLoading = false,
@@ -79,6 +80,8 @@ class PlayerHoverPreview extends StatefulWidget {
   final PlayerHoverPreviewIdentity player;
   final List<TournamentGameSummary> games;
   final ValueChanged<PlayerHoverPreviewIdentity>? onOpenPlayerInNewTab;
+  /// Event report activation stays separate from public-profile navigation.
+  final VoidCallback? onOpenScoreCard;
   final ValueChanged<PlayerHoverPreviewIdentity> onOpenOpponentInNewTab;
   final ValueChanged<TournamentGameSummary> onOpenGameInNewTab;
   final VoidCallback? onPreviewOpened;
@@ -295,15 +298,12 @@ class _PlayerHoverPreviewState extends State<PlayerHoverPreview>
                   }),
               child: _PlayerPreviewCard(
                 player: widget.player,
+                onOpenScoreCard: widget.onOpenScoreCard == null
+                    ? null
+                    : () => _hideBeforeAction(widget.onOpenScoreCard!),
                 games: filteredGames,
                 isLoading: widget.isLoading,
                 scrollController: _scrollController,
-                onOpenPlayer:
-                    widget.onOpenPlayerInNewTab == null
-                        ? null
-                        : () => _hideBeforeAction(
-                          () => widget.onOpenPlayerInNewTab!(widget.player),
-                        ),
                 onOpenOpponent:
                     (opponent) => _hideBeforeAction(
                       () => widget.onOpenOpponentInNewTab(opponent),
@@ -361,7 +361,7 @@ class _PlayerHoverPreviewState extends State<PlayerHoverPreview>
   }
 }
 
-@visibleForTesting
+/// Shared identity-safe, newest-round-first card and Board ordering.
 List<TournamentGameSummary> playerHoverPreviewGames(
   PlayerHoverPreviewIdentity player,
   List<TournamentGameSummary> games,
@@ -406,7 +406,7 @@ class _PlayerPreviewCard extends StatelessWidget {
     required this.games,
     required this.isLoading,
     required this.scrollController,
-    required this.onOpenPlayer,
+    this.onOpenScoreCard,
     required this.onOpenOpponent,
     required this.onOpenGame,
   });
@@ -415,7 +415,7 @@ class _PlayerPreviewCard extends StatelessWidget {
   final List<TournamentGameSummary> games;
   final bool isLoading;
   final ScrollController scrollController;
-  final VoidCallback? onOpenPlayer;
+  final VoidCallback? onOpenScoreCard;
   final ValueChanged<PlayerHoverPreviewIdentity> onOpenOpponent;
   final ValueChanged<TournamentGameSummary> onOpenGame;
 
@@ -442,7 +442,10 @@ class _PlayerPreviewCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _PlayerPreviewHeader(player: player, onOpenPlayer: onOpenPlayer),
+            _PlayerPreviewHeader(
+              player: player,
+              onOpenPlayer: onOpenScoreCard,
+            ),
             const Divider(height: 1, thickness: 1, color: kDividerColor),
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
@@ -566,11 +569,18 @@ class _PlayerPreviewHeader extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       child: Row(
         children: [
-          PlayerInitialsAvatarCompact(
-            photoUrl: photoUrl?.isEmpty == true ? null : photoUrl,
-            initials: _initials(player.name),
-            size: 48,
-            borderRadius: 8,
+          ClickCursor(
+            child: GestureDetector(
+              key: const ValueKey('player-hover-header-avatar'),
+              behavior: HitTestBehavior.opaque,
+              onTap: onOpenPlayer,
+              child: PlayerInitialsAvatarCompact(
+                photoUrl: photoUrl?.isEmpty == true ? null : photoUrl,
+                initials: _initials(player.name),
+                size: 48,
+                borderRadius: 8,
+              ),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
