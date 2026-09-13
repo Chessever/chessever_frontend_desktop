@@ -14,6 +14,7 @@ import 'package:chessever/desktop/auth/desktop_paywall_copy.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
+import 'package:chessever/desktop/services/billing/desktop_trial_eligibility_provider.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -219,6 +220,12 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
   bool _needsSignIn = false;
   bool _closing = false;
   String? _error;
+
+  /// A created Checkout Session held back because the trial it was sold
+  /// with turned out not to be granted. Same shape as the website's
+  /// pending checkout: the session exists in Stripe either way, and
+  /// declining just never opens it.
+  DesktopCheckoutSession? _pendingTrialCheckout;
   StreamSubscription<EntitlementSnapshot>? _pollSub;
 
   @override
@@ -356,9 +363,14 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
       surface: widget.surface,
       interval: _interval,
     );
-    final String token;
+    // Whether THIS purchase was sold as a trial, read before the round trip.
+    final soldAsTrial = DesktopPricing.offersTrial(
+      ref.read(desktopTrialEligibilityOverrideProvider) ??
+          ref.read(desktopTrialEligibilityProvider).valueOrNull,
+    );
+    final DesktopCheckoutSession created;
     try {
-      token = await DesktopBillingService.instance.openCheckout(
+      created = await DesktopBillingService.instance.createCheckoutSession(
         tier: pricing.pricing.tier,
         interval: _interval,
       );
@@ -378,10 +390,50 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
       return;
     }
     if (!mounted) return;
-    setState(() => _phase = _PaywallPhase.awaitingCheckout);
+    // We promised a trial and Stripe is not giving one: either this person
+    // has already had theirs, or an eligibility read failed and fell
+    // closed. Opening the browser anyway would charge someone who clicked a
+    // button that said "free", so stop and let them choose — the same stop
+    // chessever.com/premium makes. The columns above re-render without the
+    // trial first, so the notice explains a change already on screen.
+    if (soldAsTrial && created.trialDays == 0) {
+      ref.read(desktopTrialEligibilityOverrideProvider.notifier).state = false;
+      setState(() {
+        _phase = _PaywallPhase.idle;
+        _pendingTrialCheckout = created;
+      });
+      return;
+    }
+    await _openSessionAndPoll(created);
+  }
+
+  /// Opens a created session in the browser and watches for the purchase.
+  Future<void> _openSessionAndPoll(DesktopCheckoutSession created) async {
+    try {
+      await DesktopBillingService.instance.launchCheckoutUrl(created.url);
+    } catch (_) {
+      DesktopAccessAnalytics.operationalError(
+        widget.decision,
+        context: widget.accessContext,
+        surface: widget.surface,
+        stage: 'checkout_open',
+      );
+      if (mounted) {
+        setState(() {
+          _phase = _PaywallPhase.idle;
+          _error = 'Checkout could not be opened. Try again.';
+        });
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _phase = _PaywallPhase.awaitingCheckout;
+      _pendingTrialCheckout = null;
+    });
     await _pollSub?.cancel();
     _pollSub = DesktopBillingService.instance
-        .pollAfterCheckout(token)
+        .pollAfterCheckout(created.authToken)
         .listen(
           (entry) {
             // The poll is a hint, not proof. Re-read the notifier; the live
@@ -397,6 +449,13 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
             );
           },
         );
+  }
+
+  Future<void> _confirmPendingTrialCheckout() async {
+    final pending = _pendingTrialCheckout;
+    if (pending == null || _phase != _PaywallPhase.idle) return;
+    setState(() => _phase = _PaywallPhase.openingCheckout);
+    await _openSessionAndPoll(pending);
   }
 
   @override
@@ -508,6 +567,9 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
   List<Widget> _pricingBody() {
     final pricingState = ref.watch(desktopPricingProvider);
     final pricing = pricingState.valueOrNull;
+    final showsTrial = DesktopPricing.offersTrial(
+      effectiveTrialEligibility(ref),
+    );
     if (_phase == _PaywallPhase.awaitingCheckout) {
       return [
         const _Progress(
@@ -525,10 +587,12 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
         ),
       ];
     }
+    final pendingTrial = _pendingTrialCheckout;
     return [
       _PlanSelector(
         pricing: pricing,
         interval: _interval,
+        showsTrial: showsTrial,
         onChanged: (interval) => setState(() => _interval = interval),
       ),
       const SizedBox(height: 16),
@@ -566,6 +630,19 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
           ),
         ],
       ),
+      const SizedBox(height: 12),
+      Text(
+        DesktopPricing.premiumAssuranceLabel(showsTrial: showsTrial),
+        style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+      ),
+      if (pendingTrial != null) ...[
+        const SizedBox(height: 16),
+        _PendingTrialConfirm(
+          busy: _phase != _PaywallPhase.idle,
+          onConfirm: _confirmPendingTrialCheckout,
+          onDismiss: () => setState(() => _pendingTrialCheckout = null),
+        ),
+      ],
     ];
   }
 }
@@ -605,6 +682,73 @@ class _Header extends StatelessWidget {
   }
 }
 
+/// The withheld-trial stop: same copy as chessever.com/premium's pending
+/// checkout. The plan columns above have already re-rendered without the
+/// trial, so this explains a change the user can see.
+class _PendingTrialConfirm extends StatelessWidget {
+  const _PendingTrialConfirm({
+    required this.busy,
+    required this.onConfirm,
+    required this.onDismiss,
+  });
+
+  final bool busy;
+  final VoidCallback onConfirm;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: kBackgroundColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            "You've already used your free trial",
+            style: TextStyle(
+              color: kWhiteColor,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Continuing starts your subscription today at the price shown above.',
+            style: TextStyle(
+              color: kWhiteColor70,
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              DesktopDialogButton(
+                label: busy ? 'Opening checkout' : 'Continue to checkout',
+                tone: DesktopDialogButtonTone.primary,
+                onPress: busy ? null : onConfirm,
+              ),
+              DesktopDialogButton(
+                label: 'Not now',
+                tone: DesktopDialogButtonTone.ghost,
+                onPress: busy ? null : onDismiss,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _Progress extends StatelessWidget {
   const _Progress({required this.label});
 
@@ -635,12 +779,6 @@ class _Progress extends StatelessWidget {
   }
 }
 
-String _formatAmount(double amount, String currencyCode) {
-  if (currencyCode == 'USD') return DesktopPricing.formatUsd(amount);
-  final decimals = amount % 1 == 0 ? 0 : 2;
-  return '${amount.toStringAsFixed(decimals)} $currencyCode';
-}
-
 /// Monthly / annual as ONE composed control: two equal columns inside a
 /// single rounded track, each column carrying the same three rows (plan,
 /// price, detail) so the rows line up regardless of copy length.
@@ -648,11 +786,13 @@ class _PlanSelector extends StatelessWidget {
   const _PlanSelector({
     required this.pricing,
     required this.interval,
+    required this.showsTrial,
     required this.onChanged,
   });
 
   final DesktopResolvedPricing? pricing;
   final String interval;
+  final bool showsTrial;
   final ValueChanged<String> onChanged;
 
   static const double _trackRadius = 10;
@@ -663,7 +803,6 @@ class _PlanSelector extends StatelessWidget {
     final resolved = pricing;
     final tier = resolved?.pricing;
     final currency = resolved?.currencyCode ?? 'USD';
-    final savings = tier?.annualSavingsPercent ?? 0;
     return Container(
       padding: const EdgeInsets.all(_trackPadding),
       decoration: BoxDecoration(
@@ -679,10 +818,19 @@ class _PlanSelector extends StatelessWidget {
               child: _PlanColumn(
                 selected: interval == 'month',
                 plan: 'Monthly',
-                price: tier == null
-                    ? '-'
-                    : _formatAmount(tier.monthlyAmount, currency),
-                detail: 'per month',
+                price:
+                    tier == null
+                        ? '-'
+                        : DesktopPricing.formatAmount(
+                          tier.monthlyAmount,
+                          currency,
+                        ),
+                detail:
+                    tier == null
+                        ? 'per month'
+                        : DesktopPricing.monthlyPlanDetail(
+                          showsTrial: showsTrial,
+                        ),
                 onTap: () => onChanged('month'),
               ),
             ),
@@ -691,16 +839,21 @@ class _PlanSelector extends StatelessWidget {
               child: _PlanColumn(
                 selected: interval == 'year',
                 plan: 'Annual',
-                price: tier == null
-                    ? '-'
-                    : _formatAmount(tier.annualAmount, currency),
-                detail: tier == null
-                    ? 'per year'
-                    : savings > 0
-                    ? '${_formatAmount(tier.annualMonthlyEquivalent, currency)}'
-                          ' a month, save $savings%'
-                    : '${_formatAmount(tier.annualMonthlyEquivalent, currency)}'
-                          ' a month',
+                price:
+                    tier == null
+                        ? '-'
+                        : DesktopPricing.formatAmount(
+                          tier.annualAmount,
+                          currency,
+                        ),
+                detail:
+                    tier == null
+                        ? 'per year'
+                        : DesktopPricing.annualPlanDetail(
+                          pricing: tier,
+                          currencyCode: currency,
+                          showsTrial: showsTrial,
+                        ),
                 onTap: () => onChanged('year'),
               ),
             ),
