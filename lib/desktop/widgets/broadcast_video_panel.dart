@@ -14,6 +14,7 @@ import 'package:webview_all_wkwebview/webview_all_wkwebview.dart'
 import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/state/broadcast_video_streams_provider.dart';
+import 'package:chessever/desktop/state/broadcast_video_visibility_provider.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
@@ -55,8 +56,8 @@ class BroadcastVideoPanel extends ConsumerStatefulWidget {
   /// scope it has.
   final String? roundId;
 
-  /// Identity for the session preference slot (`ce-video.v1:<id>`), matching
-  /// the web's per-tournament sessionStorage key.
+  /// Stable owning event identity: session stream choice and durable video
+  /// visibility share this key, not the current round or inherited source.
   final String tournamentStorageId;
 
   @override
@@ -224,7 +225,9 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
             if (error.isForMainFrame != true || !mounted) return;
             _markFrameFailed();
           },
-          onPageFinished: (_) => unawaited(_verifyEmbedDocument()),
+          onPageFinished: (url) {
+            if (url == _loadedEmbedUrl) unawaited(_verifyEmbedDocument());
+          },
         ),
       );
     _controller = controller;
@@ -295,7 +298,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   /// external link rather than showing that page in the rail.
   Future<void> _verifyEmbedDocument() async {
     final controller = _controller;
-    if (controller == null || _loadedEmbedUrl == null) return;
+    final expectedUrl = _loadedEmbedUrl;
+    if (controller == null || expectedUrl == null) return;
     Object? result;
     try {
       result = await controller.runJavaScriptReturningResult(
@@ -305,7 +309,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       return; // Not answerable (page torn down); the next load re-checks.
     }
     final hasFrame = result == true || result.toString() == 'true';
-    if (!mounted || _loadedEmbedUrl == null) return;
+    if (!mounted || _loadedEmbedUrl != expectedUrl) return;
     if (hasFrame) {
       _autoRetries = 0;
       return;
@@ -319,7 +323,11 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     _loadedEmbedUrl = key;
     _frameFailed = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || _loadedEmbedUrl != key) return;
+      if (!widget.active || !ref.read(liveGameStreamingLifecycleProvider)) {
+        _loadedEmbedUrl = null;
+        return;
+      }
       unawaited(_ensureController().loadRequest(url));
     });
   }
@@ -330,7 +338,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     final controller = _controller;
     if (controller == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || _loadedEmbedUrl != null) return;
       unawaited(controller.loadRequest(Uri.parse('about:blank')));
     });
   }
@@ -362,6 +370,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   void _selectStream(BroadcastVideoStream stream) {
+    _setVisible(true);
     ref
         .read(broadcastVideoSessionPreferencesProvider.notifier)
         .write(
@@ -381,6 +390,18 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   void _setVisible(bool visible) {
+    if (!visible) {
+      _retryTimer?.cancel();
+      _cancelStopGrace();
+      _stopPlaybackNow();
+    }
+    unawaited(
+      ref.read(broadcastVideoVisibilityProvider(widget.tournamentStorageId).notifier)
+          .remember(visible)
+          .catchError((Object error) {
+            debugPrint('Could not persist video visibility: $error');
+          }),
+    );
     final preferences =
         ref.read(broadcastVideoSessionPreferencesProvider)[_storageKey] ??
         const BroadcastVideoPreference();
@@ -408,6 +429,15 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       return const SizedBox.shrink();
     }
     _cancelStopGrace();
+    final visibility = ref.watch(
+      broadcastVideoVisibilityProvider(widget.tournamentStorageId),
+    );
+    // Never create a player before the durable off preference is known.
+    // A storage read error also fails closed instead of autoplaying.
+    if (!visibility.hasValue || visibility.isLoading || visibility.hasError) {
+      _scheduleStopPlayback();
+      return const SizedBox.shrink();
+    }
     final scope = _scope;
     final streamsState = ref.watch(broadcastVideoStreamsProvider(scope));
     final data = streamsState.valueOrNull;
@@ -443,16 +473,9 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       _scheduleStopPlayback();
       return const SizedBox.shrink();
     }
-    final visible = preferences.visible ?? true;
+    final visible = visibility.requireValue;
     if (!visible) _scheduleStopPlayback();
     final groups = groupBroadcastVideoStreams(data.streams);
-    final watchUri = data.source != null
-        ? broadcastVideoWatchUri(
-            scope: data.source!.scope,
-            scopeId: data.source!.id,
-            streamId: selected.id,
-          )
-        : Uri.parse(selected.url);
     // Player first, toolbar under it: every popover and tooltip the toolbar
     // opens then falls downward over our own notation panel, never in front
     // of the provider player. Both Twitch ("should not be obscured in any
@@ -470,12 +493,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
             groups: groups,
             selectedId: selected.id,
             visible: visible,
-            providerName: selected.provider.displayName,
             onSelect: _selectStream,
             onToggle: () => _setVisible(!visible),
-            onOpenWatch: () => unawaited(launchDesktopWebUrl(watchUri)),
-            onOpenSource: () =>
-                unawaited(launchDesktopWebUrl(Uri.parse(selected.url))),
           ),
         ],
       ),
@@ -596,21 +615,15 @@ class _BroadcastVideoToolbar extends StatelessWidget {
     required this.groups,
     required this.selectedId,
     required this.visible,
-    required this.providerName,
     required this.onSelect,
     required this.onToggle,
-    required this.onOpenWatch,
-    required this.onOpenSource,
   });
 
   final List<BroadcastVideoStreamGroup> groups;
   final String selectedId;
   final bool visible;
-  final String providerName;
   final ValueChanged<BroadcastVideoStream> onSelect;
   final VoidCallback onToggle;
-  final VoidCallback onOpenWatch;
-  final VoidCallback onOpenSource;
 
   // A 30px flag, plus the 18px count badge laid out beside it when the
   // language owns several streams. Reserving the badged footprint for every
@@ -629,7 +642,7 @@ class _BroadcastVideoToolbar extends StatelessWidget {
         builder: (context, constraints) {
           // The trailing actions are fixed; only the remaining width can hold
           // language slots.
-          const actionsWidth = 106.0;
+          const actionsWidth = 38.0;
           final flagsWidth = constraints.maxWidth - actionsWidth;
           final capacity = flagsWidth <= 0
               ? 0
@@ -663,21 +676,9 @@ class _BroadcastVideoToolbar extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               _RailIconButton(
-                icon: Icons.open_in_new_rounded,
-                tooltip: 'Open on $providerName',
-                onPress: onOpenSource,
-              ),
-              const SizedBox(width: 2),
-              _RailIconButton(
-                icon: Icons.grid_view_rounded,
-                tooltip: 'Watch video with live boards',
-                onPress: onOpenWatch,
-              ),
-              const SizedBox(width: 2),
-              _RailIconButton(
                 icon: visible
-                    ? Icons.videocam_rounded
-                    : Icons.videocam_off_rounded,
+                    ? Icons.videocam_off_rounded
+                    : Icons.videocam_rounded,
                 tooltip: visible ? 'Hide video' : 'Show video',
                 selected: visible,
                 onPress: onToggle,

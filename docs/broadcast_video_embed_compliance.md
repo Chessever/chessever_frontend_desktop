@@ -122,8 +122,9 @@ place, owner named; N/A = does not apply.
    YouTube reading above depends on the stream staying supplementary to the
    product's own value. A "Pay to watch GM live streams" pitch, anywhere,
    breaks both.
-9. The toolbar always offers "Open on <Provider>", so the official source is
-   one click away whatever the embed does.
+9. Keep the provider player's own source links and attribution unmodified.
+   The desktop toolbar omits the redundant external-provider and watch-grid
+   icons; failed or too-narrow embeds still offer an explicit provider link.
 10. When the broadcasting API supplies `publication.madeForKids`, the site
     switches YouTube to `youtube-nocookie.com`; do not remove that path.
 
