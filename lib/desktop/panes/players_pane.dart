@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -22,8 +23,8 @@ import 'package:chessever/repository/gamebase/memorial_player.dart';
 import 'package:chessever/screens/players/providers/player_providers.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/favorite_limit_guard.dart';
-import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
+
+
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 
@@ -694,58 +695,16 @@ Future<void> _toggleFavorite(
   WidgetRef ref,
   Map<String, dynamic> player, {
   required bool isFavorite,
-}) async {
-  final allowed = await requireFullAuthGuard(context);
-  if (!allowed || !context.mounted) return;
-
-  if (!isFavorite) {
-    final canAdd = await canAddMoreFavorites(context, ref);
-    if (!canAdd || !context.mounted) return;
-  }
-
-  final fideId = _playerFideId(player);
-  final memorialIdentity = _stringField(player, const [
-    'memorialSourceIdentity',
-  ]);
-  if (fideId.isEmpty || memorialIdentity.isNotEmpty) {
-    final name = _playerName(player);
-    if (name.isEmpty) return;
-    unawaited(
-      isFavorite
-          ? ref
-              .read(favoritePlayersProviderNew.notifier)
-              .removeFavorite(
-                name,
-                fideId: fideId.isEmpty ? null : fideId,
-                memorialSourceIdentity:
-                    memorialIdentity.isEmpty ? null : memorialIdentity,
-              )
-          : ref
-              .read(favoritePlayersProviderNew.notifier)
-              .addFavorite(
-                fideId: fideId.isEmpty ? null : fideId,
-                playerName: name,
-                countryCode: _playerFederation(player),
-                rating: _playerRating(player),
-                title: _playerTitle(player),
-                gamebasePlayerId: _stringField(player, const [
-                  'gamebasePlayerId',
-                ]),
-                memorialSourceIdentity:
-                    memorialIdentity.isEmpty ? null : memorialIdentity,
-                memorialRouteId: _stringField(player, const [
-                  'memorialRouteId',
-                ]),
-              ),
-    );
-    return;
-  }
-  unawaited(
-    ref
-        .read(playerPaginationProvider.notifier)
-        .setFavorite(fideId, !isFavorite),
-  );
-}
+}) => setDesktopPlayerFavorite(context, ref,
+  favorite: !isFavorite,
+  playerName: _playerName(player),
+  fideId: _playerFideId(player).isEmpty ? null : _playerFideId(player),
+  countryCode: _playerFederation(player), rating: _playerRating(player),
+  title: _playerTitle(player),
+  gamebasePlayerId: _stringField(player, const ['gamebasePlayerId']),
+  memorialSourceIdentity: _stringField(player, const ['memorialSourceIdentity']),
+  memorialRouteId: _stringField(player, const ['memorialRouteId']),
+);
 
 void _openPlayer(
   WidgetRef ref,
@@ -781,8 +740,7 @@ bool _isFavorite(
   final memorialIdentity = _stringField(player, const [
     'memorialSourceIdentity',
   ]);
-  return player['isFavorite'] == true ||
-      favoritePlayers.any(
+  return favoritePlayers.any(
         (favorite) => favoritePlayerMatchesIdentity(
           favorite,
           fideId: fideId,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/auth/desktop_play_access.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
@@ -1467,6 +1468,7 @@ bool _startHumanTournamentGame(
   required bool humanIsWhite,
   String? tabId,
 }) {
+  if (!admitDesktopPlay(ref)) return false;
   final binaryPath = engineBinaryPathFor(ref, opponent.engine);
   if (binaryPath == null) return false;
   final started =

@@ -24,6 +24,7 @@ enum DesktopFeature {
   gameReport,
   prepare,
   engineTournament,
+  play,
   botvinnik,
   localFiles,
   sharedBook,

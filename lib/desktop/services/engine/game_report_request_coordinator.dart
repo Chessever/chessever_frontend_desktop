@@ -4,12 +4,8 @@ import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report_store.dart';
-import 'package:chessever/repository/supabase/game_analysis_quota_repository.dart';
+import 'package:chessever/desktop/services/engine/game_report_allowance.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
-
-/// Claims a report slot: `public.claim_game_analysis_report(p_fingerprint)`.
-typedef GameReportClaim =
-    Future<GameAnalysisClaimResult> Function(String fingerprint);
 
 enum GameReportRequestOutcome {
   /// A report for this exact mainline was already on screen or cached.
@@ -28,7 +24,7 @@ enum GameReportRequestOutcome {
   unavailable,
   accountRequired,
 
-  /// Today's free report is spent and no upgrade completed.
+  /// The account's lifetime free report is spent and no upgrade completed.
   quotaExceeded,
 
   /// The claim could not be answered. Retry, never a purchase prompt.
@@ -37,12 +33,12 @@ enum GameReportRequestOutcome {
 
 @immutable
 class GameReportRequestResult {
-  const GameReportRequestResult(this.outcome, {this.claimReason, this.message});
+  const GameReportRequestResult(this.outcome, {this.reason, this.message});
 
   final GameReportRequestOutcome outcome;
 
-  /// The server's last `reason`, when a claim was made.
-  final String? claimReason;
+  /// Stable machine-readable reason for logs/tests.
+  final String? reason;
   final String? message;
 
   /// Whether the request ended without a report and needs to explain why.
@@ -55,7 +51,7 @@ class GameReportRequestResult {
   };
 
   @override
-  String toString() => 'GameReportRequestResult($outcome, $claimReason)';
+  String toString() => 'GameReportRequestResult($outcome, $reason)';
 }
 
 /// Interactive steps a denial may take. Every callback runs only in the
@@ -71,8 +67,8 @@ class GameReportRequestUi {
   /// Offers sign-in. Resolves true when an account is now available.
   final Future<bool> Function()? requestAccount;
 
-  /// Opens the paywall for [denial]. Resolves true when the user subscribed.
-  final Future<bool> Function(GameAnalysisClaimResult denial)? requestUpgrade;
+  /// Opens the paywall. Resolves true when the user subscribed.
+  final Future<bool> Function()? requestUpgrade;
 
   /// Re-reads the entitlement after a purchase, before claiming again.
   final Future<void> Function()? refreshEntitlement;
@@ -80,8 +76,8 @@ class GameReportRequestUi {
 
 /// Whether [headers] (or the game's own tags) record a finished result.
 bool gameReportHasFinalResult(ChessGame game, Map<String, String> headers) {
-  final raw = (headers['Result'] ?? game.metadata['Result']?.toString() ?? '')
-      .trim();
+  final raw =
+      (headers['Result'] ?? game.metadata['Result']?.toString() ?? '').trim();
   return raw == '1-0' || raw == '0-1' || raw == '1/2-1/2' || raw == '½-½';
 }
 
@@ -89,27 +85,47 @@ bool gameReportHasFinalResult(ChessGame game, Map<String, String> headers) {
 /// alternate trigger. The order is fixed:
 ///
 /// 1. validate the game (source access, finished, nonempty mainline);
-/// 2. restore a completed session report or an account-scoped cached report,
-///    which never spends a claim and works offline;
-/// 3. otherwise call `claim_game_analysis_report` with the cross-platform
-///    fingerprint;
-/// 4. generate only after an affirmative claim. Server first, then the local
-///    engine: the local fallback lives inside the controller's `analyze`,
-///    which is unreachable from here without an allowed claim;
-/// 5. after an upgrade, refresh the entitlement and claim again before
+/// 2. require an account and serialize this account's requests in-process so
+///    two tabs cannot both consume the one free success;
+/// 3. restore a completed session report or account-scoped cached report only
+///    when this account has explicitly admitted that fingerprint. A first
+///    explicit cache hit can spend the free success;
+/// 4. generate only when Premium is verified or the lifetime free success is
+///    still unused. Failed/cancelled analysis writes no success marker;
+/// 5. after an upgrade, refresh the entitlement and re-check before
 ///    generating.
 class GameReportRequestCoordinator {
   GameReportRequestCoordinator({
-    required GameReportClaim claim,
     required String? Function() accountId,
+    required bool Function() isPremium,
+    Object? Function()? accountEpoch,
+    bool Function()? entitlementKnown,
     GameAnalysisReportStore? store,
-  }) : _claim = claim,
-       _accountId = accountId,
-       _store = store ?? GameAnalysisReportStore.instance;
+    GameReportAllowanceStore? allowanceStore,
+  }) : _accountId = accountId,
+       _isPremium = isPremium,
+       _accountEpoch = accountEpoch ?? accountId,
+       _entitlementKnown = entitlementKnown ?? _alwaysCurrent,
+       _store = store ?? GameAnalysisReportStore.instance,
+       _allowanceStore = allowanceStore ?? GameReportAllowanceStore.instance;
 
-  final GameReportClaim _claim;
   final String? Function() _accountId;
+  final bool Function() _isPremium;
+  final Object? Function() _accountEpoch;
+  final bool Function() _entitlementKnown;
   final GameAnalysisReportStore _store;
+  final GameReportAllowanceStore _allowanceStore;
+  static final Map<String, Future<void>> _accountChains = {};
+  static bool _alwaysCurrent() => true;
+  static const _stale = GameReportRequestResult(
+    GameReportRequestOutcome.temporarilyUnavailable,
+    reason: 'stale_request',
+    message: 'Start the report again from the current game.',
+  );
+  static const _retry = GameReportRequestResult(
+    GameReportRequestOutcome.temporarilyUnavailable,
+    message: "Couldn't check your report allowance.",
+  );
 
   Future<GameReportRequestResult> request({
     required GameAnalysisReportController controller,
@@ -118,132 +134,168 @@ class GameReportRequestCoordinator {
     bool sourceAccessible = true,
     int? whiteRating,
     int? blackRating,
+    bool Function() isCurrent = _alwaysCurrent,
     GameReportRequestUi ui = const GameReportRequestUi(),
   }) async {
-    // 1. Validate. Nothing expensive starts for a request that cannot run.
+    if (!isCurrent()) return _stale;
     if (controller.state.isRunning) {
       return const GameReportRequestResult(GameReportRequestOutcome.busy);
     }
-    if (!sourceAccessible) {
+    if (!sourceAccessible ||
+        game == null ||
+        game.mainline.isEmpty ||
+        !gameFinished) {
       return const GameReportRequestResult(
         GameReportRequestOutcome.unavailable,
-        message: 'Reports are not available for games from this source.',
+        message: 'Load an accessible finished game with moves.',
       );
     }
-    if (game == null || game.mainline.isEmpty) {
-      return const GameReportRequestResult(
-        GameReportRequestOutcome.unavailable,
-        message: 'Load a game with at least one move.',
-      );
-    }
-    if (!gameFinished) {
-      return const GameReportRequestResult(
-        GameReportRequestOutcome.unavailable,
-        message: 'Reports are available once the game has a result.',
-      );
-    }
-    final fingerprint = gameReportFingerprint(game);
-
-    // 2. Restore. A completed report is never paid for twice.
-    final shown = controller.state;
-    if (shown.status == GameReportStatus.completed &&
-        shown.report?.fingerprint == fingerprint) {
-      return const GameReportRequestResult(GameReportRequestOutcome.restored);
-    }
-    final account = _accountId();
-    if (account != null && account.isNotEmpty) {
-      final cached = await _store.load(account, fingerprint);
-      if (cached != null && controller.adoptCompletedReport(cached)) {
+    var account = _accountId();
+    if (account == null || account.isEmpty) {
+      if (ui.requestAccount == null ||
+          !await ui.requestAccount!() ||
+          !isCurrent()) {
         return const GameReportRequestResult(
-          GameReportRequestOutcome.restored,
-        );
-      }
-    }
-
-    // 3. Claim.
-    var claim = await _claimOrNull(fingerprint);
-    if (claim == null) return _unavailableClaim;
-
-    if (!claim.allowed && claim.needsAuth) {
-      final requestAccount = ui.requestAccount;
-      if (requestAccount == null || !await requestAccount()) {
-        return GameReportRequestResult(
           GameReportRequestOutcome.accountRequired,
-          claimReason: claim.reason,
         );
       }
-      claim = await _claimOrNull(fingerprint);
-      if (claim == null) return _unavailableClaim;
+      account = _accountId();
     }
+    if (account == null || account.isEmpty) {
+      return const GameReportRequestResult(
+        GameReportRequestOutcome.accountRequired,
+      );
+    }
+    final owner = account;
+    final epoch = _accountEpoch();
+    final fingerprint = gameReportFingerprint(game);
+    bool current() =>
+        isCurrent() &&
+        _accountId() == owner &&
+        _accountEpoch() == epoch &&
+        gameReportFingerprint(game) == fingerprint;
 
-    // 5. Upgrade, refresh, claim again. The paywall's answer is never trusted
-    // on its own: only a second affirmative claim unlocks generation.
-    if (!claim.allowed && claim.dailyLimitReached) {
-      final requestUpgrade = ui.requestUpgrade;
-      if (requestUpgrade == null || !await requestUpgrade(claim)) {
-        return GameReportRequestResult(
-          GameReportRequestOutcome.quotaExceeded,
-          claimReason: claim.reason,
-        );
-      }
+    return _runSerialized(owner, () async {
       try {
-        await ui.refreshEntitlement?.call();
+        if (!current()) return _stale;
+        final admitted = await _allowanceStore.hasAdmittedReport(
+          owner,
+          fingerprint,
+        );
+        if (!current()) return _stale;
+        final shown = controller.state;
+        final sessionReport =
+            shown.status == GameReportStatus.completed &&
+                    shown.report?.fingerprint == fingerprint
+                ? shown.report
+                : null;
+        final cached = sessionReport ?? await _store.load(owner, fingerprint);
+        if (!current()) return _stale;
+        if (admitted && cached != null) {
+          if (sessionReport == null &&
+              !controller.adoptCompletedReport(cached)) {
+            return const GameReportRequestResult(GameReportRequestOutcome.busy);
+          }
+          return const GameReportRequestResult(
+            GameReportRequestOutcome.restored,
+          );
+        }
+
+        // Previously admitted reports may be recomputed after cache eviction;
+        // new fingerprints require the lifetime allowance or verified Premium.
+        var premiumAdmission = _isPremium();
+        if (!admitted && !premiumAdmission) {
+          final spent = await _allowanceStore.hasLifetimeSuccess(owner);
+          if (!current()) return _stale;
+          if (spent) {
+            if (!_entitlementKnown()) return _retry;
+            if (ui.requestUpgrade == null || !await ui.requestUpgrade!()) {
+              if (!current()) return _stale;
+              return const GameReportRequestResult(
+                GameReportRequestOutcome.quotaExceeded,
+                reason: 'lifetime_free_success_used',
+              );
+            }
+            if (!current()) return _stale;
+            await ui.refreshEntitlement?.call();
+            if (!current()) return _stale;
+            if (!_isPremium()) {
+              return const GameReportRequestResult(
+                GameReportRequestOutcome.quotaExceeded,
+                reason: 'lifetime_free_success_used',
+              );
+            }
+            premiumAdmission = true;
+          }
+        }
+        if (!current()) return _stale;
+        if (cached != null) {
+          if (!controller.adoptCompletedReport(cached)) {
+            return const GameReportRequestResult(GameReportRequestOutcome.busy);
+          }
+        } else {
+          await controller.analyze(
+            game,
+            whiteRating: whiteRating,
+            blackRating: blackRating,
+          );
+        }
+        if (!current()) return _stale;
+        final state = controller.state;
+        final report = state.report;
+        if (state.status != GameReportStatus.completed ||
+            report == null ||
+            report.fingerprint != fingerprint) {
+          // Failure/cancellation releases the in-process reservation unspent.
+          return const GameReportRequestResult(
+            GameReportRequestOutcome.generated,
+            reason: 'not_delivered',
+          );
+        }
+        if (!admitted) {
+          // Await durable admission before releasing the queue to another tab.
+          if (premiumAdmission) {
+            await _allowanceStore.markReportAdmitted(owner, fingerprint);
+          } else {
+            await _allowanceStore.markFreeSuccess(owner, fingerprint);
+          }
+        }
+        // Keep the success marker even if the optional report cache fails.
+        try {
+          await _store.save(owner, report);
+        } catch (_) {}
+        if (!current()) return _stale;
+        return GameReportRequestResult(
+          cached == null
+              ? GameReportRequestOutcome.generated
+              : GameReportRequestOutcome.restored,
+          reason:
+              admitted
+                  ? 'already_admitted'
+                  : premiumAdmission
+                  ? 'premium'
+                  : 'free_success',
+        );
       } catch (error) {
-        debugPrint('[GameReport] entitlement refresh failed: $error');
+        debugPrint('[GameReport] admission unavailable: ${error.runtimeType}');
+        return _retry;
       }
-      claim = await _claimOrNull(fingerprint);
-      if (claim == null) return _unavailableClaim;
-    }
-
-    if (!claim.allowed) {
-      return GameReportRequestResult(
-        claim.dailyLimitReached
-            ? GameReportRequestOutcome.quotaExceeded
-            : claim.needsAuth
-            ? GameReportRequestOutcome.accountRequired
-            : GameReportRequestOutcome.temporarilyUnavailable,
-        claimReason: claim.reason,
-      );
-    }
-
-    // 4. Generate. From here the day's slot is spent: cancelling, closing the
-    // tab or a failed run does NOT refund it. There is deliberately no refund
-    // path; retrying the same game today is free (`same_day_same_game`).
-    await controller.analyze(
-      game,
-      whiteRating: whiteRating,
-      blackRating: blackRating,
-    );
-    final finished = controller.state;
-    final report = finished.report;
-    if (account != null &&
-        account.isNotEmpty &&
-        finished.status == GameReportStatus.completed &&
-        report != null &&
-        report.fingerprint == fingerprint) {
-      unawaited(
-        _store.save(account, report).catchError((Object error) {
-          debugPrint('[GameReport] cache save failed: $error');
-        }),
-      );
-    }
-    return GameReportRequestResult(
-      GameReportRequestOutcome.generated,
-      claimReason: claim.reason,
-    );
+    });
   }
 
-  static const _unavailableClaim = GameReportRequestResult(
-    GameReportRequestOutcome.temporarilyUnavailable,
-    message: "Couldn't check your report allowance.",
-  );
-
-  Future<GameAnalysisClaimResult?> _claimOrNull(String fingerprint) async {
-    try {
-      return await _claim(fingerprint);
-    } catch (error) {
-      debugPrint('[GameReport] claim failed: $error');
-      return null;
-    }
+  static Future<T> _runSerialized<T>(
+    String account,
+    Future<T> Function() action,
+  ) {
+    final previous = _accountChains[account] ?? Future<void>.value();
+    final completer = Completer<void>();
+    final gate = previous.catchError((_) {}).then((_) => completer.future);
+    _accountChains[account] = gate;
+    return previous.catchError((_) {}).then((_) => action()).whenComplete(() {
+      completer.complete();
+      if (identical(_accountChains[account], gate)) {
+        _accountChains.remove(account);
+      }
+    });
   }
 }

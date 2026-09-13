@@ -1,9 +1,10 @@
 import 'dart:async';
+import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
-import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
-import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
+
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 
 import 'package:flutter/gestures.dart';
@@ -74,11 +75,11 @@ import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/country_utils.dart';
-import 'package:chessever/utils/favorite_constants.dart';
-import 'package:chessever/utils/favorite_limit_guard.dart';
+
+
 import 'package:chessever/utils/number_format_utils.dart';
 import 'package:chessever/utils/png_asset.dart';
-import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
+
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
@@ -328,70 +329,17 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   }
 
   Future<void> _toggleFavorite() async {
-    final allowed = await requireFullAuthGuard(context);
-    if (!allowed) return;
-    final fideStr = widget.args.fideId?.toString();
-    final playerName = widget.args.playerName.trim();
-    final favs = ref.read(favoritePlayersProviderNew);
-    final already = favs.maybeWhen(
-      data:
-          (players) => players.any(
-            (player) => favoritePlayerMatchesIdentity(
-              player,
-              fideId: fideStr,
-              playerName: playerName,
-              memorialSourceIdentity: widget.args.memorialSourceIdentity,
-            ),
-          ),
-      orElse: () => false,
-    );
-    if (!already) {
-      if (!mounted) return;
-      final canAdd = await canAddMoreFavorites(context, ref);
-      if (!canAdd) return;
-    }
-    try {
-      await ref
-          .read(favoritePlayersProviderNew.notifier)
-          .toggleFavorite(
-            fideId: widget.args.fideId?.toString(),
-            playerName: widget.args.playerName,
-            countryCode: widget.args.federation,
-            rating: widget.args.rating,
-            title: widget.args.title,
-            gamebasePlayerId: widget.args.gamebasePlayerId,
-            memorialSourceIdentity: widget.args.memorialSourceIdentity,
-            memorialRouteId: widget.args.memorialRouteId,
-          );
-    } on FavoriteLimitExceededException catch (limitReached) {
-      // Freemium: the server refused a favourite PLAYER past the free limit.
-      // Show the specific limit, not a generic failure. Events are unlimited.
-      if (mounted) {
-        unawaited(
-          showDesktopPaywall(
-            context,
-            DesktopAccessDecision(
-              DesktopAccess.quotaExceeded,
-              DesktopAccessReason.quotaFavoritePlayers,
-              capacity: DesktopQuotaCapacity(
-                quota: DesktopQuota.favoritePlayers,
-                used: limitReached.limit,
-                limit: limitReached.limit,
-                requested: 1,
-              ),
-            ),
-            surface: 'favorite_player_limit',
-          ),
-        );
-      }
-    } catch (_) {
-      if (!mounted) return;
-      showDesktopToast(
-        context,
-        'Failed to update favorite. Please try again.',
-        error: true,
-      );
-    }
+    final args = widget.args;
+    final favorites = ref.read(favoritePlayersProviderNew).valueOrNull ?? const [];
+    final already = favorites.any((player) => favoritePlayerMatchesIdentity(player,
+      fideId: args.fideId?.toString(), playerName: args.playerName.trim(),
+      memorialSourceIdentity: args.memorialSourceIdentity));
+    await setDesktopPlayerFavorite(context, ref, favorite: !already,
+      playerName: args.playerName, fideId: args.fideId?.toString(),
+      countryCode: args.federation, rating: args.rating, title: args.title,
+      gamebasePlayerId: args.gamebasePlayerId,
+      memorialSourceIdentity: args.memorialSourceIdentity,
+      memorialRouteId: args.memorialRouteId);
   }
 
   void _showToast(String message, {bool error = false}) {

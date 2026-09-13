@@ -1,5 +1,6 @@
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report_store.dart';
+import 'package:chessever/desktop/services/engine/game_report_allowance.dart';
 import 'package:chessever/desktop/services/engine/game_report_request_coordinator.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
@@ -35,7 +36,8 @@ void main() {
     'legacy automatic setting on',
     (tester) async {
       var engineRuns = 0;
-      var claims = 0;
+      final allowance = GameReportAllowanceStore.memory();
+      await allowance.markFreeSuccess('account-1', 'already-used');
       final controller = GameAnalysisReportController(
         evaluator: (
           fen, {
@@ -50,12 +52,10 @@ void main() {
       );
       addTearDown(controller.dispose);
       final coordinator = GameReportRequestCoordinator(
-        claim: (_) async {
-          claims++;
-          throw Exception('offline');
-        },
         accountId: () => 'account-1',
+        isPremium: () => false,
         store: GameAnalysisReportStore.memory(),
+        allowanceStore: allowance,
       );
       final game = ChessGame.fromPgn(
         'auto-report',
@@ -95,21 +95,19 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
 
-      expect(claims, 0);
       expect(engineRuns, 0);
       expect(controller.state.status, GameReportStatus.idle);
       expect(find.text('Analyze Game'), findsOneWidget);
 
-      // An explicit request is the only way in. A failed claim is Retry,
-      // never a purchase prompt, and starts no engine work.
+      // An explicit request is the only way in. A spent lifetime free report
+      // shows the upgrade path and starts no engine work.
       await tester.tap(find.text('Analyze Game'));
       await tester.pump();
       await tester.pump();
 
-      expect(claims, 1);
       expect(engineRuns, 0);
-      expect(find.text("Couldn't check your report allowance"), findsOneWidget);
-      expect(find.text('Retry'), findsOneWidget);
+      expect(find.text('Your free report is used'), findsOneWidget);
+      expect(find.text('See Premium'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 5));

@@ -57,7 +57,7 @@ String? desktopCapacityLine(DesktopQuotaCapacity? capacity) {
     case DesktopQuota.cloudSavedGames:
       return '$used of $limit saved ${_plural(limit, 'game')} used';
     case DesktopQuota.gameReportsPerUtcDay:
-      return '$used of $limit ${_plural(limit, 'report')} used today';
+      return '$used of $limit free ${_plural(limit, 'report')} used';
     case DesktopQuota.none:
       return null;
   }
@@ -160,6 +160,8 @@ String _sourceName(DesktopAccessContext? context) {
       return 'Countrymen';
     case DesktopFeature.smartCollection:
       return 'smart collections';
+    case DesktopFeature.play:
+      return 'Play';
     case DesktopFeature.playerProfile:
       return 'player profiles';
     case DesktopFeature.twic:
@@ -230,6 +232,11 @@ DesktopPaywallCopy _premiumCopy(
         body:
             'Computed stats, comparisons, drilldowns and the combined database '
             'need Premium. Your downloaded files are untouched.',
+      );
+    case DesktopAccessReason.premiumPlay:
+      return const DesktopPaywallCopy(
+        title: 'Play is Premium',
+        body: 'Play against engines and enter tournaments with Premium. Your existing games remain yours.',
       );
     case DesktopAccessReason.premiumEngineTournament:
       return const DesktopPaywallCopy(
@@ -341,8 +348,10 @@ DesktopPaywallCopy _premiumCopy(
       );
     case DesktopAccessReason.quotaGameReportsPerUtcDay:
       return DesktopPaywallCopy(
-        title: 'Today\'s free game report is used',
-        body: 'A new free report is available tomorrow (UTC).',
+        title: 'Your free game report is used',
+        body:
+            'Free accounts include one successful game report. Premium adds '
+            'unlimited reports.',
         capacityLine: capacityLine,
       );
     default:

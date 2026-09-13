@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/auth/desktop_play_access.dart';
+import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -70,13 +72,22 @@ Future<void> showPlayFromHereDialog(
   WidgetRef ref, {
   required PlayFromHereSeed seed,
 }) async {
+  if (!admitDesktopPlay(ref)) return;
+  final container = ProviderScope.containerOf(context, listen: false);
+  final account = container.read(desktopAccountIdentityProvider);
+  final owner = container.read(desktopTabsProvider).activeId;
   final result = await showFDialog<_PlayFromHereDecision>(
     context: context,
     builder:
         (ctx, _, animation) =>
             _PlayFromHereDialog(seed: seed, animation: animation),
   );
-  if (result == null) return;
+  if (result == null || !context.mounted ||
+      container.read(desktopAccountIdentityProvider) != account ||
+      container.read(desktopTabsProvider).activeId != owner ||
+      !admitDesktopPlay(ref)) {
+    return;
+  }
 
   final tabId = ref
       .read(desktopTabsProvider.notifier)
@@ -150,6 +161,7 @@ void startPlayAgainFromBoardHeaders(
   WidgetRef ref,
   Map<String, String> headers,
 ) {
+  if (!admitDesktopPlay(ref)) return;
   final kindName = headers['ChessEverEngineKind'];
   if (kindName == null || kindName.isEmpty) return;
   final engine = BotEngineKind.values.firstWhere(

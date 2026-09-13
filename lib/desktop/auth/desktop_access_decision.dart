@@ -22,6 +22,7 @@ enum DesktopAccessReason {
   accountRequiredForPurchase('account_required_purchase'),
   accountRequiredForBotvinnik('account_required_botvinnik'),
   premiumPaidSource('premium_paid_source'),
+  premiumPlay('premium_play'),
   premiumPrepareTarget('premium_prepare_target'),
   premiumPrepareSource('premium_prepare_source'),
   premiumPrepareComputed('premium_prepare_computed'),
@@ -298,6 +299,8 @@ _Requirement _requirementFor(DesktopAccessContext context, DateTime now) {
   }
 
   switch (context.feature) {
+    case DesktopFeature.play:
+      return const _Requirement.premium(DesktopAccessReason.premiumPlay);
     case DesktopFeature.prepare:
       return _prepareRequirement(context.action);
     case DesktopFeature.engineTournament:
@@ -380,7 +383,7 @@ _Requirement _provenanceRequirement(DesktopAccessContext context, DateTime now) 
     if (context.ownershipCovers) return _owned;
     if (_paidSourceFreeActions.contains(context.action)) return _free;
     // Favouriting a player found on a profile is a favourites quota
-    // decision; a report is a daily-report quota decision.
+    // decision; interactive reports use their account-lifetime coordinator.
     if (_isQuotaOnlyFeature(context.feature) &&
         context.effectiveQuota != DesktopQuota.none) {
       return _free;

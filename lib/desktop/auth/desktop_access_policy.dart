@@ -74,7 +74,8 @@ const int desktopFreeCloudSavedGames = 10;
 /// was fixed here.
 const int desktopFreeExplorerPlies = 20;
 
-/// Free tier: one game report per UTC day, per NEW game fingerprint.
+/// Legacy shared daily-quota shape. Interactive Desktop reports now use the
+/// account-lifetime success ledger in GameReportRequestCoordinator instead.
 ///
 /// Spec: "desktopFreeGameReportsPerUtcDay = 1 // per NEW game fingerprint".
 /// Re-opening or recomputing a report that already exists for the same game

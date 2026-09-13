@@ -5298,6 +5298,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           gameReport.value = report;
                         },
                         reportResetRevision: reportResetRevision.value,
+                        reportRevealRevision: reportRevealRevision.value,
                         onReportRunningChanged: (running) {
                           if (!context.mounted) return;
                           if (reportRunning.value != running) {

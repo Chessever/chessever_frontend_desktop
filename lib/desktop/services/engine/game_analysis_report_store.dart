@@ -21,7 +21,7 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 /// * the app SQLite cache, bounded to [maxEntries] rows per account, which
 ///   survives restarts and works offline.
 ///
-/// A cached report is served without claiming a daily slot; see
+/// A cached report is served only after account-scoped admission; see
 /// `GameReportRequestCoordinator`.
 class GameAnalysisReportStore {
   /// Production store on the already-open shared app database.

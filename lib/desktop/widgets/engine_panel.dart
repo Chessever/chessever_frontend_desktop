@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/state/desktop_account_identity.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
@@ -8,7 +12,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
-import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
+import 'package:chessever/desktop/services/desktop_subscription_stub.dart' show DesktopSubscriptionNotifier;
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/engine/game_report_request_coordinator.dart';
 import 'package:chessever/desktop/services/engine/game_report_book_lookup.dart';
@@ -25,12 +29,12 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
-import 'package:chessever/repository/supabase/game_analysis_quota_repository.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
-import 'package:chessever/widgets/paywall/premium_paywall_sheet.dart';
+
 import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
 
 @visibleForTesting
@@ -64,6 +68,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.onReportRunningChanged,
     this.onReportChanged,
     this.reportResetRevision = 0,
+    this.reportRevealRevision = 0,
     this.reportVisible = false,
     this.isForegroundTab = true,
     this.autoAnalysisAllowed = true,
@@ -98,6 +103,10 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// game fingerprint. A later explicit request restores it from the cache.
   final int reportResetRevision;
 
+  /// Incremented by the Show Report command. A new value while [reportVisible]
+  /// is true represents an explicit user admission request.
+  final int reportRevealRevision;
+
   /// Whether the session-scoped game-analysis report is currently shown.
   /// Fully independent of the engine on/off state — closing the engine lines
   /// never removes the report, and vice versa. The toggle itself lives beside
@@ -110,8 +119,8 @@ class EnginePanel extends ConsumerStatefulWidget {
   final bool isForegroundTab;
 
   /// Kept for call-site compatibility only. Automatic report generation was
-  /// removed: every new report spends a server-authorized daily claim, so one
-  /// only starts from an explicit Analyze or Retry. This flag starts nothing.
+  /// removed: every new report admission starts from an explicit Show Report,
+  /// Analyze or Retry. This flag starts nothing.
   final bool autoAnalysisAllowed;
 
   /// Whether the loaded game's source lets this account create a report.
@@ -131,7 +140,7 @@ class EnginePanel extends ConsumerStatefulWidget {
   @visibleForTesting
   final GameAnalysisReportController? reportController;
 
-  /// Test seam for the claim-first request path.
+  /// Test seam for the admission-first request path.
   @visibleForTesting
   final GameReportRequestCoordinator? reportCoordinator;
 
@@ -151,6 +160,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
   /// or the next request starts.
   GameReportRequestResult? _requestNotice;
   bool _requesting = false;
+  bool Function()? _reportOwnerIsCurrent;
 
   @override
   void initState() {
@@ -172,13 +182,20 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     _reportCoordinator =
         widget.reportCoordinator ??
         GameReportRequestCoordinator(
-          claim:
-              (fingerprint) => ref
-                  .read(gameAnalysisQuotaRepositoryProvider)
-                  .claim(fingerprint),
           accountId: () => Supabase.instance.client.auth.currentUser?.id,
+          isPremium: () => desktopPremiumAccess(ref.read(subscriptionProvider)) == DesktopAccess.allowed,
+          accountEpoch: () => ref.read(desktopAccountIdentityProvider),
+          entitlementKnown: () {
+            final value = desktopPremiumAccess(ref.read(subscriptionProvider));
+            return value == DesktopAccess.allowed || value == DesktopAccess.premiumRequired;
+          },
         );
     _gameFingerprint = _fingerprint(widget.game);
+    if (widget.reportVisible && widget.reportRevealRevision > 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_analyze());
+      });
+    }
   }
 
   @override
@@ -195,6 +212,12 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       _gameFingerprint = nextFingerprint;
       _requestNotice = null;
       _reportController.invalidate();
+    }
+    if (widget.reportVisible &&
+        oldWidget.reportRevealRevision != widget.reportRevealRevision) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_analyze());
+      });
     }
   }
 
@@ -214,12 +237,20 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       });
     }
     final report = reportState.report;
-    final reportChanged = !identical(report, _lastPublishedReport);
+    final reportChanged = !_requesting &&
+        (_reportOwnerIsCurrent?.call() ?? true) &&
+        !identical(report, _lastPublishedReport);
     if (reportChanged) {
       _lastPublishedReport = report;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !identical(_lastPublishedReport, report)) return;
-        widget.onReportChanged?.call(report);
+        if (!mounted || !identical(_lastPublishedReport, report) ||
+            !(_reportOwnerIsCurrent?.call() ?? true)) {
+          return;
+        }
+        final current = _gameFingerprint;
+        widget.onReportChanged?.call(
+          report == null || report.fingerprint == current ? report : null,
+        );
       });
     }
     // Progress-only ticks stream in as fast as the engine reports; those are
@@ -234,6 +265,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
   Future<void> _analyze() async {
     if (!widget.isForegroundTab || _requesting) return;
     final game = widget.game;
+    final account = ref.read(desktopAccountIdentityProvider);
+    bool ownsRequest() => mounted && widget.isForegroundTab &&
+        identical(widget.game, game) &&
+        ref.read(desktopAccountIdentityProvider) == account;
+    _reportOwnerIsCurrent = ownsRequest;
     setState(() {
       _requesting = true;
       _requestNotice = null;
@@ -242,6 +278,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     try {
       result = await _reportCoordinator.request(
         controller: _reportController,
+        isCurrent: ownsRequest,
         game: game,
         gameFinished:
             game != null && gameReportHasFinalResult(game, widget.headers),
@@ -253,9 +290,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             if (!mounted) return false;
             return requireFullAuthGuard(context);
           },
-          requestUpgrade: (_) async {
-            if (!mounted) return false;
-            return showPremiumPaywallSheet(context: context);
+          requestUpgrade: () async {
+            if (!ownsRequest()) return false;
+            return showDesktopPaywall(context, const DesktopAccessDecision(
+              DesktopAccess.quotaExceeded, DesktopAccessReason.quotaGameReportsPerUtcDay,
+            ), surface: 'lifetime_report_limit');
           },
           refreshEntitlement: () async {
             await DesktopSubscriptionNotifier.current?.refreshFromBackend(
@@ -268,6 +307,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       _requesting = false;
     }
     if (!mounted) return;
+    if (!ownsRequest()) {
+      setState(() {});
+      return;
+    }
+    _onReport();
     final notice = result;
     setState(() => _requestNotice = notice.isBlocked ? notice : null);
   }
@@ -292,13 +336,18 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<DesktopAccountIdentity>(desktopAccountIdentityProvider, (before, after) {
+      if (before != null && before != after) _reportController.invalidate();
+    });
+    ref.watch(desktopAccountIdentityProvider);
     final asyncSettings = ref.watch(engineSettingsProviderNew);
     final settings = asyncSettings.valueOrNull;
     final engineOn =
         settings?.showEngineAnalysis ??
         const EngineSettings().showEngineAnalysis;
     final reportOn = widget.reportVisible;
-    final reportState = _reportController.state;
+    final reportState = (_reportOwnerIsCurrent?.call() ?? true)
+        ? _reportController.state : const GameReportState();
     final liveAnalysisPausedForReport = reportOn && reportState.isRunning;
     final runLiveBoardAnalysis = shouldRunLiveBoardAnalysis(
       isForeground: widget.isForegroundTab,
@@ -659,11 +708,10 @@ class _GameReportViewState extends State<GameReportView> {
     return switch (notice.outcome) {
       GameReportRequestOutcome.quotaExceeded => _ReportMessage(
         icon: Icons.hourglass_bottom_rounded,
-        title: "Today's free report is used",
+        title: 'Your free report is used',
         body:
-            'Free accounts get one new game report per day (UTC). Reopening '
-            'a report you already made is free. Premium includes unlimited '
-            'reports.',
+            'Free accounts get one successful game report. Reopening an '
+            'admitted report is free. Premium includes unlimited reports.',
         actionLabel: 'See Premium',
         onAction: widget.onAnalyze,
       ),

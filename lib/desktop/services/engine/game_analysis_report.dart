@@ -258,7 +258,7 @@ class GameAnalysisReportController extends ChangeNotifier {
   /// Shows [report] as this tab's completed report without running anything.
   ///
   /// Used to restore a session or cached report, which must never spend a
-  /// daily claim. Returns false while a run is in flight.
+  /// second allowance. Returns false while a run is in flight.
   bool adoptCompletedReport(GameAnalysisReport report) {
     if (_disposed || _state.isRunning) return false;
     _generation++;
@@ -275,8 +275,8 @@ class GameAnalysisReportController extends ChangeNotifier {
     return true;
   }
 
-  /// Stops the running report. Cancelling never refunds the day's report
-  /// claim: the slot was spent when the server said yes.
+  /// Stops the running report. The lifetime allowance is recorded only after
+  /// a successful delivery; a cancelled run consumes no new allowance.
   Future<void> cancel() async {
     if (!_state.isRunning) return;
     _generation++;

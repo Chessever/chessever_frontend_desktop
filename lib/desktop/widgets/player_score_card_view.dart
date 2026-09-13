@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -13,10 +14,10 @@ import 'package:chessever/desktop/services/player_score_card_board_context.dart'
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
-import 'package:chessever/desktop/auth/desktop_access_context.dart';
-import 'package:chessever/desktop/auth/desktop_access_decision.dart';
-import 'package:chessever/desktop/auth/desktop_access_policy.dart';
-import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
+
+
+
+
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -58,11 +59,11 @@ import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/favorite_constants.dart';
-import 'package:chessever/utils/favorite_limit_guard.dart';
+
+
 import 'package:chessever/utils/location_service_provider.dart';
 import 'package:chessever/utils/png_asset.dart';
-import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
+
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 
@@ -836,69 +837,16 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
   }
 
   Future<void> _toggleFavorite(PlayerStandingModel player) async {
-    final allowed = await requireFullAuthGuard(context);
-    if (!allowed) return;
-    try {
-      final hydrated = await ref.read(
-        backfilledStandingPlayerProvider(player).future,
-      );
-      final favs = ref.read(favoritePlayersProviderNew);
-      final hydratedFideId = hydrated.fideId?.toString();
-      final hydratedName = hydrated.name.trim();
-      final already = favs.maybeWhen(
-        data:
-            (players) => players.any(
-              (p) =>
-                  (hydratedFideId != null &&
-                      hydratedFideId.isNotEmpty &&
-                      p.fideId == hydratedFideId) ||
-                  p.playerName.trim() == hydratedName,
-            ),
-        orElse: () => false,
-      );
-      if (!already) {
-        if (!mounted) return;
-        final canAdd = await canAddMoreFavorites(context, ref);
-        if (!canAdd) return;
-      }
-      await ref
-          .read(favoritePlayersProviderNew.notifier)
-          .toggleFavorite(
-            fideId: hydrated.fideId?.toString(),
-            playerName: hydrated.name,
-            countryCode: hydrated.countryCode,
-            rating: hydrated.score,
-            title: hydrated.title,
-          );
-    } on FavoriteLimitExceededException catch (limitReached) {
-      // Freemium: the server refused a favourite PLAYER past the free limit.
-      // Show the specific limit, not a generic failure. Events are unlimited.
-      if (mounted) {
-        unawaited(
-          showDesktopPaywall(
-            context,
-            DesktopAccessDecision(
-              DesktopAccess.quotaExceeded,
-              DesktopAccessReason.quotaFavoritePlayers,
-              capacity: DesktopQuotaCapacity(
-                quota: DesktopQuota.favoritePlayers,
-                used: limitReached.limit,
-                limit: limitReached.limit,
-                requested: 1,
-              ),
-            ),
-            surface: 'favorite_player_limit',
-          ),
-        );
-      }
-    } catch (_) {
-      if (!mounted) return;
-      showDesktopToast(
-        context,
-        'Failed to update favorite. Please try again.',
-        error: true,
-      );
-    }
+    final favorites = ref.read(favoritePlayersProviderNew).valueOrNull ?? const [];
+    final already = favorites.any((favorite) => favoritePlayerMatchesIdentity(favorite,
+      fideId: player.fideId?.toString(), playerName: player.name.trim(),
+      memorialSourceIdentity: player.memorialSourceIdentity));
+    await setDesktopPlayerFavorite(context, ref, favorite: !already,
+      playerName: player.name, fideId: player.fideId?.toString(),
+      countryCode: player.countryCode, rating: player.score, title: player.title,
+      gamebasePlayerId: player.gamebasePlayerId,
+      memorialSourceIdentity: player.memorialSourceIdentity,
+      memorialRouteId: player.memorialRouteId);
   }
 
   // ---------------------------------------------------------------------
