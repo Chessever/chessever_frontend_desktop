@@ -22,6 +22,39 @@ DesktopAccessContext miniatureGameAccessContext(
   );
 }
 
+/// [context] aimed at a game dated [gameDate].
+///
+/// Miniatures access is decided by the date of the game a request acts on. A
+/// Miniatures context carried to another game (a board rail step, a drag
+/// payload, a new tab or window) takes that game's date instead of keeping the
+/// date it was built with, and an undated game clears it, so a request never
+/// borrows today's date from the game it started on. Ownership of a retained
+/// row never carries to another game either. Every other provenance is
+/// returned unchanged: its gate does not depend on which game it acts on.
+DesktopAccessContext retargetMiniatureAccessContext(
+  DesktopAccessContext context,
+  DateTime? gameDate,
+) {
+  if (context.feature != DesktopFeature.miniatures &&
+      context.origin != DesktopDiscoveryOrigin.miniatures) {
+    return context;
+  }
+  return DesktopAccessContext(
+    feature: context.feature,
+    action: context.action,
+    origin: context.origin,
+    contentDate: gameDate,
+    playedPlies: context.playedPlies,
+    filterCriteriaCount: context.filterCriteriaCount,
+    sortKeyCount: context.sortKeyCount,
+    playerScoped: context.playerScoped,
+    accountId: context.accountId,
+    entitlementGeneration: context.entitlementGeneration,
+    quota: context.quota,
+    additions: context.additions,
+  );
+}
+
 DesktopAccessDecision miniatureGameDecision(
   GamesTourModel game,
   DesktopAction action, {

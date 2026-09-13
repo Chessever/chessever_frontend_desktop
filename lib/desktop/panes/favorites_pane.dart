@@ -698,6 +698,7 @@ void _openFavoriteGame(
     eventGames: allGames,
     eventGamesContinuation: const BoardTabGamesContinuation.favorites(),
     viewSource: ChessboardView.favScorecard,
+    accessContext: desktopFavoritesFeedAccessContext,
   );
 }
 
@@ -737,6 +738,7 @@ class _FavoriteLiveGameCard extends ConsumerWidget {
         layout: layout,
         selected: selected,
         viewSource: ChessboardView.favScorecard,
+        accessContext: desktopFavoritesFeedAccessContext,
         streamingEnabled: streamingEnabled && streamEnabled,
         allowStockfishFallback: streamEnabled,
       ),

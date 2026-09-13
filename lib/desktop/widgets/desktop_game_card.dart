@@ -184,7 +184,7 @@ class DesktopGameCard extends ConsumerWidget {
         onTap?.call();
         return;
       }
-      p.spawn(ref, focus: false);
+      p.spawnAdmitted(ref, focus: false, surface: 'game_card_new_tab');
     }
 
     final tappable = ClickCursor(

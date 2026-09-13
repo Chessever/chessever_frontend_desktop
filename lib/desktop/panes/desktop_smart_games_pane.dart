@@ -5,6 +5,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/services/desktop_local_day_clock.dart';
 import 'package:chessever/desktop/services/miniature_game_open.dart';
@@ -12,6 +13,7 @@ import 'package:chessever/desktop/services/miniatures_access.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/desktop_miniature_players.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
+import 'package:chessever/desktop/state/smart_collection_access.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
@@ -765,6 +767,10 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                                         ? kMiniatureLockedReason
                                         : null,
                                 game: game,
+                                accessContext: smartGamesAccessContextFor(
+                                  widget.type,
+                                  game,
+                                ),
                                 onTap:
                                     isMiniatures
                                         ? () => _openSmartGame(
@@ -953,6 +959,10 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                                     ? kMiniatureLockedReason
                                     : null,
                             game: game,
+                            accessContext: smartGamesAccessContextFor(
+                              widget.type,
+                              game,
+                            ),
                                 onTap:
                                     isMiniatures
                                         ? () => _openSmartGame(
@@ -1255,8 +1265,39 @@ Future<void> _openSmartGame(
     routeGames: routeGames,
     routeGamesContinuation: smartGamesBoardContinuationFor(type),
     viewSource: ChessboardView.tour,
+    accessContext: smartGamesAccessContextFor(type, game),
   );
 }
+
+/// Provenance of a game opened from a fixed collection. Its card carries it
+/// through tap, keyboard, context menu, Cmd/Ctrl-click, middle-click and drag,
+/// and every board it opens keeps it.
+///
+/// Miniatures are judged by each game's own date. Live, GM and Classical are
+/// smart collections: opening content through them is Premium, as it is
+/// through the phone's smart events, while the same game stays free through
+/// its own broadcast. Favorites stay free; Countrymen keep their paid origin.
+@visibleForTesting
+DesktopAccessContext smartGamesAccessContextFor(
+  PremiumGamesType type,
+  GamesTourModel game,
+) => switch (type) {
+  PremiumGamesType.miniatures => miniatureGameAccessContext(
+    game,
+    DesktopAction.openContent,
+  ),
+  PremiumGamesType.live ||
+  PremiumGamesType.gm ||
+  PremiumGamesType.classical => smartCollectionAccessContext(
+    SmartCollectionContentAction.openGame,
+  ),
+  PremiumGamesType.favorites => desktopFavoritesFeedAccessContext,
+  PremiumGamesType.countrymen => const DesktopAccessContext(
+    feature: DesktopFeature.countrymen,
+    action: DesktopAction.openContent,
+    origin: DesktopDiscoveryOrigin.countrymen,
+  ),
+};
 
 @visibleForTesting
 BoardTabGamesContinuation? smartGamesBoardContinuationFor(
