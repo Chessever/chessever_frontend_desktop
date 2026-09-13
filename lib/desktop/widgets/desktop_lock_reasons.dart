@@ -3,8 +3,7 @@
 library;
 
 const String kLikeLockedReason =
-    'Liked more than 7 days ago. Browse, tag or remove it free; '
-    'Premium opens your full like history.';
+    'Liked before the last 7 days. Premium opens it.';
 
 const String kMiniatureLockedReason =
     "Free opens today's miniatures. Premium opens every day, "

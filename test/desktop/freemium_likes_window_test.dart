@@ -247,6 +247,14 @@ void main() {
         'Yesterday',
       );
     });
+
+    test('an earlier year is named, this year is not', () {
+      expect(formatLikedDateHeader('2026-09-04', now: now), 'Friday, Sep 4');
+      expect(
+        formatLikedDateHeader('2025-09-04', now: now),
+        'Thursday, Sep 4, 2025',
+      );
+    });
   });
 
   group('Likes collection identity and quota semantics', () {

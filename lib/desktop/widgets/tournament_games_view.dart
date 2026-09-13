@@ -2420,10 +2420,14 @@ class LiveDesktopGameCard extends ConsumerWidget {
     this.federationFallbackForName,
     this.federationFallback,
     this.accessContext,
+    this.lockedReason,
   });
 
   final GamesTourModel game;
   final String tournamentTitle;
+
+  /// Draws the card locked at rest; see [DesktopGameCard.lockedReason].
+  final String? lockedReason;
 
   /// Where this card's game was discovered. Countrymen, player profiles and
   /// smart collections pass their paid provenance; ordinary broadcast lists
@@ -2593,6 +2597,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
       ),
       layout: layout,
       selected: selected,
+      lockedReason: lockedReason,
       allowStockfishFallback:
           streamingEnabled &&
           allowStockfishFallback &&

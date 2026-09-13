@@ -10,6 +10,7 @@ import 'package:chessever/desktop/services/desktop_local_day_clock.dart';
 import 'package:chessever/desktop/services/miniature_game_open.dart';
 import 'package:chessever/desktop/services/miniatures_access.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/desktop_miniature_players.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
@@ -193,18 +194,36 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                     ],
                   ),
                 ),
-                DesktopTooltip(
-                  message: 'Refresh',
-                  child: FButton.icon(
-                    style: FButtonStyle.ghost(),
-                    onPress: () {
-                      ref.read(premiumGamesProvider(type).notifier).refresh();
-                    },
-                    child: const Icon(Icons.refresh_rounded),
+                // Header controls act on what is on screen: the games list on
+                // Games, the leaderboard on Players, nothing on About.
+                if (showGamesList ||
+                    _miniaturesSection == _MiniaturesSection.players)
+                  DesktopTooltip(
+                    message: showGamesList ? 'Refresh' : 'Refresh players',
+                    child: FButton.icon(
+                      style: FButtonStyle.ghost(),
+                      onPress: () {
+                        if (showGamesList) {
+                          ref
+                              .read(premiumGamesProvider(type).notifier)
+                              .refresh();
+                          return;
+                        }
+                        unawaited(
+                          ref
+                              .read(desktopMiniaturePlayersProvider.notifier)
+                              .refresh(),
+                        );
+                        ref.invalidate(desktopMiniaturePlayerRecordProvider);
+                        ref.invalidate(desktopMiniaturePlayerGamesProvider);
+                      },
+                      child: const Icon(Icons.refresh_rounded),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                const GameViewModeToggle(),
+                if (showGamesList) ...[
+                  const SizedBox(width: 8),
+                  const GameViewModeToggle(),
+                ],
               ],
             ),
           ),
@@ -740,10 +759,11 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                               groupId: sections[sectionIndex].key,
                               gameId: game.gameId,
                               onSelect: selectGame,
-                              child: DesktopLockedContent(
-                                locked: lockedAtRest(game),
-                                reason: kMiniatureLockedReason,
-                                child: LiveDesktopGameCard(
+                              child: LiveDesktopGameCard(
+                                lockedReason:
+                                    lockedAtRest(game)
+                                        ? kMiniatureLockedReason
+                                        : null,
                                 game: game,
                                 onTap:
                                     isMiniatures
@@ -775,7 +795,6 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                                 viewSource: ChessboardView.tour,
                                 streamingEnabled: cardStreamingEnabled,
                                 allowStockfishFallback: true,
-                              ),
                               ),
                             );
                           }, childCount: sections[sectionIndex].games.length),
@@ -928,10 +947,11 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                           groupId: sections[sectionIndex].key,
                           gameId: game.gameId,
                           onSelect: selectGame,
-                          child: DesktopLockedContent(
-                                locked: lockedAtRest(game),
-                                reason: kMiniatureLockedReason,
-                                child: LiveDesktopGameCard(
+                          child: LiveDesktopGameCard(
+                            lockedReason:
+                                lockedAtRest(game)
+                                    ? kMiniatureLockedReason
+                                    : null,
                             game: game,
                                 onTap:
                                     isMiniatures
@@ -964,7 +984,6 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                             streamingEnabled: cardStreamingEnabled,
                             allowStockfishFallback: true,
                           ),
-                              ),
                         );
                       },
                     ),
@@ -1549,10 +1568,10 @@ class _SmartGamesTableRowState extends State<_SmartGamesTableRow> {
                     )
                     : null,
           ),
-          child: DesktopDesaturated(
-            enabled: widget.locked,
-            child: Row(
+          child: Row(
             children: [
+              // The status column stays outside the greyscale, so the lock
+              // renders at full strength as it does in every locked table.
               SizedBox(
                 width: 68,
                 child:
@@ -1585,37 +1604,60 @@ class _SmartGamesTableRowState extends State<_SmartGamesTableRow> {
                   ],
                 ),
               ),
-              Expanded(flex: 4, child: _PlayerCell(player: game.whitePlayer)),
-              SizedBox(
-                width: 56,
-                child: Center(child: _ResultCell(game: game)),
-              ),
-              Expanded(flex: 4, child: _PlayerCell(player: game.blackPlayer)),
-              SizedBox(
-                width: 64,
-                child: Text(
-                  desktopGameAverageRating(game).toString(),
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    color: kWhiteColor70,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: [FontFeature.tabularFigures()],
+              Expanded(
+                child: DesktopDesaturated(
+                  enabled: widget.locked,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 4,
+                        child: _PlayerCell(
+                          player: game.whitePlayer,
+                          muted: widget.locked,
+                        ),
+                      ),
+                      SizedBox(
+                        width: 56,
+                        child: Center(child: _ResultCell(game: game)),
+                      ),
+                      Expanded(
+                        flex: 4,
+                        child: _PlayerCell(
+                          player: game.blackPlayer,
+                          muted: widget.locked,
+                        ),
+                      ),
+                      SizedBox(
+                        width: 64,
+                        child: Text(
+                          desktopGameAverageRating(game).toString(),
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        flex: 3,
+                        child: Text(
+                          _smartGameEventLabel(game),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                flex: 3,
-                child: Text(
-                  _smartGameEventLabel(game),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
-                ),
-              ),
             ],
-          ),
           ),
         ),
       ),
@@ -1624,8 +1666,12 @@ class _SmartGamesTableRowState extends State<_SmartGamesTableRow> {
 }
 
 class _PlayerCell extends StatelessWidget {
-  const _PlayerCell({required this.player});
+  const _PlayerCell({required this.player, this.muted = false});
   final PlayerCard player;
+
+  /// On a locked row the title takes the neutral tone: a greyscaled primary
+  /// falls below readable contrast.
+  final bool muted;
 
   @override
   Widget build(BuildContext context) {
@@ -1634,8 +1680,8 @@ class _PlayerCell extends StatelessWidget {
         if (player.title.isNotEmpty) ...[
           Text(
             player.title,
-            style: const TextStyle(
-              color: kPrimaryColor,
+            style: TextStyle(
+              color: muted ? kWhiteColor70 : kPrimaryColor,
               fontSize: 11,
               fontWeight: FontWeight.w800,
             ),
