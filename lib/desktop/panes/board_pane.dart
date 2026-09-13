@@ -8798,6 +8798,7 @@ class _BoardEvalBarSurface extends ConsumerWidget {
       mate: snapshot.mate,
       isEvaluating: snapshot.isEvaluating,
       positionKey: _fenPositionKey(fen),
+      retainWhileRetargeting: true,
     );
   }
 }

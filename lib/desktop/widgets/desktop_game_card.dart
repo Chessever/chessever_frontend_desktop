@@ -22,6 +22,7 @@ import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart';
 import 'package:chessever/screens/chessboard/widgets/evaluation_bar_widget.dart';
+import 'package:chessever/desktop/widgets/desktop_eval_midpoint.dart';
 import 'package:chessever/screens/chessboard/widgets/player_first_row_detail_widget.dart'
     show PlayerView;
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
@@ -874,22 +875,27 @@ class _HorizontalEvalBar extends StatelessWidget {
           }
           final f = fen;
           if (f == null || f.isEmpty) {
-            return const Row(
-              children: [
-                Expanded(child: ColoredBox(color: kWhiteColor)),
-                Expanded(child: ColoredBox(color: kPopUpColor)),
-              ],
+            return const DesktopEvalMidpoint(
+              axis: Axis.horizontal,
+              child: Row(
+                children: [
+                  Expanded(child: ColoredBox(color: kWhiteColor)),
+                  Expanded(child: ColoredBox(color: kPopUpColor)),
+                ],
+              ),
             );
           }
           return RotatedBox(
             quarterTurns: 1,
-            child: EvaluationBarWidgetForGames(
-              width: h,
-              height: w,
-              fen: f,
-              playerView: PlayerView.gridView,
-              allowStockfishFallback: allowStockfishFallback,
-              showText: false,
+            child: DesktopEvalMidpoint(
+              child: EvaluationBarWidgetForGames(
+                width: h,
+                height: w,
+                fen: f,
+                playerView: PlayerView.gridView,
+                allowStockfishFallback: allowStockfishFallback,
+                showText: false,
+              ),
             ),
           );
         },
@@ -1232,7 +1238,7 @@ class _EvalRail extends StatelessWidget {
     // placeholder split so the layout pass never emits NaN constraints.
     final hOk = width.isFinite && width > 0 && height.isFinite && height > 0;
     if (!hOk || f == null || f.isEmpty) {
-      return const _NoEvalSplit();
+      return const DesktopEvalMidpoint(child: _NoEvalSplit());
     }
     return EvaluationBarWidgetForGames(
       width: width,
@@ -1240,6 +1246,7 @@ class _EvalRail extends StatelessWidget {
       fen: f,
       playerView: view,
       allowStockfishFallback: allowStockfishFallback,
+      railDecorationBuilder: DesktopEvalMidpoint.behindLabel,
     );
   }
 }
