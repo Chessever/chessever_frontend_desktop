@@ -31,6 +31,7 @@ import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:forui/forui.dart';
@@ -1362,6 +1363,52 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(DesktopPaywallView), findsOneWidget);
       expectNoToast(tester);
+    });
+
+    testWidgets('the dialog lock follows membership and clears in place', (
+      tester,
+    ) async {
+      final subscription = await pumpGuardedPane(tester, initial: premium());
+      await tester.tap(find.text('Add player').first);
+      await tester.pumpAndSettle();
+
+      subscription.set(SubscriptionState());
+      await tester.pump();
+      await tester.enterText(find.byType(TextField).last, 'Carlsen');
+      await tester.pumpAndSettle();
+      expect(find.text('Adding preparation targets is Premium'), findsOneWidget);
+
+      VoidCallback? manualAdd() =>
+          tester
+              .widget<DesktopDialogButton>(
+                find.widgetWithText(DesktopDialogButton, 'Create manual player'),
+              )
+              .onPress;
+      expect(manualAdd(), isNull);
+
+      // The membership lookup fails: the same lock turns into Retry.
+      subscription.set(SubscriptionState(error: 'offline'));
+      await tester.pumpAndSettle();
+      expect(find.text('Membership could not be verified'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+
+      // Retry or a verified purchase lands while the dialog stays open.
+      subscription.set(premium());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DesktopAccessLockedSurface), findsNothing);
+      expect(find.text('Membership could not be verified'), findsNothing);
+      expect(
+        find.text('No ChessEver match'),
+        findsOneWidget,
+        reason: 'the typed query runs again once it is admitted',
+      );
+      expect(manualAdd(), isNotNull);
+      expect(find.byType(DesktopPaywallView), findsNothing);
+      expectNoToast(tester);
+      expect(tester.takeException(), isNull);
     });
   });
 }

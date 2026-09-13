@@ -23,8 +23,7 @@ class DesktopMiniaturesAboutView extends StatelessWidget {
     ),
     (
       'Free',
-      'Games dated today. Premium opens every other day, including undated '
-          'games.',
+      'Games dated today. Premium opens every day, including undated games.',
     ),
   ];
 

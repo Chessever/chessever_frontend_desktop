@@ -17,6 +17,7 @@ import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
+import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/chat/botvinnik_provider.dart';
 import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/desktop/state/botvinnik_dock.dart';
@@ -29,6 +30,7 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/services/engine/uci_engine.dart';
 import 'package:chessever/providers/app_version_provider.dart';
+import 'package:chessever/providers/guest_session_provider.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -68,14 +70,18 @@ class SettingsPane extends HookConsumerWidget {
       try {
         // Same path as the guest reminder: clears the guest clock only once
         // a permanent account is confirmed.
-        await signInDesktopPermanentAccount(
+        final signedIn = await signInDesktopPermanentAccount(
           ref,
           DesktopAccountProvider.google,
           surface: 'settings',
         );
+        if (!signedIn) {
+          lastError.value = 'Sign-in did not finish. Please try again.';
+        }
         session.value = Supabase.instance.client.auth.currentSession;
-      } catch (e) {
-        lastError.value = e.toString();
+      } catch (e, st) {
+        ErrorReporter.report(e, stackTrace: st, tag: 'auth.settings');
+        lastError.value = desktopSignInErrorMessage(e);
       } finally {
         signingIn.value = false;
       }
@@ -85,14 +91,18 @@ class SettingsPane extends HookConsumerWidget {
       lastError.value = null;
       signingIn.value = true;
       try {
-        await signInDesktopPermanentAccount(
+        final signedIn = await signInDesktopPermanentAccount(
           ref,
           DesktopAccountProvider.apple,
           surface: 'settings',
         );
+        if (!signedIn) {
+          lastError.value = 'Sign-in did not finish. Please try again.';
+        }
         session.value = Supabase.instance.client.auth.currentSession;
-      } catch (e) {
-        lastError.value = _friendlyAuthError(e);
+      } catch (e, st) {
+        ErrorReporter.report(e, stackTrace: st, tag: 'auth.settings');
+        lastError.value = desktopSignInErrorMessage(e);
       } finally {
         signingIn.value = false;
       }
@@ -305,7 +315,7 @@ class _SettingsUnavailable extends StatelessWidget {
   }
 }
 
-class _AccountSection extends StatelessWidget {
+class _AccountSection extends ConsumerWidget {
   const _AccountSection({
     required this.session,
     required this.signingIn,
@@ -323,11 +333,18 @@ class _AccountSection extends StatelessWidget {
   final String? error;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final user = session?.user;
     final isGuest = user?.isAnonymous == true;
     final isPermanent = user != null && !isGuest;
     final email = user?.email;
+    final guestAge =
+        isGuest
+            ? ref
+                .watch(guestSessionProvider)
+                .valueOrNull
+                ?.ageAt(DateTime.now())
+            : null;
     return _Card(
       title: 'Account',
       icon: Icons.account_circle_outlined,
@@ -373,13 +390,15 @@ class _AccountSection extends StatelessWidget {
           ] else ...[
             _StatusPill(
               label: isGuest ? 'Guest' : 'Signed out',
-              color: kLightGreyColor,
+              color: isGuest ? kWhiteColor70 : kLightGreyColor,
             ),
             const SizedBox(height: 12),
-            const Text(
-              'Sign in to sync favorites, library, and settings across '
-              'devices.',
-              style: TextStyle(color: kWhiteColor70, fontSize: 13),
+            Text(
+              isGuest
+                  ? _guestAccountCopy(guestAge)
+                  : 'Sign in to sync favorites, library, and settings across '
+                      'devices.',
+              style: const TextStyle(color: kWhiteColor70, fontSize: 13),
             ),
             const SizedBox(height: 16),
             Row(
@@ -554,21 +573,15 @@ class _SubscriptionSection extends HookConsumerWidget {
   }
 }
 
-String _friendlyAuthError(Object error) {
-  final text = error.toString();
-  if (text.contains('canceled')) return 'Sign-in was cancelled.';
-  if (text.contains('Apple sign-in is not available') ||
-      text.contains('Sign in with Apple capability')) {
-    return 'Apple sign-in is not available for this build.';
-  }
-  if (text.contains('Apple sign-in timed out') ||
-      text.contains('Provider sign-in timed out') ||
-      text.contains('timed out')) {
-    return 'Apple sign-in timed out. Check Supabase Apple OAuth and allow '
-        'http://127.0.0.1:*/auth/callback as a redirect URL.';
-  }
-  final tail = text.length > 220 ? '${text.substring(0, 220)}…' : text;
-  return tail;
+/// Guest account line: how long they have been a guest, and what signing in
+/// carries over (the guest merge moves favorites, folders and analyses).
+String _guestAccountCopy(Duration? guestAge) {
+  const carry = 'Sign in and your favorites and saved analyses move to your '
+      'account.';
+  if (guestAge == null || guestAge.isNegative) return carry;
+  final days = guestAge.inDays;
+  if (days < 1) return 'Guest since today. $carry';
+  return 'Guest for ${days == 1 ? '1 day' : '$days days'}. $carry';
 }
 
 String _formatExpiry(DateTime when) {

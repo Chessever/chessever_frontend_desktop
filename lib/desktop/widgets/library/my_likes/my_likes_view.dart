@@ -13,12 +13,12 @@ import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/state/my_likes_provider.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_date_gate_prompt.dart';
-import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_lock_reasons.dart';
 import 'package:chessever/desktop/widgets/desktop_locked_content.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 import 'package:chessever/desktop/widgets/library/my_likes/like_tags_dialog.dart';
@@ -184,18 +184,23 @@ class MyLikesView extends HookConsumerWidget {
                       ),
                     ),
                   ],
-                  const Spacer(),
-                  Flexible(
-                    child: DesktopSearchField(
-                      controller: searchController,
-                      maxWidth: 280,
-                      hintText: 'Search player, event or title',
-                      onChanged: onSearchChanged,
-                      onClear: () {
-                        debounce.value?.cancel();
-                        searchController.clear();
-                        ref.read(myLikesQueryProvider.notifier).clearSearch();
-                      },
+                  // The search takes the free space, capped and right-aligned,
+                  // so the controls end on the table's right gutter at every
+                  // pane width.
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: DesktopSearchField(
+                        controller: searchController,
+                        maxWidth: 280,
+                        hintText: 'Search player, event or title',
+                        onChanged: onSearchChanged,
+                        onClear: () {
+                          debounce.value?.cancel();
+                          searchController.clear();
+                          ref.read(myLikesQueryProvider.notifier).clearSearch();
+                        },
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -204,6 +209,7 @@ class MyLikesView extends HookConsumerWidget {
                         (buttonContext) => DesktopToolbarPillButton(
                           label: query.sort.label,
                           icon: Icons.swap_vert_rounded,
+                          height: desktopToolbarControlHeight,
                           tooltip: 'Sort likes',
                           onPress: () => _pickSort(buttonContext, ref, query),
                         ),
@@ -217,6 +223,7 @@ class MyLikesView extends HookConsumerWidget {
                                   ? 'Filters'
                                   : 'Filters ${query.structuredFilterCount}',
                           icon: Icons.tune_rounded,
+                          height: desktopToolbarControlHeight,
                           tabularFigures: true,
                           tone:
                               query.structuredFilterCount == 0
@@ -231,6 +238,7 @@ class MyLikesView extends HookConsumerWidget {
                   DesktopToolbarPillButton(
                     label: 'Export PGN',
                     icon: Icons.file_download_outlined,
+                    height: desktopToolbarControlHeight,
                     tooltip: 'Export the likes in this list as one PGN file',
                     onPress:
                         data == null || data.visibleCount == 0
@@ -292,6 +300,7 @@ class MyLikesView extends HookConsumerWidget {
                       title: "Couldn't load your likes",
                       body: 'Check your connection and try again.',
                       actionLabel: 'Retry',
+                      actionIcon: Icons.refresh_rounded,
                       onAction: () {
                         ref.invalidate(myLikesRowsProvider);
                         unawaited(
@@ -312,6 +321,7 @@ class MyLikesView extends HookConsumerWidget {
                       title: 'No likes match',
                       body: 'Try a different search, tag or filter.',
                       actionLabel: 'Clear all',
+                      actionIcon: Icons.filter_alt_off_rounded,
                       onAction: () {
                         debounce.value?.cancel();
                         searchController.clear();
@@ -321,7 +331,6 @@ class MyLikesView extends HookConsumerWidget {
                   }
                   return _MyLikesList(
                     data: data,
-                    sortLabel: query.sort.label,
                     selectedId: selectedId.value,
                     collapsed: collapsed.value,
                     onToggleSection: (key) {
@@ -357,7 +366,7 @@ class MyLikesView extends HookConsumerWidget {
 }
 
 String _likedOnLabel(SavedAnalysis analysis) =>
-    DateFormat('EEEE, MMM d').format(likedAtOf(analysis));
+    formatLikedDay(likedAtOf(analysis));
 
 Future<bool> _admitLikeContentAction(
   BuildContext context,
@@ -374,11 +383,11 @@ Future<bool> _admitLikeContentAction(
           subscription: ref.read(subscriptionProvider),
           entitlement: ref.read(desktopEntitlementProvider),
         ),
-    title: 'This like is older than 7 days',
+    title: 'This like is from before the last 7 days',
     body:
-        'Free opens, copies and exports likes from today and the previous '
-        '6 days. You liked this game on ${_likedOnLabel(analysis)}. Premium '
-        'opens your full like history.',
+        'The free plan opens, copies and exports likes from today and the 6 '
+        'days before. You liked this game on ${_likedOnLabel(analysis)}. '
+        'Premium opens your full like history.',
   );
 }
 
@@ -750,7 +759,6 @@ Future<LibraryFolder?> _pickDatabase(
 class _MyLikesList extends StatelessWidget {
   const _MyLikesList({
     required this.data,
-    required this.sortLabel,
     required this.selectedId,
     required this.collapsed,
     required this.onToggleSection,
@@ -760,7 +768,6 @@ class _MyLikesList extends StatelessWidget {
   });
 
   final MyLikesData data;
-  final String sortLabel;
   final String? selectedId;
   final Set<String> collapsed;
   final ValueChanged<String> onToggleSection;
@@ -773,24 +780,24 @@ class _MyLikesList extends StatelessWidget {
     return CustomScrollView(
       slivers: [
         const SliverPadding(
-          padding: EdgeInsets.symmetric(horizontal: 24),
+          padding: EdgeInsets.fromLTRB(24, 0, 24, 6),
           sliver: SliverToBoxAdapter(child: _MyLikesColumnsHeader()),
         ),
         for (var i = 0; i < data.sections.length; i++) ...[
-          SliverPadding(
-            padding: EdgeInsets.fromLTRB(24, i == 0 ? 8 : 16, 24, 6),
-            sliver: SliverToBoxAdapter(
-              child: DesktopDateGroupCard(
-                label:
-                    data.sections[i].key == kMyLikesSortedSectionKey
-                        ? sortLabel
-                        : formatLikedDateHeader(data.sections[i].key),
-                gameCount: data.sections[i].value.length,
-                collapsed: collapsed.contains(data.sections[i].key),
-                onToggle: () => onToggleSection(data.sections[i].key),
+          // A sorted list is one ordered result and the Sort button already
+          // names the order, so it gets no header of its own.
+          if (data.sections[i].key != kMyLikesSortedSectionKey)
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(24, i == 0 ? 0 : 12, 24, 0),
+              sliver: SliverToBoxAdapter(
+                child: _MyLikesDayHeader(
+                  label: formatLikedDateHeader(data.sections[i].key),
+                  count: data.sections[i].value.length,
+                  collapsed: collapsed.contains(data.sections[i].key),
+                  onToggle: () => onToggleSection(data.sections[i].key),
+                ),
               ),
             ),
-          ),
           if (!collapsed.contains(data.sections[i].key))
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -823,6 +830,10 @@ const double _kResultColumn = 64;
 const double _kEcoColumn = 56;
 const double _kLikedColumn = 96;
 
+/// Gutter between every table column, so a rating never runs into the next
+/// player's flag and the ECO box never meets the tags.
+const double _kColumnGap = 12;
+
 TextStyle get _headerStyle => const TextStyle(
   color: kLightGreyColor,
   fontSize: 11.5,
@@ -840,7 +851,9 @@ class _MyLikesColumnsHeader extends StatelessWidget {
         children: [
           const SizedBox(width: _kLockColumn),
           Expanded(flex: 4, child: Text('White', style: _headerStyle)),
+          const SizedBox(width: _kColumnGap),
           Expanded(flex: 4, child: Text('Black', style: _headerStyle)),
+          const SizedBox(width: _kColumnGap),
           SizedBox(
             width: _kResultColumn,
             child: Text(
@@ -849,9 +862,16 @@ class _MyLikesColumnsHeader extends StatelessWidget {
               style: _headerStyle,
             ),
           ),
+          const SizedBox(width: _kColumnGap),
           Expanded(flex: 4, child: Text('Event', style: _headerStyle)),
-          SizedBox(width: _kEcoColumn, child: Text('ECO', style: _headerStyle)),
+          const SizedBox(width: _kColumnGap),
+          SizedBox(
+            width: _kEcoColumn,
+            child: Text('ECO', textAlign: TextAlign.center, style: _headerStyle),
+          ),
+          const SizedBox(width: _kColumnGap),
           Expanded(flex: 3, child: Text('Tags', style: _headerStyle)),
+          const SizedBox(width: _kColumnGap),
           SizedBox(
             width: _kLikedColumn,
             child: Text(
@@ -861,6 +881,94 @@ class _MyLikesColumnsHeader extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Liked-at day header: a disclosure chevron in the lock column, the day, and
+/// its like count. The whole 40 px row toggles the day.
+class _MyLikesDayHeader extends StatefulWidget {
+  const _MyLikesDayHeader({
+    required this.label,
+    required this.count,
+    required this.collapsed,
+    required this.onToggle,
+  });
+
+  final String label;
+  final int count;
+  final bool collapsed;
+  final VoidCallback onToggle;
+
+  @override
+  State<_MyLikesDayHeader> createState() => _MyLikesDayHeaderState();
+}
+
+class _MyLikesDayHeaderState extends State<_MyLikesDayHeader> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = widget.count;
+    return Semantics(
+      button: true,
+      expanded: !widget.collapsed,
+      label: '${widget.label}, ${count == 1 ? '1 like' : '$count likes'}',
+      excludeSemantics: true,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onToggle,
+          child: SizedBox(
+            height: 40,
+            child: Padding(
+              // Mirrors the rows: the 3 px selection edge, then the lock
+              // column, so the day lines up with the White column.
+              padding: const EdgeInsets.only(left: 3, right: 12),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: _kLockColumn,
+                    child: Center(
+                      child: Icon(
+                        widget.collapsed
+                            ? Icons.keyboard_arrow_right_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        size: 16,
+                        color: _hovered ? kWhiteColor : kWhiteColor70,
+                      ),
+                    ),
+                  ),
+                  Flexible(
+                    child: Text(
+                      widget.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kWhiteColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$count',
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 12.5,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -913,6 +1021,7 @@ class _MyLikesRowState extends State<_MyLikesRow> {
             rating: meta('WhiteElo'),
           ),
         ),
+        const SizedBox(width: _kColumnGap),
         Expanded(
           flex: 4,
           child: LibraryTablePlayerCell(
@@ -923,22 +1032,27 @@ class _MyLikesRowState extends State<_MyLikesRow> {
             rating: meta('BlackElo'),
           ),
         ),
+        const SizedBox(width: _kColumnGap),
         SizedBox(
           width: _kResultColumn,
-          child: LibraryTableResultPill(result: meta('Result')),
-        ),
-        Expanded(
-          flex: 4,
-          child: Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Text(
-              event,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: kWhiteColor70, fontSize: 12.5),
-            ),
+          // Greyscale turns the result hues unreadable, so a locked row draws
+          // its result in the neutral tone.
+          child: LibraryTableResultPill(
+            result: meta('Result'),
+            color: entry.isLocked ? kWhiteColor70 : null,
           ),
         ),
+        const SizedBox(width: _kColumnGap),
+        Expanded(
+          flex: 4,
+          child: Text(
+            event,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: kWhiteColor70, fontSize: 12.5),
+          ),
+        ),
+        const SizedBox(width: _kColumnGap),
         SizedBox(
           width: _kEcoColumn,
           child: Align(
@@ -946,7 +1060,9 @@ class _MyLikesRowState extends State<_MyLikesRow> {
             child: LibraryTableEcoCell(eco: meta('ECO')),
           ),
         ),
+        const SizedBox(width: _kColumnGap),
         Expanded(flex: 3, child: _TagLine(tags: entry.analysis.tags)),
+        const SizedBox(width: _kColumnGap),
         SizedBox(
           width: _kLikedColumn,
           child: Text(
@@ -1014,42 +1130,39 @@ class _TagLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (tags.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(right: 12),
-      child: Row(
-        children: [
-          for (final label in tags.take(2)) ...[
-            SizedBox.square(
-              dimension: 6,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: likeTagByLabel(label)?.color ?? kLightGreyColor,
-                  shape: BoxShape.circle,
-                ),
+    return Row(
+      children: [
+        for (final label in tags.take(2)) ...[
+          SizedBox.square(
+            dimension: 6,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: likeTagByLabel(label)?.color ?? kLightGreyColor,
+                shape: BoxShape.circle,
               ),
             ),
-            const SizedBox(width: 5),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: kWhiteColor70, fontSize: 12),
-              ),
+          ),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: kWhiteColor70, fontSize: 12),
             ),
-            const SizedBox(width: 10),
-          ],
-          if (tags.length > 2)
-            Text(
-              '+${tags.length - 2}',
-              style: const TextStyle(
-                color: kLightGreyColor,
-                fontSize: 12,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
+          ),
+          const SizedBox(width: 10),
         ],
-      ),
+        if (tags.length > 2)
+          Text(
+            '+${tags.length - 2}',
+            style: const TextStyle(
+              color: kWhiteColor70,
+              fontSize: 12,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+      ],
     );
   }
 }
@@ -1059,12 +1172,19 @@ class _MyLikesMessage extends StatelessWidget {
     required this.title,
     required this.body,
     this.actionLabel,
+    this.actionIcon,
     this.onAction,
-  });
+  }) : assert(
+         (actionLabel == null) == (actionIcon == null),
+         'An action names its own icon',
+       );
 
   final String title;
   final String body;
   final String? actionLabel;
+
+  /// Matches the action: a reload for Retry, a filter-off for Clear all.
+  final IconData? actionIcon;
   final VoidCallback? onAction;
 
   @override
@@ -1094,7 +1214,7 @@ class _MyLikesMessage extends StatelessWidget {
               const SizedBox(height: 14),
               DesktopToolbarPillButton(
                 label: actionLabel!,
-                icon: Icons.refresh_rounded,
+                icon: actionIcon,
                 onPress: onAction,
               ),
             ],
@@ -1113,23 +1233,34 @@ class _ExportSliceDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final lockedCopy =
-        locked == 1 ? '1 older like needs' : '$locked older likes need';
+    const rule =
+        'The free plan exports likes from today and the 6 days before.';
+    // Non-breaking spaces keep each count on the same line as its noun.
+    if (accessible == 0) {
+      return DesktopDateGateDialog(
+        title:
+            locked == 1
+                ? 'This like needs Premium to export'
+                : 'These likes need Premium to export',
+        body:
+            '$rule ${locked == 1 ? 'This like is' : 'All $locked likes here are'} '
+            'older. Premium exports your full like history.',
+        onDismiss: () => Navigator.of(context).pop(),
+        onPremium: () => Navigator.of(context).pop(_ExportChoice.premium),
+      );
+    }
+    // The export the user asked for is the primary action; Premium is the
+    // alternative and Cancel backs out.
     return DesktopDateGateDialog(
-      title: 'Export likes from the last 7 days?',
+      title: 'Export $accessible of ${accessible + locked} likes?',
       body:
-          accessible == 0
-              ? 'Free exports likes from today and the previous 6 days. '
-                  '$lockedCopy Premium.'
-              : '$accessible ${accessible == 1 ? 'game' : 'games'} can be '
-                  'exported free. $lockedCopy Premium.',
-      dismissLabel: accessible == 0 ? 'Not now' : 'Export $accessible',
-      premiumLabel: 'See Premium',
-      onDismiss:
-          () => Navigator.of(
-            context,
-          ).pop(accessible == 0 ? null : _ExportChoice.slice),
+          '$rule Premium also exports the other '
+          '$locked ${locked == 1 ? 'like' : 'likes'}.',
+      dismissLabel: 'Cancel',
+      onDismiss: () => Navigator.of(context).pop(),
       onPremium: () => Navigator.of(context).pop(_ExportChoice.premium),
+      actionLabel: 'Export $accessible',
+      onAction: () => Navigator.of(context).pop(_ExportChoice.slice),
     );
   }
 }

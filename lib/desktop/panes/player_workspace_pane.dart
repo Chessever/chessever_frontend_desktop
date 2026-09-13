@@ -4,6 +4,7 @@ import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'dart:io';
 
@@ -6085,7 +6086,7 @@ Future<void> _showConnectChessEverDialog(BuildContext context, WidgetRef ref) {
   );
 }
 
-class _AddPlayerDialog extends StatefulWidget {
+class _AddPlayerDialog extends ConsumerStatefulWidget {
   const _AddPlayerDialog({
     required this.title,
     required this.animation,
@@ -6119,10 +6120,10 @@ class _AddPlayerDialog extends StatefulWidget {
   final String? lockedFideId;
 
   @override
-  State<_AddPlayerDialog> createState() => _AddPlayerDialogState();
+  ConsumerState<_AddPlayerDialog> createState() => _AddPlayerDialogState();
 }
 
-class _AddPlayerDialogState extends State<_AddPlayerDialog> {
+class _AddPlayerDialogState extends ConsumerState<_AddPlayerDialog> {
   late final TextEditingController _controller;
   Timer? _debounce;
   Future<List<GamebasePlayer>>? _results;
@@ -6185,7 +6186,14 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
   }
 
   Future<List<GamebasePlayer>> _searchChessEver(String query) async {
-    final players = await widget.onSearch(query);
+    final List<GamebasePlayer> players;
+    try {
+      players = await widget.onSearch(query);
+    } on DesktopPremiumRequiredException {
+      // Hand the denial to [_locked] so this lock also follows membership.
+      if (mounted) _searchAdmitted();
+      rethrow;
+    }
     final lockedFideId = _lockedFideId;
     if (lockedFideId == null) return players;
     return players
@@ -6263,6 +6271,16 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // The lock follows live membership: a successful Retry, a verified
+    // purchase or a lapse updates it in place, and an unlock re-runs the
+    // query that was typed, instead of waiting for the user to edit it.
+    ref.listen<DesktopAccessDecision>(
+      desktopAccessDecisionProvider(widget.searchAccess),
+      (_, __) {
+        if (_locked == null) return;
+        if (_searchAdmitted()) _onQueryChanged(_controller.text);
+      },
+    );
     final lockedFideId = _lockedFideId;
     return FDialog.raw(
       animation: widget.animation,

@@ -253,7 +253,13 @@ class DesktopSubscriptionNotifier extends SubscriptionNotifier {
       state = SubscriptionState();
       return null;
     }
-    state = state.copyWith(isLoading: true);
+    // A re-check on top of a settled result (a known free user or member)
+    // keeps that result until the response lands, so a background poll never
+    // blinks a known denial to "checking". Only an unknown or failed state
+    // shows progress.
+    if (state.isLoading || state.error != null) {
+      state = state.copyWith(isLoading: true);
+    }
     try {
       final ent = await _deps.fetchEntitlement(
         forceSessionRefresh: forceSessionRefresh,

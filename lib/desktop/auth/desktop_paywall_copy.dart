@@ -35,9 +35,9 @@ class DesktopPaywallCopy {
 /// What Premium adds. Reports and storage are UNLIMITED; Botvinnik is a
 /// larger DAILY allowance, not unlimited. Keep the two distinct.
 const List<String> desktopPremiumIncludes = <String>[
-  'Unlimited game reports, saved games, databases and favourite players',
+  'Unlimited game reports, saved games, databases and favorite players',
   'Full games from Countrymen, player profiles, TWIC and databases',
-  'Explorer past move 10, player scope and exact position search',
+  'Explorer past move 10, by player and for set-up positions',
   'Prepare, opening trees and engine tournaments',
   'A larger daily Botvinnik allowance',
 ];
@@ -51,7 +51,7 @@ String? desktopCapacityLine(DesktopQuotaCapacity? capacity) {
   final limit = capacity.limit;
   switch (capacity.quota) {
     case DesktopQuota.favoritePlayers:
-      return '$used of $limit favourite ${_plural(limit, 'player')} used';
+      return '$used of $limit favorite ${_plural(limit, 'player')} used';
     case DesktopQuota.cloudDatabases:
       return '$used of $limit ${_plural(limit, 'database')} used';
     case DesktopQuota.cloudSavedGames:
@@ -132,8 +132,11 @@ DesktopPaywallCopy _unavailableCopy(
     default:
       return DesktopPaywallCopy(
         title: 'Membership could not be verified',
-        body:
-            'Your saved work is unchanged. Check your connection and retry.',
+        // Only a refused add or save (a quota decision) has anything to
+        // reassure about; search and the explorer changed nothing.
+        body: capacityLine == null
+            ? 'Check your connection, then retry.'
+            : 'Nothing was changed. Check your connection, then retry.',
         capacityLine: capacityLine,
       );
   }
@@ -259,8 +262,8 @@ DesktopPaywallCopy _premiumCopy(
       return const DesktopPaywallCopy(
         title: 'Explorer statistics past move 10 are Premium',
         body:
-            'The first 20 plies of every line are free. Your own board keeps '
-            'working at any depth.',
+            'Every line is free up to move 10. Your own board keeps working '
+            'at any depth.',
       );
     case DesktopAccessReason.premiumExplorerPlayerScope:
       return const DesktopPaywallCopy(
@@ -271,8 +274,8 @@ DesktopPaywallCopy _premiumCopy(
       );
     case DesktopAccessReason.premiumExplorerExactPosition:
       return const DesktopPaywallCopy(
-        title: 'Exact position search is Premium',
-        body: 'Explorer move statistics for the opening stay free.',
+        title: 'Explorer for set-up positions is Premium',
+        body: 'Games from the starting position are free up to move 10.',
       );
     case DesktopAccessReason.premiumProfileFilterCombination:
       return const DesktopPaywallCopy(
@@ -324,10 +327,10 @@ DesktopPaywallCopy _premiumCopy(
       );
     case DesktopAccessReason.quotaFavoritePlayers:
       return DesktopPaywallCopy(
-        title: 'Favourite player limit reached',
+        title: 'Favorite player limit reached',
         body:
             'Free accounts follow $desktopFreeFavoritePlayers players. '
-            'Favourite events stay unlimited.',
+            'Favorite events stay unlimited.',
         capacityLine: capacityLine,
       );
     case DesktopAccessReason.quotaCloudDatabases:

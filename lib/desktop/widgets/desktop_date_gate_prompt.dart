@@ -64,6 +64,10 @@ Future<bool> resolveDesktopDateGate(
 
 /// The explanation shown before any purchase prompt. Pops `true` when the
 /// user asks to see Premium.
+///
+/// With an [actionLabel] the dialog answers an action the user already asked
+/// for (an export that is partly free): that action is the primary button,
+/// See Premium steps down to secondary, and the dismiss button cancels.
 class DesktopDateGateDialog extends StatelessWidget {
   const DesktopDateGateDialog({
     super.key,
@@ -73,7 +77,12 @@ class DesktopDateGateDialog extends StatelessWidget {
     this.dismissLabel = 'Not now',
     this.onDismiss,
     this.onPremium,
-  });
+    this.actionLabel,
+    this.onAction,
+  }) : assert(
+         (actionLabel == null) == (onAction == null),
+         'actionLabel and onAction go together',
+       );
 
   final String title;
   final String body;
@@ -85,6 +94,11 @@ class DesktopDateGateDialog extends StatelessWidget {
 
   /// Defaults to popping `true`.
   final VoidCallback? onPremium;
+
+  /// The free part of the action the user asked for, drawn as the primary
+  /// button. Null for a plain gate, where See Premium is the primary.
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -121,8 +135,12 @@ class DesktopDateGateDialog extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                // Wraps rather than overflows when the labels outgrow the
+                // dialog's width; on one line it reads as an end-aligned row.
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  runSpacing: 8,
                   children: [
                     DesktopDialogButton(
                       label: dismissLabel,
@@ -133,10 +151,21 @@ class DesktopDateGateDialog extends StatelessWidget {
                     const SizedBox(width: 8),
                     DesktopDialogButton(
                       label: premiumLabel,
-                      tone: DesktopDialogButtonTone.primary,
+                      tone:
+                          actionLabel == null
+                              ? DesktopDialogButtonTone.primary
+                              : DesktopDialogButtonTone.secondary,
                       onPress:
                           onPremium ?? () => Navigator.of(context).pop(true),
                     ),
+                    if (actionLabel != null) ...[
+                      const SizedBox(width: 8),
+                      DesktopDialogButton(
+                        label: actionLabel!,
+                        tone: DesktopDialogButtonTone.primary,
+                        onPress: onAction,
+                      ),
+                    ],
                   ],
                 ),
               ],

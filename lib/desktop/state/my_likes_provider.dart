@@ -295,7 +295,16 @@ String formatLikedDateHeader(String dateKey, {DateTime? now}) {
 
   if (day == today) return 'Today';
   if (day == yesterday) return 'Yesterday';
-  return DateFormat('EEEE, MMM d').format(date);
+  return formatLikedDay(date, now: clock);
+}
+
+/// `EEEE, MMM d` for a day in the current year, `EEEE, MMM d, y` otherwise, so
+/// a like from an earlier year never reads as this year's date.
+String formatLikedDay(DateTime date, {DateTime? now}) {
+  final clock = now ?? DateTime.now();
+  return DateFormat(
+    date.year == clock.year ? 'EEEE, MMM d' : 'EEEE, MMM d, y',
+  ).format(date);
 }
 
 class MyLikesQueryNotifier extends StateNotifier<LikedAnalysesQuery> {

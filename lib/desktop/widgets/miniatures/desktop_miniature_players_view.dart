@@ -293,6 +293,8 @@ class _PlayerRowState extends ConsumerState<_PlayerRow> {
                   federation: player.country ?? '',
                   fideId: player.fideid,
                   title: player.title ?? '',
+                  // The name is this row's subject and the column is wide.
+                  abbreviate: false,
                 ),
               ),
               SizedBox(
@@ -480,6 +482,8 @@ class _ScorecardGames extends ConsumerWidget {
                     final game = groups[i].games[index];
                     return _ScorecardGameRow(
                       game: game,
+                      playerId: playerId,
+                      playerName: routeTitle,
                       locked: miniatureGameIsLockedAtRest(
                         game,
                         subscription: subscription,
@@ -506,14 +510,49 @@ class _ScorecardGames extends ConsumerWidget {
   }
 }
 
+/// Whether the scorecard's player won [game]: true for a win, false for a
+/// loss, null for a draw, an unfinished game, or a side that cannot be told.
+///
+/// The side comes from the gamebase player id, then from the name.
+bool? miniatureScorecardPlayerWon(
+  GamesTourModel game, {
+  required String playerId,
+  required String playerName,
+}) {
+  final bool isWhite;
+  final id = playerId.trim();
+  if (id.isNotEmpty && game.whitePlayer.gamebasePlayerId?.trim() == id) {
+    isWhite = true;
+  } else if (id.isNotEmpty &&
+      game.blackPlayer.gamebasePlayerId?.trim() == id) {
+    isWhite = false;
+  } else {
+    final name = playerName.trim().toLowerCase();
+    if (name.isEmpty) return null;
+    final asWhite = game.whitePlayer.name.trim().toLowerCase() == name;
+    final asBlack = game.blackPlayer.name.trim().toLowerCase() == name;
+    if (asWhite == asBlack) return null;
+    isWhite = asWhite;
+  }
+  return switch (game.gameStatus) {
+    GameStatus.whiteWins => isWhite,
+    GameStatus.blackWins => !isWhite,
+    _ => null,
+  };
+}
+
 class _ScorecardGameRow extends StatefulWidget {
   const _ScorecardGameRow({
     required this.game,
+    required this.playerId,
+    required this.playerName,
     required this.locked,
     required this.onOpen,
   });
 
   final GamesTourModel game;
+  final String playerId;
+  final String playerName;
   final bool locked;
   final VoidCallback onOpen;
 
@@ -528,6 +567,18 @@ class _ScorecardGameRowState extends State<_ScorecardGameRow> {
   Widget build(BuildContext context) {
     final game = widget.game;
     final moves = game.boardNr;
+    // Coloured by this player's outcome, matching the W-L record above: a win
+    // as Black is still a win. Neutral on a locked row, where a greyscaled hue
+    // is unreadable, and when the player's side cannot be told.
+    final won = miniatureScorecardPlayerWon(
+      game,
+      playerId: widget.playerId,
+      playerName: widget.playerName,
+    );
+    final resultColor =
+        widget.locked || won == null
+            ? kWhiteColor70
+            : (won ? kPrimaryColor : kRedColor);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -580,6 +631,7 @@ class _ScorecardGameRowState extends State<_ScorecardGameRow> {
                             GameStatus.blackWins => '0-1',
                             _ => '',
                           },
+                          color: resultColor,
                         ),
                       ),
                       Expanded(

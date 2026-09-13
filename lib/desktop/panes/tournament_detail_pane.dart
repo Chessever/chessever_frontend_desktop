@@ -180,8 +180,11 @@ class TournamentDetailPane extends HookConsumerWidget {
                               eventId: tournament.id,
                               eventName: tournament.title,
                               tournamentId: selectedTourId,
+                              // An event with no tours carries a placeholder
+                              // tour ("No Tournament") with an empty id; that
+                              // name is not a subject.
                               tournamentName:
-                                  ownsSelectedContext
+                                  (selectedTourId?.isNotEmpty ?? false)
                                       ? detailState
                                           .valueOrNull
                                           ?.aboutTourModel

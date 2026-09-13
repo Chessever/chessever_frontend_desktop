@@ -21,15 +21,27 @@ import 'package:chessever/desktop/state/botvinnik_reference_router.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/widgets/tournament_category_switcher.dart'
+    show tournamentCategoryLabel;
 import 'package:chessever/providers/auth_state_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 const _tabular = [FontFeature.tabularFigures()];
+
+/// The one text gutter every dock row shares, so the allowance line, body,
+/// error line and composer start and end on the same edges.
+const double _kDockGutter = 20;
+
+/// Quiet 11-12px captions (disclaimer, keyboard hint, reset time). About 6:1
+/// on the dock surface, still a step below [kWhiteColor70] body copy.
+final Color _captionColor = kWhiteColor.withValues(alpha: 0.55);
 
 /// Mounts the Botvinnik dock beside the tab stack. Renders nothing while the
 /// dock is closed, Botvinnik is switched off in Settings, or the build has the
@@ -164,6 +176,13 @@ class _BotvinnikDockState extends ConsumerState<BotvinnikDock> {
       quota: quota.valueOrNull,
     );
     final showingHistory = dock.showingHistory && signedIn;
+    final ValueChanged<String>? onSuggestion =
+        switch (botvinnikSuggestionAction(access)) {
+          BotvinnikSuggestionAction.send => _sendSuggestion,
+          BotvinnikSuggestionAction.openPlans =>
+            (_) => unawaited(_openPlans()),
+          BotvinnikSuggestionAction.disabled => null,
+        };
 
     return CallbackShortcuts(
       bindings: {
@@ -203,7 +222,7 @@ class _BotvinnikDockState extends ConsumerState<BotvinnikDock> {
                               : _ConversationBody(
                                 state: chat,
                                 signedIn: signedIn,
-                                onSuggestion: _sendSuggestion,
+                                onSuggestion: onSuggestion,
                               ),
                     ),
                     if (chat.error != null)
@@ -297,7 +316,9 @@ class _DockHeader extends ConsumerWidget {
     final dock = ref.read(botvinnikDockProvider.notifier);
     final chat = ref.read(botvinnikChatControllerProvider.notifier);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 8, 8, 6),
+      // Left 14 + the mark's ~6px transparent margin puts its ink on the
+      // gutter; right 9 + the 40px icon box's inset does the same.
+      padding: EdgeInsets.fromLTRB(14, 8, _kDockGutter - 11, signedIn ? 0 : 6),
       child: Row(
         children: [
           const BotvinnikMark(size: 30),
@@ -389,14 +410,18 @@ class _AllowanceLine extends ConsumerWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          _DockTextButton(
-            label: 'Retry',
-            onPress: () => ref.read(botvinnikQuotaProvider.notifier).refresh(),
+          // Pull the 8px label inset back so "Retry" ends on the gutter.
+          Transform.translate(
+            offset: const Offset(8, 0),
+            child: _DockTextButton(
+              label: 'Retry',
+              onPress:
+                  () => ref.read(botvinnikQuotaProvider.notifier).refresh(),
+            ),
           ),
         ],
       );
     } else if (value == null) {
-      // Reserve the line while the allowance loads so nothing below shifts.
       line = const Text(' ', style: base);
     } else {
       line = Row(
@@ -409,25 +434,31 @@ class _AllowanceLine extends ConsumerWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (value.resetsAt != null && value.limit > 0)
+          if (value.resetsAt != null && value.limit > 0) ...[
+            const SizedBox(width: 12),
             Text(
               botvinnikResetLabel(value.resetsAt!, DateTime.now()),
-              style: base.copyWith(color: kLightGreyColor),
+              style: base.copyWith(color: _captionColor),
             ),
+          ],
         ],
       );
     }
+    // Loading, figures and the error with its 40px Retry target all share
+    // one fixed row, so nothing below moves when the allowance settles.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 16),
-        child: line,
+      padding: const EdgeInsets.symmetric(horizontal: _kDockGutter),
+      child: SizedBox(
+        height: 40,
+        child: Align(alignment: Alignment.centerLeft, child: line),
       ),
     );
   }
 }
 
-/// Allowance copy for the three account states. Numbers come from [quota].
+/// Allowance status for the header. Numbers come from [quota]. The header
+/// only states where the allowance stands; the limit, the reopen time and
+/// the offer live in the composer notice, so no sentence appears twice.
 @visibleForTesting
 TextSpan botvinnikAllowanceSpan(ChatQuotaStatus quota) {
   const strong = TextStyle(color: kWhiteColor, fontWeight: FontWeight.w600);
@@ -437,10 +468,16 @@ TextSpan botvinnikAllowanceSpan(ChatQuotaStatus quota) {
     case ChatComposerAccess.upgradeRequired:
       return const TextSpan(text: 'Botvinnik messages are not in your plan');
     case ChatComposerAccess.exhausted:
+      // Short enough to sit beside the reset time in a 340px dock.
       return TextSpan(
         children: [
-          TextSpan(text: quota.isPremium ? 'Premium: ' : ''),
-          const TextSpan(text: 'no messages left today', style: strong),
+          const TextSpan(text: 'No', style: strong),
+          TextSpan(
+            text:
+                quota.isPremium
+                    ? ' Premium messages left today'
+                    : ' messages left today',
+          ),
         ],
       );
     case ChatComposerAccess.enabled:
@@ -457,15 +494,41 @@ TextSpan botvinnikAllowanceSpan(ChatQuotaStatus quota) {
   }
 }
 
+enum _ResetDay { today, tomorrow, later }
+
+_ResetDay _resetDay(DateTime local, DateTime now) {
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(local.year, local.month, local.day);
+  if (day == today) return _ResetDay.today;
+  if (day.difference(today).inDays == 1) return _ResetDay.tomorrow;
+  return _ResetDay.later;
+}
+
 @visibleForTesting
 String botvinnikResetLabel(DateTime resetsAt, DateTime now) {
   final local = resetsAt.toLocal();
   final time = DateFormat.Hm().format(local);
-  final today = DateTime(now.year, now.month, now.day);
-  final day = DateTime(local.year, local.month, local.day);
-  if (day == today) return 'Resets $time';
-  if (day.difference(today).inDays == 1) return 'Resets tomorrow $time';
-  return 'Resets ${DateFormat.MMMd().format(local)}';
+  return switch (_resetDay(local, now)) {
+    _ResetDay.today => 'Resets $time',
+    _ResetDay.tomorrow => 'Resets tomorrow $time',
+    _ResetDay.later => 'Resets ${DateFormat.MMMd().format(local)}',
+  };
+}
+
+/// The exhausted notice's second sentence. No-break spaces hold the time to
+/// its preposition, so a wrap never leaves "05:54." alone on a line.
+@visibleForTesting
+String botvinnikSendingOpensAgain(DateTime resetsAt, DateTime now) {
+  const glue = '\u00A0';
+  final local = resetsAt.toLocal();
+  final time = DateFormat.Hm().format(local);
+  final when = switch (_resetDay(local, now)) {
+    _ResetDay.today => 'at$glue$time',
+    _ResetDay.tomorrow => 'tomorrow at$glue$time',
+    _ResetDay.later =>
+      'on$glue${DateFormat.MMMd().format(local).replaceAll(' ', glue)}',
+  };
+  return 'Sending opens again $when.';
 }
 
 class _ConversationBody extends StatelessWidget {
@@ -477,7 +540,9 @@ class _ConversationBody extends StatelessWidget {
 
   final BotvinnikChatState state;
   final bool signedIn;
-  final ValueChanged<String> onSuggestion;
+
+  /// Null while the account cannot send (an exhausted allowance).
+  final ValueChanged<String>? onSuggestion;
 
   @override
   Widget build(BuildContext context) {
@@ -549,9 +614,9 @@ class _EmptyConversation extends StatelessWidget {
             const SizedBox(height: 8),
           ],
           const SizedBox(height: 14),
-          const Text(
+          Text(
             'Botvinnik can make mistakes. Check important results.',
-            style: TextStyle(color: kLightGreyColor, fontSize: 11),
+            style: TextStyle(color: _captionColor, fontSize: 11),
           ),
         ],
       ),
@@ -560,6 +625,10 @@ class _EmptyConversation extends StatelessWidget {
 }
 
 /// Human name of what a launch was about, if the context carries one.
+///
+/// A tournament launch names the event, then the selected category when it
+/// adds something ("Norway Chess 2026, Women"). A bare tour name ("Open") or
+/// a full "Event | Open" string is never the subject on its own.
 @visibleForTesting
 String? botvinnikContextSubject(ChatScreenContext? context) {
   if (context == null) return null;
@@ -568,10 +637,45 @@ String? botvinnikContextSubject(ChatScreenContext? context) {
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
 
+  if (context.screen == 'tournament') {
+    final event = clean(context.eventName);
+    final tour = clean(context.tournamentName);
+    final category = tour == null ? null : tournamentCategoryLabel(tour);
+    if (event == null) return category;
+    if (category == null || category == event) return event;
+    return '$event, $category';
+  }
+
   return clean(context.gameLabel) ??
       clean(context.playerName) ??
       clean(context.tournamentName) ??
       clean(context.eventName);
+}
+
+/// What a suggestion row does for each gate. A row never promises a send the
+/// account cannot make, and a blocked click never overwrites the draft.
+enum BotvinnikSuggestionAction {
+  /// Put the prompt in the composer and send it (sign-in keeps it as a draft).
+  send,
+
+  /// The plan has no Botvinnik messages: show the plans, leave the draft.
+  openPlans,
+
+  /// The allowance is used up: the rows render muted and do nothing.
+  disabled,
+}
+
+@visibleForTesting
+BotvinnikSuggestionAction botvinnikSuggestionAction(ChatComposerAccess access) {
+  switch (access) {
+    case ChatComposerAccess.enabled:
+    case ChatComposerAccess.signedOut:
+      return BotvinnikSuggestionAction.send;
+    case ChatComposerAccess.upgradeRequired:
+      return BotvinnikSuggestionAction.openPlans;
+    case ChatComposerAccess.exhausted:
+      return BotvinnikSuggestionAction.disabled;
+  }
 }
 
 class _SuggestionRow extends StatefulWidget {
@@ -639,8 +743,10 @@ class _SuggestionRowState extends State<_SuggestionRow>
                           widget.suggestion.prompt,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: kWhiteColor70,
+                          style: TextStyle(
+                            // A muted row dims as one unit, so the prompt
+                            // never outshines its own label.
+                            color: enabled ? kWhiteColor70 : kLightGreyColor,
                             fontSize: 12,
                           ),
                         ),
@@ -774,18 +880,27 @@ class _MessageListState extends ConsumerState<_MessageList> {
         ),
         if (_showJump)
           Positioned(
-            right: 16,
+            right: _kDockGutter,
             bottom: 12,
-            child: DesktopToolbarPillButton(
-              label: 'Latest',
-              icon: Icons.arrow_downward_rounded,
-              onPress: () {
-                setState(() {
-                  _following = true;
-                  _showJump = false;
-                });
-                _jumpToEnd();
-              },
+            // The pill floats over scrolling answer text, so it sits on an
+            // opaque dock-surface backing instead of the toolbar's clear fill.
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: DesktopToolbarPillButton(
+                label: 'Latest',
+                icon: Icons.arrow_downward_rounded,
+                height: 40,
+                onPress: () {
+                  setState(() {
+                    _following = true;
+                    _showJump = false;
+                  });
+                  _jumpToEnd();
+                },
+              ),
             ),
           ),
       ],
@@ -901,13 +1016,6 @@ class _AssistantMessage extends ConsumerWidget {
               },
             ),
           ),
-        if (streaming && !waiting) ...[
-          const SizedBox(height: 6),
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: _StreamingCaret(),
-          ),
-        ],
         if (!streaming && message.content.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -978,6 +1086,8 @@ MarkdownStyleSheet _markdownStyle(BuildContext context) {
     listBullet: body.copyWith(color: kWhiteColor70),
     tableHead: body.copyWith(fontWeight: FontWeight.w600, fontSize: 12.5),
     tableBody: body.copyWith(fontSize: 12.5, fontFeatures: _tabular),
+    tableHeadAlign: TextAlign.left,
+    tableColumnWidth: const _ContentShareColumnWidth(),
     tableBorder: TableBorder.all(color: kDividerColor),
     tableCellsPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
     code: const TextStyle(
@@ -1001,8 +1111,34 @@ MarkdownStyleSheet _markdownStyle(BuildContext context) {
   );
 }
 
-/// The one moving thing in a streaming answer. It sits after text that is
-/// already on screen; the answer itself never waits on an animation.
+/// A table column that starts at its content width and shares spare width in
+/// proportion to that content, so "Magnus Carlsen" keeps its line while "5.5"
+/// stays narrow. When the table is too wide, columns shrink in the same
+/// proportion down to their longest word. Unlike [IntrinsicColumnWidth] it
+/// keeps the table inside the dock instead of scrolling it sideways.
+class _ContentShareColumnWidth extends TableColumnWidth {
+  const _ContentShareColumnWidth();
+
+  static const _content = IntrinsicColumnWidth();
+
+  @override
+  double minIntrinsicWidth(Iterable<RenderBox> cells, double containerWidth) =>
+      _content.minIntrinsicWidth(cells, containerWidth);
+
+  @override
+  double maxIntrinsicWidth(Iterable<RenderBox> cells, double containerWidth) =>
+      _content.maxIntrinsicWidth(cells, containerWidth);
+
+  @override
+  double? flex(Iterable<RenderBox> cells) {
+    final width = _content.maxIntrinsicWidth(cells, double.infinity);
+    return width > 1 ? width : 1;
+  }
+}
+
+/// The pulse beside "Thinking" before the first words arrive. Once text
+/// streams, the send button's spinner carries progress, so no caret trails
+/// the answer. The answer itself never waits on an animation.
 class _StreamingCaret extends StatefulWidget {
   const _StreamingCaret();
 
@@ -1091,9 +1227,100 @@ class _HistoryList extends ConsumerWidget {
             dock.showHistory(false);
             unawaited(chat.select(conversation));
           },
-          onDelete: () => unawaited(chat.delete(conversation)),
+          onDelete: () => unawaited(_confirmAndDelete(context, conversation)),
         );
       },
+    );
+  }
+
+  Future<void> _confirmAndDelete(
+    BuildContext context,
+    ChatConversation conversation,
+  ) async {
+    final chat = ProviderScope.containerOf(
+      context,
+      listen: false,
+    ).read(botvinnikChatControllerProvider.notifier);
+    if (!conversation.isDraft &&
+        !await showBotvinnikDeleteChatConfirmation(context, conversation)) {
+      return;
+    }
+    await chat.delete(conversation);
+  }
+}
+
+/// Deleting a chat removes it from the account for good, so the dock asks
+/// first, like every other permanent delete on desktop. Esc, the close
+/// button and the barrier all cancel. Returns true only on Delete.
+Future<bool> showBotvinnikDeleteChatConfirmation(
+  BuildContext context,
+  ChatConversation conversation,
+) async {
+  final confirmed = await showDesktopModal<bool>(
+    context,
+    title: 'Delete this chat?',
+    maxWidth: 420,
+    builder: (_) => _DeleteChatBody(title: conversation.title),
+  );
+  return confirmed == true;
+}
+
+class _DeleteChatBody extends StatelessWidget {
+  const _DeleteChatBody({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = title.trim().isEmpty ? 'This chat' : title.trim();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: name,
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const TextSpan(
+                  text:
+                      ' and its answers are deleted from your ChessEver '
+                      'account. This cannot be undone.',
+                ),
+              ],
+            ),
+            style: const TextStyle(
+              color: kWhiteColor70,
+              fontSize: 13,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              DesktopDialogButton(
+                label: 'Cancel',
+                tone: DesktopDialogButtonTone.ghost,
+                onPress: () => Navigator.of(context).pop(false),
+              ),
+              const SizedBox(width: 8),
+              DesktopDialogButton(
+                label: 'Delete',
+                tone: DesktopDialogButtonTone.danger,
+                onPress: () => Navigator.of(context).pop(true),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1224,7 +1451,7 @@ class _ErrorLine extends StatelessWidget {
     return Semantics(
       liveRegion: true,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 8, 0),
+        padding: const EdgeInsets.fromLTRB(_kDockGutter, 4, 8, 0),
         child: Row(
           children: [
             const Icon(Icons.error_outline_rounded, size: 15, color: kRedColor),
@@ -1282,8 +1509,11 @@ class _Composer extends StatelessWidget {
     final blocked =
         access == ChatComposerAccess.exhausted ||
         access == ChatComposerAccess.upgradeRequired;
+    final offerPremium =
+        access == ChatComposerAccess.upgradeRequired ||
+        (access == ChatComposerAccess.exhausted && quota?.isPremium == false);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+      padding: const EdgeInsets.fromLTRB(_kDockGutter, 8, _kDockGutter, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1313,7 +1543,7 @@ class _Composer extends StatelessWidget {
                       onPress: onSignIn,
                     ),
                   ],
-                  if (access == ChatComposerAccess.upgradeRequired) ...[
+                  if (offerPremium) ...[
                     const SizedBox(width: 10),
                     DesktopToolbarPillButton(
                       label: 'See Premium',
@@ -1330,9 +1560,9 @@ class _Composer extends StatelessWidget {
           if (subject != null)
             Row(
               children: [
-                const Text(
+                Text(
                   'About ',
-                  style: TextStyle(color: kLightGreyColor, fontSize: 12),
+                  style: TextStyle(color: _captionColor, fontSize: 12),
                 ),
                 Expanded(
                   child: Text(
@@ -1342,11 +1572,16 @@ class _Composer extends StatelessWidget {
                     style: const TextStyle(color: kWhiteColor70, fontSize: 12),
                   ),
                 ),
-                _DockIconButton(
-                  icon: Icons.close_rounded,
-                  iconSize: 14,
-                  tooltip: 'Stop sending this context',
-                  onPress: sending ? null : onClearContext,
+                // 5px = the composer's 1px border + 4px inset, so this glyph
+                // centres over the send button below it.
+                Padding(
+                  padding: const EdgeInsets.only(right: 5),
+                  child: _DockIconButton(
+                    icon: Icons.close_rounded,
+                    iconSize: 14,
+                    tooltip: 'Stop sending this context',
+                    onPress: sending ? null : onClearContext,
+                  ),
                 ),
               ],
             ),
@@ -1364,12 +1599,12 @@ class _Composer extends StatelessWidget {
               final count = value.text.characters.length;
               return Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       'Enter to send, Shift+Enter for a new line',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: kLightGreyColor, fontSize: 11),
+                      style: TextStyle(color: _captionColor, fontSize: 11),
                     ),
                   ),
                   if (count >= kChatComposerMaxLength * 0.8)
@@ -1380,7 +1615,7 @@ class _Composer extends StatelessWidget {
                         color:
                             count >= kChatComposerMaxLength
                                 ? kRedColor
-                                : kLightGreyColor,
+                                : _captionColor,
                         fontSize: 11,
                         fontFeatures: _tabular,
                       ),
@@ -1408,7 +1643,10 @@ String? botvinnikComposerNotice(
     case ChatComposerAccess.signedOut:
       return 'Botvinnik needs a ChessEver account. Your draft stays here.';
     case ChatComposerAccess.upgradeRequired:
-      return 'Your plan has no Botvinnik messages. Premium adds a daily allowance.';
+      // The header already says the plan has no messages; this is the offer.
+      // No-break space: the last two words wrap together, never "allowance."
+      // alone beside the See Premium button.
+      return 'Premium adds a daily Botvinnik\u00A0allowance.';
     case ChatComposerAccess.exhausted:
       final limit = quota?.limit ?? 0;
       final plan = quota?.isPremium ?? false ? 'Premium ' : '';
@@ -1417,8 +1655,7 @@ String? botvinnikComposerNotice(
           '${plan}messages for today.';
       final resetsAt = quota?.resetsAt;
       if (resetsAt == null) return used;
-      final reset = botvinnikResetLabel(resetsAt, now);
-      return '$used ${reset.replaceFirst('Resets', 'Sending opens again')}.';
+      return '$used ${botvinnikSendingOpensAgain(resetsAt, now)}';
   }
 }
 
@@ -1486,7 +1723,9 @@ class _ComposerFieldState extends State<_ComposerField> {
         children: [
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 7),
+              // 10 + a 19.6px line + 10 matches the 40px send button, so
+              // one line of text centres on it; more lines grow upward.
+              padding: const EdgeInsets.symmetric(vertical: 10),
               child: TextField(
                 controller: widget.controller,
                 focusNode: widget.focusNode,
@@ -1511,7 +1750,10 @@ class _ComposerFieldState extends State<_ComposerField> {
                 ),
                 decoration: const InputDecoration.collapsed(
                   hintText: 'Ask Botvinnik',
-                  hintStyle: TextStyle(color: kLightGreyColor, fontSize: 13.5),
+                  hintStyle: TextStyle(
+                    color: Color(0x73FFFFFF), // white at 0.45, about 4.5:1
+                    fontSize: 13.5,
+                  ),
                 ),
               ),
             ),

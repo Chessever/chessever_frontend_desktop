@@ -10,54 +10,25 @@ const ColorFilter _kGreyscale = ColorFilter.matrix(<double>[
   0, 0, 0, 1, 0, //
 ]);
 
-/// Draws premium-gated content as locked AT REST: desaturated, dimmed, and
-/// marked with a bare lock glyph that explains itself on hover.
+/// How far locked content is dimmed.
 ///
-/// Purely visual. It never intercepts a pointer and never opens a paywall;
-/// the owning surface re-evaluates access when the user acts, and only an
-/// explicit action may offer Premium. The content stays fully readable, so a
-/// locked row can still be browsed, sorted and removed.
-class DesktopLockedContent extends StatelessWidget {
-  const DesktopLockedContent({
-    super.key,
-    required this.locked,
-    required this.reason,
-    required this.child,
-    this.glyphAlignment = AlignmentDirectional.topEnd,
-    this.glyphPadding = const EdgeInsetsDirectional.fromSTEB(0, 8, 10, 0),
-  });
-
-  final bool locked;
-
-  /// Hover copy naming the specific rule, e.g. "Liked more than 7 days ago.
-  /// Premium opens your full history."
-  final String reason;
-  final Widget child;
-  final AlignmentGeometry glyphAlignment;
-  final EdgeInsetsGeometry glyphPadding;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!locked) return child;
-    return Stack(
-      children: [
-        DesktopDesaturated(enabled: true, child: child),
-        Positioned.fill(
-          child: Align(
-            alignment: glyphAlignment,
-            child: Padding(
-              padding: glyphPadding,
-              child: DesktopLockGlyph(reason: reason),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
+/// Locked content stays readable: at this value [kWhiteColor70] text keeps
+/// about 6.5:1 on the page and 5:1 on a selected row's primary tint, so a
+/// locked row can still be browsed, sorted and removed. The greyscale plus the
+/// lock glyph carry the locked signal, not a dim that erases the text.
+const double kDesktopLockedContentOpacity = 0.8;
 
 /// Desaturates and dims [child] when [enabled]; otherwise returns it as is.
-/// Use where the lock glyph lives in its own column (table rows).
+///
+/// Draws premium-gated content as locked AT REST. Purely visual: it never
+/// intercepts a pointer and never opens a paywall; the owning surface
+/// re-evaluates access when the user acts.
+///
+/// Colour-coded text (results, titles) must be passed a neutral colour by the
+/// caller while locked: the greyscale maps a saturated red or the brand primary
+/// to a mid grey that no dim level keeps legible. Keep the [DesktopLockGlyph]
+/// and any selection chrome outside this widget so they render at full
+/// strength.
 class DesktopDesaturated extends StatelessWidget {
   const DesktopDesaturated({
     super.key,
@@ -73,12 +44,16 @@ class DesktopDesaturated extends StatelessWidget {
     if (!enabled) return child;
     return ColorFiltered(
       colorFilter: _kGreyscale,
-      child: Opacity(opacity: 0.62, child: child),
+      child: Opacity(opacity: kDesktopLockedContentOpacity, child: child),
     );
   }
 }
 
 /// The lock mark used on locked rows and cards. A bare glyph, no tile.
+///
+/// The explanation opens beside the glyph rather than above it: locks sit in
+/// a table's first column or at a card's edge, where a centred tip would be
+/// pushed against the window edge and over the row above.
 class DesktopLockGlyph extends StatelessWidget {
   const DesktopLockGlyph({super.key, required this.reason, this.size = 14});
 
@@ -89,6 +64,8 @@ class DesktopLockGlyph extends StatelessWidget {
   Widget build(BuildContext context) {
     return DesktopTooltip(
       message: reason,
+      tipAnchor: Alignment.centerLeft,
+      childAnchor: Alignment.centerRight,
       child: Semantics(
         label: reason,
         child: Icon(Icons.lock_rounded, size: size, color: kWhiteColor70),

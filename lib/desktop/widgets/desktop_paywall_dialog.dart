@@ -491,14 +491,19 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
           children: [
             _Header(title: copy.title),
             const SizedBox(height: 8),
-            Text(
-              copy.body,
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 13,
-                height: 1.45,
+            if (shown.outcome == DesktopAccess.checking)
+              // The progress row carries the body line; the title already
+              // names what is being checked.
+              _Progress(label: copy.body)
+            else
+              Text(
+                copy.body,
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 13,
+                  height: 1.45,
+                ),
               ),
-            ),
             if (copy.capacityLine != null) ...[
               const SizedBox(height: 14),
               Text(
@@ -511,8 +516,10 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
                 ),
               ),
             ],
-            const SizedBox(height: 20),
-            ..._bodyFor(shown),
+            if (shown.outcome != DesktopAccess.checking) ...[
+              const SizedBox(height: 20),
+              ..._bodyFor(shown),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 12),
               Text(
@@ -529,9 +536,8 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
   List<Widget> _bodyFor(DesktopAccessDecision shown) {
     switch (shown.outcome) {
       case DesktopAccess.allowed:
-        return const [];
       case DesktopAccess.checking:
-        return const [_Progress(label: 'Checking your membership')];
+        return const [];
       case DesktopAccess.temporarilyUnavailable:
         return [
           Align(
@@ -1031,14 +1037,19 @@ class DesktopAccessLockedSurface extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              Text(
-                copy.body,
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 13,
-                  height: 1.45,
+              if (decision.outcome == DesktopAccess.checking)
+                // The progress row carries the body line; the title already
+                // names what is being checked.
+                _Progress(label: copy.body)
+              else
+                Text(
+                  copy.body,
+                  style: const TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: 13,
+                    height: 1.45,
+                  ),
                 ),
-              ),
               if (copy.capacityLine != null) ...[
                 const SizedBox(height: 10),
                 Text(
@@ -1050,10 +1061,6 @@ class DesktopAccessLockedSurface extends ConsumerWidget {
                     fontFeatures: [FontFeature.tabularFigures()],
                   ),
                 ),
-              ],
-              if (decision.outcome == DesktopAccess.checking) ...[
-                const SizedBox(height: 16),
-                const _Progress(label: 'Checking your membership'),
               ],
               if (action != null) ...[const SizedBox(height: 16), action],
             ],
