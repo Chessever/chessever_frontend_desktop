@@ -20,15 +20,29 @@ import 'package:chessever/utils/svg_asset.dart';
 ///
 /// Minimal: brand logo, Google/Apple sign-in, and a quiet guest fallback.
 class DesktopWelcomeScreen extends HookConsumerWidget {
-  const DesktopWelcomeScreen({super.key, this.onContinueAsGuest});
+  const DesktopWelcomeScreen({
+    super.key,
+    this.onContinueAsGuest,
+    this.guestFailed = false,
+  });
 
   /// Creates a guest session. Hidden when null.
   final Future<void> Function()? onContinueAsGuest;
+
+  /// The last attempt to create a guest session failed, so the screen says
+  /// why it is still here instead of silently coming back.
+  final bool guestFailed;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final signingIn = useState<bool>(false);
     final lastError = useState<String?>(null);
+    final errorText =
+        lastError.value ??
+        (guestFailed && !signingIn.value
+            ? 'Could not start a guest session. Check your connection and '
+                'try again.'
+            : null);
 
     Future<void> handleGoogleSignIn() async {
       lastError.value = null;
@@ -120,7 +134,7 @@ class DesktopWelcomeScreen extends HookConsumerWidget {
                     ),
                   ),
                 ],
-                if (lastError.value != null) ...[
+                if (errorText != null) ...[
                   const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.all(10),
@@ -132,7 +146,7 @@ class DesktopWelcomeScreen extends HookConsumerWidget {
                       ),
                     ),
                     child: Text(
-                      lastError.value!,
+                      errorText,
                       style: const TextStyle(color: kRedColor, fontSize: 12),
                     ),
                   ),

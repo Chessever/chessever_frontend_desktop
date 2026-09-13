@@ -16,6 +16,14 @@ import 'package:chessever/utils/svg_asset.dart';
 
 String _guestDaysLabel(int days) => days == 1 ? '1 day' : '$days days';
 
+/// The file name with its parent folder, e.g. `Downloads/analysis.pgn`.
+String _shortExportPath(String path) {
+  final separator = RegExp(r'[\\/]');
+  final last = path.lastIndexOf(separator);
+  if (last <= 0) return path;
+  return path.substring(path.lastIndexOf(separator, last - 1) + 1);
+}
+
 /// Day 7 and weekly after: a dismissible reminder. Returns `true` when the
 /// guest signed in from it.
 Future<bool> showDesktopGuestReminder(
@@ -175,7 +183,7 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
   Widget build(BuildContext context) {
     final busy = _busyProvider != null;
     final unsaved = _unsavedBoards();
-    final exportedName = _exportedPath?.split(RegExp(r'[\\/]')).last;
+    final exportedPath = _exportedPath;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
@@ -203,35 +211,39 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
           ),
           if (unsaved.isNotEmpty) ...[
             const SizedBox(height: 16),
-            Text(
-              exportedName != null
-                  ? 'Exported to $exportedName.'
-                  : unsaved.length == 1
-                  ? '1 board has unsaved analysis. Export it before you sign in.'
-                  : '${unsaved.length} boards have unsaved analysis. '
-                      'Export them before you sign in.',
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 13,
-                height: 1.45,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: DesktopDialogButton(
-                label: _exporting ? 'Exporting…' : 'Export as PGN',
-                tone: DesktopDialogButtonTone.secondary,
-                onPress: busy || _exporting ? null : () => _export(unsaved),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    exportedPath != null
+                        ? 'Saved to ${_shortExportPath(exportedPath)}.'
+                        : unsaved.length == 1
+                        ? '1 board has unsaved analysis.'
+                        : '${unsaved.length} boards have unsaved analysis.',
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 13,
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                DesktopDialogButton(
+                  label:
+                      _exporting
+                          ? 'Exporting…'
+                          : exportedPath != null
+                          ? 'Export again'
+                          : 'Export as PGN',
+                  tone: DesktopDialogButtonTone.secondary,
+                  onPress: busy || _exporting ? null : () => _export(unsaved),
+                ),
+              ],
             ),
           ],
           const SizedBox(height: 20),
           DesktopDialogButton(
-            label:
-                _busyProvider == DesktopAccountProvider.google
-                    ? 'Opening browser…'
-                    : 'Continue with Google',
+            label: 'Continue with Google',
             tone: DesktopDialogButtonTone.primary,
             fillWidth: true,
             prefix: const DesktopIcon(SvgAsset.googleColorIcon, size: 16),
@@ -242,10 +254,7 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
           ),
           const SizedBox(height: 8),
           DesktopDialogButton(
-            label:
-                _busyProvider == DesktopAccountProvider.apple
-                    ? 'Opening Apple sign-in…'
-                    : 'Continue with Apple',
+            label: 'Continue with Apple',
             tone: DesktopDialogButtonTone.secondary,
             fillWidth: true,
             prefix: const DesktopIcon(
@@ -258,6 +267,19 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
                     ? null
                     : () => unawaited(_signIn(DesktopAccountProvider.apple)),
           ),
+          if (busy) ...[
+            const SizedBox(height: 12),
+            Text(
+              _busyProvider == DesktopAccountProvider.google
+                  ? 'Finish signing in with Google in your browser.'
+                  : 'Finish signing in with Apple in your browser.',
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 13,
+                height: 1.45,
+              ),
+            ),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 12),
             Text(
@@ -272,7 +294,8 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
               child: DesktopDialogButton(
                 label: widget.dismissLabel!,
                 tone: DesktopDialogButtonTone.ghost,
-                onPress: busy ? null : () => widget.onDone(false),
+                // Dismissing mid sign-in matches Esc and the barrier.
+                onPress: () => widget.onDone(false),
               ),
             ),
           ],

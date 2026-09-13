@@ -632,12 +632,8 @@ void main() {
         authGate,
         contains('child: DesktopGuestGateListener(child: DesktopShell()),'),
       );
-      expect(
-        authGate,
-        contains(
-          'child: DesktopWelcomeScreen(onContinueAsGuest: startGuestSession),',
-        ),
-      );
+      expect(authGate, contains('child: DesktopWelcomeScreen('));
+      expect(authGate, contains('onContinueAsGuest: startGuestSession,'));
       // Freemium: the entrance never walls on entitlement.
       expect(authGate, isNot(contains('DesktopPremiumRequiredScreen')));
       expect(authGate, isNot(contains('subscriptionProvider')));

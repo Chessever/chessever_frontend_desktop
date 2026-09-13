@@ -64,6 +64,10 @@ Future<bool> signInDesktopPermanentAccount(
 }) async {
   final wasGuest = desktopCurrentUserIsGuest();
   final merger = ref.read(desktopGuestAccountMergerProvider);
+  // Read before the browser round trip: the widget that started sign-in can
+  // be closed meanwhile, and its ref cannot be used after that.
+  final guestSession =
+      wasGuest ? ref.read(guestSessionProvider.notifier) : null;
   if (wasGuest) {
     final guestUserId = Supabase.instance.client.auth.currentUser?.id;
     if (guestUserId != null) {
@@ -84,9 +88,7 @@ Future<bool> signInDesktopPermanentAccount(
   if (user == null || user.isAnonymous == true) return false;
 
   await _replayPendingGuestMerge(merger, user, surface: surface);
-  if (wasGuest) {
-    await ref.read(guestSessionProvider.notifier).clearGuestSession();
-  }
+  await guestSession?.clearGuestSession();
   AnalyticsService.instance.trackEventDetached(
     'Guest Upgrade Completed',
     properties: {

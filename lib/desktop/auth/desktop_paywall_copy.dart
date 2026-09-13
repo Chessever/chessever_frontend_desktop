@@ -35,7 +35,7 @@ class DesktopPaywallCopy {
 /// What Premium adds. Reports and storage are UNLIMITED; Botvinnik is a
 /// larger DAILY allowance, not unlimited. Keep the two distinct.
 const List<String> desktopPremiumIncludes = <String>[
-  'Unlimited game reports, saved games, databases and favourite players',
+  'Unlimited game reports, saved games, databases and favorite players',
   'Full games from Countrymen, player profiles, TWIC and databases',
   'Explorer past move 10, player scope and exact position search',
   'Prepare, opening trees and engine tournaments',
@@ -51,7 +51,7 @@ String? desktopCapacityLine(DesktopQuotaCapacity? capacity) {
   final limit = capacity.limit;
   switch (capacity.quota) {
     case DesktopQuota.favoritePlayers:
-      return '$used of $limit favourite ${_plural(limit, 'player')} used';
+      return '$used of $limit favorite ${_plural(limit, 'player')} used';
     case DesktopQuota.cloudDatabases:
       return '$used of $limit ${_plural(limit, 'database')} used';
     case DesktopQuota.cloudSavedGames:
@@ -317,10 +317,10 @@ DesktopPaywallCopy _premiumCopy(
       );
     case DesktopAccessReason.quotaFavoritePlayers:
       return DesktopPaywallCopy(
-        title: 'Favourite player limit reached',
+        title: 'Favorite player limit reached',
         body:
             'Free accounts follow $desktopFreeFavoritePlayers players. '
-            'Favourite events stay unlimited.',
+            'Favorite events stay unlimited.',
         capacityLine: capacityLine,
       );
     case DesktopAccessReason.quotaCloudDatabases:

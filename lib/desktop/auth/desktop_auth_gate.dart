@@ -78,6 +78,12 @@ class DesktopAuthGate extends HookConsumerWidget {
         if (!restoring.value && event.event == AuthChangeEvent.signedOut) {
           signedOutThisRun.value = true;
         }
+        if (event.session != null &&
+            bootstrap.value == DesktopGuestBootstrap.failed) {
+          // A session supersedes the earlier guest failure, so a later
+          // sign-out does not repeat that message on the welcome screen.
+          bootstrap.value = DesktopGuestBootstrap.idle;
+        }
         session.value = event.session;
       });
 
@@ -113,7 +119,10 @@ class DesktopAuthGate extends HookConsumerWidget {
         return const DesktopStandaloneWindowChrome(child: _GateLoading());
       case DesktopAuthGateView.welcome:
         return DesktopStandaloneWindowChrome(
-          child: DesktopWelcomeScreen(onContinueAsGuest: startGuestSession),
+          child: DesktopWelcomeScreen(
+            onContinueAsGuest: startGuestSession,
+            guestFailed: bootstrap.value == DesktopGuestBootstrap.failed,
+          ),
         );
       case DesktopAuthGateView.shell:
         return const MandatoryUpdateGate(

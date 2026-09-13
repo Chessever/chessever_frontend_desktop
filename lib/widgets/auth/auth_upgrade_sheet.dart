@@ -11,7 +11,7 @@ Future<bool> showAuthUpgradeSheet({required BuildContext context}) {
     surface: 'auth_upgrade',
     title: 'Sign in',
     message:
-        'A free account keeps your favourites, databases and analysis safe '
+        'A free account keeps your favorites, databases and analysis safe '
         'on every device.',
   );
 }
