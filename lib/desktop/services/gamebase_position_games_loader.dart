@@ -8,7 +8,6 @@ import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_filter_adapter.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
-import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
@@ -47,6 +46,7 @@ GamebasePositionGamesQuery gamebasePositionGamesQueryWithPage(
     pageNumber: pageNumber,
     pageSize: query.pageSize,
     notationPlies: query.notationPlies,
+    useFenEndpoint: query.useFenEndpoint,
   );
 }
 
@@ -307,9 +307,9 @@ Future<GamebaseSearchQueryResponse> _fetchExactFenPositionGames(
   WidgetRef ref,
   GamebasePositionGamesQuery query,
 ) {
-  return ref
-      .read(gamebaseRepositoryProvider)
-      .getFenPositionGames(
+  return ref.read(
+    positionGamesProvider(
+      GamebasePositionGamesQuery(
         fen: query.fen,
         uci: query.uci,
         timeControl: query.timeControl,
@@ -326,7 +326,10 @@ Future<GamebaseSearchQueryResponse> _fetchExactFenPositionGames(
         pageNumber: query.pageNumber,
         pageSize: query.pageSize,
         notationPlies: query.notationPlies,
-      );
+        useFenEndpoint: true,
+      ),
+    ).future,
+  );
 }
 
 TournamentGameSummary gamebasePositionGameSummaryFromRow(
