@@ -257,7 +257,7 @@ class TournamentsPane extends HookConsumerWidget {
                   const BotvinnikLaunchButton(
                     screenContext: botvinnikHomeScreenContext,
                     variant: BotvinnikLaunchVariant.toolbar,
-                    toolbarHeight: 40,
+                    toolbarHeight: 38,
                     leadingGap: 8,
                     tooltip: 'Ask Botvinnik about live chess',
                   ),

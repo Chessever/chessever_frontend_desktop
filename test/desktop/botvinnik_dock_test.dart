@@ -1,11 +1,18 @@
+import 'package:chessever/chat/botvinnik_provider.dart';
 import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/desktop/shell/desktop_main_routes.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/chat/chat_references.dart';
+import 'package:chessever/desktop/state/botvinnik_chat.dart';
 import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/state/botvinnik_reference_router.dart';
 import 'package:chessever/desktop/widgets/botvinnik/botvinnik_dock.dart';
+import 'package:chessever/providers/auth_state_provider.dart';
+import 'package:chessever/repository/authentication/model/app_user.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 // Allowance fixtures; the copy must echo whatever the API sends.
@@ -43,6 +50,141 @@ const Map<String, dynamic> _upgradeFixture = {
 ChatQuotaStatus _quota(Map<String, dynamic> json) =>
     ChatQuotaStatus.fromJson(json);
 
+/// Copy under test uses no-break spaces to control wrapping; compare words.
+String _words(String? text) => (text ?? '').replaceAll('\u00A0', ' ');
+
+class _DockBackend implements BotvinnikChatBackend {
+  @override
+  bool hasPermanentSession = true;
+  final List<ChatConversation> chats = [];
+  int deletes = 0;
+  int sends = 0;
+
+  @override
+  Future<List<ChatConversation>> conversations() async => List.of(chats);
+
+  @override
+  Future<List<ChatMessage>> messages(String conversationId) async => const [];
+
+  @override
+  Future<ChatConversation> createConversation({
+    required String locale,
+    String? title,
+  }) async => ChatConversation(
+    id: 'created',
+    title: title ?? 'New chat',
+    locale: locale,
+    updatedAt: DateTime.utc(2026, 9, 12),
+  );
+
+  @override
+  Future<void> deleteConversation(String id) async {
+    deletes++;
+    chats.removeWhere((chat) => chat.id == id);
+  }
+
+  @override
+  Future<ChatMessage> setMessageFeedback({
+    required String conversationId,
+    required String messageId,
+    required String? feedback,
+  }) => throw UnimplementedError();
+
+  @override
+  Stream<ChatStreamEvent> send({
+    required String conversationId,
+    required String content,
+    required String locale,
+    required String timezone,
+    required ChatClientContext clientContext,
+    ChatScreenContext? screenContext,
+  }) {
+    sends++;
+    return const Stream.empty();
+  }
+
+  @override
+  void close() {}
+}
+
+class _FixedQuota extends BotvinnikQuotaNotifier {
+  _FixedQuota(this.value);
+
+  final ChatQuotaStatus value;
+
+  @override
+  Future<ChatQuotaStatus?> build() async => value;
+}
+
+class _ContainerQuotaSink implements BotvinnikQuotaSink {
+  const _ContainerQuotaSink(this.ref);
+
+  final Ref ref;
+
+  @override
+  ChatQuotaStatus? get current => ref.read(botvinnikQuotaProvider).valueOrNull;
+
+  @override
+  void set(ChatQuotaStatus quota) {}
+
+  @override
+  Future<void> refresh() async {}
+}
+
+Future<ProviderContainer> _pumpDock(
+  WidgetTester tester, {
+  required _DockBackend backend,
+  required ChatQuotaStatus quota,
+  bool history = false,
+}) async {
+  tester.view.physicalSize = const Size(1000, 860);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final container = ProviderContainer(
+    overrides: [
+      botvinnikChatBackendProvider.overrideWithValue(backend),
+      currentUserProvider.overrideWithValue(
+        AppUser(id: 'user-1', createdAt: DateTime.utc(2026)),
+      ),
+      botvinnikQuotaProvider.overrideWith(() => _FixedQuota(quota)),
+      botvinnikChatControllerProvider.overrideWith(
+        (ref) => BotvinnikChatController(
+          backend: backend,
+          quota: _ContainerQuotaSink(ref),
+          locale: () => 'en',
+          clientContext:
+              () => const ChatClientContext(
+                platform: 'macos',
+                surface: 'desktop',
+                formFactor: 'desktop',
+              ),
+        ),
+      ),
+    ],
+  );
+  addTearDown(container.dispose);
+  container.read(botvinnikDockProvider.notifier)
+    ..open()
+    ..showHistory(history);
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp(
+        builder:
+            (context, child) => FTheme(data: FThemes.zinc.dark, child: child!),
+        home: const Scaffold(
+          body: Align(
+            alignment: Alignment.centerRight,
+            child: SizedBox(width: 420, child: BotvinnikDock()),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return container;
+}
+
 void main() {
   group('allowance copy', () {
     test('free and premium lines render the API numbers', () {
@@ -61,7 +203,11 @@ void main() {
           botvinnikAllowanceSpan(_quota(_freeExhaustedFixture)).toPlainText();
       final upgrade =
           botvinnikAllowanceSpan(_quota(_upgradeFixture)).toPlainText();
-      expect(exhausted, 'no messages left today');
+      expect(exhausted, 'No messages left today');
+      expect(
+        botvinnikAllowanceSpan(_quota(_premiumExhaustedFixture)).toPlainText(),
+        'No Premium messages left today',
+      );
       expect(upgrade, isNot(exhausted));
       expect(upgrade, contains('not in your plan'));
     });
@@ -96,11 +242,43 @@ void main() {
       expect(signedOut, contains('draft stays'));
       expect(free, contains('all 37 messages'));
       expect(premium, contains('all 91 Premium messages'));
-      expect(upgrade, contains('Premium adds a daily allowance'));
+      expect(_words(upgrade), 'Premium adds a daily Botvinnik allowance.');
+      // The header states the plan has no messages; the notice must not say
+      // it again.
+      expect(upgrade, isNot(contains('no Botvinnik messages')));
       expect({signedOut, free, premium, upgrade}, hasLength(4));
       for (final copy in [signedOut, free, premium, upgrade]) {
         expect(copy, isNot(contains('—')));
       }
+    });
+
+    test('the exhausted notice says when sending opens, time kept whole', () {
+      final now = DateTime(2026, 9, 12, 10);
+      final free = botvinnikComposerNotice(
+        ChatComposerAccess.exhausted,
+        ChatQuotaStatus(
+          limit: 37,
+          used: 37,
+          remaining: 0,
+          isPremium: false,
+          resetsAt: DateTime(2026, 9, 12, 23, 30),
+        ),
+        now,
+      );
+      expect(
+        _words(free),
+        'You have used all 37 messages for today. '
+        'Sending opens again at 23:30.',
+      );
+      expect(free, contains('at\u00A023:30.'));
+      expect(
+        _words(botvinnikSendingOpensAgain(DateTime(2026, 9, 13, 0, 0), now)),
+        'Sending opens again tomorrow at 00:00.',
+      );
+      expect(
+        _words(botvinnikSendingOpensAgain(DateTime(2026, 9, 20, 9), now)),
+        'Sending opens again on Sep 20.',
+      );
     });
 
     test('reset labels read in local time', () {
@@ -185,6 +363,120 @@ void main() {
         ),
         'Ju Wenjun',
       );
+    });
+
+    test('a tournament launch names the event, then the category', () {
+      String? subject(String? tournamentName) => botvinnikContextSubject(
+        botvinnikTournamentScreenContext(
+          eventId: 'group-1',
+          eventName: 'Norway Chess 2026',
+          tournamentId: tournamentName == null ? null : 'tour-1',
+          tournamentName: tournamentName,
+        ),
+      );
+      expect(subject('Norway Chess 2026 | Women'), 'Norway Chess 2026, Women');
+      expect(subject('Open'), 'Norway Chess 2026, Open');
+      expect(subject('Norway Chess 2026'), 'Norway Chess 2026');
+      expect(subject(null), 'Norway Chess 2026');
+    });
+  });
+
+  group('gates', () {
+    test('suggestion rows never promise a send the account cannot make', () {
+      expect(
+        botvinnikSuggestionAction(ChatComposerAccess.enabled),
+        BotvinnikSuggestionAction.send,
+      );
+      // Signed out keeps the prompt as a draft for after sign-in.
+      expect(
+        botvinnikSuggestionAction(ChatComposerAccess.signedOut),
+        BotvinnikSuggestionAction.send,
+      );
+      expect(
+        botvinnikSuggestionAction(ChatComposerAccess.upgradeRequired),
+        BotvinnikSuggestionAction.openPlans,
+      );
+      expect(
+        botvinnikSuggestionAction(ChatComposerAccess.exhausted),
+        BotvinnikSuggestionAction.disabled,
+      );
+    });
+
+    testWidgets('an exhausted allowance mutes suggestions and keeps the draft', (
+      tester,
+    ) async {
+      final backend = _DockBackend();
+      final container = await _pumpDock(
+        tester,
+        backend: backend,
+        quota: _quota(_freeExhaustedFixture),
+      );
+      final chat = container.read(botvinnikChatControllerProvider.notifier);
+      chat.draft.text = 'My own question';
+      await tester.pump();
+
+      await tester.tap(find.text('Live games'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      expect(chat.draft.text, 'My own question');
+      expect(backend.sends, 0);
+      // A free account that ran out is offered Premium.
+      expect(find.text('See Premium'), findsOneWidget);
+    });
+  });
+
+  group('chat history', () {
+    testWidgets('deleting a chat asks first; Cancel and Esc keep it', (
+      tester,
+    ) async {
+      final backend =
+          _DockBackend()
+            ..chats.addAll([
+              ChatConversation(
+                id: 'chat-1',
+                title: 'Who leads Norway Chess 2026?',
+                locale: 'en',
+                updatedAt: DateTime.utc(2026, 9, 12),
+              ),
+              ChatConversation(
+                id: 'chat-2',
+                title: 'Live games',
+                locale: 'en',
+                updatedAt: DateTime.utc(2026, 9, 11),
+              ),
+            ]);
+      final container = await _pumpDock(
+        tester,
+        backend: backend,
+        quota: _quota(_freeFixture),
+        history: true,
+      );
+      final trash = find.byIcon(Icons.delete_outline_rounded).first;
+
+      await tester.tap(trash);
+      await tester.pumpAndSettle();
+      expect(find.text('Delete this chat?'), findsOneWidget);
+      expect(backend.deletes, 0);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete this chat?'), findsNothing);
+      expect(backend.deletes, 0);
+
+      await tester.tap(trash);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.text('Delete this chat?'), findsNothing);
+      expect(backend.deletes, 0);
+      // Esc closed the dialog, not the dock behind it.
+      expect(container.read(botvinnikDockProvider).open, isTrue);
+
+      await tester.tap(trash);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      expect(backend.deletes, 1);
+      expect(backend.chats.map((chat) => chat.id), ['chat-2']);
     });
   });
 
