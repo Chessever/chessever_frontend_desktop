@@ -54,6 +54,19 @@ class BoardTabLibrarySaveOrigin {
   final String title;
 }
 
+/// Provenance of a game opened from the Favorites feed.
+///
+/// The feed is free (its saves still spend storage quota), so the feature
+/// stays the broadcast content the game is and only the origin records where
+/// it was found. The favourite-players quota is not a game action and must
+/// never be derived from a board's context.
+const DesktopAccessContext desktopFavoritesFeedAccessContext =
+    DesktopAccessContext(
+      feature: DesktopFeature.broadcast,
+      action: DesktopAction.openContent,
+      origin: DesktopDiscoveryOrigin.favorites,
+    );
+
 class BoardTabGameArgs {
   const BoardTabGameArgs({
     this.gameId,
@@ -304,6 +317,11 @@ class BoardTabGameArgs {
       (c) => c?.kind == BoardTabGamesContinuationKind.twicDatabase,
     )) {
       return source(DesktopFeature.twic, DesktopDiscoveryOrigin.twic);
+    }
+    if (continuations.any(
+      (c) => c?.kind == BoardTabGamesContinuationKind.favorites,
+    )) {
+      return desktopFavoritesFeedAccessContext;
     }
     if (hideLocalOpeningTreePicker && localOpeningTreeIndex != null) {
       return source(

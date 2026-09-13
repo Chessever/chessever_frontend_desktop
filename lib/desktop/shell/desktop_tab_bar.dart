@@ -105,7 +105,12 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
         setState(() => _hoverPayload = null);
         // Drag-drop intent is "open this game and look at it now" — pass
         // focus: true so the new tab foregrounds itself.
-        details.data.spawn(ref, focus: true);
+        // Admitted before the spawn: a gated payload opens nothing.
+        details.data.spawnAdmitted(
+          ref,
+          focus: true,
+          surface: 'tab_strip_drop',
+        );
       },
       builder: (context, candidate, rejected) {
         final dragging = candidate.isNotEmpty;

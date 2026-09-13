@@ -50,7 +50,10 @@ bool _isAfterToday(DateTime gameDate, DateTime now) {
 ///
 /// Rendering never gates; this does. A denied open starts no work (no tab, no
 /// PGN fetch). An allowed open hands the board only the miniatures that are
-/// open right now, so stepping between games cannot cross the gate.
+/// open right now, so stepping between games cannot cross the gate. The board
+/// carries Miniatures provenance, so a rail step, a new tab, a detached window
+/// or a restored tab is judged by the same date rule at the operation
+/// boundary rather than as a free broadcast.
 Future<void> openMiniatureGame(
   BuildContext context,
   WidgetRef ref,
@@ -85,5 +88,6 @@ Future<void> openMiniatureGame(
     routeTitle: routeTitle,
     routeGames: boardGames.isEmpty ? <GamesTourModel>[game] : boardGames,
     viewSource: ChessboardView.tour,
+    accessContext: miniatureGameAccessContext(game, DesktopAction.openContent),
   );
 }

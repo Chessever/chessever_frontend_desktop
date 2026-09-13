@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'dart:math' as math;
 
@@ -16,6 +17,7 @@ import 'package:motor/motor.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
+import 'package:chessever/desktop/services/miniatures_access.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
@@ -762,6 +764,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           _copyHighlightedGamesAsPgn(
             orderedGames,
             selectedGameId: selectedGameId,
+            activeArgs: activeArgs,
           ),
         );
       }
@@ -847,6 +850,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   Future<void> _copyHighlightedGamesAsPgn(
     List<TournamentGameSummary> orderedGames, {
     required String? selectedGameId,
+    required BoardTabGameArgs? activeArgs,
   }) async {
     final games = eventRailGamesForCopy(
       orderedGames: orderedGames,
@@ -858,6 +862,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       context: context,
       ref: ref,
       games: games,
+      activeArgs: activeArgs,
     );
   }
 
@@ -2156,12 +2161,14 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                         ref: ref,
                         game: game,
                         tournamentTitle: resolved.title,
+                        activeArgs: effectiveArgs,
                       ),
                   onCopyGames:
                       (games) => _copyEventGameSummariesAsPgn(
                         context: context,
                         ref: ref,
                         games: games,
+                        activeArgs: effectiveArgs,
                       ),
                 ),
               ),
@@ -2238,9 +2245,20 @@ Future<int> _copyEventGameSummariesAsPgn({
   required BuildContext context,
   required WidgetRef ref,
   required List<TournamentGameSummary> games,
+  required BoardTabGameArgs? activeArgs,
 }) async {
   if (games.isEmpty) {
     showDesktopToast(context, 'Nothing to copy.', error: true);
+    return 0;
+  }
+  // Denied => no PGN is resolved or fetched for any of the games.
+  if (!admitEventRailContentAction(
+    ProviderScope.containerOf(context, listen: false),
+    activeArgs: activeArgs,
+    games: games,
+    action: DesktopAction.copy,
+    surface: 'board_rail_copy',
+  )) {
     return 0;
   }
 
@@ -4320,11 +4338,52 @@ bool _isActualLiveGame({
       timeSinceLastMove <= _kSidebarLiveActivityWindow;
 }
 
+/// Admits a content action ([DesktopAction.insertMove], [DesktopAction.copy])
+/// on rail [games] BEFORE any PGN is resolved or fetched.
+///
+/// Each game keeps the board's SOURCE provenance, never the ownership of the
+/// document on the board, and a Miniatures game is judged by its own date.
+/// Rows of a local PGN file are the user's own files and stay free. A denial
+/// presents once in this window; nothing is fetched.
+@visibleForTesting
+bool admitEventRailContentAction(
+  ProviderContainer container, {
+  required BoardTabGameArgs? activeArgs,
+  required Iterable<TournamentGameSummary> games,
+  required DesktopAction action,
+  required String surface,
+}) {
+  final args = activeArgs;
+  if (args == null) return true;
+  final source = args.sourceAccessContext;
+  for (final game in games) {
+    if (game.localPgnSource != null) continue;
+    final request = retargetMiniatureAccessContext(
+      source,
+      game.lastMoveTime,
+    ).copyWith(action: action, quota: DesktopQuota.none, additions: 0);
+    if (!admitDesktopAction(container, request, surface: surface)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 Future<void> _insertEventGame({
   required WidgetRef ref,
   required TournamentGameSummary game,
   required String tournamentTitle,
+  required BoardTabGameArgs? activeArgs,
 }) async {
+  if (!admitEventRailContentAction(
+    ProviderScope.containerOf(ref.context, listen: false),
+    activeArgs: activeArgs,
+    games: <TournamentGameSummary>[game],
+    action: DesktopAction.insertMove,
+    surface: 'board_rail_insert',
+  )) {
+    return;
+  }
   var pgn = game.pgn?.trim() ?? '';
   if (!pgnHasMoves(pgn) && game.id.trim().isNotEmpty) {
     pgn =
@@ -4617,9 +4676,16 @@ Future<void> _openEventGame({
           );
 
   // The next game of a rail keeps the rail's SOURCE provenance; owning the
-  // current document never carries to it. Denied => no replace prompt, no
-  // local hydrate, no open-seed fetch, and the active board is untouched.
-  final DesktopAccessContext? railAccess = activeArgs?.sourceAccessContext;
+  // current document never carries to it, and a Miniatures rail judges the
+  // next game by its own date. Denied => no replace prompt, no local hydrate,
+  // no open-seed fetch, and the active board is untouched.
+  final DesktopAccessContext? railAccess =
+      activeArgs == null
+          ? null
+          : retargetMiniatureAccessContext(
+            activeArgs.sourceAccessContext,
+            game.lastMoveTime,
+          );
   if (railAccess != null &&
       !(kind == _GameListKind.database && game.localPgnSource != null) &&
       !admitBoardSourceOpen(
@@ -5096,6 +5162,7 @@ class _DatabaseGamesList extends ConsumerWidget {
                     ref: ref,
                     game: game,
                     tournamentTitle: tournamentTitle,
+                    activeArgs: activeArgs,
                   );
                 case _GameRowAction.copyPgn:
                   final copyGames = eventRailGamesForCopy(
@@ -5109,6 +5176,7 @@ class _DatabaseGamesList extends ConsumerWidget {
                     context: context,
                     ref: ref,
                     games: copyGames,
+                    activeArgs: activeArgs,
                   );
               }
             },

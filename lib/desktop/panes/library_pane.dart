@@ -50,6 +50,7 @@ import 'package:chessever/desktop/state/library_import_buffer.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/state/my_databases_focus.dart';
+import 'package:chessever/desktop/state/my_likes_provider.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
@@ -8442,6 +8443,7 @@ void _openAnalysis(
   String databaseTitle = '',
   List<SavedAnalysis> databaseAnalyses = const <SavedAnalysis>[],
   String? initialFen,
+  DesktopAccessContext? accessContext,
 }) {
   final pgn = exportGameToPgn(analysis.chessGame).trim();
   if (pgn.isEmpty) return;
@@ -8453,6 +8455,7 @@ void _openAnalysis(
       databaseTitle: databaseTitle,
       databaseAnalyses: databaseAnalyses,
       initialFen: initialFen,
+      accessContext: accessContext,
     ),
     reuseExisting: false,
     focus: focus,
@@ -8461,13 +8464,20 @@ void _openAnalysis(
 
 /// Opens a liked game that the My Likes destination has already admitted at
 /// tap time. [openable] is the board's game list: likes outside the free window
-/// are not in it, so stepping between games cannot cross the window.
+/// are not in it, so stepping between games cannot cross the window. The board
+/// carries Likes provenance, so the central admission (and a detached window or
+/// a restored tab) applies the same window instead of treating the row as an
+/// owned document.
 void openLibraryLikedAnalysis(
   WidgetRef ref,
   SavedAnalysis analysis, {
   required List<SavedAnalysis> openable,
   bool newWindow = false,
 }) {
+  final accessContext = likedGameAccessContext(
+    analysis,
+    DesktopAction.openContent,
+  );
   if (newWindow) {
     unawaited(
       _openAnalysisWindow(
@@ -8475,6 +8485,7 @@ void openLibraryLikedAnalysis(
         analysis,
         databaseTitle: 'My Likes',
         databaseAnalyses: openable,
+        accessContext: accessContext,
       ),
     );
     return;
@@ -8484,6 +8495,7 @@ void openLibraryLikedAnalysis(
     analysis,
     databaseTitle: 'My Likes',
     databaseAnalyses: openable,
+    accessContext: accessContext,
   );
 }
 
@@ -8493,6 +8505,7 @@ Future<void> _openAnalysisWindow(
   String databaseTitle = '',
   List<SavedAnalysis> databaseAnalyses = const <SavedAnalysis>[],
   String? initialFen,
+  DesktopAccessContext? accessContext,
 }) async {
   final pgn = exportGameToPgn(analysis.chessGame).trim();
   if (pgn.isEmpty) return;
@@ -8504,6 +8517,7 @@ Future<void> _openAnalysisWindow(
       databaseTitle: databaseTitle,
       databaseAnalyses: databaseAnalyses,
       initialFen: initialFen,
+      accessContext: accessContext,
     ),
   );
 }
@@ -8514,6 +8528,7 @@ BoardTabGameArgs _boardArgsForAnalysis(
   String databaseTitle = '',
   List<SavedAnalysis> databaseAnalyses = const <SavedAnalysis>[],
   String? initialFen,
+  DesktopAccessContext? accessContext,
 }) {
   final game = analysis.chessGame;
   final md = game.metadata;
@@ -8559,6 +8574,7 @@ BoardTabGameArgs _boardArgsForAnalysis(
       analysisId: analysis.id,
       title: analysis.title.isEmpty ? fallbackTitle : analysis.title,
     ),
+    accessContext: accessContext,
   );
 }
 

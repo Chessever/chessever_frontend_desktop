@@ -17,6 +17,7 @@ import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
+import 'package:chessever/desktop/services/miniatures_access.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
@@ -1911,7 +1912,12 @@ DesktopAccessContext tournamentGameAccessContext(
   String? eventBroadcastId,
 }) {
   if (accessContext != null) {
-    return accessContext.copyWith(action: DesktopAction.openContent);
+    // A Miniatures context is always judged by THIS game's date, never by the
+    // game it was first built for.
+    return retargetMiniatureAccessContext(
+      accessContext.copyWith(action: DesktopAction.openContent),
+      game.lastMoveTime,
+    );
   }
   return buildTournamentBoardTabArgs(
     game,
@@ -2359,6 +2365,16 @@ GameTabDragPayload tournamentGameDragPayload(
     id: game.gameId,
     label: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
     eventBroadcastId: _normalizedOptionalId(eventBroadcastId),
+    // Admitted by the drop target and the card's new-tab gestures before the
+    // spawn runs, so a gated payload opens nothing.
+    accessContext:
+        accessContext == null
+            ? null
+            : tournamentGameAccessContext(
+              game,
+              tournamentTitle,
+              accessContext: accessContext,
+            ),
     spawn:
         (ref, {required focus}) => openTournamentGameTab(
           ref,
@@ -2741,13 +2757,16 @@ Future<void> _showLiveGameContextMenu({
   );
   if (picked == null || !context.mounted) return;
 
-  // Opens admit themselves inside openTournamentGameTab/Window. Save, share
-  // and share-link are content actions on the game's provenance; the saved
-  // game quota itself is decided by the save flow.
+  // Opens admit themselves inside openTournamentGameTab/Window. Save, share,
+  // share-link and liking are content actions on the game's provenance; the
+  // saved game quota itself is decided by the save flow.
   final contentAction = switch (picked) {
     _LiveGameContextAction.saveToLibrary => DesktopAction.save,
     _LiveGameContextAction.share ||
     _LiveGameContextAction.copyShareLink => DesktopAction.share,
+    // Liking stores the full game in My Likes: a copy of the content. Removing
+    // a like is never gated.
+    _LiveGameContextAction.toggleLike when !isLiked => DesktopAction.copy,
     _ => null,
   };
   if (contentAction != null) {
