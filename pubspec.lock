@@ -2235,18 +2235,16 @@ packages:
   webview_all_windows:
     dependency: "direct main"
     description:
-      name: webview_all_windows
-      sha256: d9b81f16ec41fe19ea966ad690dba6ed65989d2287b04da0eeb19905e4eb3d2f
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/webview_all_windows"
+      relative: true
+    source: path
     version: "1.4.1"
   webview_all_wkwebview:
     dependency: "direct main"
     description:
-      name: webview_all_wkwebview
-      sha256: "7545caa17def777b0ec2c4767803299b170f744a1dae9ffac59a8dfe0f63295e"
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/webview_all_wkwebview"
+      relative: true
+    source: path
     version: "1.4.1"
   webview_platform_interface:
     dependency: transitive

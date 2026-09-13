@@ -1,0 +1,7 @@
+# Vendored copy (see CHESSEVER_PATCH.md). The pigeon sources need the `pigeon`
+# dev dependency the app does not carry, and the generated files follow
+# upstream's own style; neither is ours to lint from the app's analyzer.
+analyzer:
+  exclude:
+    - pigeons/**
+    - lib/src/common/*.g.dart
