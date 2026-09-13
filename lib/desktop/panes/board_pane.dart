@@ -67,6 +67,7 @@ import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/opening_explorer_seed.dart';
 import 'package:chessever/desktop/state/pgn_intake.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/state/player_hover_rounds.dart';
 import 'package:chessever/desktop/state/user_move_nags.dart';
 import 'package:chessever/desktop/utils/mainline_annotation_index.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
@@ -9233,9 +9234,11 @@ EventPlayerGamesKey? boardPlayerHistoryKey({
   required int? fideId,
   required String ownerId,
   GamesTourModel? sourceGame,
+  bool allowSourceFallback = false,
 }) {
   final primaryTourId = eventKey?.tourId.trim() ??
-      (sourceGame?.source == GameSource.supabase ? sourceGame?.tourId.trim() : null) ?? '';
+      (allowSourceFallback && sourceGame?.source == GameSource.supabase
+          ? sourceGame?.tourId.trim() : null) ?? '';
   if (primaryTourId.isEmpty || playerName.trim().isEmpty) return null;
 
   final additionalTourIds = <String>{};
@@ -9379,6 +9382,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         eventKey: eventKey,
         eventGames: hydratedEventGames,
         sourceGame: sourceGame,
+        allowSourceFallback: _canOpenEventPlayerGames,
         playerName: name,
         fideId: fideId,
         ownerId: historyOwnerId ?? '',
@@ -9403,6 +9407,17 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             ?.map(TournamentGameSummary.fromGamesTourModel)
             .toList(growable: false) ??
         const <TournamentGameSummary>[];
+
+    final hoverRounds =
+        historyKey == null ||
+                requestedHistoryContext.value != historyRequestContext
+            ? const <PlayerHoverRound>[]
+            : ref
+                    .watch(playerHoverRoundsProvider(
+                      playerHoverRoundsKey(historyKey.tourIds),
+                    ))
+                    .valueOrNull ??
+                const <PlayerHoverRound>[];
 
     // Local PGNs (e.g. TWIC) often carry a FIDE ID but no title tag; resolve
     // the title on demand from chess_players, same as the flag backfill.
@@ -9458,6 +9473,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             photoUrl: photoUrl,
           ),
           games: hoverGames,
+          rounds: hoverRounds,
           isLoading: hoverIsLoading,
           openAbove: openAbove,
           contextKey: '$hoverContextKey|$historyRequestContext',
@@ -9501,6 +9517,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         photoUrl,
         hoverGames,
         hoverIsLoading,
+        hoverRounds,
         historyRequestContext,
         boardArgs,
         sourceGame,
@@ -9754,7 +9771,8 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             args.viewSource == ChessboardView.countryman) &&
         args.databaseGames.isEmpty &&
         args.databaseGamesContinuation == null &&
-        (sourceGame ?? args.sourceGame)?.source == GameSource.supabase;
+        (args.eventPlayerScope != null ||
+            (sourceGame ?? args.sourceGame)?.source == GameSource.supabase);
   }
 
   void _openPreviewGameInNewTab(
