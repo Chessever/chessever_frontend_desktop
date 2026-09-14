@@ -225,6 +225,7 @@ class _AuthButtonState extends State<_AuthButton> {
             mainAxisSize: MainAxisSize.max,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
                 DesktopIcon(

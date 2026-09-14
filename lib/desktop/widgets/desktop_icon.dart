@@ -20,12 +20,18 @@ class DesktopIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SvgPicture.asset(
-      assetPath,
+    return SizedBox(
       width: size,
       height: size,
-      colorFilter:
-          color == null ? null : ColorFilter.mode(color!, BlendMode.srcIn),
+      child: SvgPicture.asset(
+        assetPath,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        alignment: Alignment.center,
+        colorFilter:
+            color == null ? null : ColorFilter.mode(color!, BlendMode.srcIn),
+      ),
     );
   }
 }

@@ -1,13 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
+import 'package:chessever/desktop/widgets/desktop_icon.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/svg_asset.dart';
 
 /// Desktop sign-in for Botvinnik, one of the two places a permanent account
 /// is required. Uses the same loopback OAuth as the Welcome screen, so it
@@ -87,7 +88,7 @@ class _BotvinnikSignInBodyState extends State<_BotvinnikSignInBody> {
           ),
           const SizedBox(height: 20),
           _ProviderButton(
-            asset: 'assets/svgs/google_g_color.svg',
+            asset: SvgAsset.googleColorIcon,
             label:
                 _busy == _Provider.google
                     ? 'Opening browser'
@@ -96,7 +97,7 @@ class _BotvinnikSignInBodyState extends State<_BotvinnikSignInBody> {
           ),
           const SizedBox(height: 10),
           _ProviderButton(
-            asset: 'assets/svgs/apple_logo.svg',
+            asset: SvgAsset.appleIcon,
             tint: kWhiteColor,
             label:
                 _busy == _Provider.apple
@@ -173,17 +174,9 @@ class _ProviderButtonState extends State<_ProviderButton>
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  SvgPicture.asset(
-                    widget.asset,
-                    width: 18,
-                    height: 18,
-                    colorFilter:
-                        widget.tint == null
-                            ? null
-                            : ColorFilter.mode(widget.tint!, BlendMode.srcIn),
-                    excludeFromSemantics: true,
-                  ),
+                  DesktopIcon(widget.asset, size: 18, color: widget.tint),
                   const SizedBox(width: 10),
                   Text(
                     widget.label,
