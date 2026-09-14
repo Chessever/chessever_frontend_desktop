@@ -1,4 +1,11 @@
 import 'dart:async';
+import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +14,9 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/chat/chat_api.dart';
+import 'package:chessever/desktop/state/botvinnik_dock.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_launch_button.dart';
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/repository/gamebase/memorial_player.dart';
 import 'package:chessever/desktop/panes/player_workspace_pane.dart';
@@ -65,11 +75,11 @@ import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/country_utils.dart';
-import 'package:chessever/utils/favorite_constants.dart';
-import 'package:chessever/utils/favorite_limit_guard.dart';
+
+
 import 'package:chessever/utils/number_format_utils.dart';
 import 'package:chessever/utils/png_asset.dart';
-import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
+
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
@@ -191,6 +201,19 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   }
 
   Future<void> _buildChessEverPlayerTree(int fideId) async {
+    // Building a player's opening tree is Premium; denied => no download,
+    // no workspace creation, no build.
+    if (!admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      const DesktopAccessContext(
+        feature: DesktopFeature.openingTree,
+        action: DesktopAction.recompute,
+        origin: DesktopDiscoveryOrigin.playerProfile,
+      ),
+      surface: 'player_profile_build_tree',
+    )) {
+      return;
+    }
     if (_isBuildingProfile || _isBuildingTree) return;
     setState(() => _isBuildingTree = true);
     try {
@@ -217,6 +240,8 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
       );
     } catch (error) {
       if (!mounted) return;
+      // A denial mid-flight was already presented as a paywall.
+      if (error is DesktopPremiumRequiredException) return;
       _showToast(_playerWorkspaceErrorText(error), error: true);
     } finally {
       if (mounted) setState(() => _isBuildingTree = false);
@@ -267,11 +292,27 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
         .playerForFideId(normalizedFideId);
 
     if (workspace == null) {
+      // Creating a preparation target is Premium: decide at the click, so a
+      // free user gets the paywall directly and nothing is created or
+      // fetched. Opening prep work that already exists stays free.
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        const DesktopAccessContext(
+          feature: DesktopFeature.prepare,
+          action: DesktopAction.create,
+          origin: DesktopDiscoveryOrigin.playerProfile,
+        ),
+        surface: 'player_profile_prepare',
+      )) {
+        return;
+      }
       setState(() => _isBuildingProfile = true);
       try {
         workspace = await _ensurePlayerWorkspace(fideId);
       } catch (error) {
         if (!mounted) return;
+        // A denial mid-flight was already presented as a paywall.
+        if (error is DesktopPremiumRequiredException) return;
         _showToast(_playerWorkspaceErrorText(error), error: true);
         return;
       } finally {
@@ -288,59 +329,17 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   }
 
   Future<void> _toggleFavorite() async {
-    final allowed = await requireFullAuthGuard(context);
-    if (!allowed) return;
-    final fideStr = widget.args.fideId?.toString();
-    final playerName = widget.args.playerName.trim();
-    final favs = ref.read(favoritePlayersProviderNew);
-    final already = favs.maybeWhen(
-      data:
-          (players) => players.any(
-            (player) => favoritePlayerMatchesIdentity(
-              player,
-              fideId: fideStr,
-              playerName: playerName,
-              memorialSourceIdentity: widget.args.memorialSourceIdentity,
-            ),
-          ),
-      orElse: () => false,
-    );
-    if (!already) {
-      if (!mounted) return;
-      final canAdd = await canAddMoreFavorites(context, ref);
-      if (!canAdd) return;
-    }
-    try {
-      await ref
-          .read(favoritePlayersProviderNew.notifier)
-          .toggleFavorite(
-            fideId: widget.args.fideId?.toString(),
-            playerName: widget.args.playerName,
-            countryCode: widget.args.federation,
-            rating: widget.args.rating,
-            title: widget.args.title,
-            gamebasePlayerId: widget.args.gamebasePlayerId,
-            memorialSourceIdentity: widget.args.memorialSourceIdentity,
-            memorialRouteId: widget.args.memorialRouteId,
-          );
-    } on FavoriteLimitExceededException {
-      // Desktop is premium-only, so this branch should never trip in
-      // production. Surface a toast as a defensive fallback if it does.
-      if (mounted) {
-        showDesktopToast(
-          context,
-          'Could not add favorite. Please try again.',
-          error: true,
-        );
-      }
-    } catch (_) {
-      if (!mounted) return;
-      showDesktopToast(
-        context,
-        'Failed to update favorite. Please try again.',
-        error: true,
-      );
-    }
+    final args = widget.args;
+    final favorites = ref.read(favoritePlayersProviderNew).valueOrNull ?? const [];
+    final already = favorites.any((player) => favoritePlayerMatchesIdentity(player,
+      fideId: args.fideId?.toString(), playerName: args.playerName.trim(),
+      memorialSourceIdentity: args.memorialSourceIdentity));
+    await setDesktopPlayerFavorite(context, ref, favorite: !already,
+      playerName: args.playerName, fideId: args.fideId?.toString(),
+      countryCode: args.federation, rating: args.rating, title: args.title,
+      gamebasePlayerId: args.gamebasePlayerId,
+      memorialSourceIdentity: args.memorialSourceIdentity,
+      memorialRouteId: args.memorialRouteId);
   }
 
   void _showToast(String message, {bool error = false}) {
@@ -484,6 +483,12 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
             isBuildingTree: _isBuildingTree,
             hasBuildTree: hasFideId || hasMemorialIdentity,
             onToggleFavorite: _toggleFavorite,
+            botvinnikContext: botvinnikPlayerScreenContext(
+              playerName: effectiveName,
+              fideId: effectiveFideId,
+              gamebasePlayerId: widget.args.gamebasePlayerId,
+              memorialRouteId: widget.args.memorialRouteId,
+            ),
             onOpenPlayerWorkspace:
                 hasFideId
                     ? () => _openOrBuildPlayerWorkspace(effectiveFideId)
@@ -597,6 +602,7 @@ class _Header extends StatelessWidget {
     required this.onToggleFavorite,
     required this.onOpenPlayerWorkspace,
     required this.onBuildTree,
+    required this.botvinnikContext,
   });
 
   final String name;
@@ -616,6 +622,7 @@ class _Header extends StatelessWidget {
   final VoidCallback onToggleFavorite;
   final VoidCallback? onOpenPlayerWorkspace;
   final VoidCallback onBuildTree;
+  final ChatScreenContext botvinnikContext;
 
   @override
   Widget build(BuildContext context) {
@@ -731,6 +738,11 @@ class _Header extends StatelessWidget {
           DesktopFavoriteButton(
             selected: isFavorite,
             onPress: onToggleFavorite,
+          ),
+          BotvinnikLaunchButton(
+            screenContext: botvinnikContext,
+            leadingGap: 8,
+            tooltip: 'Ask Botvinnik about this player',
           ),
           if (hasFideId) ...[
             const SizedBox(width: 8),
@@ -3804,6 +3816,30 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
     final routeGamesContinuation = BoardTabGamesContinuation.playerProfile(
       widget.activeKey,
     );
+    // Opens admit themselves (player-profile provenance). Save, share and the
+    // share link are content actions on the same provenance; the saved-game
+    // quota is decided by the save flow itself.
+    final contentAction = switch (picked) {
+      _RowAction.saveToLibrary => DesktopAction.save,
+      _RowAction.share || _RowAction.copyShareLink => DesktopAction.share,
+      _ => null,
+    };
+    if (contentAction != null &&
+        !admitDesktopAction(
+          ProviderScope.containerOf(context, listen: false),
+          const DesktopAccessContext(
+            feature: DesktopFeature.playerProfile,
+            action: DesktopAction.share,
+            origin: DesktopDiscoveryOrigin.playerProfile,
+          ).copyWith(
+            action: contentAction,
+            quota: DesktopQuota.none,
+            additions: 0,
+          ),
+          surface: 'player_profile_context_menu',
+        )) {
+      return;
+    }
     switch (picked) {
       case _RowAction.open:
         await openTournamentGameTab(
@@ -3887,6 +3923,19 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
   }
 
   Future<void> _selectAllFilteredGames(PlayerProfileGamesState state) async {
+    // Selecting every game of a profile (and paging the rest in) is a bulk
+    // operation: denied => no page loads.
+    if (!admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      const DesktopAccessContext(
+        feature: DesktopFeature.playerProfile,
+        action: DesktopAction.bulkSelect,
+        origin: DesktopDiscoveryOrigin.playerProfile,
+      ),
+      surface: 'player_profile_select_all',
+    )) {
+      return;
+    }
     if (_isLoadingAllPagesForSelection) return;
     if (!mounted) return;
 
@@ -3927,6 +3976,26 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
   }
 
   Future<void> _addSelectedToLibrary(PlayerProfileGamesState state) async {
+    // Saving profile games is a content action on player-profile provenance
+    // (several at once is a bulk operation). The saved-game quota is the save
+    // flow's own decision.
+    if (_selectedGameIds.isNotEmpty &&
+        !admitDesktopAction(
+          ProviderScope.containerOf(context, listen: false),
+          DesktopAccessContext(
+            feature: DesktopFeature.playerProfile,
+            action:
+                _selectedGameIds.length > 1
+                    ? DesktopAction.bulkSelect
+                    : DesktopAction.save,
+            origin: DesktopDiscoveryOrigin.playerProfile,
+            quota: DesktopQuota.none,
+            additions: 0,
+          ),
+          surface: 'player_profile_add_selected',
+        )) {
+      return;
+    }
     final selected = state.filteredGames
         .where((game) => _selectedGameIds.contains(game.gameId))
         .toList(growable: false);

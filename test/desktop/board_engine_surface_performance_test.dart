@@ -429,7 +429,6 @@ class _EngineWithArrowsOnNotifier extends EngineSettingsNotifierNew {
     showEngineGauge: showGauge,
     showEngineAnalysis: true,
     showPvArrows: true,
-    autoGameAnalysis: false,
     principalVariationIndex: 0,
     maxArrowsOnBoard: 0,
   );

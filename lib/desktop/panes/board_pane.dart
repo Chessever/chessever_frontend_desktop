@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../state/event_player_board_games.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -25,6 +26,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart' show DragToMoveArea;
 
+import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_clipboard.dart';
@@ -47,6 +49,7 @@ import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_board_shortcuts.dart';
+import 'package:chessever/desktop/widgets/desktop_board_access_gate.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
@@ -64,6 +67,7 @@ import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/opening_explorer_seed.dart';
 import 'package:chessever/desktop/state/pgn_intake.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/state/player_hover_rounds.dart';
 import 'package:chessever/desktop/state/user_move_nags.dart';
 import 'package:chessever/desktop/utils/mainline_annotation_index.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
@@ -656,11 +660,22 @@ class BoardPane extends ConsumerWidget {
       key: ValueKey<String>('board-explorer-scope:$activeTabId'),
       overrides: [
         gamebaseExplorerProvider.overrideWith(
-          (ref) => GamebaseExplorerNotifier(ref),
+          (ref) => GamebaseExplorerNotifier(
+            ref,
+            accessCheck:
+                (state, advance) =>
+                    desktopExplorerFetchAllowed(ref.read, state, advance),
+          ),
         ),
         appliedBoardExplorerScopeKeyProvider.overrideWith((ref) => null),
       ],
-      child: _BoardPaneContent(tabId: activeTabId),
+      // Admission is per game lifetime: a locked game never builds the board
+      // content (no PGN hydrate, stream or engine), an admitted one is never
+      // unmounted by an entitlement change.
+      child: DesktopBoardAccessGate(
+        tabId: activeTabId,
+        child: _BoardPaneContent(tabId: activeTabId),
+      ),
     );
   }
 }
@@ -737,6 +752,10 @@ class _BoardPaneContent extends HookConsumerWidget {
             : ref.watch(
               boardTabGameArgsByTabIdProvider.select((m) => m[activeTabId]),
             );
+    final eventPlayerScope = boardArgs?.eventPlayerScope;
+    if (eventPlayerScope is EventPlayerBoardScope && activeTabId != null) {
+      ref.watch(eventPlayerBoardGamesProvider(eventPlayerBoardGamesKey(eventPlayerScope, activeTabId)));
+    }
     final attachedLibrarySaveOrigin =
         activeTabId == null
             ? null
@@ -5279,6 +5298,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           gameReport.value = report;
                         },
                         reportResetRevision: reportResetRevision.value,
+                        reportRevealRevision: reportRevealRevision.value,
                         onReportRunningChanged: (running) {
                           if (!context.mounted) return;
                           if (reportRunning.value != running) {
@@ -9215,8 +9235,11 @@ EventPlayerGamesKey? boardPlayerHistoryKey({
   required int? fideId,
   required String ownerId,
   GamesTourModel? sourceGame,
+  bool allowSourceFallback = false,
 }) {
-  final primaryTourId = eventKey?.tourId.trim() ?? '';
+  final primaryTourId = eventKey?.tourId.trim() ??
+      (allowSourceFallback && sourceGame?.source == GameSource.supabase
+          ? sourceGame?.tourId.trim() : null) ?? '';
   if (primaryTourId.isEmpty || playerName.trim().isEmpty) return null;
 
   final additionalTourIds = <String>{};
@@ -9350,15 +9373,22 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     // ids. Live clocks now rebuild below this header, while other header state
     // changes still avoid an O(eventGames) scan plus a UI-isolate string join.
     final historyKey = useMemoized(
-      () => boardPlayerHistoryKey(
+      () => boardArgs?.eventPlayerScope is EventPlayerBoardScope
+          ? EventPlayerGamesKey(
+              tourId: (boardArgs!.eventPlayerScope!).tourIds.first,
+              additionalTourIds: (boardArgs!.eventPlayerScope!).tourIds.skip(1),
+              playerName: name, fideId: fideId, ownerId: historyOwnerId ?? '',
+            )
+          : boardPlayerHistoryKey(
         eventKey: eventKey,
         eventGames: hydratedEventGames,
         sourceGame: sourceGame,
+        allowSourceFallback: _canOpenEventPlayerGames,
         playerName: name,
         fideId: fideId,
         ownerId: historyOwnerId ?? '',
       ),
-      [eventKey, hydratedEventGames, sourceGame, name, fideId, historyOwnerId],
+      [boardArgs?.eventPlayerScope, eventKey, hydratedEventGames, sourceGame, name, fideId, historyOwnerId],
     );
     final requestedHistoryContext = useState<String?>(null);
     final historyRequestContext = useMemoized(
@@ -9378,6 +9408,17 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             ?.map(TournamentGameSummary.fromGamesTourModel)
             .toList(growable: false) ??
         const <TournamentGameSummary>[];
+
+    final hoverRounds =
+        historyKey == null ||
+                requestedHistoryContext.value != historyRequestContext
+            ? const <PlayerHoverRound>[]
+            : ref
+                    .watch(playerHoverRoundsProvider(
+                      playerHoverRoundsKey(historyKey.tourIds),
+                    ))
+                    .valueOrNull ??
+                const <PlayerHoverRound>[];
 
     // Local PGNs (e.g. TWIC) often carry a FIDE ID but no title tag; resolve
     // the title on demand from chess_players, same as the flag backfill.
@@ -9433,9 +9474,10 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             photoUrl: photoUrl,
           ),
           games: hoverGames,
+          rounds: hoverRounds,
           isLoading: hoverIsLoading,
           openAbove: openAbove,
-          contextKey: hoverContextKey,
+          contextKey: '$hoverContextKey|$historyRequestContext',
           onPreviewOpened:
               historyRequestContext == null
                   ? null
@@ -9457,10 +9499,11 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             fontWeight: FontWeight.w600,
           ),
           onOpenPlayerInNewTab: (player) => _openProfileInNewTab(ref, player),
+          onOpenScoreCard: () => _openPlayer(ref, name),
           onOpenOpponentInNewTab:
               (opponent) => _openProfileInNewTab(ref, opponent),
           onOpenGameInNewTab:
-              (game) => _openPreviewGameInNewTab(ref, game, hoverGames),
+              (game) => _openPreviewGameInNewTab(ref, game, hoverGames, historyKey),
         );
       },
       [
@@ -9475,6 +9518,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         photoUrl,
         hoverGames,
         hoverIsLoading,
+        hoverRounds,
         historyRequestContext,
         boardArgs,
         sourceGame,
@@ -9720,12 +9764,52 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     );
   }
 
+  bool get _canOpenEventPlayerGames {
+    final args = boardArgs;
+    return args != null &&
+        (args.viewSource == ChessboardView.tour ||
+            args.viewSource == ChessboardView.forYou ||
+            args.viewSource == ChessboardView.countryman) &&
+        args.databaseGames.isEmpty &&
+        args.databaseGamesContinuation == null &&
+        (args.eventPlayerScope != null ||
+            (sourceGame ?? args.sourceGame)?.source == GameSource.supabase);
+  }
+
   void _openPreviewGameInNewTab(
     WidgetRef ref,
     TournamentGameSummary selected,
     List<TournamentGameSummary> previewGames,
+    EventPlayerGamesKey? historyKey,
   ) {
     final args = boardArgs;
+    if (historyKey != null && args != null && _canOpenEventPlayerGames) {
+      final priorScope = args.eventPlayerScope;
+      final scope = EventPlayerBoardScope(
+        tourIds: historyKey.tourIds,
+        playerName: name, fideId: fideId,
+        eventTitle: priorScope is EventPlayerBoardScope ? priorScope.eventTitle : args.tournamentTitle,
+        eventBroadcastId: args.eventBroadcastId,
+      );
+      final games = eventPlayerBoardGames(scope, previewGames);
+      if (!games.any((game) => game.id == selected.id)) return;
+      final openContext = ref.context;
+      unawaited(openTournamentGameTab(
+        ref,
+        _gamesTourModelFromSummary(selected, source: sourceGame?.source ?? GameSource.supabase),
+        scope.title,
+        eventGames: [for (final game in games) _gamesTourModelFromSummary(game, source: sourceGame?.source ?? GameSource.supabase)],
+        eventPlayerScope: scope,
+        eventBroadcastId: scope.eventBroadcastId,
+        // A player subset changes the rail, never its source entitlement.
+        accessContext: args.sourceAccessContext,
+        viewSource: ChessboardView.tour,
+        focus: true, reuseExisting: false, replaceActive: false,
+      ).catchError((Object error) {
+        if (openContext.mounted) showDesktopToast(openContext, 'Could not open event games. Please retry.', error: true);
+      }));
+      return;
+    }
     if (args?.databaseGames.isNotEmpty == true) {
       final pgn = selected.pgn?.trim() ?? '';
       final localPgnSaveOrigin = _boardLibrarySaveOriginForSummary(selected);
@@ -9769,6 +9853,8 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           hideLocalOpeningTreePicker: args.hideLocalOpeningTreePicker,
           gameListSelectedId: selected.id,
           librarySaveOrigin: localPgnSaveOrigin,
+          // Source provenance only: the next rail game is a fresh request.
+          accessContext: args.sourceAccessContext,
         ),
         focus: true,
         reuseExisting: false,
@@ -9824,6 +9910,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         replaceActive: false,
         viewSource: viewSource,
         eventBroadcastId: args?.eventBroadcastId,
+        accessContext: args?.sourceAccessContext,
       ),
     );
   }
@@ -9926,7 +10013,10 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         .read(scoreCardGamesContextProvider.notifier)
         .state = _scoreCardGamesContextForBoardTap(eventGame, boardArgs);
 
-    openPlayerScoreCard(ref, player, fromTournamentContext: true);
+    openPlayerScoreCard(
+      ref, player, fromTournamentContext: true,
+      accessContext: boardArgs?.sourceAccessContext,
+    );
   }
 
   PlayerProfileDataSource _profileSourceFor(GameSource source) {

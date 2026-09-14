@@ -8,21 +8,29 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/desktop/auth/desktop_guest_upgrade_dialog.dart';
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
+import 'package:chessever/desktop/services/auth/desktop_guest_upgrade.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
+import 'package:chessever/desktop/services/error_reporter.dart';
+import 'package:chessever/chat/botvinnik_provider.dart';
+import 'package:chessever/chat/chat_api.dart';
+import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/desktop_delete_account_dialog.dart';
 import 'package:chessever/desktop/widgets/keyboard_shortcuts_section.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/services/engine/uci_engine.dart';
 import 'package:chessever/providers/app_version_provider.dart';
+import 'package:chessever/providers/guest_session_provider.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -60,10 +68,20 @@ class SettingsPane extends HookConsumerWidget {
       lastError.value = null;
       signingIn.value = true;
       try {
-        final next = await DesktopAuthService.instance.signInWithGoogle();
-        session.value = next;
-      } catch (e) {
-        lastError.value = e.toString();
+        // Same path as the guest reminder: clears the guest clock only once
+        // a permanent account is confirmed.
+        final signedIn = await signInDesktopPermanentAccount(
+          ref,
+          DesktopAccountProvider.google,
+          surface: 'settings',
+        );
+        if (!signedIn) {
+          lastError.value = 'Sign-in did not finish. Please try again.';
+        }
+        session.value = Supabase.instance.client.auth.currentSession;
+      } catch (e, st) {
+        ErrorReporter.report(e, stackTrace: st, tag: 'auth.settings');
+        lastError.value = desktopSignInErrorMessage(e);
       } finally {
         signingIn.value = false;
       }
@@ -73,10 +91,18 @@ class SettingsPane extends HookConsumerWidget {
       lastError.value = null;
       signingIn.value = true;
       try {
-        final next = await DesktopAuthService.instance.signInWithApple();
-        session.value = next;
-      } catch (e) {
-        lastError.value = _friendlyAuthError(e);
+        final signedIn = await signInDesktopPermanentAccount(
+          ref,
+          DesktopAccountProvider.apple,
+          surface: 'settings',
+        );
+        if (!signedIn) {
+          lastError.value = 'Sign-in did not finish. Please try again.';
+        }
+        session.value = Supabase.instance.client.auth.currentSession;
+      } catch (e, st) {
+        ErrorReporter.report(e, stackTrace: st, tag: 'auth.settings');
+        lastError.value = desktopSignInErrorMessage(e);
       } finally {
         signingIn.value = false;
       }
@@ -198,8 +224,6 @@ class SettingsPane extends HookConsumerWidget {
             const SizedBox(height: 24),
             const _BoardSettingsSection(),
             const SizedBox(height: 16),
-            const _NotificationsSection(),
-            const SizedBox(height: 16),
             const KeyboardShortcutsSection(),
             const SizedBox(height: 16),
             _AccountSection(
@@ -215,6 +239,7 @@ class SettingsPane extends HookConsumerWidget {
               const _SubscriptionSection(),
               const SizedBox(height: 16),
             ],
+            const _BotvinnikSection(),
             const _EngineSection(),
             const SizedBox(height: 16),
             const _UpdatesSection(),
@@ -290,7 +315,7 @@ class _SettingsUnavailable extends StatelessWidget {
   }
 }
 
-class _AccountSection extends StatelessWidget {
+class _AccountSection extends ConsumerWidget {
   const _AccountSection({
     required this.session,
     required this.signingIn,
@@ -308,22 +333,32 @@ class _AccountSection extends StatelessWidget {
   final String? error;
 
   @override
-  Widget build(BuildContext context) {
-    final email = session?.user.email;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = session?.user;
+    final isGuest = user?.isAnonymous == true;
+    final isPermanent = user != null && !isGuest;
+    final email = user?.email;
+    final guestAge =
+        isGuest
+            ? ref
+                .watch(guestSessionProvider)
+                .valueOrNull
+                ?.ageAt(DateTime.now())
+            : null;
     return _Card(
       title: 'Account',
       icon: Icons.account_circle_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (email != null) ...[
+          if (isPermanent) ...[
             Row(
               children: [
                 const _StatusPill(label: 'Signed in', color: kGreenColor),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    email,
+                    email ?? 'Signed in',
                     style: const TextStyle(
                       color: kWhiteColor,
                       fontSize: 13,
@@ -334,13 +369,36 @@ class _AccountSection extends StatelessWidget {
                 _SecondaryButton(label: 'Sign out', onTap: onSignOut),
               ],
             ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Permanently remove this account and its synced data.',
+                    style: TextStyle(color: kWhiteColor70, fontSize: 12),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                _SecondaryButton(
+                  label: 'Delete account',
+                  onTap: () => unawaited(
+                    showDesktopDeleteAccountDialog(context, email: email),
+                  ),
+                ),
+              ],
+            ),
           ] else ...[
-            const _StatusPill(label: 'Signed out', color: kLightGreyColor),
+            _StatusPill(
+              label: isGuest ? 'Guest' : 'Signed out',
+              color: isGuest ? kWhiteColor70 : kLightGreyColor,
+            ),
             const SizedBox(height: 12),
-            const Text(
-              'Sign in to sync favorites, library, and settings across '
-              'devices.',
-              style: TextStyle(color: kWhiteColor70, fontSize: 13),
+            Text(
+              isGuest
+                  ? _guestAccountCopy(guestAge)
+                  : 'Sign in to sync favorites, library, and settings across '
+                      'devices.',
+              style: const TextStyle(color: kWhiteColor70, fontSize: 13),
             ),
             const SizedBox(height: 16),
             Row(
@@ -394,6 +452,9 @@ class _SubscriptionSection extends HookConsumerWidget {
     final entitlement = live.value ?? snapshot.data;
 
     Future<void> upgrade() async {
+      // Purchasing needs a permanent account: a guest signs in first.
+      if (!await ensureDesktopPermanentAccountForPurchase(context)) return;
+      if (!context.mounted) return;
       error.value = null;
       loading.value = true;
       String token;
@@ -512,21 +573,15 @@ class _SubscriptionSection extends HookConsumerWidget {
   }
 }
 
-String _friendlyAuthError(Object error) {
-  final text = error.toString();
-  if (text.contains('canceled')) return 'Sign-in was cancelled.';
-  if (text.contains('Apple sign-in is not available') ||
-      text.contains('Sign in with Apple capability')) {
-    return 'Apple sign-in is not available for this build.';
-  }
-  if (text.contains('Apple sign-in timed out') ||
-      text.contains('Provider sign-in timed out') ||
-      text.contains('timed out')) {
-    return 'Apple sign-in timed out. Check Supabase Apple OAuth and allow '
-        'http://127.0.0.1:*/auth/callback as a redirect URL.';
-  }
-  final tail = text.length > 220 ? '${text.substring(0, 220)}…' : text;
-  return tail;
+/// Guest account line: how long they have been a guest, and what signing in
+/// carries over (the guest merge moves favorites, folders and analyses).
+String _guestAccountCopy(Duration? guestAge) {
+  const carry = 'Sign in and your favorites and saved analyses move to your '
+      'account.';
+  if (guestAge == null || guestAge.isNegative) return carry;
+  final days = guestAge.inDays;
+  if (days < 1) return 'Guest since today. $carry';
+  return 'Guest for ${days == 1 ? '1 day' : '$days days'}. $carry';
 }
 
 String _formatExpiry(DateTime when) {
@@ -670,25 +725,6 @@ class _LegalSection extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _NotificationsSection extends ConsumerWidget {
-  const _NotificationsSection();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final tabs = ref.read(desktopTabsProvider.notifier);
-    return _Card(
-      title: 'Notifications',
-      icon: Icons.notifications_outlined,
-      child: _SettingsLinkRow(
-        icon: Icons.notifications_outlined,
-        title: 'Open notification preferences',
-        subtitle: 'Push alerts and per-event notification preferences.',
-        onTap: () => tabs.open(TabKind.notificationSettings),
       ),
     );
   }
@@ -1265,6 +1301,71 @@ class _SecondaryButtonState extends State<_SecondaryButton> {
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                 ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Botvinnik visibility. Hiding it removes the sidebar row, the page launch
+/// buttons and the dock; saved chats are untouched.
+class _BotvinnikSection extends ConsumerWidget {
+  const _BotvinnikSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ChatApi.buildEnabled) return const SizedBox.shrink();
+    final enabled = ref.watch(botvinnikEnabledProvider).valueOrNull ?? true;
+    void setEnabled(bool value) {
+      unawaited(ref.read(botvinnikEnabledProvider.notifier).setEnabled(value));
+      if (!value) ref.read(botvinnikDockProvider.notifier).close();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: _Card(
+        title: 'Botvinnik',
+        icon: Icons.forum_outlined,
+        child: ClickCursor(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setEnabled(!enabled),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 40),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Show Botvinnik',
+                          style: TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'The chess assistant in the sidebar and on event '
+                          'and player pages. Your chats stay saved while it '
+                          'is hidden.',
+                          style: TextStyle(color: kWhiteColor70, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  FTheme(
+                    data: FThemes.zinc.dark,
+                    child: FSwitch(value: enabled, onChange: setEnabled),
+                  ),
+                ],
               ),
             ),
           ),

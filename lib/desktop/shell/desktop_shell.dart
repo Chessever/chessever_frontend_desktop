@@ -1,4 +1,6 @@
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,7 +16,6 @@ import 'package:chessever/desktop/panes/countrymen_pane.dart';
 import 'package:chessever/desktop/panes/favorites_pane.dart';
 import 'package:chessever/desktop/panes/board_settings_pane.dart';
 import 'package:chessever/desktop/panes/library_pane.dart';
-import 'package:chessever/desktop/panes/notification_settings_pane.dart';
 import 'package:chessever/desktop/panes/placeholder_pane.dart';
 import 'package:chessever/desktop/panes/player_profile_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
@@ -23,7 +24,8 @@ import 'package:chessever/desktop/panes/play_pane.dart';
 import 'package:chessever/desktop/panes/play_profile_pane.dart';
 import 'package:chessever/desktop/panes/players_pane.dart';
 import 'package:chessever/desktop/panes/settings_pane.dart';
-import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart';
+import 'package:chessever/desktop/panes/desktop_smart_event_pane.dart';
+import 'package:chessever/desktop/panes/team_score_card_pane.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
@@ -42,6 +44,7 @@ import 'package:chessever/desktop/shell/desktop_shell_intents.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_dock.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/editable_aware_shortcut_activator.dart';
 import 'package:chessever/desktop/widgets/pane_keyboard_scroll.dart';
@@ -239,6 +242,10 @@ class DesktopShell extends HookConsumerWidget {
             if (!m.containsKey(t.id)) return m;
             final next = <String, dynamic>{...m}..remove(t.id);
             return Map<String, BoardTabGameArgs>.from(next);
+          });
+          ref.read(boardTabAdmissionByTabIdProvider.notifier).update((m) {
+            if (!m.containsKey(t.id)) return m;
+            return <String, String>{...m}..remove(t.id);
           });
           ref.read(boardExplorerScopeByTabIdProvider.notifier).update((m) {
             if (!m.containsKey(t.id)) return m;
@@ -773,14 +780,28 @@ class DesktopShell extends HookConsumerWidget {
                                       onToggleSidebar: toggleSidebar,
                                     ),
                                   Expanded(
-                                    child: PageStorage(
-                                      bucket: tabPageStorageBucket,
-                                      child: _DesktopTabStack(
-                                        tabs: tabsState.tabs,
-                                        activeId: tabsState.activeId,
-                                        feedbackScreenshotKey:
-                                            feedbackScreenshotKey,
-                                      ),
+                                    // The Botvinnik dock sits beside the tab
+                                    // stack, outside it, so tab switches never
+                                    // rebuild the conversation.
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Expanded(
+                                          child: PageStorage(
+                                            bucket: tabPageStorageBucket,
+                                            child: _DesktopTabStack(
+                                              tabs: tabsState.tabs,
+                                              activeId: tabsState.activeId,
+                                              feedbackScreenshotKey:
+                                                  feedbackScreenshotKey,
+                                            ),
+                                          ),
+                                        ),
+                                        BotvinnikDockHost(
+                                          visible: !boardFocusActive,
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ],
@@ -988,11 +1009,13 @@ Widget resolveDesktopTabContent(
     case TabKind.tournamentDetail:
       return TournamentDetailPane(tabId: tab.id);
     case TabKind.smartGames:
-      return DesktopSmartGamesPane(tabId: tab.id);
+      return DesktopSmartGamesTabContent(tabId: tab.id);
     case TabKind.library:
       return const LibraryPane();
     case TabKind.databaseWorkspace:
       return DatabaseWorkspacePane(tabId: tab.id);
+    case TabKind.teamScoreCard:
+      return TeamScoreCardPane(tabId: tab.id);
     case TabKind.favorites:
       return const FavoritesPane();
     case TabKind.players:
@@ -1018,7 +1041,12 @@ Widget resolveDesktopTabContent(
         key: ValueKey('opening-explorer-scope-${tab.id}'),
         overrides: [
           gamebaseExplorerProvider.overrideWith(
-            (ref) => GamebaseExplorerNotifier(ref),
+            (ref) => GamebaseExplorerNotifier(
+              ref,
+              accessCheck:
+                  (state, advance) =>
+                      desktopExplorerFetchAllowed(ref.read, state, advance),
+            ),
           ),
         ],
         child: OpeningExplorerPane(tabId: tab.id),
@@ -1038,8 +1066,6 @@ Widget resolveDesktopTabContent(
       return const PlayProfilePane();
     case TabKind.boardSettings:
       return const BoardSettingsPane();
-    case TabKind.notificationSettings:
-      return const NotificationSettingsPane();
     case TabKind.play:
       return PlayPane(tabId: tab.id);
   }

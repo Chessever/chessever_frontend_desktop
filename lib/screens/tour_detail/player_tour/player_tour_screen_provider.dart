@@ -597,6 +597,12 @@ bool shouldPreserveExternalStandingOrder({
   return useExternalOrder || hasUniversalRank;
 }
 
+/// Result-affecting signature of a tour's games. Watching
+/// `gamesTourProvider(tourId).select(standingsGamesSignature)` rebuilds on new
+/// games, result changes and team labels, not on clock or move ticks.
+String standingsGamesSignature(AsyncValue<List<Games>> gamesAsync) =>
+    _standingsGamesSignature(gamesAsync);
+
 String _standingsGamesSignature(AsyncValue<List<Games>> gamesAsync) {
   final games = gamesAsync.valueOrNull;
   if (games == null) {
@@ -863,9 +869,35 @@ class PlayerTourScreenNotifier
               fideId: card.fideId,
               rating: card.rating > 0 ? card.rating : null,
               played: 0,
+              team: _nonEmptyTeam(card.team),
             ),
           );
         }
+      }
+    }
+
+    // Team standings group roster rows by team. Fill a missing roster team
+    // label from the player's game card; never override a roster label.
+    if (players.any((player) => _nonEmptyTeam(player.team) == null)) {
+      final cardTeamByName = <String, String>{};
+      for (final game in gamesTourModels) {
+        for (final card in [game.whitePlayer, game.blackPlayer]) {
+          final team = _nonEmptyTeam(card.team);
+          final key = _canonicalName(card.name);
+          if (team == null || key.isEmpty) continue;
+          cardTeamByName.putIfAbsent(key, () => team);
+        }
+      }
+      if (cardTeamByName.isNotEmpty) {
+        players = [
+          for (final player in players)
+            _nonEmptyTeam(player.team) == null &&
+                    cardTeamByName.containsKey(_canonicalName(player.name))
+                ? player.copyWith(
+                  team: cardTeamByName[_canonicalName(player.name)],
+                )
+                : player,
+        ];
       }
     }
 
@@ -1364,3 +1396,8 @@ final tournamentFavoritePlayersProvider =
       final favoritesService = ref.read(favoriteStandingsPlayerService);
       return favoritesService.getFavoritePlayers();
     });
+
+String? _nonEmptyTeam(String? team) {
+  final trimmed = team?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}

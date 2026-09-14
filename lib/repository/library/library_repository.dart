@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
 import 'package:chessever/repository/library/models/shared_book_preview.dart';
+import 'package:chessever/repository/liked_games/liked_analyses_query.dart';
 import 'package:chessever/repository/supabase/base_repository.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -99,12 +100,17 @@ class LibraryRepository extends BaseRepository {
   });
 
   /// Create a new folder
+  ///
+  /// [nodeType] is `'folder'` (organisation only, never counted against the
+  /// owned-database quota) or `'database'`. When omitted the column default
+  /// (`'database'`) applies, which is what older callers rely on.
   Future<LibraryFolder> createFolder({
     required String name,
     String? color,
     String? icon,
     int? orderIndex,
     String? parentId,
+    String? nodeType,
   }) => handleApiCall(() async {
     final userId = supabase.auth.currentUser?.id;
     if (userId == null) throw Exception('User not authenticated');
@@ -127,7 +133,10 @@ class LibraryRepository extends BaseRepository {
     final response =
         await supabase
             .from('user_folders')
-            .insert(folder.toSupabaseInsert())
+            .insert(<String, dynamic>{
+              ...folder.toSupabaseInsert(),
+              if (nodeType != null) 'node_type': nodeType,
+            })
             .select()
             .single();
 
@@ -139,11 +148,14 @@ class LibraryRepository extends BaseRepository {
     final userId = supabase.auth.currentUser?.id;
     if (userId == null) return;
 
-    // Check if user already has any folders
+    // Check if user already has any folders. The Likes collection is created
+    // on its own (ensureLikedGamesFolder) and must not count as "has folders",
+    // or a user whose first action was a like never gets the default database.
     final existing = await supabase
         .from('user_folders')
         .select('id')
         .eq('user_id', userId)
+        .eq('is_liked_games', false)
         .limit(1);
 
     if ((existing as List).isNotEmpty) return;
@@ -815,4 +827,157 @@ class LibraryRepository extends BaseRepository {
       return analyses;
     });
   }
+
+  // ============ LIKES COLLECTION ============
+
+  /// Returns the user's Likes collection, creating it on first access.
+  ///
+  /// Identified ONLY by `is_liked_games = true` (a partial unique index per
+  /// user), never by its display name. Mechanically it is an ordinary folder
+  /// of `user_saved_analyses` rows; policy-wise it is exempt from the
+  /// saved-game and database quotas and governed by the seven-day window.
+  Future<LibraryFolder> ensureLikedGamesFolder() => handleApiCall(() async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    Future<Map<String, dynamic>?> selectExisting() => supabase
+        .from('user_folders')
+        .select()
+        .eq('user_id', userId)
+        .eq('is_liked_games', true)
+        .maybeSingle();
+
+    final existing = await selectExisting();
+    if (existing != null) return LibraryFolder.fromSupabase(existing);
+
+    final nextOrder = await _getNextFolderOrder();
+    try {
+      final response =
+          await supabase
+              .from('user_folders')
+              .insert({
+                'user_id': userId,
+                'name': 'My Likes',
+                'color': '#F5453A',
+                'icon': 'liked',
+                'order_index': nextOrder,
+                'is_liked_games': true,
+              })
+              .select()
+              .single();
+      return LibraryFolder.fromSupabase(response);
+    } on PostgrestException catch (e) {
+      // Another device or window created it between the select and the
+      // insert; the unique index rejected ours. Use theirs.
+      if (e.code != '23505') rethrow;
+      final raced = await selectExisting();
+      if (raced == null) rethrow;
+      return LibraryFolder.fromSupabase(raced);
+    }
+  });
+
+  /// Update only the classification tags of a saved analysis.
+  ///
+  /// Tag taps must not write a stale chess tree, comments or folder back over
+  /// the row, so this patches the smallest server surface the tag picker needs.
+  Future<SavedAnalysis> updateSavedAnalysisTags({
+    required String analysisId,
+    required List<String> tags,
+  }) => handleApiCall(() async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    final response =
+        await supabase
+            .from('user_saved_analyses')
+            .update({
+              'tags': tags,
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .eq('id', analysisId)
+            .eq('user_id', userId)
+            .select()
+            .single();
+
+    return SavedAnalysis.fromSupabase(response);
+  });
+
+  /// My Likes read query. Search, tags, structured filters and the sort all
+  /// run in PostgREST against the whole Likes collection, so changing any of
+  /// them re-runs this query instead of re-sorting rows already on screen.
+  Future<List<SavedAnalysis>> getLikedAnalysesForView({
+    required String folderId,
+    LikedAnalysesQuery query = const LikedAnalysesQuery(),
+  }) => handleApiCall(() async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    var filtered = supabase
+        .from('user_saved_analyses')
+        .select()
+        .eq('user_id', userId)
+        .eq('folder_id', folderId);
+
+    final tags = <String>{
+      for (final tag in query.tags)
+        if (tag.trim().isNotEmpty) tag.trim(),
+    }.toList();
+    if (tags.isNotEmpty) {
+      // `tags && ARRAY[...]`: a like matches when it carries ANY selected tag.
+      filtered = filtered.overlaps('tags', tags);
+    }
+
+    final term = query.search.replaceAll(RegExp(r'[(),%]'), ' ').trim();
+    if (term.isNotEmpty) {
+      filtered = filtered.or(
+        'title.ilike.%$term%,white_name.ilike.%$term%,'
+        'black_name.ilike.%$term%,event.ilike.%$term%',
+      );
+    }
+
+    final resultCode = switch (query.result) {
+      LikedGamesResultFilter.any => null,
+      LikedGamesResultFilter.whiteWins => 'W',
+      LikedGamesResultFilter.blackWins => 'B',
+      LikedGamesResultFilter.draw => 'D',
+    };
+    if (resultCode != null) filtered = filtered.eq('result', resultCode);
+
+    final speed = switch (query.timeControl) {
+      LikedGamesTimeControlFilter.any => null,
+      LikedGamesTimeControlFilter.classical => 'classical',
+      LikedGamesTimeControlFilter.rapid => 'rapid',
+      LikedGamesTimeControlFilter.blitz => 'blitz',
+    };
+    if (speed != null) {
+      // Games whose speed could not be classified are never excluded.
+      filtered = filtered.or('time_control.is.null,time_control.eq.$speed');
+    }
+
+    final PostgrestTransformBuilder<PostgrestList> ordered = switch (query
+        .sort) {
+      LikedGamesSort.likedNewest => filtered.order(
+        'created_at',
+        ascending: false,
+      ),
+      LikedGamesSort.likedOldest => filtered.order(
+        'created_at',
+        ascending: true,
+      ),
+      LikedGamesSort.gameDateNewest => filtered
+          .order('game_date', ascending: false, nullsFirst: false)
+          .order('created_at', ascending: false),
+      LikedGamesSort.ratingHighest => filtered
+          .order('avg_elo', ascending: false, nullsFirst: false)
+          .order('created_at', ascending: false),
+      LikedGamesSort.whitePlayer => filtered
+          .order('white_name', ascending: true, nullsFirst: false)
+          .order('created_at', ascending: false),
+    };
+
+    final response = await ordered;
+    return (response as List)
+        .map((json) => SavedAnalysis.fromSupabase(json))
+        .toList();
+  });
 }

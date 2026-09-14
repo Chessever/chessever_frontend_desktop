@@ -1,5 +1,11 @@
+import 'package:chessever/desktop/services/shared_books.dart';
+import 'package:chessever/desktop/widgets/library/shared_book_dialogs.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
 
@@ -44,12 +50,16 @@ import 'package:chessever/desktop/state/library_import_buffer.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/state/my_databases_focus.dart';
+import 'package:chessever/desktop/state/my_likes_provider.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
+import 'package:chessever/repository/freemium/freemium_quota.dart';
+import 'package:chessever/utils/freemium_quota_guard.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/widgets/library/my_likes/my_likes_view.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
@@ -129,7 +139,17 @@ class LibraryPane extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final foldersAsync = ref.watch(libraryFoldersStreamProvider);
     final subscribedAsync = ref.watch(subscribedBooksProvider);
-    final ownedFolders = foldersAsync.valueOrNull ?? const <LibraryFolder>[];
+    // The Likes collection is its own destination with its own access policy
+    // (the seven-day window), so it never appears as a generic cloud folder,
+    // database tile or preview. Identified by flag, never by name.
+    final ownedFolders = useMemoized(
+      () => <LibraryFolder>[
+        for (final folder
+            in foldersAsync.valueOrNull ?? const <LibraryFolder>[])
+          if (!folder.isLikedGames) folder,
+      ],
+      [foldersAsync.valueOrNull],
+    );
     final subscribedFolders =
         subscribedAsync.valueOrNull ?? const <LibraryFolder>[];
 
@@ -145,6 +165,15 @@ class LibraryPane extends HookConsumerWidget {
     final allFolders = useMemoized(
       () => [kTwicFolder, ...ownedSorted, ...subscribedSorted],
       [ownedSorted, subscribedSorted],
+    );
+
+    // Regular databases a like can be copied or moved into.
+    final likesDatabaseTargets = useMemoized(
+      () => <LibraryFolder>[
+        for (final folder in ownedSorted)
+          if (libraryFolderIsDatabase(folder, allFolders)) folder,
+      ],
+      [ownedSorted, allFolders],
     );
 
     final import = ref.watch(libraryImportBufferProvider);
@@ -470,6 +499,18 @@ class LibraryPane extends HookConsumerWidget {
                             selectedPath: localFullViewPath.value!,
                             onSelectPath: openLocalFullView,
                           )
+                          : selectedFolderId.value == kMyLikesDestinationId
+                          ? MyLikesView(
+                            databaseTargets: likesDatabaseTargets,
+                            onOpen:
+                                (analysis, openable, {newWindow = false}) =>
+                                    openLibraryLikedAnalysis(
+                                      ref,
+                                      analysis,
+                                      openable: openable,
+                                      newWindow: newWindow,
+                                    ),
+                          )
                           : _MyDatabasesHomeView(
                             folders: allFolders,
                             onPastePgn: () {
@@ -568,9 +609,19 @@ final _twicPreviewPgnProvider = FutureProvider.autoDispose
 ) {
   if (selected == null) return (game: null, isLoading: false);
 
+  // The static teaser is free; fetching the game's PGN is a content action.
+  // A free user's selection never starts the fetch.
+  final canFetchPgn =
+      ref
+          .watch(
+            desktopAccessDecisionProvider(
+              _twicAccessContext.copyWith(action: DesktopAction.fetchPgn),
+            ),
+          )
+          .isAllowed;
   final hasInitialMoves = pgnHasMoves(selected.pgn);
   final hydratedPgnAsync =
-      hasInitialMoves
+      hasInitialMoves || !canFetchPgn
           ? null
           : ref.watch(_twicPreviewPgnProvider(selected.gameId));
   final hydratedPgn = hydratedPgnAsync?.valueOrNull;
@@ -635,12 +686,22 @@ class _FolderRail extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 12),
       children: [
         if (error != null) _RailSyncWarning(error: error!),
-        const _RailGroupHeader(label: 'System', count: 1),
+        const _RailGroupHeader(label: 'System', count: 2),
         _PinnedSystemFolderRow(
-          folder: kTwicFolder,
+          label: kTwicFolder.name,
+          icon: Icons.public_rounded,
+          trailingIcon: Icons.lock_outline_rounded,
+          trailingTooltip: 'System database (read-only)',
           selected: kTwicBookId == selectedId,
           onTap: () => onSelect(kTwicBookId),
           onOpen: () => onOpen(kTwicFolder),
+        ),
+        _PinnedSystemFolderRow(
+          label: 'My Likes',
+          icon: Icons.favorite_rounded,
+          selected: kMyLikesDestinationId == selectedId,
+          onTap: () => onSelect(kMyLikesDestinationId),
+          onOpen: () => onSelect(kMyLikesDestinationId),
         ),
         if (ownedFolders.isNotEmpty) ...[
           const SizedBox(height: 14),
@@ -752,16 +813,22 @@ class _RailHeader extends StatelessWidget {
   }
 }
 
-/// Rail row for the pinned TWIC database. No right-click menu — TWIC is
-/// non-deletable and not renamable.
+/// Rail row for a pinned system destination (TWIC, My Likes). No right-click
+/// menu: neither is deletable or renamable.
 class _PinnedSystemFolderRow extends StatefulWidget {
   const _PinnedSystemFolderRow({
-    required this.folder,
+    required this.label,
+    required this.icon,
     required this.selected,
     required this.onTap,
     required this.onOpen,
+    this.trailingIcon,
+    this.trailingTooltip,
   });
-  final LibraryFolder folder;
+  final String label;
+  final IconData icon;
+  final IconData? trailingIcon;
+  final String? trailingTooltip;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onOpen;
@@ -825,11 +892,11 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
                         Transform.translate(offset: Offset(x, 0), child: child),
                 child: Row(
                   children: [
-                    Icon(Icons.public_rounded, size: 14, color: fg),
+                    Icon(widget.icon, size: 14, color: fg),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        widget.folder.name,
+                        widget.label,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: fg,
@@ -841,14 +908,15 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
                         ),
                       ),
                     ),
-                    DesktopTooltip(
-                      message: 'System database (read-only)',
-                      child: Icon(
-                        Icons.lock_outline_rounded,
-                        size: 11,
-                        color: kLightGreyColor,
+                    if (widget.trailingIcon != null)
+                      DesktopTooltip(
+                        message: widget.trailingTooltip ?? '',
+                        child: Icon(
+                          widget.trailingIcon,
+                          size: 11,
+                          color: kLightGreyColor,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -1078,6 +1146,7 @@ class _FolderRowState extends ConsumerState<_FolderRow>
       child: LibraryFolderContextMenu(
         folder: widget.folder,
         canCreateDatabase: !widget.folder.isSubscribed && isFolder,
+        canShare: libraryFolderIsShareable(widget.folder, isDatabase: !isFolder),
         hasGames: true, // count is unknown at rail level; menu still useful.
         includeLibraryHomeAction: !widget.folder.isPermanentLibraryFolder,
         isShownOnLibraryHome: isShownOnLibraryHome,
@@ -1515,7 +1584,15 @@ enum _LibraryDatabaseKind { cloud, local }
 
 enum _DatabaseBoardView { list, grid }
 
-enum _CloudDatabaseBoardAction { preview, open, pin, unpin, remove }
+enum _CloudDatabaseBoardAction {
+  preview,
+  open,
+  share,
+  pin,
+  unpin,
+  remove,
+  unsubscribe,
+}
 
 enum _LocalGroupBoardAction {
   open,
@@ -2747,6 +2824,14 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       final isPinned = pinnedDatabaseKeys.contains(pinKey);
       final canChangePin = !folder.isPermanentLibraryFolder;
       final canRemove = libraryCanRemoveCloudFolderFromBoard(folder);
+      final canShare = libraryFolderIsShareable(
+        folder,
+        isDatabase: libraryFolderIsDatabase(
+          folder,
+          folders,
+          gameCount: counts[folder.id],
+        ),
+      );
       final picked = await showDesktopContextMenu<_CloudDatabaseBoardAction>(
         context: context,
         position: position,
@@ -2762,6 +2847,12 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             icon: Icons.open_in_new_rounded,
             label: 'Open full database',
           ),
+          if (canShare)
+            const DesktopContextMenuItem(
+              value: _CloudDatabaseBoardAction.share,
+              icon: Icons.link_rounded,
+              label: 'Share database...',
+            ),
           if (canChangePin) ...[
             const DesktopContextMenuDivider(),
             DesktopContextMenuItem(
@@ -2781,6 +2872,15 @@ class _MyDatabasesBoard extends HookConsumerWidget {
               label: 'Remove from Library Home',
             ),
           ],
+          if (folder.isSubscribed) ...[
+            const DesktopContextMenuDivider(),
+            const DesktopContextMenuItem(
+              value: _CloudDatabaseBoardAction.unsubscribe,
+              icon: Icons.remove_circle_outline_rounded,
+              label: 'Remove from my library',
+              destructive: true,
+            ),
+          ],
         ],
       );
       if (picked == null || !context.mounted) return;
@@ -2789,6 +2889,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           onSelectFolder(folder);
         case _CloudDatabaseBoardAction.open:
           onOpenDatabase(folder);
+        case _CloudDatabaseBoardAction.share:
+          await showShareDatabaseDialog(context, folder: folder);
+        case _CloudDatabaseBoardAction.unsubscribe:
+          await _onUnsubscribe(context: context, ref: ref, folder: folder);
         case _CloudDatabaseBoardAction.pin:
           await updateDatabasePin(
             key: pinKey,
@@ -2820,6 +2924,14 @@ class _MyDatabasesBoard extends HookConsumerWidget {
               gameCount: counts[folder.id],
             ),
         hasGames: (counts[folder.id] ?? 0) > 0,
+        canShare: libraryFolderIsShareable(
+          folder,
+          isDatabase: libraryFolderIsDatabase(
+            folder,
+            folders,
+            gameCount: counts[folder.id],
+          ),
+        ),
         includeLibraryHomeAction: true,
         isShownOnLibraryHome: true,
         isPinned: pinnedDatabaseKeys.contains(pinKey),
@@ -4994,7 +5106,12 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
                           selectedId: selectedId.value,
                           selectedIds: clampedSelectedIds,
                           scrollController: scrollController,
-                          onSortChange: (next) => sort.value = next,
+                          onSortChange:
+                            (next) => _gateCloudSort(
+                              context,
+                              next,
+                              () => sort.value = next,
+                            ),
                           onRangeSelect: rangeSelectSavedRow,
                           onSelect: (analysis) {
                             final index = rows.indexWhere(
@@ -5089,6 +5206,14 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
     }, [selectedId.value, selectedPlyCount]);
 
     bool setSelectedTwicPly(int next) {
+      // Stepping through a TWIC game is interactive preview navigation.
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        _twicAccessContext.copyWith(action: DesktopAction.previewNavigate),
+        surface: 'twic_preview_navigate',
+      )) {
+        return true;
+      }
       final clamped = _clampLibraryPreviewPly(selectedPreviewGame, next);
       if (clamped == plyIndex.value) return true;
       plyIndex.value = clamped;
@@ -5177,6 +5302,13 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
     }
 
     void copySelectedTwic() {
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        _twicAccessContext.copyWith(action: DesktopAction.copy),
+        surface: 'twic_copy',
+      )) {
+        return;
+      }
       final copyGames = _selectedTwicGamesForCopy(
         games: games,
         selectedIds: clampedSelectedIds,
@@ -6303,7 +6435,12 @@ class _FolderContentView extends HookConsumerWidget {
                   query: query.value,
                   viewMode: viewMode.value,
                   sort: sort.value,
-                  onSortChange: (next) => sort.value = next,
+                  onSortChange:
+                            (next) => _gateCloudSort(
+                              context,
+                              next,
+                              () => sort.value = next,
+                            ),
                   selectedIds: clampedSelected,
                   onPrimeSelectionAnchor: primeSelectionAnchor,
                   onRangeSelect: setRangeSelection,
@@ -8306,6 +8443,7 @@ void _openAnalysis(
   String databaseTitle = '',
   List<SavedAnalysis> databaseAnalyses = const <SavedAnalysis>[],
   String? initialFen,
+  DesktopAccessContext? accessContext,
 }) {
   final pgn = exportGameToPgn(analysis.chessGame).trim();
   if (pgn.isEmpty) return;
@@ -8317,9 +8455,47 @@ void _openAnalysis(
       databaseTitle: databaseTitle,
       databaseAnalyses: databaseAnalyses,
       initialFen: initialFen,
+      accessContext: accessContext,
     ),
     reuseExisting: false,
     focus: focus,
+  );
+}
+
+/// Opens a liked game that the My Likes destination has already admitted at
+/// tap time. [openable] is the board's game list: likes outside the free window
+/// are not in it, so stepping between games cannot cross the window. The board
+/// carries Likes provenance, so the central admission (and a detached window or
+/// a restored tab) applies the same window instead of treating the row as an
+/// owned document.
+void openLibraryLikedAnalysis(
+  WidgetRef ref,
+  SavedAnalysis analysis, {
+  required List<SavedAnalysis> openable,
+  bool newWindow = false,
+}) {
+  final accessContext = likedGameAccessContext(
+    analysis,
+    DesktopAction.openContent,
+  );
+  if (newWindow) {
+    unawaited(
+      _openAnalysisWindow(
+        ref,
+        analysis,
+        databaseTitle: 'My Likes',
+        databaseAnalyses: openable,
+        accessContext: accessContext,
+      ),
+    );
+    return;
+  }
+  _openAnalysis(
+    ref,
+    analysis,
+    databaseTitle: 'My Likes',
+    databaseAnalyses: openable,
+    accessContext: accessContext,
   );
 }
 
@@ -8329,6 +8505,7 @@ Future<void> _openAnalysisWindow(
   String databaseTitle = '',
   List<SavedAnalysis> databaseAnalyses = const <SavedAnalysis>[],
   String? initialFen,
+  DesktopAccessContext? accessContext,
 }) async {
   final pgn = exportGameToPgn(analysis.chessGame).trim();
   if (pgn.isEmpty) return;
@@ -8340,6 +8517,7 @@ Future<void> _openAnalysisWindow(
       databaseTitle: databaseTitle,
       databaseAnalyses: databaseAnalyses,
       initialFen: initialFen,
+      accessContext: accessContext,
     ),
   );
 }
@@ -8350,6 +8528,7 @@ BoardTabGameArgs _boardArgsForAnalysis(
   String databaseTitle = '',
   List<SavedAnalysis> databaseAnalyses = const <SavedAnalysis>[],
   String? initialFen,
+  DesktopAccessContext? accessContext,
 }) {
   final game = analysis.chessGame;
   final md = game.metadata;
@@ -8395,6 +8574,7 @@ BoardTabGameArgs _boardArgsForAnalysis(
       analysisId: analysis.id,
       title: analysis.title.isEmpty ? fallbackTitle : analysis.title,
     ),
+    accessContext: accessContext,
   );
 }
 
@@ -8608,16 +8788,28 @@ Future<void> _onCreateFolder({
     allowKindSelection: allowKindSelection,
   );
   if (draft == null) return;
+  final isDatabase = draft.kind == LibraryFolderCreateKind.database;
+  // Folders are unlimited; only a new database asks for a slot.
+  if (isDatabase) {
+    if (!context.mounted) return;
+    final quota = await requestFreemiumQuota(
+      context,
+      FreemiumQuotaKind.ownedDatabases,
+    );
+    if (!context.mounted) return;
+    if (!quota.isAllowed) {
+      _toast(context, freemiumQuotaBlockedMessage(quota), error: true);
+      return;
+    }
+  }
   try {
     await ref
         .read(libraryRepositoryProvider)
         .createFolder(
           name: draft.name,
           parentId: draft.parentId,
-          icon:
-              draft.kind == LibraryFolderCreateKind.database
-                  ? 'database'
-                  : 'folder_container',
+          icon: isDatabase ? 'database' : 'folder_container',
+          nodeType: isDatabase ? 'database' : 'folder',
         );
     ref.invalidate(libraryFoldersStreamProvider);
     ref.invalidate(subscribedBooksProvider);
@@ -8626,6 +8818,15 @@ Future<void> _onCreateFolder({
         draft.kind == LibraryFolderCreateKind.database ? 'Database' : 'Folder';
     _toast(context, '$noun "${draft.name}" created');
   } catch (e, st) {
+    final rejection = freemiumQuotaRejection(
+      e,
+      fallbackKind: FreemiumQuotaKind.ownedDatabases,
+    );
+    if (rejection != null) {
+      if (!context.mounted) return;
+      _toast(context, freemiumQuotaBlockedMessage(rejection), error: true);
+      return;
+    }
     ErrorReporter.report(e, stackTrace: st, tag: 'library.create_folder');
     if (!context.mounted) return;
     _toast(context, 'Failed to create folder. Please try again.', error: true);
@@ -8734,6 +8935,30 @@ Future<void> _onFolderAction({
       );
     case LibraryFolderAction.delete:
       await _onDelete(context: context, ref: ref, folder: folder);
+    case LibraryFolderAction.share:
+      await showShareDatabaseDialog(context, folder: folder);
+    case LibraryFolderAction.unsubscribe:
+      await _onUnsubscribe(context: context, ref: ref, folder: folder);
+  }
+}
+
+Future<void> _onUnsubscribe({
+  required BuildContext context,
+  required WidgetRef ref,
+  required LibraryFolder folder,
+}) async {
+  if (!folder.isSubscribed) return;
+  final confirmed = await confirmRemoveSharedBook(context, folder: folder);
+  if (!confirmed) return;
+  try {
+    await ref.read(libraryRepositoryProvider).unsubscribeFromBook(folder.id);
+    ref.invalidate(subscribedBooksProvider);
+    if (!context.mounted) return;
+    _toast(context, '"${folder.name}" removed from your library');
+  } catch (e, st) {
+    ErrorReporter.report(e, stackTrace: st, tag: 'library.unsubscribe_book');
+    if (!context.mounted) return;
+    _toast(context, 'Could not remove it. Please try again.', error: true);
   }
 }
 
@@ -9277,6 +9502,46 @@ class _TwicContentView extends HookConsumerWidget {
   }
 }
 
+/// Cloud databases and shared books: the default order is free; any other
+/// sort is Premium even on owned data. A denied sort leaves the list as it
+/// is and replays once after a verified purchase.
+void _gateCloudSort(
+  BuildContext context,
+  _SortConfig next,
+  VoidCallback apply,
+) {
+  if (next.key == _SortKey.saved && next.dir == _SortDir.desc) {
+    apply();
+    return;
+  }
+  if (admitDesktopAction(
+    ProviderScope.containerOf(context, listen: false),
+    const DesktopAccessContext(
+      feature: DesktopFeature.ownedDocument,
+      action: DesktopAction.sort,
+      origin: DesktopDiscoveryOrigin.ownedDocument,
+      ownedDocument: true,
+      sortKeyCount: 1,
+    ),
+    surface: 'cloud_database_sort',
+    resume: DesktopAccessResume(
+      run: apply,
+      stillMatches: () => context.mounted,
+    ),
+  )) {
+    apply();
+  }
+}
+
+/// TWIC / system database provenance. The list and a static preview are free;
+/// every content action (open, preview navigation, PGN fetch, copy, save,
+/// share) is Premium.
+const DesktopAccessContext _twicAccessContext = DesktopAccessContext(
+  feature: DesktopFeature.twic,
+  action: DesktopAction.openContent,
+  origin: DesktopDiscoveryOrigin.twic,
+);
+
 BoardTabGameArgs _buildTwicBoardArgs(
   WidgetRef ref,
   GamesTourModel game, {
@@ -9287,6 +9552,7 @@ BoardTabGameArgs _buildTwicBoardArgs(
     ref.read(gamebaseDatabaseGamesPaginatedProvider).games,
   ).map(TournamentGameSummary.fromGamesTourModel).toList(growable: false);
   return BoardTabGameArgs(
+    accessContext: _twicAccessContext,
     gameId: game.gameId,
     pgn: game.pgn ?? '',
     label: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
@@ -9420,6 +9686,27 @@ Future<void> _showTwicGameContextMenu({
     ],
   );
   if (picked == null || !context.mounted) return;
+
+  // Opens admit through the board. Save, share and the share link are content
+  // actions on TWIC provenance; the saved-game quota is the save flow's.
+  final contentAction = switch (picked) {
+    _TwicGameContextAction.saveToLibrary => DesktopAction.save,
+    _TwicGameContextAction.share ||
+    _TwicGameContextAction.copyShareLink => DesktopAction.share,
+    _ => null,
+  };
+  if (contentAction != null &&
+      !admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        _twicAccessContext.copyWith(
+          action: contentAction,
+          quota: DesktopQuota.none,
+          additions: 0,
+        ),
+        surface: 'twic_context_menu',
+      )) {
+    return;
+  }
 
   switch (picked) {
     case _TwicGameContextAction.open:
@@ -11347,7 +11634,12 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
                         selectedId: selectedId.value,
                         selectedIds: clampedSelectedIds,
                         scrollController: listScrollController,
-                        onSortChange: (next) => sort.value = next,
+                        onSortChange:
+                            (next) => _gateCloudSort(
+                              context,
+                              next,
+                              () => sort.value = next,
+                            ),
                         onRangeSelect: rangeSelectSavedIndex,
                         onSelect: (analysis) {
                           final index = filtered.indexWhere(
@@ -11475,6 +11767,14 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
     }, [selectedId.value, selectedPlyCount]);
 
     bool setSelectedTwicPly(int next) {
+      // Stepping through a TWIC game is interactive preview navigation.
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        _twicAccessContext.copyWith(action: DesktopAction.previewNavigate),
+        surface: 'twic_preview_navigate',
+      )) {
+        return true;
+      }
       final clamped = _clampLibraryPreviewPly(selectedPreviewGame, next);
       if (clamped == plyIndex.value) return true;
       plyIndex.value = clamped;
@@ -11571,6 +11871,13 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
             : '${formatCompactCount(totalCount)} games';
 
     void copySelectedTwic() {
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        _twicAccessContext.copyWith(action: DesktopAction.copy),
+        surface: 'twic_copy',
+      )) {
+        return;
+      }
       final copyGames = _selectedTwicGamesForCopy(
         games: games,
         selectedIds: clampedSelectedIds,

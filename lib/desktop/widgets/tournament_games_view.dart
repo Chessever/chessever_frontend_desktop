@@ -1,4 +1,8 @@
 import 'dart:async';
+import '../state/event_player_board_games.dart';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -6,11 +10,15 @@ import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/services/desktop_like_actions.dart';
+import 'package:chessever/desktop/widgets/library/my_likes/like_tags_dialog.dart';
+import 'package:chessever/repository/liked_games/liked_games_provider.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
     show tournamentDetailGamesSearchByTabIdProvider;
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
+import 'package:chessever/desktop/services/miniatures_access.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
@@ -1811,6 +1819,8 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
   ChessboardView viewSource = ChessboardView.tour,
   String? eventBroadcastId,
   bool includeServerEventRail = true,
+  DesktopAccessContext? accessContext,
+  EventPlayerBoardScope? eventPlayerScope,
 }) {
   final pgn = pgnHasMoves(game.pgn) ? game.pgn!.trim() : '';
   final normalizedGame = _withFreshestFen(game, pgnOverride: pgn);
@@ -1819,6 +1829,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
       routeGamesContinuation?.kind == BoardTabGamesContinuationKind.smartGames;
   final eventGamesKey =
       !includeServerEventRail ||
+              eventPlayerScope != null ||
               sourceOwnsSmartCollection ||
               viewSource == ChessboardView.favScorecard ||
               eventTourId.isEmpty
@@ -1829,6 +1840,16 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
             selectedRoundId: normalizedGame.roundId,
             selectedBoardNumber: normalizedGame.boardNr,
           );
+  if (eventPlayerScope != null) {
+    final modelsById = {for (final row in eventGames) row.gameId: row};
+    eventGames = [
+      for (final row in eventPlayerBoardGames(
+        eventPlayerScope,
+        eventGames.map(TournamentGameSummary.fromGamesTourModel),
+      ))
+        modelsById[row.id]!,
+    ];
+  }
   final eventContextGames = _boardRailContextGames(
     normalizedGame,
     eventGames,
@@ -1863,7 +1884,9 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
     gameId: normalizedGame.gameId,
     pgn: pgn,
     label:
-        '${normalizedGame.whitePlayer.name} vs ${normalizedGame.blackPlayer.name}',
+        eventPlayerScope != null
+            ? eventPlayerScope.title
+            : '${normalizedGame.whitePlayer.name} vs ${normalizedGame.blackPlayer.name}',
     whiteName: normalizedGame.whitePlayer.name,
     blackName: normalizedGame.blackPlayer.name,
     whiteFederation: normalizedGame.whitePlayer.federation,
@@ -1882,12 +1905,45 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
     eventGames: eventSummaries,
     eventGamesLoading: false,
     eventGamesKey: eventGamesKey,
+    eventPlayerScope: eventPlayerScope,
     eventGamesContinuation: eventGamesContinuation,
     routeTitle: routeTitle,
     routeGames: routeSummaries,
     routeGamesContinuation: routeGamesContinuation,
     gameListSelectedId: normalizedGame.gameId,
+    accessContext: accessContext,
   );
+}
+
+/// Provenance of a tournament-feed open, decided BEFORE any fetch: the
+/// explicit [accessContext] when the surface supplied one, otherwise the
+/// board's conservative inference from the same args shape the open builds.
+DesktopAccessContext tournamentGameAccessContext(
+  GamesTourModel game,
+  String tournamentTitle, {
+  DesktopAccessContext? accessContext,
+  BoardTabGamesContinuation? eventGamesContinuation,
+  BoardTabGamesContinuation? routeGamesContinuation,
+  ChessboardView viewSource = ChessboardView.tour,
+  String? eventBroadcastId,
+}) {
+  if (accessContext != null) {
+    // A Miniatures context is always judged by THIS game's date, never by the
+    // game it was first built for.
+    return retargetMiniatureAccessContext(
+      accessContext.copyWith(action: DesktopAction.openContent),
+      game.lastMoveTime,
+    );
+  }
+  return buildTournamentBoardTabArgs(
+    game,
+    tournamentTitle,
+    eventGamesContinuation: eventGamesContinuation,
+    routeGamesContinuation: routeGamesContinuation,
+    viewSource: viewSource,
+    eventBroadcastId: eventBroadcastId,
+    includeServerEventRail: false,
+  ).admissionContext;
 }
 
 Future<void> openTournamentGameTab(
@@ -1907,6 +1963,8 @@ Future<void> openTournamentGameTab(
   ChessboardView viewSource = ChessboardView.tour,
   String? eventBroadcastId,
   bool Function(ProviderContainer container)? canCommitOpen,
+  DesktopAccessContext? accessContext,
+  EventPlayerBoardScope? eventPlayerScope,
 }) async {
   // Capture the ProviderContainer up front. `ref` belongs to the widget
   // that owns the tap (often a LiveDesktopGameCard whose live-stream
@@ -1915,18 +1973,46 @@ Future<void> openTournamentGameTab(
   // unmounted — which used to swallow the click silently. The container
   // is held by the surrounding ProviderScope and survives card disposal.
   final container = ProviderScope.containerOf(ref.context, listen: false);
+  final admission = tournamentGameAccessContext(
+    game,
+    tournamentTitle,
+    accessContext: accessContext,
+    eventGamesContinuation: eventGamesContinuation,
+    routeGamesContinuation: routeGamesContinuation,
+    viewSource: viewSource,
+    eventBroadcastId: eventBroadcastId,
+  );
+  // Denied => the PGN hydrate below never starts. The click's window shows
+  // the decision; the source list keeps its selection.
+  if (!admitBoardSourceOpen(
+    container,
+    admission,
+    surface: 'tournament_game_open',
+  )) {
+    return;
+  }
   final gameRepo = container.read(gameRepositoryProvider);
+  if (eventPlayerScope != null) {
+    eventPlayerScope = await resolveEventPlayerBoardScope(
+      container,
+      eventPlayerScope,
+    );
+    eventBroadcastId = eventPlayerScope.eventBroadcastId;
+  }
 
   final hydratedGame = await _hydrateTournamentGameForBoardOpen(
     gameRepo: gameRepo,
     game: game,
   );
   if (canCommitOpen != null && !canCommitOpen(container)) return;
+  // Membership can move while the hydrate is in flight (logout, expiry).
+  if (!readDesktopAccess(container.read, admission).isAllowed) return;
   _seedBaseGameIfFresher(container, hydratedGame);
 
   final args = buildTournamentBoardTabArgs(
     hydratedGame,
     tournamentTitle,
+    eventPlayerScope: eventPlayerScope,
     eventGames: _replaceGameInModels(eventGames, hydratedGame),
     routeTitle: routeTitle,
     routeGames: _replaceGameInModels(routeGames, hydratedGame),
@@ -1936,6 +2022,7 @@ Future<void> openTournamentGameTab(
     roundNameById: roundNameById,
     viewSource: viewSource,
     eventBroadcastId: eventBroadcastId,
+    accessContext: admission,
   );
   container.read(chessboardViewFromProviderNew.notifier).state = viewSource;
   final tabId = openBoardGameTabFromContainer(
@@ -1945,6 +2032,7 @@ Future<void> openTournamentGameTab(
     reuseExisting: reuseExisting,
     replaceActive: replaceActive,
   );
+  if (tabId.isEmpty) return;
 
   unawaited(
     _refreshOpenedBoardTabWithLatestLiveGame(
@@ -1969,7 +2057,24 @@ Future<void> openTournamentGameWindow({
   Map<String, String> roundNameById = const <String, String>{},
   ChessboardView viewSource = ChessboardView.tour,
   String? eventBroadcastId,
+  DesktopAccessContext? accessContext,
 }) async {
+  final admission = tournamentGameAccessContext(
+    game,
+    tournamentTitle,
+    accessContext: accessContext,
+    eventGamesContinuation: eventGamesContinuation,
+    routeGamesContinuation: routeGamesContinuation,
+    viewSource: viewSource,
+    eventBroadcastId: eventBroadcastId,
+  );
+  if (!admitBoardSourceOpen(
+    container,
+    admission,
+    surface: 'tournament_game_window_open',
+  )) {
+    return;
+  }
   // Both services belong to the surrounding ProviderScope, not to the live
   // card that initiated the action. Capture them before hydration so removing
   // or filtering that card cannot invalidate the detached-window open.
@@ -1979,6 +2084,7 @@ Future<void> openTournamentGameWindow({
     gameRepo: gameRepo,
     game: game,
   );
+  if (!readDesktopAccess(container.read, admission).isAllowed) return;
   _seedBaseGameIfFresher(container, hydratedGame);
   final args = buildTournamentBoardTabArgs(
     hydratedGame,
@@ -1992,6 +2098,7 @@ Future<void> openTournamentGameWindow({
     roundNameById: roundNameById,
     viewSource: viewSource,
     eventBroadcastId: eventBroadcastId,
+    accessContext: admission,
   );
   await windowService.openBoardGameWindow(args);
 }
@@ -2277,11 +2384,22 @@ GameTabDragPayload tournamentGameDragPayload(
   Map<String, String> roundNameById = const <String, String>{},
   ChessboardView viewSource = ChessboardView.tour,
   String? eventBroadcastId,
+  DesktopAccessContext? accessContext,
 }) {
   return GameTabDragPayload(
     id: game.gameId,
     label: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
     eventBroadcastId: _normalizedOptionalId(eventBroadcastId),
+    // Admitted by the drop target and the card's new-tab gestures before the
+    // spawn runs, so a gated payload opens nothing.
+    accessContext:
+        accessContext == null
+            ? null
+            : tournamentGameAccessContext(
+              game,
+              tournamentTitle,
+              accessContext: accessContext,
+            ),
     spawn:
         (ref, {required focus}) => openTournamentGameTab(
           ref,
@@ -2297,6 +2415,8 @@ GameTabDragPayload tournamentGameDragPayload(
           focus: focus,
           viewSource: viewSource,
           eventBroadcastId: eventBroadcastId,
+          // The drop re-runs admission with the card's provenance.
+          accessContext: accessContext,
           // Drag/drop and modifier clicks are explicit new-tab gestures.
           // They must not jump to an already-open copy of the same game.
           replaceActive: false,
@@ -2340,10 +2460,20 @@ class LiveDesktopGameCard extends ConsumerWidget {
     this.allowStockfishFallback = true,
     this.federationFallbackForName,
     this.federationFallback,
+    this.accessContext,
+    this.lockedReason,
   });
 
   final GamesTourModel game;
   final String tournamentTitle;
+
+  /// Draws the card locked at rest; see [DesktopGameCard.lockedReason].
+  final String? lockedReason;
+
+  /// Where this card's game was discovered. Countrymen, player profiles and
+  /// smart collections pass their paid provenance; ordinary broadcast lists
+  /// leave it null (free).
+  final DesktopAccessContext? accessContext;
   final List<GamesTourModel> eventGames;
   final String routeTitle;
   final List<GamesTourModel> routeGames;
@@ -2450,6 +2580,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
         roundNameById: roundNameById,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       );
     }
 
@@ -2486,6 +2617,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
                     roundNameById: roundNameById,
                     viewSource: viewSource,
                     eventBroadcastId: eventBroadcastId,
+                    accessContext: accessContext,
                   ),
                 );
               }
@@ -2502,9 +2634,11 @@ class LiveDesktopGameCard extends ConsumerWidget {
         roundNameById: roundNameById,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       ),
       layout: layout,
       selected: selected,
+      lockedReason: lockedReason,
       allowStockfishFallback:
           streamingEnabled &&
           allowStockfishFallback &&
@@ -2540,6 +2674,8 @@ enum _LiveGameContextAction {
   openNewWindow,
   openBackground,
   saveToLibrary,
+  toggleLike,
+  editLikeTags,
   share,
   copyShareLink,
   whiteProfile,
@@ -2562,9 +2698,11 @@ Future<void> _showLiveGameContextMenu({
   required Map<String, String> roundNameById,
   required ChessboardView viewSource,
   required String? eventBroadcastId,
+  DesktopAccessContext? accessContext,
 }) async {
   final shareUrl = buildDesktopGameShareUrl(game: game);
   final canSaveToLibrary = canSaveDesktopGameToLibrary(game);
+  final isLiked = ref.read(isGameLikedProvider(game.likeId));
   final picked = await showDesktopContextMenu<_LiveGameContextAction>(
     context: context,
     position: position,
@@ -2599,6 +2737,19 @@ Future<void> _showLiveGameContextMenu({
         ),
       ],
       const DesktopContextMenuDivider(),
+      DesktopContextMenuItem(
+        value: _LiveGameContextAction.toggleLike,
+        icon:
+            isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+        label: isLiked ? 'Remove from My Likes' : 'Like game',
+      ),
+      if (isLiked)
+        const DesktopContextMenuItem(
+          value: _LiveGameContextAction.editLikeTags,
+          icon: Icons.sell_outlined,
+          label: 'Edit like tags',
+        ),
+      const DesktopContextMenuDivider(),
       const DesktopContextMenuItem(
         value: _LiveGameContextAction.share,
         icon: Icons.share_rounded,
@@ -2631,6 +2782,37 @@ Future<void> _showLiveGameContextMenu({
   );
   if (picked == null || !context.mounted) return;
 
+  // Opens admit themselves inside openTournamentGameTab/Window. Save, share,
+  // share-link and liking are content actions on the game's provenance; the
+  // saved game quota itself is decided by the save flow.
+  final contentAction = switch (picked) {
+    _LiveGameContextAction.saveToLibrary => DesktopAction.save,
+    _LiveGameContextAction.share ||
+    _LiveGameContextAction.copyShareLink => DesktopAction.share,
+    // Liking stores the full game in My Likes: a copy of the content. Removing
+    // a like is never gated.
+    _LiveGameContextAction.toggleLike when !isLiked => DesktopAction.copy,
+    _ => null,
+  };
+  if (contentAction != null) {
+    final provenance = tournamentGameAccessContext(
+      game,
+      tournamentTitle,
+      accessContext: accessContext,
+      eventGamesContinuation: eventGamesContinuation,
+      routeGamesContinuation: routeGamesContinuation,
+      viewSource: viewSource,
+      eventBroadcastId: eventBroadcastId,
+    ).copyWith(action: contentAction, quota: DesktopQuota.none, additions: 0);
+    if (!admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      provenance,
+      surface: 'tournament_game_context_menu',
+    )) {
+      return;
+    }
+  }
+
   switch (picked) {
     case _LiveGameContextAction.open:
       await openTournamentGameTab(
@@ -2646,6 +2828,7 @@ Future<void> _showLiveGameContextMenu({
         roundNameById: roundNameById,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       );
     case _LiveGameContextAction.openNewTab:
       await openTournamentGameTab(
@@ -2663,6 +2846,7 @@ Future<void> _showLiveGameContextMenu({
         replaceActive: false,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       );
     case _LiveGameContextAction.openNewWindow:
       final container = ProviderScope.containerOf(context, listen: false);
@@ -2679,6 +2863,7 @@ Future<void> _showLiveGameContextMenu({
         roundNameById: roundNameById,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       );
     case _LiveGameContextAction.openBackground:
       await openTournamentGameTab(
@@ -2696,6 +2881,7 @@ Future<void> _showLiveGameContextMenu({
         replaceActive: false,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       );
     case _LiveGameContextAction.saveToLibrary:
       await saveDesktopGameToLibrary(
@@ -2704,6 +2890,10 @@ Future<void> _showLiveGameContextMenu({
         game: game,
         sourceLabel: tournamentTitle,
       );
+    case _LiveGameContextAction.toggleLike:
+      await toggleDesktopGameLike(context: context, ref: ref, game: game);
+    case _LiveGameContextAction.editLikeTags:
+      await showLikeTagsDialog(context, game.likeId);
     case _LiveGameContextAction.share:
       await showDesktopGameShareDialog(context: context, ref: ref, game: game);
     case _LiveGameContextAction.copyShareLink:

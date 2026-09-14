@@ -1,4 +1,8 @@
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import '../state/event_player_board_games.dart';
 import 'dart:math' as math;
 
 import 'package:chessever/desktop/services/retained_local_pgn.dart';
@@ -14,6 +18,7 @@ import 'package:motor/motor.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
+import 'package:chessever/desktop/services/miniatures_access.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
@@ -760,6 +765,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           _copyHighlightedGamesAsPgn(
             orderedGames,
             selectedGameId: selectedGameId,
+            activeArgs: activeArgs,
           ),
         );
       }
@@ -845,6 +851,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   Future<void> _copyHighlightedGamesAsPgn(
     List<TournamentGameSummary> orderedGames, {
     required String? selectedGameId,
+    required BoardTabGameArgs? activeArgs,
   }) async {
     final games = eventRailGamesForCopy(
       orderedGames: orderedGames,
@@ -856,6 +863,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       context: context,
       ref: ref,
       games: games,
+      activeArgs: activeArgs,
     );
   }
 
@@ -1251,6 +1259,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     }
 
     switch (continuation.kind) {
+
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return null;
@@ -1328,6 +1337,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
 
   bool _canLoadMoreContinuation(BoardTabGamesContinuation continuation) {
     switch (continuation.kind) {
+
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return false;
@@ -1367,6 +1377,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     BoardTabGamesContinuation continuation,
   ) async {
     switch (continuation.kind) {
+
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return;
@@ -1468,7 +1479,16 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       fallbackGames: activeArgs?.routeGames ?? const <TournamentGameSummary>[],
       selectedGameId: activeSelectedGameId,
     );
-    final eventContinuationSnapshot = _watchContinuationSnapshot(
+    final playerScope = activeArgs?.eventPlayerScope;
+    final playerRows = playerScope == null ? null : ref.watch(eventPlayerBoardGamesProvider(eventPlayerBoardGamesKey(playerScope, activeTabId)));
+    final eventContinuationSnapshot = playerScope != null
+        ? _ContinuationSnapshot(
+            games: _mergeEventPlayerGames(playerScope, activeArgs!.eventGames, playerRows?.valueOrNull),
+            isLoading: playerRows?.isLoading ?? false,
+            hasMore: false, totalCount: playerRows?.valueOrNull?.length,
+            error: playerRows?.hasError == true ? playerRows!.error.toString() : null,
+          )
+        : _watchContinuationSnapshot(
       activeArgs?.eventGamesContinuation,
       fallbackGames: activeArgs?.eventGames ?? const <TournamentGameSummary>[],
       selectedGameId: activeSelectedGameId,
@@ -1554,7 +1574,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     }
     final preserveEventInputOrder =
         resolved.kind == _GameListKind.event &&
-        effectiveArgs?.viewSource == ChessboardView.playerProfile;
+        (effectiveArgs?.viewSource == ChessboardView.playerProfile ||
+          effectiveArgs?.eventPlayerScope != null);
 
     // The rail seeds from the games handed over when the board opened, then the
     // provider resolves with the authoritative round catalog. Painting headings
@@ -2154,12 +2175,14 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                         ref: ref,
                         game: game,
                         tournamentTitle: resolved.title,
+                        activeArgs: effectiveArgs,
                       ),
                   onCopyGames:
                       (games) => _copyEventGameSummariesAsPgn(
                         context: context,
                         ref: ref,
                         games: games,
+                        activeArgs: effectiveArgs,
                       ),
                 ),
               ),
@@ -2236,9 +2259,20 @@ Future<int> _copyEventGameSummariesAsPgn({
   required BuildContext context,
   required WidgetRef ref,
   required List<TournamentGameSummary> games,
+  required BoardTabGameArgs? activeArgs,
 }) async {
   if (games.isEmpty) {
     showDesktopToast(context, 'Nothing to copy.', error: true);
+    return 0;
+  }
+  // Denied => no PGN is resolved or fetched for any of the games.
+  if (!admitEventRailContentAction(
+    ProviderScope.containerOf(context, listen: false),
+    activeArgs: activeArgs,
+    games: games,
+    action: DesktopAction.copy,
+    surface: 'board_rail_copy',
+  )) {
     return 0;
   }
 
@@ -2489,7 +2523,8 @@ Future<void> _navigateActiveEventGameNow(
 
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
-      activeArgs?.viewSource == ChessboardView.playerProfile;
+      (activeArgs?.viewSource == ChessboardView.playerProfile ||
+          activeArgs?.eventPlayerScope != null);
 
   final nextGame = orderedGames[nextIdx];
 
@@ -2559,7 +2594,11 @@ BoardTabGameArgs? _readNavigationBoardArgs(WidgetRef ref, String activeTabId) {
 
   List<TournamentGameSummary>? eventGames;
   final eventKey = raw.eventGamesKey;
-  if (eventKey != null) {
+  final playerScope = raw.eventPlayerScope;
+  if (playerScope != null) {
+    eventGames = _mergeEventPlayerGames(playerScope, raw.eventGames,
+      ref.read(eventPlayerBoardGamesProvider(eventPlayerBoardGamesKey(playerScope, activeTabId))).valueOrNull);
+  } else if (eventKey != null) {
     final fallbackRail = _resolveGameRail(raw, null);
     final selected =
         fallbackRail.isEmpty
@@ -2625,7 +2664,8 @@ _navigationOrdering(
 }) {
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
-      activeArgs?.viewSource == ChessboardView.playerProfile;
+      (activeArgs?.viewSource == ChessboardView.playerProfile ||
+          activeArgs?.eventPlayerScope != null);
   final groups = switch (resolved.kind) {
     _GameListKind.favorites => _buildDateGroups(resolved.games),
     // Player-profile event rails mirror the source list's own ordering.
@@ -2810,6 +2850,7 @@ String? _selectedGameIdForArgs(BoardTabGameArgs? args) {
 /// as a cross-event source list, so it must never be refreshed as though it
 /// were one tournament rail.
 String _eventTourIdForArgs(BoardTabGameArgs? args) {
+  if (args?.eventPlayerScope != null) return '';
   if (args == null ||
       args.viewSource == ChessboardView.favScorecard ||
       args.eventGames.isEmpty) {
@@ -2875,6 +2916,7 @@ List<TournamentGameSummary>? _readContinuationGames(
 }) {
   if (continuation == null) return null;
 
+
   return _windowContinuationGames(
     fallbackGames: fallbackGames,
     providerGames: _readContinuationProviderGames(ref, continuation),
@@ -2891,6 +2933,7 @@ List<TournamentGameSummary> _readContinuationProviderGames(
   BoardTabGamesContinuation continuation,
 ) {
   return switch (continuation.kind) {
+
     BoardTabGamesContinuationKind.smartGames => () {
       final argument = continuation.argument;
       if (argument is! PremiumGamesType) {
@@ -3019,6 +3062,11 @@ List<TournamentGameSummary> _mergeFreshTournamentProviderGames(
     for (final game in freshGames) TournamentGameSummary.fromGame(game),
   ]);
 }
+
+List<TournamentGameSummary> _mergeEventPlayerGames(
+  EventPlayerBoardScope scope, List<TournamentGameSummary> fallback,
+  List<TournamentGameSummary>? fresh,
+) => eventPlayerBoardGames(scope, fresh == null ? fallback : _mergeFreshEventGameSummaries(fallback, fresh));
 
 List<TournamentGameSummary> _mergeFreshEventGameSummaries(
   List<TournamentGameSummary> fallbackGames,
@@ -4318,11 +4366,52 @@ bool _isActualLiveGame({
       timeSinceLastMove <= _kSidebarLiveActivityWindow;
 }
 
+/// Admits a content action ([DesktopAction.insertMove], [DesktopAction.copy])
+/// on rail [games] BEFORE any PGN is resolved or fetched.
+///
+/// Each game keeps the board's SOURCE provenance, never the ownership of the
+/// document on the board, and a Miniatures game is judged by its own date.
+/// Rows of a local PGN file are the user's own files and stay free. A denial
+/// presents once in this window; nothing is fetched.
+@visibleForTesting
+bool admitEventRailContentAction(
+  ProviderContainer container, {
+  required BoardTabGameArgs? activeArgs,
+  required Iterable<TournamentGameSummary> games,
+  required DesktopAction action,
+  required String surface,
+}) {
+  final args = activeArgs;
+  if (args == null) return true;
+  final source = args.sourceAccessContext;
+  for (final game in games) {
+    if (game.localPgnSource != null) continue;
+    final request = retargetMiniatureAccessContext(
+      source,
+      game.lastMoveTime,
+    ).copyWith(action: action, quota: DesktopQuota.none, additions: 0);
+    if (!admitDesktopAction(container, request, surface: surface)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 Future<void> _insertEventGame({
   required WidgetRef ref,
   required TournamentGameSummary game,
   required String tournamentTitle,
+  required BoardTabGameArgs? activeArgs,
 }) async {
+  if (!admitEventRailContentAction(
+    ProviderScope.containerOf(ref.context, listen: false),
+    activeArgs: activeArgs,
+    games: <TournamentGameSummary>[game],
+    action: DesktopAction.insertMove,
+    surface: 'board_rail_insert',
+  )) {
+    return;
+  }
   var pgn = game.pgn?.trim() ?? '';
   if (!pgnHasMoves(pgn) && game.id.trim().isNotEmpty) {
     pgn =
@@ -4614,6 +4703,26 @@ Future<void> _openEventGame({
             container: container,
           );
 
+  // The next game of a rail keeps the rail's SOURCE provenance; owning the
+  // current document never carries to it, and a Miniatures rail judges the
+  // next game by its own date. Denied => no replace prompt, no local hydrate,
+  // no open-seed fetch, and the active board is untouched.
+  final DesktopAccessContext? railAccess =
+      activeArgs == null
+          ? null
+          : retargetMiniatureAccessContext(
+            activeArgs.sourceAccessContext,
+            game.lastMoveTime,
+          );
+  if (railAccess != null &&
+      !(kind == _GameListKind.database && game.localPgnSource != null) &&
+      !admitBoardSourceOpen(
+        ownerContainer,
+        railAccess,
+        surface: 'board_rail_open',
+      )) {
+    return;
+  }
   if (!await _confirmReplaceActiveBoardGameIfNeeded(
     ref: ref,
     context: context,
@@ -4663,8 +4772,9 @@ Future<void> _openEventGame({
               ? null
               : openGame.id,
       pgn: pgn,
-      label:
-          openGame.name.isEmpty
+      label: activeArgs?.eventPlayerScope != null
+          ? (activeArgs!.eventPlayerScope!).title
+          : openGame.name.isEmpty
               ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
               : openGame.name,
       whiteName: openGame.whitePlayer,
@@ -4692,6 +4802,7 @@ Future<void> _openEventGame({
           activeArgs?.hideLocalOpeningTreePicker ?? false,
       gameListSelectedId: openGame.id,
       librarySaveOrigin: localPgnSaveOrigin,
+      accessContext: railAccess,
     );
 
     if (inNewWindow) {
@@ -4718,8 +4829,9 @@ Future<void> _openEventGame({
     final args = BoardTabGameArgs(
       gameId: openGame.id,
       pgn: pgn,
-      label:
-          openGame.name.isEmpty
+      label: activeArgs?.eventPlayerScope != null
+          ? (activeArgs!.eventPlayerScope!).title
+          : openGame.name.isEmpty
               ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
               : openGame.name,
       whiteName: openGame.whitePlayer,
@@ -4735,16 +4847,19 @@ Future<void> _openEventGame({
       fenSeed: openGame.fen,
       initialFen: activeArgs?.initialFen ?? openGame.fen,
       sourceGame: openSeed.sourceGame,
+      eventBroadcastId: activeArgs?.eventBroadcastId,
       viewSource: activeArgs?.viewSource ?? ChessboardView.tour,
       tournamentTitle: _eventTitleForGame(openGame, activeArgs),
       eventGames: eventSeed,
       eventGamesLoading: false,
       eventGamesKey: _eventGamesKeyForSummary(openGame, activeArgs),
       eventGamesContinuation: activeArgs?.eventGamesContinuation,
+      eventPlayerScope: activeArgs?.eventPlayerScope,
       routeTitle: tournamentTitle,
       routeGames: openEventGames,
       routeGamesContinuation: activeArgs?.routeGamesContinuation,
       gameListSelectedId: openGame.id,
+      accessContext: railAccess,
     );
 
     if (inNewWindow) {
@@ -4763,15 +4878,16 @@ Future<void> _openEventGame({
   }
 
   final pgn = openGame.pgn?.trim() ?? '';
-  if (!inNewTab && !inNewWindow) {
+  if (!inNewTab && !inNewWindow && activeArgs?.eventPlayerScope == null) {
     ref.read(tournamentGamesProvider.notifier).markActive(openGame.id);
   }
 
   final args = BoardTabGameArgs(
     gameId: openGame.id,
     pgn: pgn,
-    label:
-        openGame.name.isEmpty
+    label: activeArgs?.eventPlayerScope != null
+        ? (activeArgs!.eventPlayerScope!).title
+        : openGame.name.isEmpty
             ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
             : openGame.name,
     whiteName: openGame.whitePlayer,
@@ -4786,15 +4902,18 @@ Future<void> _openEventGame({
     blackFideId: openGame.blackFideId,
     fenSeed: openGame.fen,
     sourceGame: openSeed.sourceGame,
+    eventBroadcastId: activeArgs?.eventBroadcastId,
     viewSource: activeArgs?.viewSource ?? ChessboardView.tour,
     tournamentTitle: tournamentTitle,
     eventGames: openEventGames,
     eventGamesKey: _eventGamesKeyForSummary(openGame, activeArgs),
     eventGamesContinuation: activeArgs?.eventGamesContinuation,
+      eventPlayerScope: activeArgs?.eventPlayerScope,
     routeTitle: activeArgs?.routeTitle ?? '',
     routeGames: activeArgs?.routeGames ?? const <TournamentGameSummary>[],
     routeGamesContinuation: activeArgs?.routeGamesContinuation,
     gameListSelectedId: openGame.id,
+    accessContext: railAccess,
   );
 
   if (inNewWindow) {
@@ -4819,6 +4938,7 @@ BoardTabEventGamesKey? _eventGamesKeyForSummary(
       activeArgs?.routeGamesContinuation?.kind ==
       BoardTabGamesContinuationKind.smartGames;
   if (sourceOwnsSmartCollection ||
+      activeArgs?.eventPlayerScope != null ||
       activeArgs?.viewSource == ChessboardView.favScorecard) {
     return null;
   }
@@ -5078,6 +5198,7 @@ class _DatabaseGamesList extends ConsumerWidget {
                     ref: ref,
                     game: game,
                     tournamentTitle: tournamentTitle,
+                    activeArgs: activeArgs,
                   );
                 case _GameRowAction.copyPgn:
                   final copyGames = eventRailGamesForCopy(
@@ -5091,6 +5212,7 @@ class _DatabaseGamesList extends ConsumerWidget {
                     context: context,
                     ref: ref,
                     games: copyGames,
+                    activeArgs: activeArgs,
                   );
               }
             },

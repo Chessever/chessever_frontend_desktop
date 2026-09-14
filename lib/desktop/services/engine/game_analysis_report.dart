@@ -255,6 +255,28 @@ class GameAnalysisReportController extends ChangeNotifier {
     _setState(const GameReportState());
   }
 
+  /// Shows [report] as this tab's completed report without running anything.
+  ///
+  /// Used to restore a session or cached report, which must never spend a
+  /// second allowance. Returns false while a run is in flight.
+  bool adoptCompletedReport(GameAnalysisReport report) {
+    if (_disposed || _state.isRunning) return false;
+    _generation++;
+    _stopRemoteProgress();
+    _setState(
+      GameReportState(
+        status: GameReportStatus.completed,
+        progress: 1,
+        completedPositions: report.positions.length,
+        totalPositions: report.positions.length,
+        report: report,
+      ),
+    );
+    return true;
+  }
+
+  /// Stops the running report. The lifetime allowance is recorded only after
+  /// a successful delivery; a cancelled run consumes no new allowance.
   Future<void> cancel() async {
     if (!_state.isRunning) return;
     _generation++;

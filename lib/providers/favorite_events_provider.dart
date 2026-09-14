@@ -103,12 +103,16 @@ class FavoriteEventsNotifier extends AsyncNotifier<List<FavoriteEvent>> {
   }
 
   /// Add event to favorites (optimistic update)
+  ///
+  /// [extraMetadata] is merged into the row's `metadata` JSONB; smart events
+  /// store their criteria there.
   Future<void> addFavorite({
     required String eventId,
     required String eventName,
     String? timeControl,
     int? maxAvgElo,
     String? dates,
+    Map<String, dynamic>? extraMetadata,
   }) async {
     final userId = _getCurrentUserId();
     if (userId == null) {
@@ -119,6 +123,7 @@ class FavoriteEventsNotifier extends AsyncNotifier<List<FavoriteEvent>> {
       if (timeControl != null) 'timeControl': timeControl,
       if (maxAvgElo != null) 'maxAvgElo': maxAvgElo,
       if (dates != null) 'dates': dates,
+      ...?extraMetadata,
     };
 
     // Create optimistic event
@@ -213,6 +218,233 @@ class FavoriteEventsNotifier extends AsyncNotifier<List<FavoriteEvent>> {
     }
   }
 
+  /// Merge [patch] into a saved favorite's `metadata` JSONB (optimistic local
+  /// update + Supabase UPDATE). No-op if the event isn't currently saved.
+  ///
+  /// Used to persist per-row data such as a smart event's refreshed member
+  /// snapshot on the owning favorite row, so it syncs across devices and is
+  /// deleted with the event.
+  Future<void> updateMetadata(
+    String eventId,
+    Map<String, dynamic> patch,
+  ) async {
+    final userId = currentUserIdForWrites();
+    if (userId == null) return;
+
+    final currentEvents = state.valueOrNull ?? [];
+    final index = currentEvents.indexWhere((e) => e.eventId == eventId);
+    if (index < 0) return; // not saved — nothing to update
+
+    final existing = currentEvents[index];
+    final newMetadata = <String, dynamic>{...existing.metadata, ...patch};
+    final optimistic = FavoriteEvent(
+      id: existing.id,
+      userId: existing.userId,
+      eventId: existing.eventId,
+      eventName: existing.eventName,
+      metadata: newMetadata,
+      createdAt: existing.createdAt,
+      updatedAt: DateTime.now(),
+    );
+    final updatedEvents = [...currentEvents]..[index] = optimistic;
+    state = AsyncValue.data(updatedEvents);
+    await cacheFavoriteEventsLocally(updatedEvents, userId);
+
+    try {
+      await updateFavoriteRowRemote(
+        userId: userId,
+        matchEventId: eventId,
+        values: {'metadata': newMetadata},
+      );
+      debugPrint('[FavoriteEvents] Updated metadata for $eventId');
+    } catch (e, st) {
+      debugPrint('[FavoriteEvents] Error updating metadata: $e');
+      debugPrint('[FavoriteEvents] Stack: $st');
+      state = AsyncValue.data(currentEvents);
+      await cacheFavoriteEventsLocally(currentEvents, userId);
+      rethrow;
+    }
+  }
+
+  /// Re-keys the favourite row [previousEventId] to [eventId] atomically.
+  ///
+  /// A row's id can embed its content (a smart event's id embeds its criteria
+  /// key), so changing the content changes the id. The old delete-then-add
+  /// sequence could lose the row on any failure between the two writes and
+  /// silently no-op on a surviving row. This instead issues ONE UPDATE that
+  /// rewrites `event_id`, `event_name` and `metadata` together on the existing
+  /// row. [buildMetadata] receives that row's current metadata so user-owned
+  /// keys can be carried across.
+  ///
+  /// * No row for [previousEventId]: this is a first save, so the row is
+  ///   inserted (an upsert that writes metadata, never `ignoreDuplicates`).
+  /// * A different row already owns [eventId]: that row is written first and
+  ///   the source row retired only afterwards. If retiring fails the user
+  ///   keeps a harmless duplicate; nothing is lost.
+  ///
+  /// Not optimistic: local state and the cache advance only after the server
+  /// confirms the write. On failure this throws and leaves both untouched.
+  Future<FavoriteEvent> rekeyFavorite({
+    required String previousEventId,
+    required String eventId,
+    required String eventName,
+    required Map<String, dynamic> Function(Map<String, dynamic> existing)
+    buildMetadata,
+  }) async {
+    final userId = currentUserIdForWrites();
+    if (userId == null) {
+      throw StateError('User must be logged in to update favorites');
+    }
+
+    final before = state.valueOrNull ?? const <FavoriteEvent>[];
+    FavoriteEvent? source;
+    FavoriteEvent? target;
+    for (final row in before) {
+      if (row.eventId == previousEventId) source ??= row;
+      if (previousEventId != eventId && row.eventId == eventId) target ??= row;
+    }
+
+    Future<FavoriteEvent> insert(Map<String, dynamic> metadata) async {
+      final row = await upsertFavoriteRowRemote({
+        'user_id': userId,
+        'event_id': eventId,
+        'event_name': eventName,
+        'metadata': metadata,
+      });
+      return FavoriteEvent.fromSupabase(row);
+    }
+
+    late final FavoriteEvent saved;
+    var retiredSource = false;
+
+    if (source == null) {
+      saved = await insert(buildMetadata(target?.metadata ?? const {}));
+    } else if (target != null) {
+      final rows = await updateFavoriteRowRemote(
+        userId: userId,
+        matchEventId: eventId,
+        values: {
+          'event_name': eventName,
+          'metadata': buildMetadata({...target.metadata, ...source.metadata}),
+        },
+      );
+      saved =
+          rows.isEmpty
+              ? await insert(
+                buildMetadata({...target.metadata, ...source.metadata}),
+              )
+              : FavoriteEvent.fromSupabase(rows.first);
+      try {
+        await deleteFavoriteRowRemote(userId: userId, eventId: previousEventId);
+        retiredSource = true;
+      } catch (e, st) {
+        debugPrint(
+          '[FavoriteEvents] Kept duplicate $previousEventId after re-key: $e',
+        );
+        debugPrint('[FavoriteEvents] Stack: $st');
+      }
+    } else {
+      final metadata = buildMetadata(source.metadata);
+      final rows = await updateFavoriteRowRemote(
+        userId: userId,
+        matchEventId: previousEventId,
+        values: {
+          'event_id': eventId,
+          'event_name': eventName,
+          'metadata': metadata,
+        },
+      );
+      // Zero rows means another device removed it meanwhile: re-create it
+      // rather than report a save that never happened.
+      saved =
+          rows.isEmpty
+              ? await insert(metadata)
+              : FavoriteEvent.fromSupabase(rows.first);
+      retiredSource = true;
+    }
+
+    final after = <FavoriteEvent>[];
+    var placed = false;
+    for (final row in before) {
+      final isSource = row.eventId == previousEventId;
+      final isTarget = row.eventId == eventId;
+      if (isSource && !retiredSource && !isTarget) {
+        after.add(row);
+        continue;
+      }
+      if (isSource || isTarget) {
+        if (!placed) {
+          after.add(saved);
+          placed = true;
+        }
+        continue;
+      }
+      after.add(row);
+    }
+    if (!placed) after.add(saved);
+
+    state = AsyncValue.data(after);
+    await cacheFavoriteEventsLocally(after, userId);
+    debugPrint('[FavoriteEvents] Re-keyed $previousEventId -> $eventId');
+    return saved;
+  }
+
+  /// Signed-in user id for writes. Overridable so tests can drive the write
+  /// paths without a Supabase session.
+  @protected
+  String? currentUserIdForWrites() => _getCurrentUserId();
+
+  /// `UPDATE user_favorite_events SET values WHERE user_id AND event_id`,
+  /// returning the updated rows (empty when nothing matched).
+  @protected
+  Future<List<Map<String, dynamic>>> updateFavoriteRowRemote({
+    required String userId,
+    required String matchEventId,
+    required Map<String, dynamic> values,
+  }) async {
+    final response = await _supabase
+        .from('user_favorite_events')
+        .update(values)
+        .eq('user_id', userId)
+        .eq('event_id', matchEventId)
+        .select();
+    return (response as List)
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList(growable: false);
+  }
+
+  /// Insert-or-update on `(user_id, event_id)` that always writes metadata.
+  @protected
+  Future<Map<String, dynamic>> upsertFavoriteRowRemote(
+    Map<String, dynamic> values,
+  ) async {
+    final response =
+        await _supabase
+            .from('user_favorite_events')
+            .upsert(values, onConflict: 'user_id,event_id')
+            .select()
+            .single();
+    return Map<String, dynamic>.from(response);
+  }
+
+  @protected
+  Future<void> deleteFavoriteRowRemote({
+    required String userId,
+    required String eventId,
+  }) async {
+    await _supabase
+        .from('user_favorite_events')
+        .delete()
+        .eq('user_id', userId)
+        .eq('event_id', eventId);
+  }
+
+  @protected
+  Future<void> cacheFavoriteEventsLocally(
+    List<FavoriteEvent> events,
+    String? userId,
+  ) => _cacheEvents(events, userId);
+
   /// Toggle event favorite status
   Future<bool> toggleFavorite({
     required String eventId,
@@ -220,6 +452,7 @@ class FavoriteEventsNotifier extends AsyncNotifier<List<FavoriteEvent>> {
     String? timeControl,
     int? maxAvgElo,
     String? dates,
+    Map<String, dynamic>? extraMetadata,
   }) async {
     final currentState = state.valueOrNull ?? [];
     final isFavorited = currentState.any((e) => e.eventId == eventId);
@@ -234,6 +467,7 @@ class FavoriteEventsNotifier extends AsyncNotifier<List<FavoriteEvent>> {
         timeControl: timeControl,
         maxAvgElo: maxAvgElo,
         dates: dates,
+        extraMetadata: extraMetadata,
       );
       return true;
     }

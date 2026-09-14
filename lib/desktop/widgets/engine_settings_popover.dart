@@ -110,13 +110,6 @@ class _PopoverBody extends ConsumerWidget {
             value: settings.showPvArrows,
             onChange: notifier.togglePvArrows,
           ),
-          const SizedBox(height: 10),
-          _SwitchRow(
-            label: 'Auto game analysis',
-            description: 'Analyze loaded games automatically.',
-            value: settings.autoGameAnalysis,
-            onChange: notifier.toggleAutoGameAnalysis,
-          ),
           const Divider(height: 24, color: kDividerColor),
           _SegmentedRow(
             label: 'Engine lines',

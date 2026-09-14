@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
 import 'package:chessever/revenue_cat_service/revenue_cat_service.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
@@ -19,7 +22,23 @@ import 'package:url_launcher/url_launcher.dart';
 
 /// Show the premium paywall sheet.
 /// Returns `true` if the user successfully subscribed.
-Future<bool> showPremiumPaywallSheet({required BuildContext context}) async {
+///
+/// On desktop this is the decision-driven desktop paywall. Pass
+/// [desktopDecision] / [desktopAccessContext] so the copy names the specific
+/// feature or limit; `true` means a re-read verified Premium, never the
+/// dialog's own result.
+Future<bool> showPremiumPaywallSheet({
+  required BuildContext context,
+  DesktopAccessDecision? desktopDecision,
+  DesktopAccessContext? desktopAccessContext,
+}) async {
+  if (isDesktopPlatform) {
+    return showDesktopPremiumPaywall(
+      context,
+      decision: desktopDecision,
+      accessContext: desktopAccessContext,
+    );
+  }
   // Sync purchases when paywall opens (user might have subscribed externally)
   unawaited(RevenueCatService().syncPurchases());
 
@@ -42,6 +61,10 @@ Future<bool> showPremiumPaywallSheet({required BuildContext context}) async {
 /// Returns true if user has premium or just subscribed.
 /// Note: Requires authentication first - shows auth upgrade sheet if user is anonymous.
 Future<bool> requirePremiumGuard(BuildContext context, WidgetRef ref) async {
+  // Desktop: guests keep the free tier and purchasing asks for an account
+  // inside the paywall, so there is no up-front auth wall. Placed before the
+  // mobile debug bypass on purpose: desktop gates behave the same in debug.
+  if (isDesktopPlatform) return showDesktopPremiumPaywall(context);
   if (kDebugMode) return true;
 
   // First ensure user is authenticated (not anonymous)
@@ -58,6 +81,7 @@ Future<bool> requirePremiumGuard(BuildContext context, WidgetRef ref) async {
 /// Guard variant for places where WidgetRef is not conveniently available.
 /// Returns true if user has premium or just subscribed from paywall.
 Future<bool> requirePremiumGuardNoRef(BuildContext context) async {
+  if (isDesktopPlatform) return showDesktopPremiumPaywall(context);
   if (kDebugMode) return true;
 
   final isAuthenticated = await requireFullAuthGuard(context);

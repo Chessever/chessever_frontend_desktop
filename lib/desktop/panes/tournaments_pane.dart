@@ -10,6 +10,8 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/state/botvinnik_dock.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_launch_button.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/global_search_query.dart';
@@ -24,6 +26,7 @@ import 'package:chessever/desktop/widgets/desktop_event_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_event_favorite_button.dart';
 import 'package:chessever/desktop/widgets/desktop_event_countdown.dart';
 import 'package:chessever/desktop/widgets/desktop_collection_cards.dart';
+import 'package:chessever/desktop/widgets/smart_event/desktop_smart_event_shelf.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_game_context.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_strip_layout.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
@@ -251,6 +254,13 @@ class TournamentsPane extends HookConsumerWidget {
                     const SizedBox(width: 8),
                     const GameViewModeToggle(buttonSize: 38),
                   ],
+                  const BotvinnikLaunchButton(
+                    screenContext: botvinnikHomeScreenContext,
+                    variant: BotvinnikLaunchVariant.toolbar,
+                    toolbarHeight: 38,
+                    leadingGap: 8,
+                    tooltip: 'Ask Botvinnik about live chess',
+                  ),
                 ],
               ),
             ],
@@ -3200,7 +3210,11 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                 addAutomaticKeepAlives: false,
                 itemBuilder: (context, index) {
                   if (index == 0) {
-                    return DesktopCollectionCards(
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DesktopCollectionCards(
                       onFavoritesTap: () {
                         ref
                             .read(selectedFavoritesModeProvider.notifier)
@@ -3225,6 +3239,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                             .read(desktopSmartGamesTypeByTabIdProvider.notifier)
                             .update((types) => {...types, tabId: type});
                       },
+                        ),
+                        const DesktopSmartEventShelf(),
+                      ],
                     );
                   }
                   final eventIndex = index - 1;

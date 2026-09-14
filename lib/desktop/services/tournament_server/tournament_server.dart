@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:chessever/desktop/auth/desktop_play_access.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -70,10 +72,13 @@ class TournamentServerState {
 /// Dart Frog gives us a small Shelf-backed local server with typed routes
 /// while staying inside the Flutter process and binding only to loopback.
 class TournamentServer extends StateNotifier<TournamentServerState> {
-  TournamentServer()
-    : super(
+  TournamentServer({bool Function()? canStart})
+    : _canStart = canStart ?? (() => true),
+      super(
         const TournamentServerState(status: TournamentServerStatus.stopped),
       );
+
+  final bool Function() _canStart;
 
   HttpServer? _http;
   File? _lockFile;
@@ -85,6 +90,7 @@ class TournamentServer extends StateNotifier<TournamentServerState> {
   Future<void> _eventWriteChain = Future<void>.value();
 
   Future<bool> start() async {
+    if (!_canStart()) return false;
     if (state.status == TournamentServerStatus.running ||
         state.status == TournamentServerStatus.starting) {
       return state.status == TournamentServerStatus.running;
@@ -166,11 +172,13 @@ class TournamentServer extends StateNotifier<TournamentServerState> {
   /// Create + run a tournament. Returns immediately; progress is streamed
   /// via [state.snapshot] / `events` WebSocket.
   Future<void> launchTournament(TournamentConfig config) async {
+    if (!_canStart()) return;
     if (state.status != TournamentServerStatus.running) {
       throw StateError('Server not running — call start() first.');
     }
     await _conductor?.shutdown();
     await _resetEventLog(config.title);
+    if (!_canStart()) return;
     final conductor = Conductor(
       config: config,
       onSnapshotChange: (s) {
@@ -215,6 +223,7 @@ class TournamentServer extends StateNotifier<TournamentServerState> {
   }
 
   Future<void> continueTournamentStream() async {
+    if (!_canStart()) return;
     final snapshot = state.snapshot;
     if (snapshot == null || snapshot.isRunning) return;
     if (state.status != TournamentServerStatus.running) {
@@ -222,6 +231,7 @@ class TournamentServer extends StateNotifier<TournamentServerState> {
       if (!ready) return;
     }
     await _conductor?.shutdown();
+    if (!_canStart()) return;
     final conductor = Conductor(
       config: snapshot.config,
       resumeFrom: snapshot,
@@ -1692,7 +1702,8 @@ class _TournamentEngine {
 /// snapshot rendering.
 final tournamentServerProvider =
     StateNotifierProvider<TournamentServer, TournamentServerState>((ref) {
-      final server = TournamentServer();
+      final server = TournamentServer(canStart: () =>
+        readDesktopAccess(ref.read, desktopPlayAccessContext).isAllowed);
       ref.onDispose(() => unawaited(server.stop()));
       // Wire engine resolver from the engineInstallProvider so the conductor
       // can find binaries without taking a Riverpod dependency itself.

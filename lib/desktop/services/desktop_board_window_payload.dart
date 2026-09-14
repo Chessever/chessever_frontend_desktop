@@ -10,8 +10,10 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
 
 import 'package:flutter/foundation.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/tab_kind_restore.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
@@ -147,11 +149,13 @@ class DesktopBoardWindowPayload {
 
   factory DesktopBoardWindowPayload.fromJson(Map<String, Object?> json) {
     final argsJson = json['args'];
-    final kind = _kind(json['kind']);
+    final restoredKind = restoreTabKindByName(json['kind']);
+    final kind = restoredKind.kind;
     final metadataJson = json['metadata'];
     return DesktopBoardWindowPayload(
       title:
-          (json['title'] as String?)?.trim().isNotEmpty == true
+          !restoredKind.retired &&
+                  (json['title'] as String?)?.trim().isNotEmpty == true
               ? (json['title'] as String).trim()
               : kind.defaultTitle,
       kind: kind,
@@ -222,6 +226,7 @@ Map<String, Object?> _argsToJson(BoardTabGameArgs args) => <String, Object?>{
   'eventGames': _summariesToJson(args.eventGames),
   'eventGamesLoading': args.eventGamesLoading,
   'eventGamesKey': _eventGamesKeyToJson(args.eventGamesKey),
+  'eventPlayerScope': args.eventPlayerScope?.toJson(),
   'eventGamesContinuation': _continuationToJson(args.eventGamesContinuation),
   'routeTitle': args.routeTitle,
   'routeGames': _summariesToJson(args.routeGames),
@@ -233,6 +238,11 @@ Map<String, Object?> _argsToJson(BoardTabGameArgs args) => <String, Object?>{
   ),
   'gameListSelectedId': args.gameListSelectedId,
   'librarySaveOrigin': _librarySaveOriginToJson(args.librarySaveOrigin),
+  // Provenance survives the window boundary. Absent on payloads from builds
+  // before freemium; the decoder then leaves it null and the board infers it
+  // conservatively from the args shape.
+  if (args.accessContext != null)
+    'accessContext': args.accessContext!.toJson(),
 };
 
 BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
@@ -260,6 +270,7 @@ BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
     eventGames: _summariesFromJson(json['eventGames']),
     eventGamesLoading: json['eventGamesLoading'] == true,
     eventGamesKey: _eventGamesKeyFromJson(json['eventGamesKey']),
+    eventPlayerScope: EventPlayerBoardScope.fromJson(json['eventPlayerScope']),
     eventGamesContinuation: _continuationFromJson(
       json['eventGamesContinuation'],
     ),
@@ -275,7 +286,13 @@ BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
     ),
     gameListSelectedId: _nullableString(json['gameListSelectedId']),
     librarySaveOrigin: _librarySaveOriginFromJson(json['librarySaveOrigin']),
+    accessContext: _accessContextFromJson(json['accessContext']),
   );
+}
+
+DesktopAccessContext? _accessContextFromJson(Object? value) {
+  if (value is! Map) return null;
+  return DesktopAccessContext.fromJson(value.cast<String, Object?>());
 }
 
 Map<String, Object?>? _eventGamesKeyToJson(BoardTabEventGamesKey? key) {
@@ -464,6 +481,7 @@ Map<String, Object?>? _continuationToJson(
   if (continuation == null) return null;
   return <String, Object?>{
     'kind': continuation.kind.name,
+
     if (continuation.argument is PremiumGamesType)
       'premiumGamesType': (continuation.argument! as PremiumGamesType).name,
     if (continuation.argument is PlayerProfileKey)
@@ -493,6 +511,7 @@ BoardTabGamesContinuation? _continuationFromJson(Object? value) {
           .firstOrNull;
   if (kind == null) return null;
   switch (kind) {
+
     case BoardTabGamesContinuationKind.smartGames:
       final typeName = json['premiumGamesType']?.toString();
       final type =
@@ -567,12 +586,4 @@ PlayerProfileDataSource _playerProfileDataSource(Object? value) {
     if (source.name == name) return source;
   }
   return PlayerProfileDataSource.supabase;
-}
-
-TabKind _kind(Object? value) {
-  final name = value?.toString();
-  for (final kind in TabKind.values) {
-    if (kind.name == name) return kind;
-  }
-  return TabKind.board;
 }

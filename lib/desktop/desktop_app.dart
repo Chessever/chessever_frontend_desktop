@@ -3,15 +3,21 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_auth_gate.dart';
+import 'package:chessever/desktop/auth/desktop_guest_gate.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/engine/macos_chip_guard.dart';
 import 'package:chessever/desktop/widgets/desktop_native_update_menu_bridge.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 
 final _desktopNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Root navigator of the desktop app. Services without a widget context
+/// (the deep link router) use it to present dialogs and toasts.
+GlobalKey<NavigatorState> get desktopRootNavigatorKey => _desktopNavigatorKey;
 
 /// Top-level widget for the desktop build of ChessEver.
 ///
@@ -44,7 +50,11 @@ class _DesktopAppState extends ConsumerState<DesktopApp> {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
       navigatorKey: _desktopNavigatorKey,
-      navigatorObservers: [AnalyticsService.instance.routeObserver],
+      navigatorObservers: [
+        AnalyticsService.instance.routeObserver,
+        // Lets the guest reminder see open dialogs so it never stacks on one.
+        DesktopGuestGateObserver.instance,
+      ],
       builder: (context, child) {
         // Init ResponsiveHelper so widgets that share with the mobile app
         // (EventCard's tablet grid layout, tablet-style tournament cards,
@@ -57,8 +67,11 @@ class _DesktopAppState extends ConsumerState<DesktopApp> {
           child: FToaster(
             child: DesktopNativeUpdateMenuBridge(
               navigatorKey: _desktopNavigatorKey,
-              child: DesktopWindowFrame(
-                child: child ?? const SizedBox.shrink(),
+              child: DesktopPaywallHost(
+                navigatorKey: _desktopNavigatorKey,
+                child: DesktopWindowFrame(
+                  child: child ?? const SizedBox.shrink(),
+                ),
               ),
             ),
           ),

@@ -105,7 +105,7 @@ void main() {
     expect('widget.onWriteStarted(operation)'.allMatches(dialog), hasLength(2));
     final save = dialog.substring(dialog.indexOf('Future<void> _save('));
     expect(save.indexOf('_isSaving = true'),
-        lessThan(save.indexOf('await canSaveMoreGames')));
+        lessThan(save.indexOf('await requestSaveGamesQuota')));
     expect(save, contains('if (_isSaving || _isUpdatingOriginal) return;'));
   });
 }

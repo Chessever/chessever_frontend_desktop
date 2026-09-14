@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:chessever/desktop/auth/desktop_play_access.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'dart:io';
 import 'dart:math';
 
@@ -974,7 +976,10 @@ final playSessionProviderFor =
           playSessionArgsByTabIdProvider.select((m) => m[tabId]),
         );
         final bootEngine = ref.watch(playSessionBootEngineProvider);
-        if (args == null) {
+        // Read, not watch: entitlement refresh must not destroy a live game.
+        // A newly-created/restored session still needs admission before boot.
+        final admitted = readDesktopAccess(ref.read, desktopPlayAccessContext).isAllowed;
+        if (args == null || !admitted) {
           return PlaySessionNotifier(
             config: PlayConfig.defaults,
             engineBinaryPath: '',

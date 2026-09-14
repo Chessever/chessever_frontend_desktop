@@ -105,7 +105,12 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
         setState(() => _hoverPayload = null);
         // Drag-drop intent is "open this game and look at it now" — pass
         // focus: true so the new tab foregrounds itself.
-        details.data.spawn(ref, focus: true);
+        // Admitted before the spawn: a gated payload opens nothing.
+        details.data.spawnAdmitted(
+          ref,
+          focus: true,
+          surface: 'tab_strip_drop',
+        );
       },
       builder: (context, candidate, rejected) {
         final dragging = candidate.isNotEmpty;
@@ -905,7 +910,7 @@ class _GameTabChipContent extends StatelessWidget {
         final rightInset =
             reserveClose ? (muted ? 40.0 : 22.0) : (muted ? 18.0 : 0.0);
 
-        if (!hasNamedSides) {
+        if (!hasNamedSides || args.eventPlayerScope != null) {
           final label = args.label.trim().isEmpty ? 'Board' : args.label.trim();
           final content = Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1473,6 +1478,8 @@ IconData _iconFor(TabKind kind) {
       return Icons.collections_bookmark_outlined;
     case TabKind.databaseWorkspace:
       return Icons.table_chart_outlined;
+    case TabKind.teamScoreCard:
+      return Icons.groups_2_outlined;
     case TabKind.favorites:
       return Icons.star_outline_outlined;
     case TabKind.players:
@@ -1501,8 +1508,6 @@ IconData _iconFor(TabKind kind) {
       return Icons.account_circle_outlined;
     case TabKind.boardSettings:
       return Icons.tune_outlined;
-    case TabKind.notificationSettings:
-      return Icons.notifications_outlined;
     case TabKind.play:
       return Icons.sports_esports_outlined;
   }
