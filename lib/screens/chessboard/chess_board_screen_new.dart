@@ -24,6 +24,8 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/chessboard/view_model/chess_board_state_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/providers/gamebase_overlay_settings_provider.dart';
+import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart'
+    show positionGamesProvider, GamebasePositionGamesQuery;
 import 'package:chessever/screens/chessboard/widgets/chess_board_bottom_nav_bar.dart';
 import 'package:chessever/screens/chessboard/widgets/evaluation_bar_widget.dart';
 // DISABLED: Move annotation overlay (requires move impact analysis)
@@ -7905,9 +7907,10 @@ class _FenPositionGamesTableState
           _filters.timeControls.isNotEmpty ? _filters.timeControls.first : null;
       final playerIdFilter =
           _filters.playerIds.isNotEmpty ? _filters.playerIds.first : null;
-      final response = await ref
-          .read(gamebaseRepositoryProvider)
-          .getFenPositionGames(
+      final response = await ref.read(
+        positionGamesProvider(
+          GamebasePositionGamesQuery(
+            useFenEndpoint: true,
             fen: widget.fen,
             pageNumber: pageNumber,
             pageSize: _pageSize,
@@ -7922,7 +7925,9 @@ class _FenPositionGamesTableState
             yearTo: _filters.yearTo,
             sortBy: _filters.sortBy,
             sortDirection: _filters.sortDirection,
-          );
+          ),
+        ).future,
+      );
       if (!mounted || requestToken != _requestToken) return;
 
       final mergedRows = List<Map<String, dynamic>>.from(_rows);

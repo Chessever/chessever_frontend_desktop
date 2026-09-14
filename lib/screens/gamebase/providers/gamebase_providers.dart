@@ -2160,6 +2160,7 @@ class GamebasePositionGamesQuery {
   /// games rail passes a short first-paint slice and lazy-loads the full PGN
   /// continuation only when the user previews a row.
   final int notationPlies;
+  final bool useFenEndpoint;
 
   const GamebasePositionGamesQuery({
     required this.fen,
@@ -2179,6 +2180,7 @@ class GamebasePositionGamesQuery {
     this.pageNumber = 0,
     this.pageSize = 20,
     this.notationPlies = 0,
+    this.useFenEndpoint = false,
   });
 
   @override
@@ -2200,7 +2202,8 @@ class GamebasePositionGamesQuery {
         other.sortDirection == sortDirection &&
         other.pageNumber == pageNumber &&
         other.pageSize == pageSize &&
-        other.notationPlies == notationPlies;
+        other.notationPlies == notationPlies &&
+        other.useFenEndpoint == useFenEndpoint;
   }
 
   @override
@@ -2222,6 +2225,7 @@ class GamebasePositionGamesQuery {
     pageNumber,
     pageSize,
     notationPlies,
+    useFenEndpoint,
   );
 }
 
@@ -2236,25 +2240,45 @@ final positionGamesProvider = FutureProvider.autoDispose
       ref.onDispose(() => cacheTimer?.cancel());
 
       try {
-        final response = await repository.getPositionGames(
-          fen: query.fen,
-          moves: query.moves,
-          uci: query.uci,
-          timeControl: query.timeControl,
-          playerId: query.playerId,
-          color: query.color,
-          result: query.result,
-          isOnline: query.isOnline,
-          minRating: query.minRating,
-          maxRating: query.maxRating,
-          yearFrom: query.yearFrom,
-          yearTo: query.yearTo,
-          sortBy: query.sortBy,
-          sortDirection: query.sortDirection,
-          pageNumber: query.pageNumber,
-          pageSize: query.pageSize,
-          notationPlies: query.notationPlies,
-        );
+        final response =
+            query.useFenEndpoint
+                ? await repository.getFenPositionGames(
+                  fen: query.fen,
+                  uci: query.uci,
+                  timeControl: query.timeControl,
+                  playerId: query.playerId,
+                  color: query.color,
+                  result: query.result,
+                  isOnline: query.isOnline,
+                  minRating: query.minRating,
+                  maxRating: query.maxRating,
+                  yearFrom: query.yearFrom,
+                  yearTo: query.yearTo,
+                  sortBy: query.sortBy,
+                  sortDirection: query.sortDirection,
+                  pageNumber: query.pageNumber,
+                  pageSize: query.pageSize,
+                  notationPlies: query.notationPlies,
+                )
+                : await repository.getPositionGames(
+                  fen: query.fen,
+                  moves: query.moves,
+                  uci: query.uci,
+                  timeControl: query.timeControl,
+                  playerId: query.playerId,
+                  color: query.color,
+                  result: query.result,
+                  isOnline: query.isOnline,
+                  minRating: query.minRating,
+                  maxRating: query.maxRating,
+                  yearFrom: query.yearFrom,
+                  yearTo: query.yearTo,
+                  sortBy: query.sortBy,
+                  sortDirection: query.sortDirection,
+                  pageNumber: query.pageNumber,
+                  pageSize: query.pageSize,
+                  notationPlies: query.notationPlies,
+                );
         cacheTimer = Timer(_positionGamesPageCacheTtl, keepAliveLink.close);
         return response;
       } catch (_) {
