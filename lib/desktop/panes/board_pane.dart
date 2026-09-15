@@ -4907,7 +4907,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         ? null
         : BroadcastVideoPanel(
             key: ValueKey<String>(
-              'broadcast-video:$broadcastTourId:$broadcastRoundId',
+              'broadcast-video:${activeTabId ?? ''}:$broadcastTourId:$broadcastRoundId',
             ),
             tourId: broadcastTourId,
             roundId: broadcastRoundId.isEmpty ? null : broadcastRoundId,

@@ -2265,7 +2265,7 @@ packages:
     source: hosted
     version: "1.4.1"
   webview_platform_interface:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: webview_platform_interface
       sha256: "50b00322919bdae4b27cdb6e1d0ad9bf4348d26a592bf6bab6610e36af083335"

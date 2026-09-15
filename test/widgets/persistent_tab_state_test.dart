@@ -18,6 +18,25 @@ void main() {
     expect(find.text('kept'), findsOneWidget);
   });
 
+  testWidgets(
+    'PersistentIndexedStack keeps state when keyed children are reordered',
+    (tester) async {
+      _KeepProbeState.mounts.clear();
+      await tester.pumpWidget(
+        const _ReorderStackHarness(order: <String>['first', 'second']),
+      );
+      expect(_KeepProbeState.mounts['first'], 1);
+      expect(_KeepProbeState.mounts['second'], 1);
+
+      await tester.pumpWidget(
+        const _ReorderStackHarness(order: <String>['second', 'first']),
+      );
+      expect(find.text('second:1'), findsOneWidget);
+      expect(_KeepProbeState.mounts['first'], 1);
+      expect(_KeepProbeState.mounts['second'], 1);
+    },
+  );
+
   testWidgets('PersistentTabPage keeps PageView tab field state mounted', (
     tester,
   ) async {
@@ -75,5 +94,53 @@ class _PersistentStackHarness extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _ReorderStackHarness extends StatelessWidget {
+  const _ReorderStackHarness({required this.order});
+
+  final List<String> order;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: PersistentIndexedStack(
+          index: 0,
+          children: [
+            for (final label in order)
+              KeyedSubtree(
+                key: ValueKey<String>(label),
+                child: _KeepProbe(label: label),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _KeepProbe extends StatefulWidget {
+  const _KeepProbe({required this.label});
+
+  final String label;
+
+  @override
+  State<_KeepProbe> createState() => _KeepProbeState();
+}
+
+class _KeepProbeState extends State<_KeepProbe> {
+  static final Map<String, int> mounts = <String, int>{};
+
+  @override
+  void initState() {
+    super.initState();
+    mounts[widget.label] = (mounts[widget.label] ?? 0) + 1;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text('${widget.label}:${mounts[widget.label]}');
   }
 }
