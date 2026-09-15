@@ -152,6 +152,9 @@ const List<String> eventRailRoundOrderColumnsForTesting = <String>[
 ];
 
 @visibleForTesting
+String get countrymenDaySelectColumnsForTesting => _gameSummarySelectColumns;
+
+@visibleForTesting
 ({int from, int to}) eventRailPageRangeForTesting({
   required int limit,
   required int offset,
@@ -349,6 +352,61 @@ String formatSmartEventDay(DateTime day) {
   return '${day.year.toString().padLeft(4, '0')}-'
       '${day.month.toString().padLeft(2, '0')}-'
       '${day.day.toString().padLeft(2, '0')}';
+}
+
+/// Cap on newest-`game_day` probes for one countrymen date page. Each probe
+/// is a single-row query (~200ms); this is a runaway guard, not a timeout.
+const int countrymenDateProbeCap = 60;
+
+/// Newest calendar day from a one-row `game_day` probe, or null.
+@visibleForTesting
+DateTime? parseCountryGameDay(Object? response) {
+  if (response is! List || response.isEmpty) return null;
+  final first = response.first;
+  if (first is! Map) return null;
+  final raw = first['game_day']?.toString().trim();
+  if (raw == null || raw.isEmpty) return null;
+  final parsed = DateTime.tryParse(raw);
+  if (parsed == null) return null;
+  return DateTime(parsed.year, parsed.month, parsed.day);
+}
+
+DateTime _countrymenCalendarDay(DateTime day) =>
+    DateTime(day.year, day.month, day.day);
+
+/// Newest-first days from a LIMIT-1 "next older `game_day`" probe.
+///
+/// `get_distinct_dates_for_country` does `DISTINCT COALESCE(game_day, …)`
+/// over a federation's full history and is cancelled by the ~3s PostgREST
+/// statement timeout (USA / IND / TUR all fail). Walking one newest day at
+/// a time uses the `game_day` index and stays around 200ms per probe.
+@visibleForTesting
+Future<List<DateTime>> walkNewestCountryDays({
+  required int limit,
+  int skip = 0,
+  DateTime? before,
+  required Future<DateTime?> Function(DateTime? before) probe,
+  int maxProbes = countrymenDateProbeCap,
+}) async {
+  if (limit <= 0) return const <DateTime>[];
+  final dates = <DateTime>[];
+  var cursor = before == null ? null : _countrymenCalendarDay(before);
+  var skipped = 0;
+  for (var i = 0; i < maxProbes && dates.length < limit; i++) {
+    final day = await probe(cursor);
+    if (day == null) break;
+    final normalized = _countrymenCalendarDay(day);
+    if (cursor != null && !normalized.isBefore(cursor)) {
+      break;
+    }
+    cursor = normalized;
+    if (skipped < skip) {
+      skipped++;
+      continue;
+    }
+    dates.add(normalized);
+  }
+  return dates;
 }
 
 class _CurrentSmartEventScopeCache {
@@ -668,15 +726,22 @@ class GameRepository extends BaseRepository {
     final normalizedName = _stripTitlePrefix(playerName);
     final escapedName = normalizedName.replaceAll('"', r'\"');
 
-    Future<List<Games>> loadPages({required bool byId}) => handleApiCall(() async {
+    Future<List<Games>> loadPages({
+      required bool byId,
+    }) => handleApiCall(() async {
       const pageSize = 500;
       final games = <Games>[];
       for (var offset = 0; ; offset += pageSize) {
-        final query = supabase.from('games').select(_gameListSelectColumns)
+        final query = supabase
+            .from('games')
+            .select(_gameListSelectColumns)
             .eq('tour_id', normalizedTourId);
-        final filtered = byId
-            ? query.contains('player_fide_ids', <int>[fideId!])
-            : query.or('player_white.eq."$escapedName",player_black.eq."$escapedName"');
+        final filtered =
+            byId
+                ? query.contains('player_fide_ids', <int>[fideId!])
+                : query.or(
+                  'player_white.eq."$escapedName",player_black.eq."$escapedName"',
+                );
         final response = await filtered
             .order('round_id', ascending: true)
             .order('board_nr', ascending: true, nullsFirst: false)
@@ -696,7 +761,8 @@ class GameRepository extends BaseRepository {
         // remains subject to identity checks at the consumer boundary.
       }
     }
-    if (normalizedName.isEmpty) return mergeEventPlayerGameQueryResults(byFide: byFide);
+    if (normalizedName.isEmpty)
+      return mergeEventPlayerGameQueryResults(byFide: byFide);
     final byName = await loadPages(byId: false);
     return mergeEventPlayerGameQueryResults(byFide: byFide, byName: byName);
   }
@@ -2234,7 +2300,7 @@ class GameRepository extends BaseRepository {
 
       var dbQuery = supabase
           .from('games')
-          .select(_gameListSelectColumns)
+          .select(_gameSummarySelectColumns)
           .contains('player_feds', [normalizedCode]);
 
       // Add text search if query provided (searches player names, ECO code, and opening name)
@@ -2821,13 +2887,47 @@ class GameRepository extends BaseRepository {
     });
   }
 
-  /// Get distinct game dates for a country.
-  /// Returns dates in descending order (most recent first).
+  /// Newest `game_day` for [countryCode] strictly older than [before], or the
+  /// newest day on or before [today] when [before] is omitted.
+  ///
+  /// One-row query on purpose: ordering a federation's full history and then
+  /// DISTINCT-ing it is what trips the statement timeout.
+  @visibleForTesting
+  Future<DateTime?> probeNewestCountryGameDay({
+    required String countryCode,
+    int minElo = 2000,
+    DateTime? before,
+    DateTime? today,
+  }) async {
+    final todayDay = today ?? DateTime.now().toUtc();
+    final todayKey = formatSmartEventDay(todayDay);
+    var query = supabase
+        .from('games')
+        .select('game_day')
+        .contains('player_feds', [countryCode])
+        .gte('player_max_rating', minElo)
+        .not('game_day', 'is', null)
+        .lte('game_day', todayKey);
+    if (before != null) {
+      query = query.lt('game_day', formatSmartEventDay(before));
+    }
+    final response = await query
+        .order('game_day', ascending: false, nullsFirst: false)
+        .limit(1);
+    return parseCountryGameDay(response);
+  }
+
+  /// Get distinct game dates for a country, newest first.
+  ///
+  /// Walks newest `game_day` values one at a time instead of calling
+  /// `get_distinct_dates_for_country`, which times out on large federations.
+  /// Pass [before] (the oldest date already in hand) to continue paging.
   Future<List<DateTime>> getDistinctDatesForCountry({
     required String countryCode,
     int minElo = 2000,
     int limit = 30,
     int offset = 0,
+    DateTime? before,
   }) async {
     return handleApiCall(() async {
       final normalizedCode = _normalizeCountryCode(countryCode);
@@ -2835,27 +2935,17 @@ class GameRepository extends BaseRepository {
         '[GameRepository] getDistinctDatesForCountry: countryCode=$normalizedCode',
       );
 
-      final response = await supabase.rpc(
-        'get_distinct_dates_for_country',
-        params: {
-          'country_code': normalizedCode,
-          'min_elo': minElo,
-          'limit_count': limit,
-          'offset_count': offset,
-        },
+      final dates = await walkNewestCountryDays(
+        limit: limit,
+        skip: offset,
+        before: before,
+        probe:
+            (cursor) => probeNewestCountryGameDay(
+              countryCode: normalizedCode,
+              minElo: minElo,
+              before: cursor,
+            ),
       );
-
-      final dates = <DateTime>[];
-
-      for (final row in (response as List)) {
-        final dateStr = row['date_start']?.toString();
-        if (dateStr == null) continue;
-        try {
-          dates.add(DateTime.parse(dateStr));
-        } catch (e) {
-          debugPrint('[GameRepository] Error parsing date: $dateStr');
-        }
-      }
 
       final filteredDates = _filterOutFutureDates(dates);
       debugPrint(
@@ -2876,8 +2966,12 @@ class GameRepository extends BaseRepository {
   }
 
   /// Get games by country for a specific date.
-  /// Returns ALL games for the date (no limit) - the countrymen tab should display
-  /// everything your countrymen played on that date.
+  ///
+  /// Equality on `game_day` is what stays inside the statement timeout; the
+  /// previous three-way OR over `game_day` / `last_move_time` / `date_start`
+  /// plus unbounded PGN was both slower and a 1000-row silent cap. PGN is
+  /// omitted so first paint is not waiting on movetext; the board hydrates
+  /// it on open.
   Future<List<Games>> getGamesByCountryAndDate({
     required String countryCode,
     required DateTime date,
@@ -2886,44 +2980,30 @@ class GameRepository extends BaseRepository {
   }) async {
     return handleApiCall(() async {
       final normalizedCode = _normalizeCountryCode(countryCode);
-      final dateStr =
-          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-      final dayStartUtc = DateTime.utc(date.year, date.month, date.day);
-      final nextDayUtc = dayStartUtc.add(const Duration(days: 1));
-      // Match game_day first (PGN [Date], stable per round), then fall back
-      // to last_move_time, then date_start. date_start is the broadcast
-      // pairing-upload day and can drift several days from the round day on
-      // pre-created multi-round broadcasts (e.g. GCT), so it is only used
-      // when game_day and last_move_time are both null on the row.
-      final dayFilter =
-          'game_day.eq.$dateStr,'
-          'and(game_day.is.null,last_move_time.gte.${dayStartUtc.toIso8601String()},last_move_time.lt.${nextDayUtc.toIso8601String()}),'
-          'and(game_day.is.null,last_move_time.is.null,date_start.eq.$dateStr)';
+      final dateStr = formatSmartEventDay(date);
       debugPrint(
         '[GameRepository] getGamesByCountryAndDate: countryCode=$normalizedCode, date=$dateStr, eco=$eco',
       );
 
-      // No limit - fetch ALL games for this date
-      var dbQuery = supabase
-          .from('games')
-          .select(_gameListSelectColumns)
-          .contains('player_feds', [normalizedCode])
-          .or(dayFilter)
-          .gte('player_max_rating', minElo);
+      final rows = await _readAllRows((from, to) {
+        dynamic dbQuery = supabase
+            .from('games')
+            .select(_gameSummarySelectColumns)
+            .contains('player_feds', [normalizedCode])
+            .eq('game_day', dateStr)
+            .gte('player_max_rating', minElo);
+        if (eco != null && eco.isNotEmpty) {
+          dbQuery = dbQuery.eq('eco', eco);
+        }
+        return dbQuery
+            .order('last_move_time', ascending: false, nullsFirst: false)
+            .order('id', ascending: true)
+            .range(from, to);
+      }, label: 'countrymen $normalizedCode on $dateStr');
 
-      if (eco != null && eco.isNotEmpty) {
-        dbQuery = dbQuery.eq('eco', eco);
-      }
+      if (rows.isEmpty) return const <Games>[];
 
-      final response = await dbQuery.order(
-        'last_move_time',
-        ascending: false,
-        nullsFirst: false,
-      );
-
-      final jsonList =
-          (response as List).map((item) => json.encode(item)).toList();
-
+      final jsonList = rows.map((item) => json.encode(item)).toList();
       final games = await compute(_decodeGamesInIsolate, jsonList);
 
       debugPrint(

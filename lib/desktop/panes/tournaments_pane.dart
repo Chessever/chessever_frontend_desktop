@@ -298,7 +298,16 @@ class TournamentsPane extends HookConsumerWidget {
                       // Rendered in provider order. Live first re-runs the
                       // Current query and republishes a ranked list, so
                       // re-sorting here would only fight it.
-                      final displayTournaments = tournaments;
+                      // Past is the finished-broadcast bucket; calendar
+                      // date_end can still be in the future (weekend
+                      // leagues), so force Completed chips in this tab.
+                      final displayTournaments =
+                          selectedCategory == ge.GroupEventCategory.past
+                              ? [
+                                for (final tournament in tournaments)
+                                  tournament.asCompleted(),
+                              ]
+                              : tournaments;
                       return _TournamentEventGridKeyboardHost(
                         focusNode: listFocusNode,
                         tournaments: displayTournaments,
@@ -3215,30 +3224,32 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         DesktopCollectionCards(
-                      onFavoritesTap: () {
-                        ref
-                            .read(selectedFavoritesModeProvider.notifier)
-                            .update((_) => FavoritesScreenMode.games);
-                        _navigateToTab(TabKind.favorites);
-                      },
-                      onCountrymenTap: () {
-                        ref
-                            .read(selectedCountrymenModeProvider.notifier)
-                            .update((_) => CountrymenScreenMode.games);
-                        _navigateToTab(TabKind.countrymen);
-                      },
-                      onSmartCollectionTap: (type) {
-                        final tabId = ref
-                            .read(desktopTabsProvider.notifier)
-                            .open(
-                              TabKind.smartGames,
-                              title: _smartCollectionTitle(type),
-                              reuseExisting: false,
-                            );
-                        ref
-                            .read(desktopSmartGamesTypeByTabIdProvider.notifier)
-                            .update((types) => {...types, tabId: type});
-                      },
+                          onFavoritesTap: () {
+                            ref
+                                .read(selectedFavoritesModeProvider.notifier)
+                                .update((_) => FavoritesScreenMode.games);
+                            _navigateToTab(TabKind.favorites);
+                          },
+                          onCountrymenTap: () {
+                            ref
+                                .read(selectedCountrymenModeProvider.notifier)
+                                .update((_) => CountrymenScreenMode.games);
+                            _navigateToTab(TabKind.countrymen);
+                          },
+                          onSmartCollectionTap: (type) {
+                            final tabId = ref
+                                .read(desktopTabsProvider.notifier)
+                                .open(
+                                  TabKind.smartGames,
+                                  title: _smartCollectionTitle(type),
+                                  reuseExisting: false,
+                                );
+                            ref
+                                .read(
+                                  desktopSmartGamesTypeByTabIdProvider.notifier,
+                                )
+                                .update((types) => {...types, tabId: type});
+                          },
                         ),
                         const DesktopSmartEventShelf(),
                       ],
