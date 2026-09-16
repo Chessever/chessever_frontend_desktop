@@ -116,4 +116,63 @@ void main() {
 
     expect(find.text('2'), findsOneWidget);
   });
+
+  testWidgets('language rail stays left of the pin and hide actions', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 360,
+              child: BroadcastVideoToolbar(
+                streams: <BroadcastVideoStream>[
+                  for (final entry in <(String, String, String)>[
+                    ('en', 'Board · English', 'GB'),
+                    ('za', 'Johannesburg · English', 'ZA'),
+                    ('tr', 'Ankara · Turkish', 'TR'),
+                    ('ph', 'Manila · English', 'PH'),
+                    ('id', 'Jakarta · English', 'ID'),
+                    ('ru', 'Moscow · Russian', 'RU'),
+                    ('es', 'Madrid · Spanish', 'ES'),
+                    ('in', 'Delhi · Hindi', 'IN'),
+                    ('pl', 'Warsaw · Polish', 'PL'),
+                    ('br', 'Rio · Portuguese', 'BR'),
+                    ('fr', 'Paris · French', 'FR'),
+                  ])
+                    stream(
+                      id: entry.$1,
+                      label: entry.$2,
+                      countryCode: entry.$3,
+                    ),
+                ],
+                selectedId: 'en',
+                visible: true,
+                pins: const <String>[],
+                onSelect: (_) {},
+                onToggle: () {},
+                onPin: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final scroll = tester.widget<SingleChildScrollView>(
+      find.byType(SingleChildScrollView),
+    );
+    expect(scroll.clipBehavior, isNot(Clip.none));
+
+    final rail = tester.getRect(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-languages')),
+    );
+    final actions = tester.getRect(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-actions')),
+    );
+    expect(rail.right, lessThanOrEqualTo(actions.left));
+  });
 }

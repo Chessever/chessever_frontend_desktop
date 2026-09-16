@@ -49,44 +49,54 @@ class BroadcastVideoToolbar extends StatelessWidget {
         child: Row(
           children: [
             Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final capacity =
-                      constraints.maxWidth <= 0
-                          ? 0
-                          : ((constraints.maxWidth + gap) / (slot + gap))
-                              .floor();
-                  final groups = toolbarBroadcastVideoGroups(
-                    streams,
-                    pins,
-                    capacity,
-                    selectedId: selectedId,
-                  );
-                  return SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    clipBehavior: Clip.none,
-                    padding: const EdgeInsets.only(right: 6),
-                    child: Row(
-                      children: [
-                        for (var index = 0; index < groups.length; index++) ...[
-                          if (index > 0) const SizedBox(width: gap),
-                          _LanguageGroupButton(
-                            group: groups[index],
-                            selectedId: selectedId,
-                            pinned: pins.contains(
-                              groups[index].streams.first.id,
+              child: ClipRect(
+                key: const ValueKey<String>(
+                  'desktop-broadcast-video-languages',
+                ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final capacity =
+                        constraints.maxWidth <= 0
+                            ? 0
+                            : ((constraints.maxWidth + gap) / (slot + gap))
+                                .floor();
+                    final groups = toolbarBroadcastVideoGroups(
+                      streams,
+                      pins,
+                      capacity,
+                      selectedId: selectedId,
+                    );
+                    return SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      clipBehavior: Clip.hardEdge,
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Row(
+                        children: [
+                          for (
+                            var index = 0;
+                            index < groups.length;
+                            index++
+                          ) ...[
+                            if (index > 0) const SizedBox(width: gap),
+                            _LanguageGroupButton(
+                              group: groups[index],
+                              selectedId: selectedId,
+                              pinned: pins.contains(
+                                groups[index].streams.first.id,
+                              ),
+                              onSelect: onSelect,
+                              onPin: onPin,
                             ),
-                            onSelect: onSelect,
-                            onPin: onPin,
-                          ),
+                          ],
                         ],
-                      ],
-                    ),
-                  );
-                },
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
             Container(
+              key: const ValueKey<String>('desktop-broadcast-video-actions'),
               margin: const EdgeInsets.only(left: 8),
               padding: const EdgeInsets.only(left: 8),
               decoration: const BoxDecoration(
