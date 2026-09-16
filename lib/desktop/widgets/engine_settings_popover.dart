@@ -3,6 +3,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/providers/engine_settings_provider.dart';
+import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// Gear button + popover that exposes the same engine/board controls the
@@ -34,31 +35,21 @@ class _EngineSettingsPopoverState extends ConsumerState<EngineSettingsPopover>
 
   @override
   Widget build(BuildContext context) {
-    final button = FButton.icon(
-      style: FButtonStyle.ghost(
-        (style) => style.copyWith(
-          iconContentStyle:
-              (content) => content.copyWith(padding: EdgeInsets.zero),
-        ),
-      ),
+    final button = DesktopHeaderIconButton(
+      message: 'Engine & board settings',
+      icon: Icons.settings_outlined,
       onPress: _controller.toggle,
-      child: const Icon(
-        Icons.settings_outlined,
-        color: kWhiteColor70,
-        size: 18,
-      ),
     );
-    return FTheme(
+    final popover = FTheme(
       data: FThemes.zinc.dark,
       child: FPopover(
         controller: _controller,
         popoverBuilder: (context, _) => _PopoverBody(),
-        child:
-            widget.dimension == null
-                ? button
-                : SizedBox.square(dimension: widget.dimension!, child: button),
+        child: button,
       ),
     );
+    if (widget.dimension == null) return popover;
+    return SizedBox.square(dimension: widget.dimension!, child: popover);
   }
 }
 

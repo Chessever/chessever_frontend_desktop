@@ -405,6 +405,13 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
         );
   }
 
+  void _toggleVisible() {
+    final preferences =
+        ref.read(broadcastVideoSessionPreferencesProvider)[_storageKey] ??
+        const BroadcastVideoPreference();
+    _setVisible(preferences.visible == false);
+  }
+
   bool get _hasPreservedPlayer =>
       _controller != null && _loadedEmbedUrl != null && !_frameFailed;
 
@@ -446,9 +453,29 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       case BroadcastVideoPlayerRetention.hide:
         if (!widget.active || !windowVisible) {
           _scheduleStopPlaybackAfterGrace();
-        } else {
-          _cancelStopGrace();
-          _scheduleStopPlayback();
+          return const SizedBox.shrink();
+        }
+        _cancelStopGrace();
+        _scheduleStopPlayback();
+        // Web keeps the language/camera rail when the spectator collapses
+        // the player; only the frame goes away. Returning shrink here used
+        // to lose the toggle so the stream could not be turned back on.
+        if (userHidden &&
+            data != null &&
+            data.streams.isNotEmpty &&
+            selected != null &&
+            !languageState.isLoading) {
+          return _playerSkeleton(
+            stream: selected,
+            source: data.source,
+            mayLoad: false,
+            showPlayer: false,
+            toolbar: _toolbar(
+              data: data,
+              selected: selected,
+              expanded: false,
+            ),
+          );
         }
         return const SizedBox.shrink();
       case BroadcastVideoPlayerRetention.preserveOffstage:
@@ -481,7 +508,19 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
         mayLoad: mayLoad,
       );
     }
-    final groups = groupBroadcastVideoStreams(data.streams);
+    return _playerSkeleton(
+      stream: selected,
+      source: data.source,
+      mayLoad: mayLoad,
+      toolbar: _toolbar(data: data, selected: selected, expanded: true),
+    );
+  }
+
+  Widget _toolbar({
+    required ResolvedBroadcastVideoStreams data,
+    required BroadcastVideoStream selected,
+    required bool expanded,
+  }) {
     final watchUri =
         data.source != null
             ? broadcastVideoWatchUri(
@@ -490,22 +529,16 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
               streamId: selected.id,
             )
             : Uri.parse(selected.url);
-    return _playerSkeleton(
-      stream: selected,
-      source: data.source,
-      mayLoad: mayLoad,
-      toolbar: _BroadcastVideoToolbar(
-        groups: groups,
-        selectedId: selected.id,
-        // Always expanded here: a collapsed panel resolves to hide above.
-        visible: true,
-        providerName: selected.provider.displayName,
-        onSelect: _selectStream,
-        onToggle: () => _setVisible(false),
-        onOpenWatch: () => unawaited(launchDesktopWebUrl(watchUri)),
-        onOpenSource:
-            () => unawaited(launchDesktopWebUrl(Uri.parse(selected.url))),
-      ),
+    return _BroadcastVideoToolbar(
+      groups: groupBroadcastVideoStreams(data.streams),
+      selectedId: selected.id,
+      visible: expanded,
+      providerName: selected.provider.displayName,
+      onSelect: _selectStream,
+      onToggle: _toggleVisible,
+      onOpenWatch: () => unawaited(launchDesktopWebUrl(watchUri)),
+      onOpenSource:
+          () => unawaited(launchDesktopWebUrl(Uri.parse(selected.url))),
     );
   }
 
@@ -515,11 +548,14 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   /// A tab switch flips only ancestor Offstage/TickerMode flags; this
   /// subtree is identical foreground and background, so the platform view
   /// is never detached and the broadcast continues instead of restarting.
+  /// Collapsing the player (web's camera toggle) drops only the slot; the
+  /// toolbar stays so the spectator can turn the stream back on.
   Widget _playerSkeleton({
     required BroadcastVideoStream? stream,
     required BroadcastVideoSourceRef? source,
     required bool mayLoad,
     Widget? toolbar,
+    bool showPlayer = true,
   }) {
     // Player first, toolbar under it: every popover and tooltip the toolbar
     // opens then falls downward over our own notation panel, never in front
@@ -533,7 +569,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _playerSlot(stream, source, mayLoad: mayLoad),
+          if (showPlayer) _playerSlot(stream, source, mayLoad: mayLoad),
           if (toolbar != null) toolbar,
         ],
       ),
@@ -782,10 +818,11 @@ class _BroadcastVideoToolbar extends StatelessWidget {
               ),
               const SizedBox(width: 2),
               _RailIconButton(
+                key: const ValueKey<String>('desktop-broadcast-video-toggle'),
                 icon:
                     visible
-                        ? Icons.videocam_rounded
-                        : Icons.videocam_off_rounded,
+                        ? Icons.videocam_off_rounded
+                        : Icons.videocam_rounded,
                 tooltip: visible ? 'Hide video' : 'Show video',
                 selected: visible,
                 onPress: onToggle,
@@ -1302,6 +1339,7 @@ class _MenuRow extends StatelessWidget {
 
 class _RailIconButton extends StatelessWidget {
   const _RailIconButton({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.onPress,

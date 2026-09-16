@@ -21,6 +21,7 @@ import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/game_review/evaluation_graph_markers.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_settings_popover.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
@@ -470,7 +471,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           const EngineSettingsPopover(dimension: 28),
           if (widget.headerTrailing != null) ...[
             const SizedBox(width: 4),
-            widget.headerTrailing!,
+            SizedBox.square(dimension: 28, child: widget.headerTrailing!),
           ],
         ],
       ),
@@ -1944,61 +1945,11 @@ class _EnginePictureInPictureButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final tooltip =
         selected ? 'Close picture in picture' : 'Open picture in picture';
-    return DesktopTooltip(
+    return DesktopHeaderIconButton(
       message: tooltip,
-      child: Semantics(
-        button: true,
-        toggled: selected,
-        label: tooltip,
-        child: FTheme(
-          data: FThemes.zinc.dark,
-          child: SizedBox.square(
-            dimension: 28,
-            child: FButton.icon(
-              style: FButtonStyle.ghost(
-                (style) => style.copyWith(
-                  decoration: FWidgetStateMap({
-                    WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-                      color:
-                          selected
-                              ? kPrimaryColor.withValues(alpha: 0.18)
-                              : kBlack3Color,
-                      borderRadius: BorderRadius.circular(6),
-                      border:
-                          selected
-                              ? Border.all(
-                                color: kPrimaryColor.withValues(alpha: 0.42),
-                              )
-                              : null,
-                    ),
-                    WidgetState.any: BoxDecoration(
-                      color:
-                          selected
-                              ? kPrimaryColor.withValues(alpha: 0.11)
-                              : Colors.transparent,
-                      borderRadius: BorderRadius.circular(6),
-                      border:
-                          selected
-                              ? Border.all(
-                                color: kPrimaryColor.withValues(alpha: 0.34),
-                              )
-                              : null,
-                    ),
-                  }),
-                  iconContentStyle:
-                      (content) => content.copyWith(padding: EdgeInsets.zero),
-                ),
-              ),
-              onPress: onPress,
-              child: Icon(
-                Icons.picture_in_picture_alt_rounded,
-                color: selected ? kPrimaryColor : kWhiteColor70,
-                size: 16,
-              ),
-            ),
-          ),
-        ),
-      ),
+      icon: Icons.picture_in_picture_alt_rounded,
+      selected: selected,
+      onPress: onPress,
     );
   }
 }
@@ -2028,87 +1979,25 @@ class _MenuRow extends StatelessWidget {
 /// users actually look for an engine switch — right next to the eval read-
 /// out. Single global Stockfish process; toggling here pauses/resumes the
 /// search for whichever board tab is focused (#461).
-class _EngineQuickToggle extends ConsumerStatefulWidget {
+class _EngineQuickToggle extends ConsumerWidget {
   const _EngineQuickToggle({required this.enabled});
 
   final bool enabled;
 
   @override
-  ConsumerState<_EngineQuickToggle> createState() => _EngineQuickToggleState();
-}
-
-class _EngineQuickToggleState extends ConsumerState<_EngineQuickToggle> {
-  bool _hovered = false;
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = widget.enabled;
-    final tooltip = enabled ? 'Pause engine' : 'Resume engine';
-    final fg =
-        enabled ? kPrimaryColor : (_hovered ? kWhiteColor : kWhiteColor70);
-    final bg =
-        enabled
-            ? kPrimaryColor.withValues(alpha: _hovered ? 0.22 : 0.14)
-            : (_hovered ? kBlack3Color : Colors.transparent);
-    final border =
-        enabled
-            ? kPrimaryColor.withValues(alpha: 0.55)
-            : (_hovered ? kWhiteColor.withValues(alpha: 0.20) : kDividerColor);
-
-    Future<void> toggle() async {
-      await ref
-          .read(engineSettingsProviderNew.notifier)
-          .toggleEngineAnalysis(!enabled);
-    }
-
-    return DesktopTooltip(
-      message: tooltip,
-      child: ClickCursor(
-        child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit:
-              (_) => setState(() {
-                _hovered = false;
-                _pressed = false;
-              }),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: toggle,
-            onTapDown: (_) => setState(() => _pressed = true),
-            onTapUp: (_) => setState(() => _pressed = false),
-            onTapCancel: () => setState(() => _pressed = false),
-            child: SingleMotionBuilder(
-              value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
-              motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-              builder:
-                  (context, scale, child) => Transform.scale(
-                    scale: scale,
-                    filterQuality: FilterQuality.medium,
-                    child: child,
-                  ),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 110),
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: border),
-                ),
-                alignment: Alignment.center,
-                child: Icon(
-                  enabled
-                      ? Icons.power_settings_new_rounded
-                      : Icons.power_settings_new_outlined,
-                  size: 14,
-                  color: fg,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+  Widget build(BuildContext context, WidgetRef ref) {
+    return DesktopHeaderIconButton(
+      message: enabled ? 'Pause engine' : 'Resume engine',
+      icon:
+          enabled
+              ? Icons.power_settings_new_rounded
+              : Icons.power_settings_new_outlined,
+      selected: enabled,
+      onPress: () {
+        ref
+            .read(engineSettingsProviderNew.notifier)
+            .toggleEngineAnalysis(!enabled);
+      },
     );
   }
 }

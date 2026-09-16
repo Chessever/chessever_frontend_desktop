@@ -1046,6 +1046,7 @@ class _RoundSliverSection extends ConsumerWidget {
                 tournamentTitle: tournamentTitle,
                 layout: layout,
                 columns: columns,
+                centerSparseRow: true,
                 roundStartsAtById: roundStartsAtById,
                 roundNameById: roundNameById,
                 streamingEnabled: streamingEnabled,
@@ -1147,6 +1148,7 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
     required this.roundStartsAtById,
     required this.roundNameById,
     required this.streamingEnabled,
+    this.centerSparseRow = false,
   });
 
   final String scopeId;
@@ -1158,23 +1160,51 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
   final String tournamentTitle;
   final DesktopCardLayout layout;
   final int columns;
+  final bool centerSparseRow;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
   final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context) {
+    if (!centerSparseRow || games.isEmpty || games.length >= columns) {
+      return _buildGrid(crossAxisCount: columns);
+    }
+
+    return SliverLayoutBuilder(
+      builder: (context, constraints) {
+        final metrics = DesktopGameCardsFlow.metricsFor(layout);
+        final padding = desktopCenteredSparseRowPadding(
+          availableWidth: constraints.crossAxisExtent,
+          itemCount: games.length,
+          columns: columns,
+          spacing: metrics.spacing,
+        );
+        return SliverPadding(
+          padding: EdgeInsets.symmetric(horizontal: padding),
+          sliver: _buildGrid(
+            crossAxisCount: desktopCenteredSparseRowColumns(
+              itemCount: games.length,
+              columns: columns,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildGrid({required int crossAxisCount}) {
     final metrics = DesktopGameCardsFlow.metricsFor(layout);
     final gridDelegate =
         layout == DesktopCardLayout.grid
             ? SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
+              crossAxisCount: crossAxisCount,
               mainAxisSpacing: metrics.spacing,
               crossAxisSpacing: metrics.spacing,
               childAspectRatio: 0.95,
             )
             : SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
+              crossAxisCount: crossAxisCount,
               mainAxisSpacing: metrics.spacing,
               crossAxisSpacing: metrics.spacing,
               mainAxisExtent: metrics.tileHeight,
@@ -1248,37 +1278,26 @@ class _TeamMatchHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: kPrimaryColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: kPrimaryColor.withValues(alpha: 0.35)),
-            ),
-            child: const Text(
-              'TEAM',
-              style: TextStyle(
-                color: kPrimaryColor,
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.7,
+          Expanded(
+            child: _TeamMatchSideLabel(
+              name: group.leftTeam,
+              flag: desktopTeamMatchFlagCode(
+                teamName: group.leftTeam,
+                players: group.leftPlayers,
               ),
+              fideId: group.leftPlayers
+                  .map((player) => player.fideId)
+                  .whereType<int>()
+                  .where((id) => id > 0)
+                  .firstOrNull,
+              playerName: group.leftPlayers
+                  .map((player) => player.name.trim())
+                  .where((name) => name.isNotEmpty)
+                  .firstOrNull,
+              isRight: false,
             ),
           ),
           const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              group.leftTeam,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
           _TeamScoreText(label: leftScore, color: leftColor),
           const SizedBox(width: 10),
           const Text(
@@ -1292,27 +1311,95 @@ class _TeamMatchHeader extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           _TeamScoreText(label: rightScore, color: rightColor),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              group.rightTeam,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.end,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
           const SizedBox(width: 12),
-          Text(
-            '${group.games.length} board${group.games.length == 1 ? '' : 's'}',
-            style: const TextStyle(color: kLightGreyColor, fontSize: 11),
+          Expanded(
+            child: _TeamMatchSideLabel(
+              name: group.rightTeam,
+              flag: desktopTeamMatchFlagCode(
+                teamName: group.rightTeam,
+                players: group.rightPlayers,
+              ),
+              fideId: group.rightPlayers
+                  .map((player) => player.fideId)
+                  .whereType<int>()
+                  .where((id) => id > 0)
+                  .firstOrNull,
+              playerName: group.rightPlayers
+                  .map((player) => player.name.trim())
+                  .where((name) => name.isNotEmpty)
+                  .firstOrNull,
+              isRight: true,
+            ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _TeamMatchSideLabel extends StatelessWidget {
+  const _TeamMatchSideLabel({
+    required this.name,
+    required this.flag,
+    required this.fideId,
+    required this.playerName,
+    required this.isRight,
+  });
+
+  final String name;
+  final String? flag;
+  final int? fideId;
+  final String? playerName;
+  final bool isRight;
+
+  @override
+  Widget build(BuildContext context) {
+    final federation = (flag ?? name).trim();
+    final flagWidget =
+        federation.isEmpty
+            ? const SizedBox.shrink()
+            : BackfilledFederationFlag(
+              federation: federation,
+              fideId: fideId,
+              playerName: playerName,
+              width: 20,
+              height: 14,
+              borderRadius: BorderRadius.circular(2),
+            );
+    final nameWidget = Flexible(
+      fit: FlexFit.loose,
+      child: Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        textAlign: isRight ? TextAlign.start : TextAlign.end,
+        style: const TextStyle(
+          color: kWhiteColor,
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+
+    return Row(
+      mainAxisAlignment:
+          isRight ? MainAxisAlignment.start : MainAxisAlignment.end,
+      children:
+          isRight
+              ? [
+                nameWidget,
+                if (federation.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  flagWidget,
+                ],
+              ]
+              : [
+                if (federation.isNotEmpty) ...[
+                  flagWidget,
+                  const SizedBox(width: 8),
+                ],
+                nameWidget,
+              ],
     );
   }
 }

@@ -197,6 +197,43 @@ void main() {
     expect(tabA.loads, <Uri>[firstUrl, secondUrl]);
     addTearDown(() => disposeTree(tester));
   });
+
+  testWidgets('hiding the player keeps the camera toggle so it can return', (
+    tester,
+  ) async {
+    _Harness.index.value = 0;
+    await tester.pumpWidget(const _Harness());
+    await _pumpUntilLoads(tester, 1);
+    expect(find.byType(WebViewWidget), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.videocam_off_rounded), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(WebViewWidget), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.videocam_rounded), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(WebViewWidget), findsOneWidget);
+    expect(find.byIcon(Icons.videocam_off_rounded), findsOneWidget);
+    addTearDown(() => disposeTree(tester));
+  });
 }
 
 Element _webViewElement(WidgetTester tester, Key panelKey) {

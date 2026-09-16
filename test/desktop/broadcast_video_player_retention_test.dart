@@ -87,7 +87,7 @@ void main() {
       );
     });
 
-    test('hides when the spectator collapsed the player', () {
+    test('hides the player when the spectator collapsed it', () {
       expect(
         resolveBroadcastVideoPlayerRetention(
           tabActive: true,

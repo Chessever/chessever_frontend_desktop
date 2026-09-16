@@ -91,6 +91,7 @@ import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/desktop/widgets/editable_aware_shortcut_activator.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/desktop/widgets/engine_pv_arrow_palette.dart';
@@ -8844,29 +8845,14 @@ class _BoardMoreActionsButtonState extends State<_BoardMoreActionsButton> {
 
   @override
   Widget build(BuildContext context) {
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: DesktopTooltip(
+    return SizedBox.square(
+      key: _anchorKey,
+      dimension: 28,
+      child: DesktopHeaderIconButton(
+        key: const ValueKey<String>('desktop-board-more-actions'),
         message: 'More board actions',
-        child: SizedBox.square(
-          key: _anchorKey,
-          dimension: 28,
-          child: FButton.icon(
-            key: const ValueKey<String>('desktop-board-more-actions'),
-            style: FButtonStyle.ghost(
-              (style) => style.copyWith(
-                iconContentStyle:
-                    (content) => content.copyWith(padding: EdgeInsets.zero),
-              ),
-            ),
-            onPress: _openMenu,
-            child: const Icon(
-              Icons.more_vert_rounded,
-              color: kWhiteColor70,
-              size: 18,
-            ),
-          ),
-        ),
+        icon: Icons.more_vert_rounded,
+        onPress: _openMenu,
       ),
     );
   }

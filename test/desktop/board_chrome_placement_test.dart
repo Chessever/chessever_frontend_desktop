@@ -30,6 +30,10 @@ void main() {
     );
     expect(header, contains('const EngineSettingsPopover(dimension: 28)'));
     expect(
+      header,
+      contains('SizedBox.square(dimension: 28, child: widget.headerTrailing!)'),
+    );
+    expect(
       header.indexOf('widget.headerTrailing'),
       greaterThan(header.indexOf('EngineSettingsPopover')),
     );
