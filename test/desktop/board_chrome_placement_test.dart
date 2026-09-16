@@ -11,7 +11,7 @@ String section(String text, String start, String end) =>
     text.substring(text.indexOf(start), text.indexOf(end, text.indexOf(start)));
 
 void main() {
-  test('Board owns one menu trigger in its notation metadata/ECO header', () {
+  test('Board owns one menu trigger beside the engine gear', () {
     final board = source('lib/desktop/panes/board_pane.dart');
     final area = section(
       board,
@@ -21,19 +21,18 @@ void main() {
     expect(area, isNot(contains('_BoardMoreActionsButton')));
     expect(board.split('headerTrailing: _BoardMoreActionsButton(').length, 2);
     expect(board, contains('onPressed: openBoardContextMenu'));
-    expect(board, contains('headerTrailing: headerTrailing'));
-    final notation = source('lib/desktop/widgets/notation_ladder_view.dart');
+    expect(board, isNot(contains('headerTrailing: headerTrailing')));
+    final engine = source('lib/desktop/widgets/engine_panel.dart');
     final header = section(
-      notation,
-      'class _Header ',
-      'class _PgnMetadataHeader',
+      engine,
+      'Widget _buildHeader({',
+      'class _EngineActivityIndicator ',
     );
-    expect(header, contains('Expanded(child: _PgnMetadataHeader'));
+    expect(header, contains('const EngineSettingsPopover(dimension: 28)'));
     expect(
-      header.indexOf('trailing!]'),
-      greaterThan(header.indexOf('Expanded(child: _PgnMetadataHeader')),
+      header.indexOf('widget.headerTrailing'),
+      greaterThan(header.indexOf('EngineSettingsPopover')),
     );
-    expect(notation, contains('trailing: widget.headerTrailing'));
     expect(board, contains("message: 'More board actions'"));
     expect(board, contains('onPress: _openMenu'));
   });

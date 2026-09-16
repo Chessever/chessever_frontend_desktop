@@ -77,6 +77,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.reportCoordinator,
     this.onPictureInPicture,
     this.pictureInPictureSelected = false,
+    this.headerTrailing,
   });
 
   final String fen;
@@ -133,6 +134,9 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// visible, so the selected action can still turn PiP off.
   final VoidCallback? onPictureInPicture;
   final bool pictureInPictureSelected;
+
+  /// Optional action clustered with the engine gear (board more-actions).
+  final Widget? headerTrailing;
 
   /// Test seam for driving report lifecycle transitions without spawning a
   /// real Stockfish process. The controller must remain stable for this
@@ -426,8 +430,8 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     );
   }
 
-  /// Persistent header carrying the two independent toggles (engine on/off
-  /// and report on/off) plus the engine gear. The engine readout collapses
+  /// Persistent header carrying the engine toggle, optional PiP control,
+  /// engine gear, and optional trailing chrome. The engine readout collapses
   /// away when the engine is off so the report can own the panel alone.
   Widget _buildHeader({required bool engineOn, required bool engineActive}) {
     return Padding(
@@ -464,6 +468,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             const SizedBox(width: 4),
           ],
           const EngineSettingsPopover(dimension: 28),
+          if (widget.headerTrailing != null) ...[
+            const SizedBox(width: 4),
+            widget.headerTrailing!,
+          ],
         ],
       ),
     );

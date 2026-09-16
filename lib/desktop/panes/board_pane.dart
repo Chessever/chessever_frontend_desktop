@@ -4748,10 +4748,8 @@ class _BoardPaneContent extends HookConsumerWidget {
       required ChessMovePointer activePointer,
       required ValueChanged<ChessMovePointer> onJump,
       required ValueNotifier<NotationLayoutMode> layoutModeController,
-      required Widget headerTrailing,
     }) {
       return NotationLadderView(
-        headerTrailing: headerTrailing,
         game: chessGame.value,
         activePointer: activePointer,
         // Notation stays mounted under Explorer; keep the cursor highlight.
@@ -5173,9 +5171,6 @@ class _BoardPaneContent extends HookConsumerWidget {
                       hideLocalOpeningTreePicker:
                           boardArgs?.hideLocalOpeningTreePicker ?? false,
                       notationChild: buildNotationLadder(
-                        headerTrailing: _BoardMoreActionsButton(
-                          onPressed: openBoardContextMenu,
-                        ),
                         scrollController: notationScrollController,
                         activePointer: pointer.value,
                         onJump: jumpToPointer,
@@ -5317,6 +5312,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                                 : () => unawaited(openPictureInPictureAction()),
                         pictureInPictureSelected:
                             currentGameIsInPictureInPicture,
+                        headerTrailing: _BoardMoreActionsButton(
+                          onPressed: openBoardContextMenu,
+                        ),
                       ),
                     ),
                   ),
@@ -8852,65 +8850,26 @@ class _BoardMoreActionsButtonState extends State<_BoardMoreActionsButton> {
         message: 'More board actions',
         child: SizedBox.square(
           key: _anchorKey,
-          dimension: _focusButtonSize,
+          dimension: 28,
           child: FButton.icon(
             key: const ValueKey<String>('desktop-board-more-actions'),
-            style: _floatingBoardIconButtonStyle(selected: false),
+            style: FButtonStyle.ghost(
+              (style) => style.copyWith(
+                iconContentStyle:
+                    (content) => content.copyWith(padding: EdgeInsets.zero),
+              ),
+            ),
             onPress: _openMenu,
-            child: const Icon(Icons.more_vert_rounded, size: 16),
+            child: const Icon(
+              Icons.more_vert_rounded,
+              color: kWhiteColor70,
+              size: 18,
+            ),
           ),
         ),
       ),
     );
   }
-}
-
-FBaseButtonStyle Function(FButtonStyle style) _floatingBoardIconButtonStyle({
-  required bool selected,
-}) {
-  return FButtonStyle.outline(
-    (style) => style.copyWith(
-      decoration: FWidgetStateMap({
-        WidgetState.disabled: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.transparent),
-        ),
-        WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-          color:
-              selected
-                  ? kPrimaryColor.withValues(alpha: 0.12)
-                  : kWhiteColor.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color:
-                selected
-                    ? kPrimaryColor.withValues(alpha: 0.42)
-                    : kWhiteColor.withValues(alpha: 0.10),
-          ),
-        ),
-        WidgetState.any: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.transparent),
-        ),
-      }),
-      iconContentStyle:
-          (content) => content.copyWith(
-            padding: const EdgeInsets.all(8),
-            iconStyle: FWidgetStateMap({
-              WidgetState.disabled: const IconThemeData(
-                color: Color(0x4DFFFFFF),
-                size: 18,
-              ),
-              WidgetState.any: IconThemeData(
-                color: selected ? kPrimaryColor : kWhiteColor70,
-                size: 18,
-              ),
-            }),
-          ),
-    ),
-  );
 }
 
 /// The chessboard plus its annotation layer (right-click drawing) and a
