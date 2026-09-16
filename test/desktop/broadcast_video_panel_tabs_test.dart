@@ -209,7 +209,13 @@ void main() {
       find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
       findsOneWidget,
     );
-    expect(find.byIcon(Icons.videocam_off_rounded), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+        matching: find.byIcon(Icons.videocam_off_rounded),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(
       find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
@@ -222,7 +228,13 @@ void main() {
       find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
       findsOneWidget,
     );
-    expect(find.byIcon(Icons.videocam_rounded), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+        matching: find.byIcon(Icons.videocam_rounded),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(
       find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
@@ -231,7 +243,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.byType(WebViewWidget), findsOneWidget);
-    expect(find.byIcon(Icons.videocam_off_rounded), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+        matching: find.byIcon(Icons.videocam_off_rounded),
+      ),
+      findsOneWidget,
+    );
     addTearDown(() => disposeTree(tester));
   });
 }

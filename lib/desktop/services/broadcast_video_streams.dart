@@ -64,6 +64,35 @@ BroadcastVideoProvider? broadcastVideoProviderFromWire(String? value) {
   };
 }
 
+/// Spectator surfaces that may see a stream. Omitted on the wire means all.
+enum BroadcastVideoClientPlatform { web, mobile, desktop }
+
+const Set<String> _broadcastVideoClientPlatformNames = <String>{
+  'web',
+  'mobile',
+  'desktop',
+};
+
+BroadcastVideoClientPlatform? broadcastVideoClientPlatformFromWire(
+  String? value,
+) {
+  return switch (value) {
+    'web' => BroadcastVideoClientPlatform.web,
+    'mobile' => BroadcastVideoClientPlatform.mobile,
+    'desktop' => BroadcastVideoClientPlatform.desktop,
+    _ => null,
+  };
+}
+
+/// Same rule as the web's `streamSupportsPlatform`: a missing list is public.
+bool broadcastStreamSupportsPlatform(
+  BroadcastVideoStream stream,
+  BroadcastVideoClientPlatform platform,
+) {
+  final platforms = stream.platforms;
+  return platforms == null || platforms.contains(platform);
+}
+
 /// Editable facts about one broadcast session. Dates stay ISO strings: the
 /// panel only shows title / status, and the API already normalises them.
 class BroadcastVideoPublication {
@@ -140,9 +169,8 @@ class BroadcastVideoAudience {
     return BroadcastVideoAudience(
       channelId: channelId,
       count: value['count'] is num ? (value['count'] as num).toInt() : null,
-      checkedOn: value['checkedOn'] is String
-          ? value['checkedOn'] as String
-          : null,
+      checkedOn:
+          value['checkedOn'] is String ? value['checkedOn'] as String : null,
     );
   }
 }
@@ -155,6 +183,8 @@ class BroadcastVideoStream {
     required this.sourceId,
     required this.url,
     this.countryCode,
+    this.language,
+    this.platforms,
     this.publication,
     this.audience,
     this.preferred,
@@ -163,12 +193,44 @@ class BroadcastVideoStream {
   final String id;
   final String label;
   final String? countryCode;
+
+  /// Top-level language tag from the API (`en`, `hi`, `en-IN`). Distinct
+  /// from [BroadcastVideoPublication.language]. Grouping, flags, and FIDE
+  /// camera detection all read this first, matching mobile
+  /// `inferredLanguage` and the web's `primaryLanguage`.
+  final String? language;
+
+  /// When set, only these spectator surfaces may show the stream.
+  final Set<BroadcastVideoClientPlatform>? platforms;
   final BroadcastVideoProvider provider;
   final String sourceId;
   final String url;
   final BroadcastVideoPublication? publication;
   final BroadcastVideoAudience? audience;
   final bool? preferred;
+
+  BroadcastVideoStream copyWith({
+    String? countryCode,
+    String? language,
+    Set<BroadcastVideoClientPlatform>? platforms,
+    BroadcastVideoPublication? publication,
+    BroadcastVideoAudience? audience,
+    bool? preferred,
+  }) {
+    return BroadcastVideoStream(
+      id: id,
+      label: label,
+      provider: provider,
+      sourceId: sourceId,
+      url: url,
+      countryCode: countryCode ?? this.countryCode,
+      language: language ?? this.language,
+      platforms: platforms ?? this.platforms,
+      publication: publication ?? this.publication,
+      audience: audience ?? this.audience,
+      preferred: preferred ?? this.preferred,
+    );
+  }
 
   static BroadcastVideoStream? fromJson(Object? value) {
     if (value is! Map) return null;
@@ -190,13 +252,45 @@ class BroadcastVideoStream {
         provider == null) {
       return null;
     }
+    Set<BroadcastVideoClientPlatform>? platforms;
+    if (value.containsKey('platforms')) {
+      final raw = value['platforms'];
+      if (raw is! List ||
+          raw.any(
+            (entry) =>
+                entry is! String ||
+                !_broadcastVideoClientPlatformNames.contains(entry),
+          )) {
+        return null;
+      }
+      platforms =
+          raw
+              .cast<String>()
+              .map(broadcastVideoClientPlatformFromWire)
+              .whereType<BroadcastVideoClientPlatform>()
+              .toSet();
+    }
+    String? language;
+    if (value.containsKey('language')) {
+      final raw = value['language'];
+      if (raw == null || raw == '') {
+        language = null;
+      } else if (raw is String && raw.trim().isNotEmpty && raw.length <= 80) {
+        language = raw.trim();
+      } else {
+        return null;
+      }
+    }
     final country = value['countryCode'];
     return BroadcastVideoStream(
       id: id,
       label: label,
-      countryCode: country is String && country.trim().isNotEmpty
-          ? country.trim().toUpperCase()
-          : null,
+      countryCode:
+          country is String && country.trim().isNotEmpty
+              ? country.trim().toUpperCase()
+              : null,
+      language: language,
+      platforms: platforms,
       provider: provider,
       sourceId: sourceId,
       url: url,
@@ -542,9 +636,13 @@ const List<_KnownLanguage> _knownLanguages = <_KnownLanguage>[
 ];
 
 _KnownLanguage? _knownLanguageFromCode(String code) {
-  final primary = code.trim().toLowerCase().split(RegExp('[-_]')).first;
+  final normalized = code.trim().toLowerCase();
+  if (normalized.isEmpty) return null;
+  final primary = normalized.split(RegExp('[-_]')).first;
   for (final entry in _knownLanguages) {
-    if (entry.codes.contains(primary)) return entry;
+    if (entry.codes.contains(primary) || entry.names.contains(normalized)) {
+      return entry;
+    }
   }
   return null;
 }
@@ -577,8 +675,14 @@ BroadcastStreamLanguage broadcastStreamLanguage(BroadcastVideoStream stream) {
     code: 'und',
     label: 'Language unknown',
   );
-  final explicit = stream.publication?.language;
-  if (explicit != null && explicit.isNotEmpty) {
+  // Editor-set stream.language first (mobile inferredLanguage / web
+  // primaryLanguage), then YouTube publication.language. Title words are
+  // only a fallback when neither tag is recognised.
+  for (final explicit in <String?>[
+    stream.language,
+    stream.publication?.language,
+  ]) {
+    if (explicit == null || explicit.isEmpty) continue;
     final match = _knownLanguageFromCode(explicit);
     if (match != null) {
       return BroadcastStreamLanguage(
@@ -651,24 +755,26 @@ List<BroadcastVideoStreamGroup> groupBroadcastVideoStreams(
   for (final stream in streams) {
     final language = broadcastStreamLanguage(stream);
     final countryName = broadcastCountryName(stream.countryCode);
-    final key = language.code != 'und'
-        ? language.code
-        : stream.countryCode != null && countryName != null
-        ? 'country-${stream.countryCode}'
-        : 'stream-${stream.id}';
-    final resolved = language.code != 'und'
-        ? BroadcastStreamLanguage(
-            code: language.code,
-            label: language.label,
-            countryCode: stream.countryCode ?? language.countryCode,
-          )
-        : countryName != null
-        ? BroadcastStreamLanguage(
-            code: key,
-            label: countryName,
-            countryCode: stream.countryCode,
-          )
-        : language;
+    final key =
+        language.code != 'und'
+            ? language.code
+            : stream.countryCode != null && countryName != null
+            ? 'country-${stream.countryCode}'
+            : 'stream-${stream.id}';
+    final resolved =
+        language.code != 'und'
+            ? BroadcastStreamLanguage(
+              code: language.code,
+              label: language.label,
+              countryCode: stream.countryCode ?? language.countryCode,
+            )
+            : countryName != null
+            ? BroadcastStreamLanguage(
+              code: key,
+              label: countryName,
+              countryCode: stream.countryCode,
+            )
+            : language;
     groups.putIfAbsent(key, () => <BroadcastVideoStream>[]).add(stream);
     display[key] = resolved;
   }
@@ -714,32 +820,34 @@ List<BroadcastVideoStreamGroup> groupBroadcastVideoStreams(
   }
 
   int nameOrder(BroadcastVideoStream a, BroadcastVideoStream b) {
-    final byName = broadcastVideoStreamDisplayName(a)
-        .toLowerCase()
-        .compareTo(broadcastVideoStreamDisplayName(b).toLowerCase());
+    final byName = broadcastVideoStreamDisplayName(
+      a,
+    ).toLowerCase().compareTo(broadcastVideoStreamDisplayName(b).toLowerCase());
     if (byName != 0) return byName;
     return a.id.compareTo(b.id);
   }
 
-  final ordered = groups.entries
-      .map(
-        (entry) => BroadcastVideoStreamGroup(
-          key: entry.key,
-          code: display[entry.key]!.code,
-          label: display[entry.key]!.label,
-          countryCode: display[entry.key]!.countryCode,
-          streams: entry.value
-            ..sort((a, b) {
-              final byPreferred =
-                  (b.preferred == true ? 1 : 0) - (a.preferred == true ? 1 : 0);
-              if (byPreferred != 0) return byPreferred;
-              final byCount = count(b) - count(a);
-              if (byCount != 0) return byCount;
-              return nameOrder(a, b);
-            }),
-        ),
-      )
-      .toList();
+  final ordered =
+      groups.entries
+          .map(
+            (entry) => BroadcastVideoStreamGroup(
+              key: entry.key,
+              code: display[entry.key]!.code,
+              label: display[entry.key]!.label,
+              countryCode: display[entry.key]!.countryCode,
+              streams:
+                  entry.value..sort((a, b) {
+                    final byPreferred =
+                        (b.preferred == true ? 1 : 0) -
+                        (a.preferred == true ? 1 : 0);
+                    if (byPreferred != 0) return byPreferred;
+                    final byCount = count(b) - count(a);
+                    if (byCount != 0) return byCount;
+                    return nameOrder(a, b);
+                  }),
+            ),
+          )
+          .toList();
   ordered.sort((a, b) {
     final byEnglish = (b.code == 'en' ? 1 : 0) - (a.code == 'en' ? 1 : 0);
     if (byEnglish != 0) return byEnglish;
@@ -752,8 +860,9 @@ List<BroadcastVideoStreamGroup> groupBroadcastVideoStreams(
   return ordered;
 }
 
-/// Same default chain as the web: exact pick, then remembered language group,
-/// then the legacy per-tournament country fallback, then the group order.
+/// Same default chain as the web: exact pick, then a non-English remembered
+/// language, then FIDE main commentary, then English/any memory, then the
+/// legacy per-tournament country fallback, then the group order.
 BroadcastVideoStream? resolveBroadcastVideoSelection(
   List<BroadcastVideoStream> streams, {
   String? selectedId,
@@ -765,13 +874,22 @@ BroadcastVideoStream? resolveBroadcastVideoSelection(
   for (final stream in flat) {
     if (selectedId != null && stream.id == selectedId) return stream;
   }
+  BroadcastVideoStream? remembered;
   if (language != null) {
     for (final group in groups) {
       if (group.key == language && group.streams.isNotEmpty) {
-        return group.streams.first;
+        remembered = group.streams.first;
+        break;
       }
     }
   }
+  if (language != null && language != 'en' && remembered != null) {
+    return remembered;
+  }
+  for (final stream in flat) {
+    if (isFideMainCommentary(stream)) return stream;
+  }
+  if (remembered != null) return remembered;
   if (countryCode != null) {
     for (final stream in flat) {
       if (stream.countryCode == countryCode) return stream;
@@ -817,4 +935,288 @@ Map<String, String> _englishRegionNames() {
     /* Fall through with whatever was collected. */
   }
   return _cachedRegionNames = names;
+}
+
+// ---------------------------------------------------------------------------
+// In-game toolbar grouping (ports of video-fide.ts and
+// video-language-overflow.ts). Numbered official FIDE cameras stay one
+// final control; spare rail width unwraps ordinary languages into
+// individual flags.
+// ---------------------------------------------------------------------------
+
+const String fideYoutubeChannelId = 'UC9B47GnzCRFHTT1BIBWvStQ';
+
+final RegExp _fideOlympiadTitle = RegExp(
+  r'^♟?\s*FIDE Chess Olympiad 2026\s*\|\s*Round\s+\d+\s*\|',
+);
+final RegExp _fideCameraTitle = RegExp(
+  r'^♟?\s*FIDE Chess Olympiad 2026\s*\|\s*Round\s+\d+\s*\|\s*(?:Stream\s+(\d+)\s*\|\s*(Open|Women)|(Open|Women)\s+Stream\s+(\d+))\s*$',
+);
+
+enum BroadcastToolbarVideoKind { language, fide, cameras, camera }
+
+class BroadcastToolbarVideoGroup {
+  const BroadcastToolbarVideoGroup({
+    required this.key,
+    required this.code,
+    required this.label,
+    required this.streams,
+    required this.kind,
+    this.countryCode,
+    this.cameraNumber,
+  });
+
+  final String key;
+  final String code;
+  final String label;
+  final String? countryCode;
+  final List<BroadcastVideoStream> streams;
+  final BroadcastToolbarVideoKind kind;
+  final int? cameraNumber;
+
+  BroadcastToolbarVideoGroup copyWith({
+    String? key,
+    List<BroadcastVideoStream>? streams,
+    BroadcastToolbarVideoKind? kind,
+    int? cameraNumber,
+  }) {
+    return BroadcastToolbarVideoGroup(
+      key: key ?? this.key,
+      code: code,
+      label: label,
+      countryCode: countryCode,
+      streams: streams ?? this.streams,
+      kind: kind ?? this.kind,
+      cameraNumber: cameraNumber ?? this.cameraNumber,
+    );
+  }
+}
+
+String? broadcastStreamPrimaryLanguage(BroadcastVideoStream stream) {
+  final value = stream.language ?? stream.publication?.language;
+  if (value == null) return null;
+  final trimmed = value.trim().toLowerCase();
+  if (trimmed.isEmpty) return null;
+  return trimmed.split(RegExp('[-_]')).first;
+}
+
+bool _isFideYoutubeStream(BroadcastVideoStream stream) {
+  return stream.provider == BroadcastVideoProvider.youtube &&
+      stream.audience?.channelId == fideYoutubeChannelId;
+}
+
+int? fideCameraNumber(BroadcastVideoStream stream) {
+  final platforms = stream.platforms;
+  final desktopWebOnly =
+      platforms != null &&
+      platforms.length == 2 &&
+      platforms.contains(BroadcastVideoClientPlatform.web) &&
+      platforms.contains(BroadcastVideoClientPlatform.desktop);
+  if (!_isFideYoutubeStream(stream) ||
+      !desktopWebOnly ||
+      broadcastStreamPrimaryLanguage(stream) != null) {
+    return null;
+  }
+  final match = _fideCameraTitle.firstMatch(stream.publication?.title ?? '');
+  if (match == null) return null;
+  final raw = match.group(1) ?? match.group(4);
+  final number = int.tryParse(raw ?? '');
+  if (number == null || number <= 0) return null;
+  return number;
+}
+
+bool isFideMainCommentary(BroadcastVideoStream stream) {
+  final title = stream.publication?.title ?? '';
+  return _isFideYoutubeStream(stream) &&
+      broadcastStreamPrimaryLanguage(stream) == 'en' &&
+      _fideOlympiadTitle.hasMatch(title) &&
+      !_fideCameraTitle.hasMatch(title);
+}
+
+/// Show every exact stream only while the full set fits. Once it does not,
+/// keep every language together so the count badges have one meaning.
+/// Explicit local pins remain individual.
+List<BroadcastToolbarVideoGroup> progressiveBroadcastStreamGroups(
+  List<BroadcastToolbarVideoGroup> groups,
+  List<String> pins,
+  int capacity,
+) {
+  final pinned = <String>{};
+  final pinnedGroups = <BroadcastToolbarVideoGroup>[];
+  for (final id in pins) {
+    if (!pinned.add(id)) continue;
+    BroadcastToolbarVideoGroup? owner;
+    BroadcastVideoStream? stream;
+    for (final group in groups) {
+      for (final candidate in group.streams) {
+        if (candidate.id == id) {
+          owner = group;
+          stream = candidate;
+          break;
+        }
+      }
+      if (stream != null) break;
+    }
+    if (owner == null || stream == null) continue;
+    pinnedGroups.add(
+      owner.copyWith(
+        key: 'stream:$id',
+        streams: <BroadcastVideoStream>[stream],
+      ),
+    );
+  }
+  final remaining = <BroadcastToolbarVideoGroup>[];
+  for (final group in groups) {
+    final leftover = group.streams
+        .where((stream) => !pinned.contains(stream.id))
+        .toList(growable: false);
+    if (leftover.isEmpty) continue;
+    remaining.add(group.copyWith(streams: leftover));
+  }
+  final streamCount = groups.fold<int>(
+    0,
+    (total, group) => total + group.streams.length,
+  );
+  if (capacity >= streamCount) {
+    return <BroadcastToolbarVideoGroup>[
+      ...pinnedGroups,
+      for (final group in remaining)
+        for (final stream in group.streams)
+          group.copyWith(
+            key: 'stream:${stream.id}',
+            streams: <BroadcastVideoStream>[stream],
+          ),
+    ];
+  }
+  return <BroadcastToolbarVideoGroup>[
+    ...pinnedGroups,
+    for (final group in remaining)
+      group.streams.length == 1
+          ? group.copyWith(key: 'stream:${group.streams.first.id}')
+          : group,
+  ];
+}
+
+/// Product ordering for the compact in-game toolbar.
+List<BroadcastToolbarVideoGroup> toolbarBroadcastVideoGroups(
+  List<BroadcastVideoStream> streams,
+  List<String> pins,
+  int capacity, {
+  String? selectedId,
+}) {
+  final main = streams.where(isFideMainCommentary).toList(growable: false);
+  final cameras =
+      streams
+          .map((stream) => (stream: stream, number: fideCameraNumber(stream)))
+          .where((entry) => entry.number != null)
+          .map((entry) => (stream: entry.stream, number: entry.number!))
+          .toList()
+        ..sort((a, b) {
+          final byNumber = a.number.compareTo(b.number);
+          if (byNumber != 0) return byNumber;
+          return a.stream.id.compareTo(b.stream.id);
+        });
+  final specialIds = <String>{
+    ...main.map((stream) => stream.id),
+    ...cameras.map((entry) => entry.stream.id),
+  };
+  final base = <BroadcastToolbarVideoGroup>[
+    if (main.isNotEmpty)
+      BroadcastToolbarVideoGroup(
+        key: 'fide',
+        code: 'en',
+        label: 'FIDE',
+        streams: main,
+        kind: BroadcastToolbarVideoKind.fide,
+      ),
+    ...groupBroadcastVideoStreams(
+      streams.where((stream) => !specialIds.contains(stream.id)).toList(),
+    ).map(
+      (group) => BroadcastToolbarVideoGroup(
+        key: group.key,
+        code: group.code,
+        label: group.label,
+        countryCode: group.countryCode,
+        streams: group.streams,
+        kind: BroadcastToolbarVideoKind.language,
+      ),
+    ),
+  ];
+  BroadcastVideoStream? selected;
+  if (selectedId != null) {
+    for (final stream in streams) {
+      if (stream.id == selectedId) {
+        selected = stream;
+        break;
+      }
+    }
+  }
+  final selectedLanguage =
+      selected == null ? null : broadcastStreamPrimaryLanguage(selected);
+  if (selectedLanguage != null && selectedLanguage != 'en') {
+    final preferredIndex = base.indexWhere(
+      (group) => group.streams.any((stream) => stream.id == selectedId),
+    );
+    if (preferredIndex > 0) {
+      final preferred = base.removeAt(preferredIndex);
+      base.insert(0, preferred);
+    }
+  }
+  final cameraById = <String, ({BroadcastVideoStream stream, int number})>{
+    for (final entry in cameras) entry.stream.id: entry,
+  };
+  final pinnedCameras = <BroadcastToolbarVideoGroup>[];
+  final seenPins = <String>{};
+  for (final id in pins) {
+    if (!seenPins.add(id)) continue;
+    final entry = cameraById[id];
+    if (entry == null) continue;
+    pinnedCameras.add(
+      BroadcastToolbarVideoGroup(
+        key: 'camera:$id',
+        code: 'und',
+        label: 'Camera ${entry.number}',
+        streams: <BroadcastVideoStream>[entry.stream],
+        kind: BroadcastToolbarVideoKind.camera,
+        cameraNumber: entry.number,
+      ),
+    );
+  }
+  final pinnedCameraIds =
+      pinnedCameras
+          .expand((group) => group.streams.map((stream) => stream.id))
+          .toSet();
+  final remainingCameras = cameras
+      .where((entry) => !pinnedCameraIds.contains(entry.stream.id))
+      .toList(growable: false);
+  final reserved = pinnedCameras.length + (remainingCameras.isEmpty ? 0 : 1);
+  final ordinaryPins = pins
+      .where((id) => !cameraById.containsKey(id))
+      .toList(growable: false);
+  final ordinary = progressiveBroadcastStreamGroups(
+    base,
+    ordinaryPins,
+    capacity < reserved ? 0 : capacity - reserved,
+  );
+  return <BroadcastToolbarVideoGroup>[
+    ...pinnedCameras,
+    ...ordinary,
+    if (remainingCameras.isNotEmpty)
+      BroadcastToolbarVideoGroup(
+        key: 'fide-cameras',
+        code: 'und',
+        label: 'Cameras',
+        streams: remainingCameras
+            .map((entry) => entry.stream)
+            .toList(growable: false),
+        kind: BroadcastToolbarVideoKind.cameras,
+      ),
+  ];
+}
+
+String broadcastToolbarStreamName(BroadcastVideoStream stream) {
+  final number = fideCameraNumber(stream);
+  return number == null
+      ? broadcastVideoStreamDisplayName(stream)
+      : 'Camera $number';
 }

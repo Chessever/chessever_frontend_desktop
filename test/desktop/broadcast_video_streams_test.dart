@@ -9,6 +9,8 @@ BroadcastVideoStream stream({
   required String id,
   String? label,
   String? countryCode,
+  String? language,
+  Set<BroadcastVideoClientPlatform>? platforms,
   BroadcastVideoProvider provider = BroadcastVideoProvider.youtube,
   String? sourceId,
   String? url,
@@ -21,6 +23,8 @@ BroadcastVideoStream stream({
     id: id,
     label: label ?? id,
     countryCode: countryCode,
+    language: language,
+    platforms: platforms,
     provider: provider,
     sourceId: resolvedSourceId,
     url: url ?? 'https://example.com/$resolvedSourceId',
@@ -29,6 +33,39 @@ BroadcastVideoStream stream({
     preferred: preferred,
   );
 }
+
+const BroadcastVideoAudience _fideAudience = BroadcastVideoAudience(
+  channelId: fideYoutubeChannelId,
+  count: 379000,
+  checkedOn: '2026-09-15',
+);
+
+const Set<BroadcastVideoClientPlatform> _desktopWeb =
+    <BroadcastVideoClientPlatform>{
+      BroadcastVideoClientPlatform.web,
+      BroadcastVideoClientPlatform.desktop,
+    };
+
+BroadcastVideoStream fideMain() => stream(
+  id: 'fide-main',
+  label: 'FIDE',
+  audience: _fideAudience,
+  publication: const BroadcastVideoPublication(
+    language: 'en',
+    title:
+        '♟ FIDE Chess Olympiad 2026 | Round 1 | Gukesh, Sindarov, Bibisara & more',
+  ),
+);
+
+BroadcastVideoStream camera(int number, {String? id}) => stream(
+  id: id ?? 'camera-$number',
+  label: 'Official stream $number',
+  audience: _fideAudience,
+  platforms: _desktopWeb,
+  publication: BroadcastVideoPublication(
+    title: 'FIDE Chess Olympiad 2026 | Round 1 |  Stream $number | Open',
+  ),
+);
 
 void main() {
   group('broadcastVideoEmbedPageUri', () {
@@ -78,6 +115,60 @@ void main() {
       expect(detected.code, 'es');
       expect(detected.label, 'Spanish');
       expect(detected.countryCode, 'ES');
+    });
+
+    test('stream language tag is used when publication is missing', () {
+      final detected = broadcastStreamLanguage(
+        stream(id: 'tagged', label: 'Official feed', language: 'hi'),
+      );
+      expect(detected.code, 'hi');
+      expect(detected.label, 'Hindi');
+      expect(detected.countryCode, 'IN');
+    });
+
+    test('stream language tag beats a conflicting title', () {
+      expect(
+        broadcastStreamLanguage(
+          stream(
+            id: 'tagged',
+            label: 'Official feed',
+            language: 'es',
+            publication: const BroadcastVideoPublication(
+              title: 'English commentary',
+            ),
+          ),
+        ).code,
+        'es',
+      );
+    });
+
+    test('language region tags and names resolve like the web', () {
+      expect(
+        broadcastStreamLanguage(
+          stream(id: 'one', label: 'Official', language: 'en-IN'),
+        ).code,
+        'en',
+      );
+      expect(
+        broadcastStreamLanguage(
+          stream(id: 'two', label: 'Official', language: 'spanish'),
+        ).code,
+        'es',
+      );
+    });
+
+    test('stream language groups without a language word in the label', () {
+      final groups = groupBroadcastVideoStreams(<BroadcastVideoStream>[
+        stream(id: 'a', label: 'Board 1', language: 'en'),
+        stream(id: 'b', label: 'Board 2', language: 'en'),
+        stream(id: 'c', label: 'Mesa', language: 'es'),
+      ]);
+      expect(groups.map((group) => group.label).toList(), <String>[
+        'English',
+        'Spanish',
+      ]);
+      expect(groups.first.countryCode, 'GB');
+      expect(groups.last.countryCode, 'ES');
     });
 
     test('recognises a language word in title, description or label', () {
@@ -228,6 +319,244 @@ void main() {
     test('falls back to the group order', () {
       expect(resolveBroadcastVideoSelection(streams)?.id, 'en');
     });
+
+    test('FIDE main wins for English memory or no memory', () {
+      final olympiad = <BroadcastVideoStream>[
+        stream(id: 'english', label: 'Other English', language: 'en'),
+        stream(
+          id: 'spanish',
+          label: 'Español',
+          publication: const BroadcastVideoPublication(language: 'es'),
+        ),
+        camera(1),
+        fideMain(),
+      ];
+      expect(
+        resolveBroadcastVideoSelection(olympiad, selectedId: 'camera-1')?.id,
+        'camera-1',
+      );
+      expect(
+        resolveBroadcastVideoSelection(olympiad, language: 'es')?.id,
+        'spanish',
+      );
+      expect(
+        resolveBroadcastVideoSelection(olympiad, language: 'en')?.id,
+        'fide-main',
+      );
+      expect(resolveBroadcastVideoSelection(olympiad)?.id, 'fide-main');
+    });
+  });
+
+  group('toolbar grouping', () {
+    test('recognises only exact FIDE commentary and numbered cameras', () {
+      expect(isFideMainCommentary(fideMain()), isTrue);
+      expect(fideCameraNumber(camera(12)), 12);
+      expect(
+        fideCameraNumber(
+          camera(8).copyWith(
+            publication: const BroadcastVideoPublication(
+              title: 'FIDE Chess Olympiad 2026 | Round 1 | Open Stream 8',
+            ),
+          ),
+        ),
+        8,
+      );
+      expect(
+        fideCameraNumber(
+          camera(2).copyWith(
+            platforms: <BroadcastVideoClientPlatform>{
+              BroadcastVideoClientPlatform.mobile,
+            },
+          ),
+        ),
+        isNull,
+      );
+      expect(
+        fideCameraNumber(
+          stream(
+            id: 'camera-2',
+            label: 'Official stream 2',
+            audience: _fideAudience,
+            publication: const BroadcastVideoPublication(
+              title: 'FIDE Chess Olympiad 2026 | Round 1 |  Stream 2 | Open',
+            ),
+          ),
+        ),
+        isNull,
+      );
+      expect(
+        fideCameraNumber(
+          camera(2).copyWith(
+            publication: const BroadcastVideoPublication(
+              language: 'en',
+              title: 'FIDE Chess Olympiad 2026 | Round 1 |  Stream 2 | Open',
+            ),
+          ),
+        ),
+        isNull,
+      );
+      expect(
+        fideCameraNumber(
+          camera(2).copyWith(
+            audience: const BroadcastVideoAudience(
+              channelId: 'UC1111111111111111111111',
+            ),
+          ),
+        ),
+        isNull,
+      );
+      expect(isFideMainCommentary(camera(1)), isFalse);
+    });
+
+    test('keeps FIDE main first and one numeric camera group last', () {
+      final groups = toolbarBroadcastVideoGroups(
+        <BroadcastVideoStream>[
+          camera(10),
+          stream(
+            id: 'english',
+            label: 'Other English',
+            publication: const BroadcastVideoPublication(language: 'en'),
+            audience: const BroadcastVideoAudience(
+              channelId: 'UC0000000000000000000000',
+              count: 900000,
+              checkedOn: '2026-09-15',
+            ),
+          ),
+          camera(2),
+          stream(
+            id: 'spanish',
+            label: 'Español',
+            publication: const BroadcastVideoPublication(language: 'es'),
+          ),
+          fideMain(),
+          camera(1),
+        ],
+        const <String>[],
+        20,
+      );
+      expect(
+        groups.map((group) => group.kind).toList(),
+        <BroadcastToolbarVideoKind>[
+          BroadcastToolbarVideoKind.fide,
+          BroadcastToolbarVideoKind.language,
+          BroadcastToolbarVideoKind.language,
+          BroadcastToolbarVideoKind.cameras,
+        ],
+      );
+      expect(groups.first.streams.map((stream) => stream.id), <String>[
+        'fide-main',
+      ]);
+      expect(groups.last.streams.map(fideCameraNumber).toList(), <int>[
+        1,
+        2,
+        10,
+      ]);
+    });
+
+    test('moves a selected non-English language ahead of FIDE', () {
+      final groups = toolbarBroadcastVideoGroups(
+        <BroadcastVideoStream>[
+          stream(
+            id: 'english',
+            label: 'Other English',
+            publication: const BroadcastVideoPublication(language: 'en'),
+          ),
+          camera(2),
+          stream(
+            id: 'spanish',
+            label: 'Español',
+            publication: const BroadcastVideoPublication(language: 'es'),
+          ),
+          fideMain(),
+        ],
+        const <String>[],
+        20,
+        selectedId: 'spanish',
+      );
+      expect(groups.first.streams.first.id, 'spanish');
+      expect(groups[1].kind, BroadcastToolbarVideoKind.fide);
+      expect(groups.last.kind, BroadcastToolbarVideoKind.cameras);
+    });
+
+    test('camera pins move out and never dissolve the remaining group', () {
+      for (final capacity in <int>[0, 2, 20]) {
+        final groups = toolbarBroadcastVideoGroups(
+          <BroadcastVideoStream>[
+            camera(3),
+            stream(
+              id: 'english',
+              label: 'Other English',
+              publication: const BroadcastVideoPublication(language: 'en'),
+            ),
+            camera(1),
+            camera(2),
+            fideMain(),
+          ],
+          const <String>['camera-2'],
+          capacity,
+        );
+        expect(groups.first.kind, BroadcastToolbarVideoKind.camera);
+        expect(groups.first.cameraNumber, 2);
+        expect(groups.last.kind, BroadcastToolbarVideoKind.cameras);
+        expect(groups.last.streams.map(fideCameraNumber).toList(), <int>[1, 3]);
+      }
+    });
+
+    test('unwraps languages only when every stream fits', () {
+      final streams = <BroadcastVideoStream>[
+        for (final entry in <(String, String)>[
+          ('0', 'en'),
+          ('1', 'en'),
+          ('2', 'en'),
+          ('3', 'en'),
+          ('4', 'en'),
+          ('5', 'pt'),
+          ('6', 'es'),
+          ('7', 'es'),
+          ('8', 'es'),
+          ('9', 'ru'),
+        ])
+          stream(
+            id: entry.$1,
+            label: 'Channel ${entry.$1}',
+            publication: BroadcastVideoPublication(language: entry.$2),
+          ),
+      ];
+      final languageGroups =
+          groupBroadcastVideoStreams(streams)
+              .map(
+                (group) => BroadcastToolbarVideoGroup(
+                  key: group.key,
+                  code: group.code,
+                  label: group.label,
+                  countryCode: group.countryCode,
+                  streams: group.streams,
+                  kind: BroadcastToolbarVideoKind.language,
+                ),
+              )
+              .toList();
+      final individual = progressiveBroadcastStreamGroups(
+        languageGroups,
+        const <String>[],
+        streams.length,
+      );
+      expect(individual, hasLength(streams.length));
+      expect(individual.every((group) => group.streams.length == 1), isTrue);
+      final compact = progressiveBroadcastStreamGroups(
+        languageGroups,
+        const <String>[],
+        streams.length - 1,
+      );
+      expect(
+        compact.map((group) => <Object>[group.label, group.streams.length]),
+        <List<Object>>[
+          <Object>['English', 5],
+          <Object>['Portuguese', 1],
+          <Object>['Russian', 1],
+          <Object>['Spanish', 3],
+        ],
+      );
+    });
   });
 
   group('display name', () {
@@ -297,8 +626,47 @@ void main() {
       expect(resolved.streams, hasLength(1));
       expect(resolved.streams.single.provider, BroadcastVideoProvider.twitch);
       expect(resolved.streams.single.preferred, isTrue);
+      expect(resolved.streams.single.platforms, isNull);
       expect(resolved.source?.scope, 'round');
       expect(resolved.source?.id, 'r1');
+    });
+
+    test('reads platform allow-lists and top-level language', () {
+      final stream = BroadcastVideoStream.fromJson(<String, Object?>{
+        'id': 'cam',
+        'label': 'Official',
+        'provider': 'youtube',
+        'sourceId': 'abcdefghijk',
+        'url': 'https://www.youtube.com/watch?v=abcdefghijk',
+        'language': 'en-IN',
+        'platforms': <String>['web', 'desktop'],
+        'audience': <String, Object?>{
+          'channelId': fideYoutubeChannelId,
+          'count': 10,
+          'checkedOn': '2026-09-15',
+        },
+      });
+      expect(stream, isNotNull);
+      expect(stream!.language, 'en-IN');
+      expect(stream.platforms, _desktopWeb);
+      expect(
+        broadcastStreamSupportsPlatform(
+          stream,
+          BroadcastVideoClientPlatform.mobile,
+        ),
+        isFalse,
+      );
+      expect(
+        BroadcastVideoStream.fromJson(<String, Object?>{
+          'id': 'bad',
+          'label': 'Official',
+          'provider': 'youtube',
+          'sourceId': 'abcdefghijk',
+          'url': 'https://www.youtube.com/watch?v=abcdefghijk',
+          'platforms': <String>['console'],
+        }),
+        isNull,
+      );
     });
 
     test('falls back to the tour scope when the round is unknown', () async {
