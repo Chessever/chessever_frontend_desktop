@@ -515,8 +515,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     // returns to the foreground.
     final mayLoad = retention == BroadcastVideoPlayerRetention.show;
     // A loading gap (or a list that cannot pick a stream) keeps the loaded
-    // player mounted in its slot; the toolbar is appended once resolved,
-    // which does not move the slot.
+    // player mounted in its slot; the toolbar slot is reserved from the
+    // first frame so resolving the rail never reparents the webview.
     if (data == null ||
         streams.isEmpty ||
         selected == null ||
@@ -556,8 +556,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     );
   }
 
-  /// The one stable shape every non-hide frame renders: the player slot at
-  /// index 0, the toolbar (once resolvable) appended after it.
+  /// The one stable shape every non-hide frame renders: the language rail
+  /// at index 0 (web's `VideoStreamToolbar`), the player slot at index 1.
   ///
   /// A tab switch flips only ancestor Offstage/TickerMode flags; this
   /// subtree is identical foreground and background, so the platform view
@@ -571,11 +571,9 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     Widget? toolbar,
     bool showPlayer = true,
   }) {
-    // Player first, toolbar under it: every popover and tooltip the toolbar
-    // opens then falls downward over our own notation panel, never in front
-    // of the provider player. Both Twitch ("should not be obscured in any
-    // way by other page elements") and YouTube ("must not display overlays
-    // … in front of any part of a YouTube embedded player") forbid that.
+    // Same order as the site's `.ce-video`: flags and overflow sit above
+    // the frame. Menus and tooltips open upward off the player (see the
+    // toolbar), matching Twitch / YouTube overlay rules.
     return DecoratedBox(
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: kDividerColor)),
@@ -583,8 +581,11 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          KeyedSubtree(
+            key: const ValueKey<String>('desktop-broadcast-video-toolbar-slot'),
+            child: toolbar ?? const SizedBox.shrink(),
+          ),
           if (showPlayer) _playerSlot(stream, source, mayLoad: mayLoad),
-          if (toolbar != null) toolbar,
         ],
       ),
     );

@@ -174,5 +174,6 @@ void main() {
       find.byKey(const ValueKey<String>('desktop-broadcast-video-actions')),
     );
     expect(rail.right, lessThanOrEqualTo(actions.left));
+    expect(find.text('⋯'), findsOneWidget);
   });
 }

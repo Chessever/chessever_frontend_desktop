@@ -75,11 +75,12 @@ void main() {
     );
     // No GlobalKey relocation machinery: the platform view must never move
     // between tree positions, which detaches it natively.
-    final webViews = tester
-        .widgetList<WebViewWidget>(
-          find.byType(WebViewWidget, skipOffstage: false),
-        )
-        .toList();
+    final webViews =
+        tester
+            .widgetList<WebViewWidget>(
+              find.byType(WebViewWidget, skipOffstage: false),
+            )
+            .toList();
     expect(webViews.length, 2);
     for (final webView in webViews) {
       expect(webView.key, isNot(isA<GlobalKey>()));
@@ -115,10 +116,7 @@ void main() {
     final tabA = _FakeWebViewPlatform.controllers.firstWhere(
       (controller) => controller.loads.length > 1,
     );
-    expect(
-      tabA.loads,
-      <Uri>[tabA.loads.first, Uri.parse('about:blank')],
-    );
+    expect(tabA.loads, <Uri>[tabA.loads.first, Uri.parse('about:blank')]);
     expect(
       find.descendant(
         of: find.byKey(_Harness.panelAKey, skipOffstage: false),
@@ -171,11 +169,13 @@ void main() {
     // the foreground tab loads there at once but must not start a hidden
     // load on the background tab.
     ProviderScope.containerOf(
-      tester.element(find.byType(PersistentIndexedStack)),
-    ).read(broadcastVideoSessionPreferencesProvider.notifier).write(
-      'ce-video.v1:tour-x',
-      const BroadcastVideoPreference(selectedId: 's2', visible: true),
-    );
+          tester.element(find.byType(PersistentIndexedStack)),
+        )
+        .read(broadcastVideoSessionPreferencesProvider.notifier)
+        .write(
+          'ce-video.v1:tour-x',
+          const BroadcastVideoPreference(selectedId: 's2', visible: true),
+        );
     await tester.pump();
     await tester.pump();
     await tester.pump();
@@ -198,6 +198,27 @@ void main() {
     addTearDown(() => disposeTree(tester));
   });
 
+  testWidgets('language rail and overflow sit above the player', (
+    tester,
+  ) async {
+    _Harness.index.value = 0;
+    await tester.pumpWidget(const _Harness());
+    await _pumpUntilLoads(tester, 1);
+
+    final rail = tester.getRect(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-languages')),
+    );
+    final actions = tester.getRect(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-actions')),
+    );
+    final player = tester.getRect(find.byType(WebViewWidget));
+
+    expect(rail.bottom, lessThanOrEqualTo(player.top));
+    expect(actions.bottom, lessThanOrEqualTo(player.top));
+    expect(find.text('⋯'), findsOneWidget);
+    addTearDown(() => disposeTree(tester));
+  });
+
   testWidgets('hiding the player keeps the camera toggle so it can return', (
     tester,
   ) async {
@@ -211,7 +232,9 @@ void main() {
     );
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+        of: find.byKey(
+          const ValueKey<String>('desktop-broadcast-video-toggle'),
+        ),
         matching: find.byIcon(Icons.videocam_off_rounded),
       ),
       findsOneWidget,
@@ -230,7 +253,9 @@ void main() {
     );
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+        of: find.byKey(
+          const ValueKey<String>('desktop-broadcast-video-toggle'),
+        ),
         matching: find.byIcon(Icons.videocam_rounded),
       ),
       findsOneWidget,
@@ -245,7 +270,9 @@ void main() {
     expect(find.byType(WebViewWidget), findsOneWidget);
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+        of: find.byKey(
+          const ValueKey<String>('desktop-broadcast-video-toggle'),
+        ),
         matching: find.byIcon(Icons.videocam_off_rounded),
       ),
       findsOneWidget,
@@ -313,10 +340,7 @@ class _Harness extends StatelessWidget {
                       'url': 'https://twitch.tv/chess2',
                     },
                   ],
-                  'source': <String, Object?>{
-                    'scope': 'round',
-                    'id': 'r1',
-                  },
+                  'source': <String, Object?>{'scope': 'round', 'id': 'r1'},
                 }),
                 200,
               );

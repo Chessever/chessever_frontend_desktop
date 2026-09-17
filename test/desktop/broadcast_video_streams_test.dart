@@ -117,6 +117,15 @@ void main() {
       expect(detected.countryCode, 'ES');
     });
 
+    test('Uzbek editor tags group under the Uzbekistan flag', () {
+      final detected = broadcastStreamLanguage(
+        stream(id: 'room', label: 'Chess Room', language: 'uz'),
+      );
+      expect(detected.code, 'uz');
+      expect(detected.label, 'Uzbek');
+      expect(detected.countryCode, 'UZ');
+    });
+
     test('stream language tag is used when publication is missing', () {
       final detected = broadcastStreamLanguage(
         stream(id: 'tagged', label: 'Official feed', language: 'hi'),
@@ -406,6 +415,56 @@ void main() {
         isNull,
       );
       expect(isFideMainCommentary(camera(1)), isFalse);
+    });
+
+    test('treats official pairing-title board feeds as numbered cameras', () {
+      final colombia = stream(
+        id: 'colombia',
+        label: 'Colombia vs Hungary',
+        audience: _fideAudience,
+        platforms: _desktopWeb,
+        publication: const BroadcastVideoPublication(
+          title:
+              'FIDE Chess Olympiad 2026 | Round 2 | Colombia vs Hungary | Open',
+        ),
+      );
+      final ecuador = stream(
+        id: 'ecuador',
+        label: 'Ecuador vs Uzbekistan',
+        audience: _fideAudience,
+        platforms: _desktopWeb,
+        publication: const BroadcastVideoPublication(
+          title:
+              'FIDE Chess Olympiad 2026 | Round 2 |  Ecuador vs Uzbekistan | Women',
+        ),
+      );
+      final groups = toolbarBroadcastVideoGroups(
+        <BroadcastVideoStream>[
+          colombia,
+          stream(
+            id: 'english',
+            label: 'Other English',
+            language: 'en',
+          ),
+          ecuador,
+          fideMain(),
+        ],
+        const <String>[],
+        20,
+      );
+      expect(
+        groups.map((group) => group.kind).toList(),
+        <BroadcastToolbarVideoKind>[
+          BroadcastToolbarVideoKind.fide,
+          BroadcastToolbarVideoKind.language,
+          BroadcastToolbarVideoKind.cameras,
+        ],
+      );
+      expect(groups.last.streams.map((stream) => stream.id), <String>[
+        'colombia',
+        'ecuador',
+      ]);
+      expect(groups.last.streams.map(fideCameraNumber).toList(), <int>[1, 2]);
     });
 
     test('keeps FIDE main first and one numeric camera group last', () {

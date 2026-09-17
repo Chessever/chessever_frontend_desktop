@@ -705,6 +705,114 @@ void main() {
     },
   );
 
+  test(
+    'event rail standings use team rows when the boards are a team event',
+    () {
+      expect(
+        eventRailShowsTeamStandings(
+          officialTeamEvent: true,
+          games: const <TournamentGameSummary>[],
+        ),
+        isTrue,
+      );
+      expect(
+        eventRailShowsTeamStandings(
+          officialTeamEvent: false,
+          games: [
+            _summary(
+              id: 'board-1',
+              roundLabel: 'Round 1',
+              whiteTeam: 'India',
+              blackTeam: 'Norway',
+            ),
+            _summary(
+              id: 'board-2',
+              roundLabel: 'Round 1',
+              whiteTeam: 'Norway',
+              blackTeam: 'India',
+            ),
+          ],
+        ),
+        isTrue,
+      );
+      expect(
+        eventRailGamesLookLikeTeamEvent([
+          _summary(id: 'board-1', roundLabel: 'Round 1'),
+          _summary(id: 'board-2', roundLabel: 'Round 1'),
+          _summary(
+            id: 'board-3',
+            roundLabel: 'Round 1',
+            whiteTeam: 'India',
+            blackTeam: 'Norway',
+          ),
+        ]),
+        isFalse,
+      );
+      expect(
+        eventRailShowsTeamStandings(
+          officialTeamEvent: false,
+          games: [_summary(id: 'board-1', roundLabel: 'Round 1')],
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets('event rail Standings tab shows team standings for team events', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'team-board-1',
+          pgn: '1. e4 e5 *',
+          label: 'Team board',
+          whiteName: 'Gukesh D',
+          blackName: 'Carlsen, Magnus',
+          tournamentTitle: 'Olympiad Open',
+          eventGames: [
+            _summary(
+              id: 'team-board-1',
+              roundLabel: 'Round 1',
+              whitePlayer: 'Gukesh D',
+              blackPlayer: 'Carlsen, Magnus',
+              whiteTeam: 'India',
+              blackTeam: 'Norway',
+              boardNumber: 1,
+              status: GameStatus.ongoing,
+              hasStarted: true,
+              lastMoveTime: DateTime.now(),
+            ),
+            _summary(
+              id: 'team-board-2',
+              roundLabel: 'Round 1',
+              whitePlayer: 'Erigaisi',
+              blackPlayer: 'Caruana',
+              whiteTeam: 'India',
+              blackTeam: 'USA',
+              boardNumber: 2,
+              status: GameStatus.draw,
+              hasStarted: true,
+              lastMoveTime: DateTime.now(),
+            ),
+          ],
+          gameListSelectedId: 'team-board-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('Standings'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Gukesh D'), findsNothing);
+    expect(find.text('No standings published yet.'), findsNothing);
+    expect(
+      find.text('Team standings appear here once pairings are published.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'live-first toggle keeps live boards above finished board order',
     (tester) async {

@@ -604,6 +604,12 @@ const List<_KnownLanguage> _knownLanguages = <_KnownLanguage>[
     countryCode: 'TR',
   ),
   _KnownLanguage(
+    codes: ['uz'],
+    names: ['uzbek', 'oʻzbek', "o'zbek", 'ozbek'],
+    label: 'Uzbek',
+    countryCode: 'UZ',
+  ),
+  _KnownLanguage(
     codes: ['zh'],
     names: ['chinese', '中文'],
     label: 'Chinese',
@@ -949,9 +955,16 @@ const String fideYoutubeChannelId = 'UC9B47GnzCRFHTT1BIBWvStQ';
 final RegExp _fideOlympiadTitle = RegExp(
   r'^♟?\s*FIDE Chess Olympiad 2026\s*\|\s*Round\s+\d+\s*\|',
 );
-final RegExp _fideCameraTitle = RegExp(
+final RegExp _fideCameraStream = RegExp(
   r'^♟?\s*FIDE Chess Olympiad 2026\s*\|\s*Round\s+\d+\s*\|\s*(?:Stream\s+(\d+)\s*\|\s*(Open|Women)|(Open|Women)\s+Stream\s+(\d+))\s*$',
 );
+final RegExp _fideCameraBoard = RegExp(
+  r'^♟?\s*FIDE Chess Olympiad 2026\s*\|\s*Round\s+\d+\s*\|\s*(?!Stream\s+\d+\s*\|)(?!(?:Open|Women)\s+Stream\s+\d+\s*$).+\|\s*(Open|Women)\s*$',
+);
+
+bool _isFideCameraTitle(String title) {
+  return _fideCameraStream.hasMatch(title) || _fideCameraBoard.hasMatch(title);
+}
 
 enum BroadcastToolbarVideoKind { language, fide, cameras, camera }
 
@@ -1005,19 +1018,23 @@ bool _isFideYoutubeStream(BroadcastVideoStream stream) {
       stream.audience?.channelId == fideYoutubeChannelId;
 }
 
-int? fideCameraNumber(BroadcastVideoStream stream) {
+bool _isDesktopWebOnly(BroadcastVideoStream stream) {
   final platforms = stream.platforms;
-  final desktopWebOnly =
-      platforms != null &&
+  return platforms != null &&
       platforms.length == 2 &&
       platforms.contains(BroadcastVideoClientPlatform.web) &&
       platforms.contains(BroadcastVideoClientPlatform.desktop);
-  if (!_isFideYoutubeStream(stream) ||
-      !desktopWebOnly ||
-      broadcastStreamPrimaryLanguage(stream) != null) {
-    return null;
-  }
-  final match = _fideCameraTitle.firstMatch(stream.publication?.title ?? '');
+}
+
+bool _isFideBoardCamera(BroadcastVideoStream stream) {
+  return _isFideYoutubeStream(stream) &&
+      _isDesktopWebOnly(stream) &&
+      broadcastStreamPrimaryLanguage(stream) == null &&
+      _isFideCameraTitle(stream.publication?.title ?? '');
+}
+
+int? _explicitCameraNumber(BroadcastVideoStream stream) {
+  final match = _fideCameraStream.firstMatch(stream.publication?.title ?? '');
   if (match == null) return null;
   final raw = match.group(1) ?? match.group(4);
   final number = int.tryParse(raw ?? '');
@@ -1025,12 +1042,54 @@ int? fideCameraNumber(BroadcastVideoStream stream) {
   return number;
 }
 
+final Map<String, int> _assignedCameraNumbers = <String, int>{};
+
+List<({BroadcastVideoStream stream, int number})> numberedFideCameras(
+  List<BroadcastVideoStream> streams,
+) {
+  final candidates = streams.where(_isFideBoardCamera).toList(growable: false);
+  final used = <int>{};
+  final numbered = <({BroadcastVideoStream stream, int number})>[];
+  for (final stream in candidates) {
+    final explicit = _explicitCameraNumber(stream);
+    if (explicit == null) continue;
+    numbered.add((stream: stream, number: explicit));
+    used.add(explicit);
+  }
+  var next = 1;
+  for (final stream in candidates) {
+    if (_explicitCameraNumber(stream) != null) continue;
+    while (used.contains(next)) {
+      next++;
+    }
+    numbered.add((stream: stream, number: next));
+    used.add(next);
+    next++;
+  }
+  numbered.sort((a, b) {
+    final byNumber = a.number.compareTo(b.number);
+    if (byNumber != 0) return byNumber;
+    return a.stream.id.compareTo(b.stream.id);
+  });
+  _assignedCameraNumbers
+    ..clear()
+    ..addEntries(
+      numbered.map((entry) => MapEntry(entry.stream.id, entry.number)),
+    );
+  return numbered;
+}
+
+int? fideCameraNumber(BroadcastVideoStream stream) {
+  if (!_isFideBoardCamera(stream)) return null;
+  return _explicitCameraNumber(stream) ?? _assignedCameraNumbers[stream.id];
+}
+
 bool isFideMainCommentary(BroadcastVideoStream stream) {
   final title = stream.publication?.title ?? '';
   return _isFideYoutubeStream(stream) &&
       broadcastStreamPrimaryLanguage(stream) == 'en' &&
       _fideOlympiadTitle.hasMatch(title) &&
-      !_fideCameraTitle.hasMatch(title);
+      !_isFideCameraTitle(title);
 }
 
 /// Show every exact stream only while the full set fits. Once it does not,
@@ -1105,17 +1164,7 @@ List<BroadcastToolbarVideoGroup> toolbarBroadcastVideoGroups(
   String? selectedId,
 }) {
   final main = streams.where(isFideMainCommentary).toList(growable: false);
-  final cameras =
-      streams
-          .map((stream) => (stream: stream, number: fideCameraNumber(stream)))
-          .where((entry) => entry.number != null)
-          .map((entry) => (stream: entry.stream, number: entry.number!))
-          .toList()
-        ..sort((a, b) {
-          final byNumber = a.number.compareTo(b.number);
-          if (byNumber != 0) return byNumber;
-          return a.stream.id.compareTo(b.stream.id);
-        });
+  final cameras = numberedFideCameras(streams);
   final specialIds = <String>{
     ...main.map((stream) => stream.id),
     ...cameras.map((entry) => entry.stream.id),

@@ -46,7 +46,7 @@ place, owner named; N/A = does not apply.
 | Viewport at least 200×200 (RMF) | OK | Panel: below 200 px of rail width the external link replaces the player; height is clamped to at least 200. Site: `minWidth`/`minHeight` on the adapter. |
 | Do not initiate autoplay until the player is visible and more than half visible (RMF) | OK | A new player mounts (and loads) only for the foreground Board tab with the player expanded; hidden tabs keep the loaded player mounted in place without starting a hidden load. |
 | Only one autoplaying player per page or screen (RMF) | OK | One panel per Board tab; a new player mounts only on the foreground tab, and a background tab blanks its player after the 20s grace. A detached board window is a separate screen. |
-| No overlays, frames or visual elements in front of any part of the player (RMF) | OK | Desktop: player first, toolbar under it; tooltips and popovers anchor downward over our notation panel. Site: hover list opens above the flag, overflow menu `side="top"`, chat launcher hidden on `/embed`. |
+| No overlays, frames or visual elements in front of any part of the player (RMF) | OK | Desktop and site share the same chrome: language rail and overflow sit above the frame. Hover lists, pin menus and tooltips open above the flags (site falls back below only when there is no room). Chat launcher is hidden on `/embed`. |
 | No mouseovers or touch events on the player to initiate actions (RMF) | OK | Hover handlers exist only on the toolbar flags, not on the player. |
 | Do not modify, build upon or block player functionality; no changes not described by the API docs (III.I.6, RMF) | OK | Documented player parameters only (`autoplay`, `mute`, `playsinline`); no scripts injected into provider frames. |
 | No background player: content must not play from a player not displayed in the page, tab or screen the user is viewing (III.I.9) | OK | Playback stops 20 seconds after the tab leaves the foreground or the window is hidden or minimised (`liveGameStreamingLifecycleProvider`); during the grace the player stays mounted at its stable position (the tab stack hides it) so a quick switch back keeps the same player with no reload. Moving or disposing the host restarts later Board tabs, so the panel never does either during the grace. |
@@ -98,9 +98,9 @@ place, owner named; N/A = does not apply.
 3. Only streams the broadcast API resolves for the scope are embeddable; the
    embed page 404s for anything else and the panel then offers the external
    link, never a broken frame.
-4. Nothing of ours in front of the player: the toolbar stays under it, and
-   tooltips, popovers and menus anchor away from it. On the site, menus open
-   above the toolbar and the chat launcher stays hidden on `/embed`.
+4. Nothing of ours in front of the player: the language rail sits above the
+   frame, and tooltips, popovers and menus open above the flags. On the site,
+   menus prefer the same side and the chat launcher stays hidden on `/embed`.
 5. Main-frame navigations away from the embed page are cancelled; only
    twitch.tv, youtube.com, youtu.be and kick.com destinations may open in
    the system browser, throttled to one launch per two seconds and no repeat

@@ -42,96 +42,101 @@ class BroadcastVideoToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: slot + 12,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: ClipRect(
-                key: const ValueKey<String>(
-                  'desktop-broadcast-video-languages',
-                ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final capacity =
-                        constraints.maxWidth <= 0
-                            ? 0
-                            : ((constraints.maxWidth + gap) / (slot + gap))
-                                .floor();
-                    final groups = toolbarBroadcastVideoGroups(
-                      streams,
-                      pins,
-                      capacity,
-                      selectedId: selectedId,
-                    );
-                    return SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      clipBehavior: Clip.hardEdge,
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Row(
-                        children: [
-                          for (
-                            var index = 0;
-                            index < groups.length;
-                            index++
-                          ) ...[
-                            if (index > 0) const SizedBox(width: gap),
-                            _LanguageGroupButton(
-                              group: groups[index],
-                              selectedId: selectedId,
-                              pinned: pins.contains(
-                                groups[index].streams.first.id,
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: kDividerColor)),
+      ),
+      child: SizedBox(
+        height: slot + 12,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: ClipRect(
+                  key: const ValueKey<String>(
+                    'desktop-broadcast-video-languages',
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final capacity =
+                          constraints.maxWidth <= 0
+                              ? 0
+                              : ((constraints.maxWidth + gap) / (slot + gap))
+                                  .floor();
+                      final groups = toolbarBroadcastVideoGroups(
+                        streams,
+                        pins,
+                        capacity,
+                        selectedId: selectedId,
+                      );
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        clipBehavior: Clip.hardEdge,
+                        padding: const EdgeInsets.only(right: 6),
+                        child: Row(
+                          children: [
+                            for (
+                              var index = 0;
+                              index < groups.length;
+                              index++
+                            ) ...[
+                              if (index > 0) const SizedBox(width: gap),
+                              _LanguageGroupButton(
+                                group: groups[index],
+                                selectedId: selectedId,
+                                pinned: pins.contains(
+                                  groups[index].streams.first.id,
+                                ),
+                                onSelect: onSelect,
+                                onPin: onPin,
                               ),
-                              onSelect: onSelect,
-                              onPin: onPin,
-                            ),
+                            ],
                           ],
-                        ],
-                      ),
-                    );
-                  },
+                        ),
+                      );
+                    },
+                  ),
                 ),
               ),
-            ),
-            Container(
-              key: const ValueKey<String>('desktop-broadcast-video-actions'),
-              margin: const EdgeInsets.only(left: 8),
-              padding: const EdgeInsets.only(left: 8),
-              decoration: const BoxDecoration(
-                border: Border(left: BorderSide(color: kDividerColor)),
-              ),
-              child: Row(
-                children: [
-                  _PinMenuButton(
-                    groupsBuilder:
-                        (capacity) => toolbarBroadcastVideoGroups(
-                          streams,
-                          pins,
-                          capacity,
-                          selectedId: selectedId,
-                        ),
-                    pins: pins,
-                    onPin: onPin,
-                  ),
-                  const SizedBox(width: 6),
-                  _IconAction(
-                    key: const ValueKey<String>(
-                      'desktop-broadcast-video-toggle',
+              Container(
+                key: const ValueKey<String>('desktop-broadcast-video-actions'),
+                margin: const EdgeInsets.only(left: 8),
+                padding: const EdgeInsets.only(left: 8),
+                decoration: const BoxDecoration(
+                  border: Border(left: BorderSide(color: kDividerColor)),
+                ),
+                child: Row(
+                  children: [
+                    _PinMenuButton(
+                      groupsBuilder:
+                          (capacity) => toolbarBroadcastVideoGroups(
+                            streams,
+                            pins,
+                            capacity,
+                            selectedId: selectedId,
+                          ),
+                      pins: pins,
+                      onPin: onPin,
                     ),
-                    icon:
-                        visible
-                            ? Icons.videocam_off_rounded
-                            : Icons.videocam_rounded,
-                    tooltip: visible ? 'Hide video' : 'Show video',
-                    selected: visible,
-                    onPress: onToggle,
-                  ),
-                ],
+                    const SizedBox(width: 6),
+                    _IconAction(
+                      key: const ValueKey<String>(
+                        'desktop-broadcast-video-toggle',
+                      ),
+                      icon:
+                          visible
+                              ? Icons.videocam_off_rounded
+                              : Icons.videocam_rounded,
+                      tooltip: visible ? 'Hide video' : 'Show video',
+                      selected: visible,
+                      onPress: onToggle,
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -274,15 +279,7 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
       onExit: (_) => _closeMenuSoon(),
       child: GestureDetector(
         onSecondaryTap: () => widget.onPin(group.streams.first.id),
-        child:
-            _multiple
-                ? mark
-                : DesktopTooltip(
-                  message: tooltip,
-                  tipAnchor: Alignment.topCenter,
-                  childAnchor: Alignment.bottomCenter,
-                  child: mark,
-                ),
+        child: _multiple ? mark : DesktopTooltip(message: tooltip, child: mark),
       ),
     );
     if (!_multiple) return trigger;
@@ -290,6 +287,9 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
       data: FThemes.zinc.dark,
       child: FPopover(
         controller: _menuController,
+        popoverAnchor: Alignment.bottomLeft,
+        childAnchor: Alignment.topLeft,
+        spacing: const FPortalSpacing(6),
         popoverBuilder:
             (context, _) => MouseRegion(
               onEnter: (_) => _cancelClose(),
@@ -603,6 +603,9 @@ class _PinMenuButtonState extends State<_PinMenuButton>
       data: FThemes.zinc.dark,
       child: FPopover(
         controller: _controller,
+        popoverAnchor: Alignment.bottomRight,
+        childAnchor: Alignment.topRight,
+        spacing: const FPortalSpacing(6),
         popoverBuilder: (context, _) {
           final groups = widget.groupsBuilder(20);
           final entries = groups
@@ -625,7 +628,7 @@ class _PinMenuButtonState extends State<_PinMenuButton>
           );
         },
         child: _IconAction(
-          icon: Icons.more_horiz_rounded,
+          label: '⋯',
           tooltip: 'Manage stream pins (or right-click a flag)',
           onPress: _controller.toggle,
         ),
@@ -768,13 +771,18 @@ class _MenuRow extends StatelessWidget {
 class _IconAction extends StatelessWidget {
   const _IconAction({
     super.key,
-    required this.icon,
+    this.icon,
+    this.label,
     required this.tooltip,
     required this.onPress,
     this.selected = false,
-  });
+  }) : assert(
+         (icon != null) != (label != null),
+         'Provide exactly one of icon or label',
+       );
 
-  final IconData icon;
+  final IconData? icon;
+  final String? label;
   final String tooltip;
   final VoidCallback onPress;
   final bool selected;
@@ -788,37 +796,36 @@ class _IconAction extends StatelessWidget {
         semanticsLabel: tooltip.isEmpty ? null : tooltip,
         builder: (context, states, _) {
           final hovered = states.contains(WidgetState.hovered);
-          final pressed = states.contains(WidgetState.pressed);
           final focused = states.contains(WidgetState.focused);
-          final border =
-              selected || focused || hovered ? kPrimaryColor : kDividerColor;
+          final highlighted = focused || hovered;
+          // Web `.ce-video__icon-action`: square 34px, hairline border,
+          // primary rim/ink on hover, selected is ink only.
+          final border = highlighted ? kPrimaryColor : kDividerColor;
           final foreground =
-              selected || hovered ? kPrimaryColor : kWhiteColor70;
+              selected || highlighted ? kPrimaryColor : kWhiteColor70;
           return Container(
             width: BroadcastVideoToolbar.button,
             height: BroadcastVideoToolbar.button,
             alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color:
-                  selected
-                      ? kPrimaryColor.withValues(alpha: 0.12)
-                      : (hovered || pressed
-                          ? kBlack3Color
-                          : Colors.transparent),
-              border: Border.all(color: border),
-            ),
-            child: Icon(icon, size: 18, color: foreground),
+            decoration: BoxDecoration(border: Border.all(color: border)),
+            child:
+                label != null
+                    ? Text(
+                      label!,
+                      style: TextStyle(
+                        fontSize: 18,
+                        height: 1,
+                        fontWeight: FontWeight.w600,
+                        color: foreground,
+                      ),
+                    )
+                    : Icon(icon, size: 18, color: foreground),
           );
         },
       ),
     );
     if (tooltip.isEmpty) return button;
-    return DesktopTooltip(
-      message: tooltip,
-      tipAnchor: Alignment.topCenter,
-      childAnchor: Alignment.bottomCenter,
-      child: button,
-    );
+    return DesktopTooltip(message: tooltip, child: button);
   }
 }
 

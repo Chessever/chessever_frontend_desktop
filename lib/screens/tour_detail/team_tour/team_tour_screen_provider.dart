@@ -40,11 +40,9 @@ final selectedTeamStandingProvider = Provider<TeamStandingModel?>((ref) {
   );
 });
 
-/// Reads the current tour's live games as [GamesTourModel]s, subscribing only
-/// to result-affecting changes.
-List<GamesTourModel> _watchTeamGames(Ref ref) {
-  final tourId =
-      ref.watch(tourDetailScreenProvider).valueOrNull?.aboutTourModel.id ?? '';
+/// Reads a tour's live games as [GamesTourModel]s, subscribing only to
+/// result-affecting changes.
+List<GamesTourModel> _watchTeamGamesForTour(Ref ref, String tourId) {
   final games = <GamesTourModel>[];
   if (tourId.isEmpty) return games;
   ref.watch(gamesTourProvider(tourId).select(standingsGamesSignature));
@@ -57,15 +55,29 @@ List<GamesTourModel> _watchTeamGames(Ref ref) {
   return games;
 }
 
+/// Reads the current tour's live games as [GamesTourModel]s, subscribing only
+/// to result-affecting changes.
+List<GamesTourModel> _watchTeamGames(Ref ref) {
+  final tourId =
+      ref.watch(tourDetailScreenProvider).valueOrNull?.aboutTourModel.id ?? '';
+  return _watchTeamGamesForTour(ref, tourId);
+}
+
+TourInfo? _tourInfoForTourId(Ref ref, String tourId) {
+  final vm = ref.watch(tourDetailScreenProvider).valueOrNull;
+  if (vm == null || tourId.isEmpty) return null;
+  for (final t in vm.tours) {
+    if (t.tour.id == tourId) return t.tour.info;
+  }
+  return null;
+}
+
 /// Round-by-round matches for a given team (by name). Powers both the
 /// expandable team standings row and the team score card.
 TourInfo? _selectedTourInfo(Ref ref) {
-  final vm = ref.watch(tourDetailScreenProvider).valueOrNull;
-  if (vm == null) return null;
-  for (final t in vm.tours) {
-    if (t.tour.id == vm.aboutTourModel.id) return t.tour.info;
-  }
-  return null;
+  final tourId =
+      ref.watch(tourDetailScreenProvider).valueOrNull?.aboutTourModel.id ?? '';
+  return _tourInfoForTourId(ref, tourId);
 }
 
 final teamMatchesFamilyProvider =
@@ -102,4 +114,49 @@ final teamStandingsProvider =
           scoring: TeamScoringRules.fromTourInfo(_selectedTourInfo(ref)),
         );
       });
+    });
+
+/// Tour-scoped team standings for the in-game event rail.
+///
+/// The rail's [tourDetailScreenProvider] may still be pointed at a different
+/// event, so this reads the official roster and games for [tourId] directly
+/// instead of the currently selected hall tour.
+final teamStandingsForTourProvider =
+    AutoDisposeProvider.family<AsyncValue<List<TeamStandingModel>>, String>((
+      ref,
+      rawTourId,
+    ) {
+      final tourId = rawTourId.trim();
+      if (tourId.isEmpty) {
+        return const AsyncValue.data(<TeamStandingModel>[]);
+      }
+
+      final playersAsync = ref.watch(tournamentRosterStandingsProvider(tourId));
+      final games = _watchTeamGamesForTour(ref, tourId);
+      final scoring = TeamScoringRules.fromTourInfo(
+        _tourInfoForTourId(ref, tourId),
+      );
+
+      if (playersAsync.hasValue) {
+        return AsyncValue.data(
+          buildTeamStandings(
+            games: games,
+            playerStandings: playersAsync.requireValue,
+            scoring: scoring,
+          ),
+        );
+      }
+      if (games.isNotEmpty) {
+        return AsyncValue.data(
+          buildTeamStandings(
+            games: games,
+            playerStandings: const [],
+            scoring: scoring,
+          ),
+        );
+      }
+      if (playersAsync.hasError) {
+        return AsyncValue.error(playersAsync.error!, playersAsync.stackTrace!);
+      }
+      return const AsyncValue.loading();
     });

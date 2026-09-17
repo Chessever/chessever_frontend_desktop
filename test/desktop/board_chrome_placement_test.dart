@@ -136,6 +136,13 @@ void main() {
     },
   );
 
+  test('event rail Standings tab swaps in team rows for team events', () {
+    final rail = source('lib/desktop/widgets/event_games_table.dart');
+    expect(rail, contains('DesktopCompactTeamStandingsView'));
+    expect(rail, contains('eventRailShowsTeamStandings'));
+    expect(rail, contains('TournamentStandingsView('));
+  });
+
   test('event rail keeps team names in matchup header, not player rows', () {
     final rail = source('lib/desktop/widgets/event_games_table.dart');
     final playerLine = section(
