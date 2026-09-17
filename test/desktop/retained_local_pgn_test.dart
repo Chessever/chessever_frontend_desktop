@@ -9,6 +9,7 @@ import 'package:chessever/desktop/services/retained_local_pgn.dart';
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
+import 'package:chessever/desktop/services/local_pgn_source_recovery.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
@@ -375,6 +376,183 @@ void main() {
       );
       await tester.pumpWidget(const SizedBox.shrink());
       container.dispose();
+    },
+  );
+
+  testWidgets(
+    'stale database row opens the same game after the source grew',
+    (tester) async {
+      LocalPgnSourceRecovery.debugResetRecoveryState();
+      final dir = await tester.runAsync(
+        () => Directory.systemTemp.createTemp('stale-row-'),
+      );
+      final file = File('${dir!.path}/fixture.pgn');
+      final target = _pgn('Target');
+      await tester.runAsync(
+        () => file.writeAsString('${_pgn('Row')}\n\n$target'),
+      );
+      // The row was captured when the file held two games and its mainline
+      // fingerprint was known; the file since gained a game ahead of it.
+      final staleRow = TournamentGameSummary(
+        id: 'target',
+        name: 'Target',
+        whitePlayer: 'Target',
+        blackPlayer: 'Opponent',
+        hasPgn: true,
+        pgn: target,
+        localPgnSource: TournamentGameLocalPgnSource(
+          sourcePath: file.path,
+          sourceIndex: 1,
+          sourceFileGameCount: 2,
+          pgnFingerprint: localChessPgnFingerprint(target),
+          recordRevision: localPgnRecordRevision(target),
+          title: 'Target',
+        ),
+      );
+      final onDisk = '${_pgn('Inserted')}\n\n${_pgn('Row')}\n\n$target';
+      await tester.runAsync(() => file.writeAsString(onDisk));
+
+      var rescans = 0;
+      final hydrated =
+          (await tester.runAsync(
+            () => hydrateRetainedLocalPgn(
+              staleRow,
+              recovery: LocalPgnSourceRecovery(
+                reindexSource: (_) async {
+                  rescans++;
+                  return true;
+                },
+              ),
+            ),
+          ))!;
+
+      expect(hydrated.pgn, target.trim());
+      expect(hydrated.localPgnSource!.sourceIndex, 2);
+      expect(hydrated.localPgnSource!.sourceFileGameCount, 3);
+      expect(
+        hydrated.localPgnSource!.pgnFingerprint,
+        localChessPgnFingerprint(target),
+      );
+      expect(
+        hydrated.localPgnSource!.recordRevision,
+        localPgnRecordRevision(target),
+      );
+      expect(rescans, 1);
+      // Recovery is a read: the user's file is never rewritten.
+      expect(await tester.runAsync(() => file.readAsString()), onDisk);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() => dir.delete(recursive: true));
+    },
+  );
+
+  testWidgets(
+    'a row with no verifiable coordinates recovers by identity, not position',
+    (tester) async {
+      LocalPgnSourceRecovery.debugResetRecoveryState();
+      final dir = await tester.runAsync(
+        () => Directory.systemTemp.createTemp('stale-lightweight-'),
+      );
+      final file = File('${dir!.path}/fixture.pgn');
+      final gameB = _pgn('B');
+      await tester.runAsync(
+        () => file.writeAsString('${_pgn('A')}\n\n$gameB'),
+      );
+      // Lightweight catalog row: no inline PGN, no fingerprint, no count — the
+      // exact shape that used to dead-end with
+      // "Bad state: Refresh the database before opening this game."
+      final row = TournamentGameSummary(
+        id: 'b',
+        name: 'B',
+        whitePlayer: 'B',
+        blackPlayer: 'Opponent',
+        hasPgn: false,
+        localPgnSource: TournamentGameLocalPgnSource(
+          sourcePath: file.path,
+          sourceIndex: 0,
+          sourceFileGameCount: 0,
+          title: 'B',
+        ),
+      );
+
+      final hydrated =
+          (await tester.runAsync(
+            () => hydrateRetainedLocalPgn(
+              row,
+              recovery: LocalPgnSourceRecovery(
+                reindexSource: (_) async => true,
+              ),
+            ),
+          ))!;
+
+      expect(hydrated.pgn, gameB.trim());
+      expect(hydrated.localPgnSource!.sourceIndex, 1);
+      expect(hydrated.localPgnSource!.sourceFileGameCount, 2);
+      expect(
+        hydrated.localPgnSource!.pgnFingerprint,
+        localChessPgnFingerprint(gameB),
+      );
+      expect(
+        hydrated.localPgnSource!.recordRevision,
+        localPgnRecordRevision(gameB),
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() => dir.delete(recursive: true));
+    },
+  );
+
+  testWidgets(
+    'a game that is gone fails with human wording, never a raw StateError',
+    (tester) async {
+      LocalPgnSourceRecovery.debugResetRecoveryState();
+      final dir = await tester.runAsync(
+        () => Directory.systemTemp.createTemp('stale-missing-'),
+      );
+      final file = File('${dir!.path}/fixture.pgn');
+      await tester.runAsync(
+        () => file.writeAsString('${_pgn('A')}\n\n${_pgn('B')}'),
+      );
+      final row = TournamentGameSummary(
+        id: 'gone',
+        name: 'Gone',
+        whitePlayer: 'Gone',
+        blackPlayer: 'Other',
+        hasPgn: true,
+        pgn: _pgn('Gone'),
+        localPgnSource: TournamentGameLocalPgnSource(
+          sourcePath: file.path,
+          sourceIndex: 0,
+          sourceFileGameCount: 2,
+          pgnFingerprint: localChessPgnFingerprint(_pgn('Gone')),
+          recordRevision: localPgnRecordRevision(_pgn('Gone')),
+          title: 'Gone',
+        ),
+      );
+
+      await tester.runAsync(() async {
+        await expectLater(
+          hydrateRetainedLocalPgn(
+            row,
+            recovery: LocalPgnSourceRecovery(
+              reindexSource: (_) async => true,
+            ),
+          ),
+          throwsA(
+            isA<LocalPgnGameUnavailableException>()
+                .having(
+                  (error) => error.message,
+                  'message',
+                  contains('fixture.pgn'),
+                )
+                .having(
+                  (error) => error.toString(),
+                  'toString',
+                  isNot(contains('Bad state')),
+                ),
+          ),
+        );
+      });
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() => dir.delete(recursive: true));
     },
   );
 }
