@@ -18,7 +18,10 @@ import 'package:motor/motor.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_pgn_source_recovery.dart';
 import 'package:chessever/desktop/services/miniatures_access.dart';
+import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
@@ -4741,6 +4744,38 @@ GameRepository? _tryReadGameRepositoryForEventOpen({
 
 final _railOpenRequestByContainer = Expando<Object>();
 
+/// Explicit recovery action offered when a local database row could not be
+/// opened: re-index the changed source from disk, then re-scan the Library node
+/// when one is mounted. It never opens the game by itself — the user retries
+/// the row, and by then the fresh cache carries verifiable coordinates.
+Future<void> _refreshLocalDatabaseSource({
+  required ProviderContainer container,
+  required TournamentGameSummary game,
+  required BuildContext context,
+}) async {
+  final sourcePath = game.localPgnSource?.sourcePath.trim() ?? '';
+  if (sourcePath.isEmpty) return;
+  try {
+    await container
+        .read(localChessDatabaseRepositoryProvider)
+        .reconcileLocalPgnCacheFromFile(databasePath: sourcePath);
+    await container
+        .read(localChessLibraryProvider.notifier)
+        .refreshSavedFile(sourcePath);
+    if (context.mounted) {
+      showDesktopToast(context, 'Database refreshed — open the game again.');
+    }
+  } catch (_) {
+    if (context.mounted) {
+      showDesktopToast(
+        context,
+        'Could not refresh the local database.',
+        error: true,
+      );
+    }
+  }
+}
+
 Future<void> _openEventGame({
   required WidgetRef ref,
   BuildContext? context,
@@ -4829,7 +4864,22 @@ Future<void> _openEventGame({
       );
     } catch (error) {
       if (stillOwnsOpen() && context != null && context.mounted) {
-        showDesktopToast(context, error.toString(), error: true);
+        final failedOpenContext = context;
+        final refreshable = error is LocalPgnGameUnavailableException;
+        showDesktopToast(
+          failedOpenContext,
+          localPgnOpenErrorMessage(error),
+          error: true,
+          actionLabel: refreshable ? 'Refresh' : null,
+          onAction:
+              refreshable
+                  ? () => _refreshLocalDatabaseSource(
+                    container: ownerContainer,
+                    game: game,
+                    context: failedOpenContext,
+                  )
+                  : null,
+        );
       }
       return; // Never fall back to the stale inline PGN or a remote id.
     }
