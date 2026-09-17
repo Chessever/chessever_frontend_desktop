@@ -501,6 +501,59 @@ void main() {
   );
 
   testWidgets(
+    'a deleted source file fails as unreadable, never a raw OS error',
+    (tester) async {
+      LocalPgnSourceRecovery.debugResetRecoveryState();
+      final dir = await tester.runAsync(
+        () => Directory.systemTemp.createTemp('stale-deleted-'),
+      );
+      final missing = File('${dir!.path}/gone.pgn');
+      final row = TournamentGameSummary(
+        id: 'gone',
+        name: 'Gone',
+        whitePlayer: 'Gone',
+        blackPlayer: 'Other',
+        hasPgn: true,
+        pgn: _pgn('Gone'),
+        localPgnSource: TournamentGameLocalPgnSource(
+          sourcePath: missing.path,
+          sourceIndex: 0,
+          sourceFileGameCount: 1,
+          pgnFingerprint: localChessPgnFingerprint(_pgn('Gone')),
+          recordRevision: localPgnRecordRevision(_pgn('Gone')),
+          title: 'Gone',
+        ),
+      );
+
+      await tester.runAsync(() async {
+        await expectLater(
+          hydrateRetainedLocalPgn(
+            row,
+            recovery: LocalPgnSourceRecovery(
+              reindexSource: (_) async => true,
+            ),
+          ),
+          throwsA(
+            isA<LocalPgnGameUnavailableException>()
+                .having(
+                  (error) => error.failure,
+                  'failure',
+                  LocalPgnRecoveryFailure.sourceUnreadable,
+                )
+                .having(
+                  (error) => error.toString(),
+                  'toString',
+                  isNot(contains('FileSystemException')),
+                ),
+          ),
+        );
+      });
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() => dir.delete(recursive: true));
+    },
+  );
+
+  testWidgets(
     'a game that is gone fails with human wording, never a raw StateError',
     (tester) async {
       LocalPgnSourceRecovery.debugResetRecoveryState();

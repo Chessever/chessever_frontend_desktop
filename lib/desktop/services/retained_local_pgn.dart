@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as path;
 
@@ -65,6 +67,11 @@ Future<TournamentGameSummary> hydrateRetainedLocalPgn(
   } on StateError {
     if (recovery == null) rethrow;
     return _recoverLocalPgnThenHydrate(game, source, recovery);
+  } on FileSystemException {
+    // A moved or deleted file reports through recovery too, so the toast stays
+    // human and keeps its Refresh action instead of printing raw OS wording.
+    if (recovery == null) rethrow;
+    return _recoverLocalPgnThenHydrate(game, source, recovery);
   }
 }
 
@@ -92,7 +99,7 @@ TournamentGameSummary _hydratedLocalPgn(
 ///
 /// Two bounded attempts: a save or append that lands between the recovery read
 /// and the verifying read is retried once, then reported as a file that is
-/// being written — never as a silent fallback to a stale PGN.
+/// being written, never as a silent fallback to a stale PGN.
 Future<TournamentGameSummary> _recoverLocalPgnThenHydrate(
   TournamentGameSummary game,
   TournamentGameLocalPgnSource source,
@@ -121,6 +128,13 @@ Future<TournamentGameSummary> _recoverLocalPgnThenHydrate(
       );
     } on LocalPgnGameUnavailableException {
       rethrow; // Already human-readable and actionable.
+    } on FileSystemException {
+      // The file vanished between the recovery read and the verifying read.
+      throw LocalPgnGameUnavailableException(
+        sourcePath: source.sourcePath,
+        failure: LocalPgnRecoveryFailure.sourceUnreadable,
+        title: source.title,
+      );
     } on StateError catch (error) {
       // The file changed again between the recovery read and this read.
       lastReadError = error;

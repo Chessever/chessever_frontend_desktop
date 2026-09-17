@@ -277,6 +277,95 @@ void main() {
       expect(results.last.indexInFile, 1);
     });
 
+    test('concurrent opens of different rows keep their own games', () async {
+      final row = _game('Row');
+      final target = _game('Target');
+      await file.writeAsString(_layout([row, target]));
+      var rescans = 0;
+      final recovery = LocalPgnSourceRecovery(
+        reindexSource: (_) async {
+          rescans++;
+          return true;
+        },
+      );
+
+      // Only the rescan is shared per source: each row must still resolve its
+      // own identity, never join another row's resolution.
+      final results = await Future.wait(<Future<LocalPgnIdentityResolution>>[
+        recovery.recover(
+          sourcePath: file.path,
+          identity: LocalPgnRecordIdentity(
+            storedIndex: 0,
+            mainlineFingerprint: localChessPgnFingerprint(row),
+          ),
+        ),
+        recovery.recover(
+          sourcePath: file.path,
+          identity: LocalPgnRecordIdentity(
+            storedIndex: 1,
+            mainlineFingerprint: localChessPgnFingerprint(target),
+          ),
+        ),
+      ]);
+      expect(results.first.indexInFile, 0);
+      expect(results.first.rawPgn, row.trim());
+      expect(results.last.indexInFile, 1);
+      expect(results.last.rawPgn, target.trim());
+      expect(rescans, 1);
+    });
+
+    test('an empty source path reports the source as unreadable', () async {
+      var rescans = 0;
+      final recovery = LocalPgnSourceRecovery(
+        reindexSource: (_) async {
+          rescans++;
+          return true;
+        },
+      );
+      await expectLater(
+        recovery.recover(
+          sourcePath: '   ',
+          identity: const LocalPgnRecordIdentity(
+            storedIndex: 0,
+            white: 'Target',
+          ),
+        ),
+        throwsA(
+          isA<LocalPgnGameUnavailableException>().having(
+            (error) => error.failure,
+            'failure',
+            LocalPgnRecoveryFailure.sourceUnreadable,
+          ),
+        ),
+      );
+      expect(rescans, 0);
+    });
+
+    test('a row with no identity refuses without touching the disk', () async {
+      await file.writeAsString(_layout([_game('Target')]));
+      var rescans = 0;
+      final recovery = LocalPgnSourceRecovery(
+        reindexSource: (_) async {
+          rescans++;
+          return true;
+        },
+      );
+      await expectLater(
+        recovery.recover(
+          sourcePath: file.path,
+          identity: const LocalPgnRecordIdentity(storedIndex: 0),
+        ),
+        throwsA(
+          isA<LocalPgnGameUnavailableException>().having(
+            (error) => error.failure,
+            'failure',
+            LocalPgnRecoveryFailure.noIdentity,
+          ),
+        ),
+      );
+      expect(rescans, 0);
+    });
+
     test('a change landing during the rescan re-resolves the ordinal', () async {
       final row = _game('Row');
       final target = _game('Target');
