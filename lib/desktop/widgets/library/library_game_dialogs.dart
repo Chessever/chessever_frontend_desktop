@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/event_info_popover.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -98,4 +100,26 @@ Future<bool> showLibraryDeleteAnalysisConfirmation(
         ),
   );
   return confirmed == true;
+}
+
+/// Right-click → "Game info" on a **cloud** database row: shows every PGN tag the
+/// saved analysis kept, reusing the same body as the local-database and board
+/// surfaces so headers render identically everywhere.
+///
+/// Cloud rows are library records, not files: the row's `chessGame.metadata` is
+/// the authoritative header set, exactly what Copy PGN / Export write out.
+Future<void> showSavedAnalysisGameInfoDialog(
+  BuildContext context, {
+  required SavedAnalysis analysis,
+}) {
+  final headers = <String, String>{
+    for (final entry in analysis.chessGame.metadata.entries)
+      entry.key: entry.value?.toString() ?? '',
+  };
+  return showDesktopDialog<void>(
+    context,
+    child: Center(
+      child: SingleChildScrollView(child: EventInfoBody(headers: headers)),
+    ),
+  );
 }

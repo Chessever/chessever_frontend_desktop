@@ -18,6 +18,28 @@ bool isPermanentLibraryFolderName(String name) {
   return _kPermanentLibraryFolderKeys.contains(name.trim().toLowerCase());
 }
 
+/// Authoritative library node kinds stored in `user_folders.node_type`.
+///
+/// A `folder` organises (it may contain folders and databases, never games);
+/// a `database` holds games. The column is `NOT NULL DEFAULT 'database'` on the
+/// server, so it is the authority for how a node must behave — unlike `icon`,
+/// which is client-chosen presentation.
+const String kLibraryNodeTypeFolder = 'folder';
+const String kLibraryNodeTypeDatabase = 'database';
+
+/// Normalizes a `user_folders.node_type` value.
+///
+/// Returns [kLibraryNodeTypeFolder] / [kLibraryNodeTypeDatabase], or `null` when
+/// the value is missing or unknown (synthetic client rows such as the TWIC book,
+/// test fixtures, and any row read before the column existed). Callers must fall
+/// back to the icon/metadata heuristics on `null` instead of guessing.
+String? libraryNodeTypeFromRow(Object? value) {
+  final raw = value?.toString().trim().toLowerCase();
+  if (raw == kLibraryNodeTypeFolder) return kLibraryNodeTypeFolder;
+  if (raw == kLibraryNodeTypeDatabase) return kLibraryNodeTypeDatabase;
+  return null;
+}
+
 @MappableClass()
 class LibraryFolder with LibraryFolderMappable {
   final String id;
@@ -31,6 +53,19 @@ class LibraryFolder with LibraryFolderMappable {
   final String? shareToken;
   final String? ownerDisplayName;
   final String? parentId;
+
+  /// Authoritative node kind from `user_folders.node_type`
+  /// ([kLibraryNodeTypeFolder] / [kLibraryNodeTypeDatabase]), normalized by
+  /// [libraryNodeTypeFromRow]. `null` when the row did not carry the column —
+  /// synthetic rows (TWIC) and older/cached fixtures — in which case callers use
+  /// the icon/metadata heuristics.
+  ///
+  /// This is what the server's container guard acts on, so the Desktop must
+  /// classify with it: a legacy node can look like a folder (`icon ==
+  /// 'folder_container'`) while `node_type` is still the column default
+  /// `'database'`. Creating a child under such a node is rejected by the server
+  /// once it holds games.
+  final String? nodeType;
 
   /// Client-side only — true when this folder was fetched via subscription.
   /// Not stored in DB; set by the provider layer.
@@ -54,6 +89,7 @@ class LibraryFolder with LibraryFolderMappable {
     this.shareToken,
     this.ownerDisplayName,
     this.parentId,
+    this.nodeType,
     this.isSubscribed = false,
     this.isLikedGames = false,
   });
@@ -78,6 +114,7 @@ class LibraryFolder with LibraryFolderMappable {
       updatedAt: DateTime.parse(json['updated_at'] as String),
       shareToken: json['share_token'] as String?,
       parentId: json['parent_id'] as String?,
+      nodeType: libraryNodeTypeFromRow(json['node_type']),
       isLikedGames: (json['is_liked_games'] as bool?) ?? false,
     );
   }

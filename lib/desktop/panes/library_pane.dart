@@ -29,6 +29,7 @@ import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/services/board_tab_pgn_resolver.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
+import 'package:chessever/desktop/services/library_folder_create_guard.dart';
 import 'package:chessever/desktop/services/library_pgn_export.dart';
 import 'package:chessever/desktop/services/library_quick_import.dart';
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
@@ -76,11 +77,13 @@ import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/desktop/widgets/library/folder_drop_target.dart';
 import 'package:chessever/desktop/widgets/library/library_actions_toolbar.dart';
 import 'package:chessever/desktop/widgets/library/library_chrome_bar.dart';
+import 'package:chessever/desktop/widgets/library/library_cloud_rows.dart';
 import 'package:chessever/desktop/widgets/library/library_folder_context_menu.dart';
 import 'package:chessever/desktop/widgets/library/library_folder_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_game_context_menu.dart';
 import 'package:chessever/desktop/widgets/library/library_game_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_database_drag_payload.dart';
+import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
 import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 export 'package:chessever/desktop/widgets/library/library_table_row_style.dart'
     show librarySelectedRowDecoration;
@@ -532,32 +535,22 @@ class LibraryPane extends HookConsumerWidget {
                                   context: context,
                                   ref: ref,
                                   folders: allFolders,
+                                  lockedParent: libraryCurrentChildCreateParent(
+                                    currentLibraryFolderId.value,
+                                    allFolders,
+                                  ),
                                   kind: LibraryFolderCreateKind.folder,
                                 ),
-                            onNewDatabase: () {
-                              final currentFolder =
-                                  currentLibraryFolderId.value == null
-                                      ? null
-                                      : allFolders.firstWhereOrNull(
-                                        (folder) =>
-                                            folder.id ==
-                                            currentLibraryFolderId.value,
-                                      );
-                              _onCreateFolder(
-                                context: context,
-                                ref: ref,
-                                folders: allFolders,
-                                lockedParent:
-                                    currentFolder != null &&
-                                            !libraryFolderIsDatabase(
-                                              currentFolder,
-                                              allFolders,
-                                            )
-                                        ? currentFolder
-                                        : null,
-                                kind: LibraryFolderCreateKind.database,
-                              );
-                            },
+                            onNewDatabase: () => _onCreateFolder(
+                              context: context,
+                              ref: ref,
+                              folders: allFolders,
+                              lockedParent: libraryCurrentChildCreateParent(
+                                currentLibraryFolderId.value,
+                                allFolders,
+                              ),
+                              kind: LibraryFolderCreateKind.database,
+                            ),
                           ),
                 ),
               ],
@@ -3890,6 +3883,22 @@ bool libraryFolderIsDatabase(
   List<LibraryFolder> folders, {
   int? gameCount,
 }) {
+  // The server's container guard acts on `user_folders.node_type`, so a row that
+  // carries it is classified by it and never by presentation. This is what keeps
+  // the Desktop from calling a legacy node a folder when the server will refuse
+  // child inserts under it (icon 'folder_container' + column default
+  // 'database').
+  final nodeType = folder.nodeType;
+  if (nodeType == kLibraryNodeTypeFolder) return false;
+  if (nodeType == kLibraryNodeTypeDatabase) {
+    // A database node holds games only. A *mixed* legacy node (children created
+    // before the container guard shipped) stays navigable so those children
+    // remain reachable, and the server's invariant repair promotes it to a
+    // folder. A childless database node is exact and must not be presented as a
+    // folder: that mismatch is what made child creation fail with a generic
+    // error.
+    return !libraryFolderHasChildren(folders, folder.id);
+  }
   if (folder.icon == 'database' || folder.icon == 'twic') return true;
   if (_isKnownRootDatabase(folder) &&
       !libraryFolderHasChildren(folders, folder.id)) {
@@ -3903,6 +3912,30 @@ bool libraryFolderIsDatabase(
 
 bool _isKnownRootDatabase(LibraryFolder folder) {
   return folder.name.trim().toLowerCase() == 'liked games';
+}
+
+/// The container a new folder/database must be created under while
+/// [currentFolderId] is the open cloud node.
+///
+/// Returns the open node for a folder, and its parent folder for a database
+/// node (a database contains games only, and the server's
+/// `ensure_parent_node_is_folder()` guard rejects child inserts under one that
+/// already holds games). Returns `null` for the library top level.
+@visibleForTesting
+LibraryFolder? libraryCurrentChildCreateParent(
+  String? currentFolderId,
+  List<LibraryFolder> folders,
+) {
+  if (currentFolderId == null) return null;
+  final current = folders.firstWhereOrNull(
+    (folder) => folder.id == currentFolderId,
+  );
+  if (current == null) return null;
+  return libraryChildCreateTarget(
+    current: current,
+    folders: folders,
+    currentIsDatabase: libraryFolderIsDatabase(current, folders),
+  ).parent;
 }
 
 enum _DatabaseBoardIconKind {
@@ -4898,28 +4931,26 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
     final cloudRefreshNonce = ref.watch(cloudLibraryRefreshNonceProvider);
     final cloudRevision = ref.watch(libraryCloudRevisionProvider);
 
-    final analysesAsync = useFuture(
-      useMemoized(
-        () =>
-            activeFolder.isSubscribed
-                ? ref
-                    .read(libraryRepositoryProvider)
-                    .getSharedFolderAnalysesPaginated(
-                      folderId: activeFolder.id,
-                      limit: 120,
-                    )
-                : ref
-                    .read(libraryRepositoryProvider)
-                    .getSavedAnalyses(folderId: activeFolder.id),
-        [
-          activeFolder.id,
-          activeFolder.isSubscribed,
-          cloudRefreshNonce,
-          cloudRevision,
-        ],
+    final analyses = useLibraryCloudRows(
+      scope: libraryCloudDatabaseScope(
+        activeFolder.id,
+        isSubscribed: activeFolder.isSubscribed,
       ),
+      refreshKeys: <Object?>[cloudRefreshNonce, cloudRevision],
+      fetch:
+          () =>
+              activeFolder.isSubscribed
+                  ? ref
+                      .read(libraryRepositoryProvider)
+                      .getSharedFolderAnalysesPaginated(
+                        folderId: activeFolder.id,
+                        limit: 120,
+                      )
+                  : ref
+                      .read(libraryRepositoryProvider)
+                      .getSavedAnalyses(folderId: activeFolder.id),
     );
-    final all = analysesAsync.data ?? const <SavedAnalysis>[];
+    final all = analyses.rows ?? const <SavedAnalysis>[];
     final rows = useMemoized<List<SavedAnalysis>>(() {
       final copy = List<SavedAnalysis>.of(all);
       _sortAnalyses(copy, sort.value);
@@ -5046,6 +5077,58 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
       unawaited(copySavedAnalysesAsPgn(context: context, analyses: copyRows));
     }
 
+    void selectSavedRowForContextMenu(SavedAnalysis analysis) {
+      if (clampedSelectedIds.contains(analysis.id)) return;
+      final index = rows.indexWhere((row) => row.id == analysis.id);
+      if (index >= 0) selectSavedRow(index);
+    }
+
+    void handleSavedRowAction(SavedAnalysis analysis, LibraryGameAction action) {
+      switch (action) {
+        case LibraryGameAction.gameInfo:
+          unawaited(
+            showSavedAnalysisGameInfoDialog(context, analysis: analysis),
+          );
+        case LibraryGameAction.copyPgn:
+          copySelectedSaved();
+        case LibraryGameAction.pasteGames:
+          unawaited(
+            quickImportClipboardToFolder(
+              context: context,
+              ref: ref,
+              folder: activeFolder,
+            ),
+          );
+        case LibraryGameAction.saveToCloud:
+          unawaited(
+            _saveAnalysisCopyToCloud(
+              context: context,
+              ref: ref,
+              analysis: analysis,
+            ),
+          );
+        case LibraryGameAction.delete:
+          unawaited(
+            _onDeleteGame(
+              context: context,
+              ref: ref,
+              analysis: analysis,
+              onChanged: () => notifyCloudLibraryChanged(ref),
+            ),
+          );
+        case LibraryGameAction.open:
+        case LibraryGameAction.openInNewTab:
+        case LibraryGameAction.openInNewWindow:
+        case LibraryGameAction.share:
+        case LibraryGameAction.copyShareLink:
+        case LibraryGameAction.selectAll:
+        case LibraryGameAction.copyFen:
+        case LibraryGameAction.exportPgn:
+          // Not part of the cloud table menu; the pane previews rows in place.
+          break;
+      }
+    }
+
     return _databaseWorkspaceClipboardShortcuts(
       onCopy: copySelectedSaved,
       child: Focus(
@@ -5074,7 +5157,7 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
             ),
         child: _MiniDatabasePreviewFrame(
           child:
-              analysesAsync.connectionState != ConnectionState.done
+              analyses.isInitialLoading
                   ? const Center(
                     child: SizedBox(
                       width: 18,
@@ -5126,6 +5209,9 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
                                 databaseTitle: activeFolder.name,
                                 databaseAnalyses: all,
                               ),
+                          canWrite: !activeFolder.isSubscribed,
+                          onContextMenuSelect: selectSavedRowForContextMenu,
+                          onGameAction: handleSavedRowAction,
                         ),
                       ),
                       SplitChild(
@@ -6227,27 +6313,28 @@ class _FolderContentView extends HookConsumerWidget {
     final refreshNonce = useState(0);
     final cloudRefreshNonce = ref.watch(cloudLibraryRefreshNonceProvider);
     final cloudRevision = ref.watch(libraryCloudRevisionProvider);
-    final analysesAsync = useFuture(
-      useMemoized(
-        () =>
-            activeFolder.isSubscribed
-                ? ref
-                    .read(libraryRepositoryProvider)
-                    .getSharedFolderAnalysesPaginated(
-                      folderId: activeFolder.id,
-                      limit: 200,
-                    )
-                : ref
-                    .read(libraryRepositoryProvider)
-                    .getSavedAnalyses(folderId: activeFolder.id),
-        [
-          activeFolder.id,
-          activeFolder.isSubscribed,
-          refreshNonce.value,
-          cloudRefreshNonce,
-          cloudRevision,
-        ],
+    final analyses = useLibraryCloudRows(
+      scope: libraryCloudDatabaseScope(
+        activeFolder.id,
+        isSubscribed: activeFolder.isSubscribed,
       ),
+      refreshKeys: <Object?>[
+        refreshNonce.value,
+        cloudRefreshNonce,
+        cloudRevision,
+      ],
+      fetch:
+          () =>
+              activeFolder.isSubscribed
+                  ? ref
+                      .read(libraryRepositoryProvider)
+                      .getSharedFolderAnalysesPaginated(
+                        folderId: activeFolder.id,
+                        limit: 200,
+                      )
+                  : ref
+                      .read(libraryRepositoryProvider)
+                      .getSavedAnalyses(folderId: activeFolder.id),
     );
 
     final searchController = useTextEditingController();
@@ -6259,7 +6346,7 @@ class _FolderContentView extends HookConsumerWidget {
     final selectionExtent = useState<int?>(null);
 
     final filtered = useMemoized<List<SavedAnalysis>>(() {
-      final all = analysesAsync.data ?? const <SavedAnalysis>[];
+      final all = analyses.rows ?? const <SavedAnalysis>[];
       final q = query.value.trim().toLowerCase();
       final base =
           q.isEmpty
@@ -6274,10 +6361,9 @@ class _FolderContentView extends HookConsumerWidget {
               }).toList();
       _sortAnalyses(base, sort.value);
       return base;
-    }, [analysesAsync.data, query.value, sort.value]);
+    }, [analyses.rows, query.value, sort.value]);
 
-    final hasGames =
-        analysesAsync.data != null && analysesAsync.data!.isNotEmpty;
+    final hasGames = analyses.rows?.isNotEmpty ?? false;
 
     final visibleIds = filtered.map((a) => a.id).toList(growable: false);
     final clampedSelected = LibraryMultiSelect.clampToRows(
@@ -6365,19 +6451,19 @@ class _FolderContentView extends HookConsumerWidget {
         children: [
           _FolderHeader(
             folder: activeFolder,
-            count: analysesAsync.data?.length,
-            isLoading: analysesAsync.connectionState != ConnectionState.done,
+            count: analyses.rows?.length,
+            isLoading: analyses.isInitialLoading,
             isDatabase: libraryFolderIsDatabase(
               activeFolder,
               folders,
-              gameCount: analysesAsync.data?.length,
+              gameCount: analyses.rows?.length,
             ),
             canCreateSubfolder:
                 !activeFolder.isSubscribed &&
                 !libraryFolderIsDatabase(
                   activeFolder,
                   folders,
-                  gameCount: analysesAsync.data?.length,
+                  gameCount: analyses.rows?.length,
                 ),
             hasGames: hasGames,
             onAction:
@@ -6430,7 +6516,7 @@ class _FolderContentView extends HookConsumerWidget {
                     ),
                 child: _GamesBody(
                   folder: activeFolder,
-                  snapshot: analysesAsync,
+                  analyses: analyses,
                   filtered: filtered,
                   query: query.value,
                   viewMode: viewMode.value,
@@ -6975,7 +7061,7 @@ class _ViewModeButtonState extends State<_ViewModeButton>
 class _GamesBody extends ConsumerWidget {
   const _GamesBody({
     required this.folder,
-    required this.snapshot,
+    required this.analyses,
     required this.filtered,
     required this.query,
     required this.viewMode,
@@ -6989,7 +7075,7 @@ class _GamesBody extends ConsumerWidget {
   });
 
   final LibraryFolder folder;
-  final AsyncSnapshot<List<SavedAnalysis>> snapshot;
+  final LibraryCloudRowsSnapshot analyses;
   final List<SavedAnalysis> filtered;
   final String query;
   final _GamesViewMode viewMode;
@@ -7004,7 +7090,10 @@ class _GamesBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (snapshot.connectionState != ConnectionState.done) {
+    // A background refresh (realtime revision or post-write nonce) keeps the
+    // rows that are already on screen. Only a database with nothing loaded may
+    // be replaced by a loading or error placeholder.
+    if (analyses.isInitialLoading) {
       return const Center(
         child: SizedBox(
           width: 18,
@@ -7016,18 +7105,19 @@ class _GamesBody extends ConsumerWidget {
         ),
       );
     }
-    if (snapshot.hasError) {
+    final loadError = analyses.error;
+    if (loadError != null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
-            'Could not load games: ${snapshot.error}',
+            'Could not load games: $loadError',
             style: const TextStyle(color: kRedColor, fontSize: 12),
           ),
         ),
       );
     }
-    final all = snapshot.data ?? const <SavedAnalysis>[];
+    final all = analyses.rows ?? const <SavedAnalysis>[];
     if (all.isEmpty) {
       return _LibraryEmpty(
         icon:
@@ -8674,8 +8764,16 @@ Future<void> _onGameAction({
         copiedLabel: 'Game link copied to clipboard',
         missingLabel: 'This saved game has no source share link.',
       );
+    case LibraryGameAction.gameInfo:
+      await showSavedAnalysisGameInfoDialog(context, analysis: analysis);
     case LibraryGameAction.copyPgn:
       await _onCopyPgn(context: context, analysis: analysis);
+    case LibraryGameAction.saveToCloud:
+      await _saveAnalysisCopyToCloud(
+        context: context,
+        ref: ref,
+        analysis: analysis,
+      );
     case LibraryGameAction.selectAll:
     case LibraryGameAction.pasteGames:
       // These are handled by the folder list, where the complete visible
@@ -8693,6 +8791,33 @@ Future<void> _onGameAction({
         onChanged: onChanged,
       );
   }
+}
+
+/// "Save To Cloud" on a cloud database row: write *another* copy of the game
+/// into a chosen cloud database through the shared save pipeline, so destination
+/// selection, quota admission and dedupe behave exactly like a Board save.
+///
+/// The row already lives in the cloud, so this is an explicit copy — never a
+/// move, and never a silent overwrite of the source row.
+Future<void> _saveAnalysisCopyToCloud({
+  required BuildContext context,
+  required WidgetRef ref,
+  required SavedAnalysis analysis,
+}) async {
+  if (analysis.chessGame.mainline.isEmpty) {
+    _toast(context, 'Nothing to copy — the game has no moves.', error: true);
+    return;
+  }
+  final title = analysis.title.trim();
+  final outcome = await showLibrarySaveToFolderDialog(
+    context: context,
+    ref: ref,
+    games: <ChessGame>[analysis.chessGame],
+    sourceLabel: title.isEmpty ? 'library game' : title,
+    destinationMode: LibrarySaveDestinationMode.cloudOnly,
+  );
+  if (outcome == null || !outcome.didSave || !context.mounted) return;
+  _toast(context, outcome.toToastMessage());
 }
 
 Future<void> _onCopyPgn({
@@ -8789,6 +8914,28 @@ Future<void> _onCreateFolder({
   );
   if (draft == null) return;
   final isDatabase = draft.kind == LibraryFolderCreateKind.database;
+  final noun = isDatabase ? 'Database' : 'Folder';
+  final parent =
+      draft.parentId == null
+          ? null
+          : folders.firstWhereOrNull(
+            (folder) => folder.id == draft.parentId,
+          );
+
+  // `user_folders` carries UNIQUE(user_id, name) for the whole account, not per
+  // folder. Catch the conflict here so the user gets an actionable message
+  // instead of a 23505 mapped to a generic failure.
+  if (libraryCloudNodeNamed(draft.name, folders) != null) {
+    if (!context.mounted) return;
+    _toast(
+      context,
+      'You already have a library item named "${draft.name.trim()}". '
+      'Choose a different name.',
+      error: true,
+    );
+    return;
+  }
+
   // Folders are unlimited; only a new database asks for a slot.
   if (isDatabase) {
     if (!context.mounted) return;
@@ -8814,9 +8961,8 @@ Future<void> _onCreateFolder({
     ref.invalidate(libraryFoldersStreamProvider);
     ref.invalidate(subscribedBooksProvider);
     if (!context.mounted) return;
-    final noun =
-        draft.kind == LibraryFolderCreateKind.database ? 'Database' : 'Folder';
-    _toast(context, '$noun "${draft.name}" created');
+    final destination = parent == null ? '' : ' in "${parent.name}"';
+    _toast(context, '$noun "${draft.name}" created$destination');
   } catch (e, st) {
     final rejection = freemiumQuotaRejection(
       e,
@@ -8827,9 +8973,23 @@ Future<void> _onCreateFolder({
       _toast(context, freemiumQuotaBlockedMessage(rejection), error: true);
       return;
     }
-    ErrorReporter.report(e, stackTrace: st, tag: 'library.create_folder');
+    // A rejected container insert is an expected server-side guard (a legacy
+    // node the server still treats as a database, or an account-wide duplicate
+    // name), so it is surfaced to the user rather than reported as a crash.
+    final containerRejection = libraryCreateFolderRejectionMessage(
+      e,
+      name: draft.name,
+      parentName: parent?.name,
+    );
+    if (containerRejection == null) {
+      ErrorReporter.report(e, stackTrace: st, tag: 'library.create_folder');
+    }
     if (!context.mounted) return;
-    _toast(context, 'Failed to create folder. Please try again.', error: true);
+    _toast(
+      context,
+      containerRejection ?? 'Failed to create $noun. Please try again.',
+      error: true,
+    );
   }
 }
 
@@ -11360,30 +11520,35 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
       debugLabel: 'database-workspace-folder-${args.folderId}',
     );
 
-    final analysesAsync = useFuture(
-      useMemoized(
-        () =>
-            args.isSubscribed
-                ? ref
-                    .read(libraryRepositoryProvider)
-                    .getSharedFolderAnalysesPaginated(
-                      folderId: args.folderId,
-                      limit: 400,
-                    )
-                : ref
-                    .read(libraryRepositoryProvider)
-                    .getSavedAnalyses(folderId: args.folderId),
-        [
-          args.folderId,
-          args.isSubscribed,
-          refreshNonce.value,
-          cloudRefreshNonce,
-          cloudRevision,
-        ],
+    // The realtime revision, the post-write nonce and the local paging nonce
+    // all ask for a fresh fetch. They refresh the rows in place: treating a
+    // background refresh as a first load emptied the visible game list for the
+    // whole duration of the fetch.
+    final analyses = useLibraryCloudRows(
+      scope: libraryCloudDatabaseScope(
+        args.folderId,
+        isSubscribed: args.isSubscribed,
       ),
+      refreshKeys: <Object?>[
+        refreshNonce.value,
+        cloudRefreshNonce,
+        cloudRevision,
+      ],
+      fetch:
+          () =>
+              args.isSubscribed
+                  ? ref
+                      .read(libraryRepositoryProvider)
+                      .getSharedFolderAnalysesPaginated(
+                        folderId: args.folderId,
+                        limit: 400,
+                      )
+                  : ref
+                      .read(libraryRepositoryProvider)
+                      .getSavedAnalyses(folderId: args.folderId),
     );
 
-    final all = analysesAsync.data ?? const <SavedAnalysis>[];
+    final all = analyses.rows ?? const <SavedAnalysis>[];
     final filtered = useMemoized<List<SavedAnalysis>>(() {
       final q = query.value.trim().toLowerCase();
       final base =
@@ -11547,6 +11712,55 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
       );
     }
 
+    void selectSavedRowForContextMenu(SavedAnalysis analysis) {
+      // Keep a multi-selection that already contains the row so Copy PGN still
+      // acts on the group the user built; otherwise make the right-clicked row
+      // the selection.
+      if (clampedSelectedIds.contains(analysis.id)) return;
+      final index = filtered.indexWhere((row) => row.id == analysis.id);
+      if (index >= 0) selectSavedIndex(index);
+    }
+
+    void handleSavedRowAction(SavedAnalysis analysis, LibraryGameAction action) {
+      switch (action) {
+        case LibraryGameAction.gameInfo:
+          unawaited(
+            showSavedAnalysisGameInfoDialog(context, analysis: analysis),
+          );
+        case LibraryGameAction.copyPgn:
+          copySelectedSaved();
+        case LibraryGameAction.pasteGames:
+          pasteIntoWorkspaceFolder();
+        case LibraryGameAction.saveToCloud:
+          unawaited(
+            _saveAnalysisCopyToCloud(
+              context: context,
+              ref: ref,
+              analysis: analysis,
+            ),
+          );
+        case LibraryGameAction.delete:
+          unawaited(
+            _onDeleteGame(
+              context: context,
+              ref: ref,
+              analysis: analysis,
+              onChanged: () => refreshNonce.value++,
+            ),
+          );
+        case LibraryGameAction.open:
+        case LibraryGameAction.openInNewTab:
+        case LibraryGameAction.openInNewWindow:
+        case LibraryGameAction.share:
+        case LibraryGameAction.copyShareLink:
+        case LibraryGameAction.selectAll:
+        case LibraryGameAction.copyFen:
+        case LibraryGameAction.exportPgn:
+          // Not part of the cloud table menu; the pane previews rows in place.
+          break;
+      }
+    }
+
     useActiveDatabaseWorkspacePasteDispatcher(
       context: context,
       ref: ref,
@@ -11608,7 +11822,7 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
             const FDivider(),
             Expanded(
               child:
-                  analysesAsync.connectionState != ConnectionState.done
+                  analyses.isInitialLoading
                       ? const Center(
                         child: SizedBox(
                           width: 18,
@@ -11648,6 +11862,9 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
                           if (index >= 0) selectSavedIndex(index);
                         },
                         onOpen: openSelected,
+                        canWrite: !args.isSubscribed,
+                        onContextMenuSelect: selectSavedRowForContextMenu,
+                        onGameAction: handleSavedRowAction,
                       ),
             ),
           ],
@@ -12141,6 +12358,9 @@ class _DatabaseSavedGamesTable extends HookWidget {
     required this.onSelect,
     required this.onOpen,
     this.onRangeSelect,
+    this.canWrite = false,
+    this.onContextMenuSelect,
+    this.onGameAction,
   });
 
   final List<SavedAnalysis> rows;
@@ -12152,6 +12372,19 @@ class _DatabaseSavedGamesTable extends HookWidget {
   final ValueChanged<SavedAnalysis> onSelect;
   final ValueChanged<SavedAnalysis> onOpen;
   final ValueChanged<int>? onRangeSelect;
+
+  /// `true` when the database these rows belong to accepts writes — a followed
+  /// (subscribed) book is read-only, so its row menu keeps Paste/Delete disabled.
+  final bool canWrite;
+
+  /// Called when a row's context menu opens, so the surface can select the row
+  /// while preserving an existing multi-selection.
+  final ValueChanged<SavedAnalysis>? onContextMenuSelect;
+
+  /// Dispatches a cloud game row action (Game info, Copy PGN, Paste games,
+  /// Save To Cloud, Delete game). `null` disables right-click on the rows.
+  final void Function(SavedAnalysis analysis, LibraryGameAction action)?
+  onGameAction;
 
   @override
   Widget build(BuildContext context) {
@@ -12186,6 +12419,7 @@ class _DatabaseSavedGamesTable extends HookWidget {
                 itemCount: rows.length,
                 itemBuilder:
                     (context, i) => _DatabaseSavedGameRow(
+                      key: libraryDatabaseSavedRowKey(rows[i].id),
                       index: i + 1,
                       analysis: rows[i],
                       selected:
@@ -12199,6 +12433,15 @@ class _DatabaseSavedGamesTable extends HookWidget {
                               : () => onRangeSelect!(i),
                       onSelect: () => onSelect(rows[i]),
                       onOpen: () => onOpen(rows[i]),
+                      canWrite: canWrite,
+                      onGameAction:
+                          onGameAction == null
+                              ? null
+                              : (action) => onGameAction!(rows[i], action),
+                      onContextMenuOpening:
+                          onContextMenuSelect == null
+                              ? null
+                              : () => onContextMenuSelect!(rows[i]),
                     ),
               ),
             ),
@@ -12211,6 +12454,7 @@ class _DatabaseSavedGamesTable extends HookWidget {
 
 class _DatabaseSavedGameRow extends StatefulWidget {
   const _DatabaseSavedGameRow({
+    super.key,
     required this.index,
     required this.analysis,
     required this.selected,
@@ -12219,6 +12463,9 @@ class _DatabaseSavedGameRow extends StatefulWidget {
     this.onRangeSelect,
     required this.onSelect,
     required this.onOpen,
+    this.canWrite = false,
+    this.onContextMenuOpening,
+    this.onGameAction,
   });
 
   final int index;
@@ -12229,6 +12476,17 @@ class _DatabaseSavedGameRow extends StatefulWidget {
   final VoidCallback? onRangeSelect;
   final VoidCallback onSelect;
   final VoidCallback onOpen;
+
+  /// Write capability of the database these rows belong to. Disables Paste and
+  /// Delete in the row menu for a followed (read-only) book.
+  final bool canWrite;
+
+  /// Invoked just before the row menu opens so the surface can select this row
+  /// without discarding an existing multi-selection.
+  final VoidCallback? onContextMenuOpening;
+
+  /// Dispatches the chosen cloud row action. `null` disables right-click.
+  final ValueChanged<LibraryGameAction>? onGameAction;
 
   @override
   State<_DatabaseSavedGameRow> createState() => _DatabaseSavedGameRowState();
@@ -12330,7 +12588,8 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow>
       );
     }
 
-    return ClickCursor(
+    final onGameAction = widget.onGameAction;
+    final row = ClickCursor(
       child: MouseRegion(
         onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
         onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
@@ -12373,6 +12632,15 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow>
           ),
         ),
       ),
+    );
+    if (onGameAction == null) return row;
+    // Right-click menu for a row in a cloud database. The row's own tap and
+    // double-tap gestures keep primary-button ownership.
+    return LibraryCloudGameRowMenu(
+      writable: widget.canWrite,
+      onContextMenuOpening: widget.onContextMenuOpening,
+      onAction: onGameAction,
+      child: row,
     );
   }
 }
