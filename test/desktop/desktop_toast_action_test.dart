@@ -56,6 +56,10 @@ void main() {
     await tester.tap(find.text('Refresh'));
     await tester.pump();
     expect(refreshed, 1);
+
+    // Flush forui's hover and auto-dismiss timers so teardown sees no pending
+    // Timer. In production the FToaster outlives every toast.
+    await tester.pump(const Duration(seconds: 10));
   });
 
   testWidgets('a plain toast adds no action affordance', (tester) async {

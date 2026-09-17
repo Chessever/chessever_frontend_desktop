@@ -378,9 +378,10 @@ enum _ReindexOutcome { reindexed, alreadyCurrent, failed }
 /// Re-indexes one changed local-PGN source and re-resolves the requested game.
 ///
 /// Rescans are single-flight per source: rapid switching between stale rows
-/// joins the scan already running instead of starting another one, and a source
-/// that was already reconciled for its current size/mtime is not re-imported
-/// again.
+/// joins the rescan already running instead of starting another one, and a
+/// source that was already reconciled for its current size/mtime is not
+/// re-imported again. Identity resolution is always per row: only the rescan
+/// is shared, so a joined call can never receive another row's game.
 class LocalPgnSourceRecovery {
   LocalPgnSourceRecovery({
     required LocalPgnSourceReindexer reindexSource,
@@ -395,15 +396,15 @@ class LocalPgnSourceRecovery {
   final LocalPgnIdentityResolver _resolveInBackground;
   final LocalPgnFileStatReader _readStat;
 
-  static final Map<String, Future<LocalPgnIdentityResolution>> _inFlight =
-      <String, Future<LocalPgnIdentityResolution>>{};
+  static final Map<String, Future<_ReindexOutcome>> _inFlightReindex =
+      <String, Future<_ReindexOutcome>>{};
   static final Map<String, LocalPgnFileStat> _reconciled =
       <String, LocalPgnFileStat>{};
 
   /// Clears the process-wide single-flight/memo state. Tests only.
   @visibleForTesting
   static void debugResetRecoveryState() {
-    _inFlight.clear();
+    _inFlightReindex.clear();
     _reconciled.clear();
   }
 
@@ -415,7 +416,7 @@ class LocalPgnSourceRecovery {
   Future<LocalPgnIdentityResolution> recover({
     required String sourcePath,
     required LocalPgnRecordIdentity identity,
-  }) {
+  }) async {
     final trimmed = sourcePath.trim();
     final key = trimmed.isEmpty ? '' : localChessInputPathKey(trimmed);
     if (key.isEmpty) {
@@ -424,23 +425,7 @@ class LocalPgnSourceRecovery {
         failure: LocalPgnRecoveryFailure.sourceUnreadable,
       );
     }
-    final running = _inFlight[key];
-    if (running != null) return running;
-
-    final future = _recover(
-      key: key,
-      sourcePath: sourcePath,
-      identity: identity,
-    );
-    _inFlight[key] = future;
-    // Joiners await `future` itself; the cleanup future's own result (including
-    // a duplicate error) is deliberately dropped.
-    future
-        .whenComplete(() {
-          if (identical(_inFlight[key], future)) _inFlight.remove(key);
-        })
-        .ignore();
-    return future;
+    return _recover(key: key, sourcePath: sourcePath, identity: identity);
   }
 
   Future<LocalPgnIdentityResolution> _recover({
@@ -539,7 +524,37 @@ class LocalPgnSourceRecovery {
     };
   }
 
+  /// The rescan half of recovery, single-flight per source path.
+  ///
+  /// The join check and the registration run with no `await` between them, so
+  /// concurrent stale opens of one file always share exactly one rescan while
+  /// each keeps its own identity resolution.
   Future<_ReindexOutcome> _reindexOnce({
+    required String key,
+    required String sourcePath,
+    LocalPgnFileStat? current,
+  }) {
+    final running = _inFlightReindex[key];
+    if (running != null) return running;
+    final future = _runReindexOnce(
+      key: key,
+      sourcePath: sourcePath,
+      current: current,
+    );
+    _inFlightReindex[key] = future;
+    // Joiners await `future` itself; the cleanup future's own result (including
+    // a duplicate error) is deliberately dropped.
+    future
+        .whenComplete(() {
+          if (identical(_inFlightReindex[key], future)) {
+            _inFlightReindex.remove(key);
+          }
+        })
+        .ignore();
+    return future;
+  }
+
+  Future<_ReindexOutcome> _runReindexOnce({
     required String key,
     required String sourcePath,
     LocalPgnFileStat? current,
