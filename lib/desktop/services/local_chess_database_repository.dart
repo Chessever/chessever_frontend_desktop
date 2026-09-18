@@ -14,6 +14,7 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/compact_local_tree_index.dart';
+import 'package:chessever/desktop/services/local_chess_database_open_guard.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
@@ -106,7 +107,20 @@ class LocalChessResqliteDatabase {
 
   Future<resqlite.Database> openDedicatedConnection() async {
     final path = await _resolvePath();
-    final db = await resqlite.Database.open(path);
+    final db = await openLocalChessDatabaseHandle(
+      path: path,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'dedicated local cache connection',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+    );
+    if (db == null) {
+      throw LocalChessDatabaseUnavailableException(
+        path: path,
+        operation: LocalChessDatabaseOperation.open,
+        attempts: 1,
+        purpose: 'dedicated local cache connection',
+      );
+    }
     await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
       () => _configure(db),
     );
@@ -132,7 +146,20 @@ class LocalChessResqliteDatabase {
         message: 'Preparing local database cache...',
       ),
     );
-    final db = await resqlite.Database.open(path);
+    final db = await openLocalChessDatabaseHandle(
+      path: path,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'app local cache database',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+    );
+    if (db == null) {
+      throw LocalChessDatabaseUnavailableException(
+        path: path,
+        operation: LocalChessDatabaseOperation.open,
+        attempts: 1,
+        purpose: 'app local cache database',
+      );
+    }
     await LocalChessDatabaseRepository._runLocalCacheWriteQueued(() async {
       await _configure(db);
       await createLocalChessResqliteDatabaseSchema(db);
@@ -2190,7 +2217,13 @@ class LocalChessDatabaseRepository {
     );
     final path = await resolver();
     if (path == null || path.trim().isEmpty) return null;
-    final db = await resqlite.Database.open(path);
+    final db = await openLocalChessDatabaseHandle(
+      path: path,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'path-only local import cache',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fallBackToExistingConnection,
+    );
+    if (db == null) return null;
     try {
       onProgress?.call(
         LocalChessScanProgress(
@@ -2243,7 +2276,13 @@ class LocalChessDatabaseRepository {
     if (resolver == null) return null;
     final path = await resolver();
     if (path == null || path.trim().isEmpty) return null;
-    final db = await resqlite.Database.open(path);
+    final db = await openLocalChessDatabaseHandle(
+      path: path,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'shared cache read connection',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fallBackToExistingConnection,
+    );
+    if (db == null) return null;
     try {
       await db.execute('PRAGMA busy_timeout=5000');
       await db.execute('PRAGMA query_only=ON');
@@ -2259,7 +2298,22 @@ class LocalChessDatabaseRepository {
   ) async {
     final path = compactLocalTreeGameIndexPath(databasePath);
     if (!await File(path).exists()) return null;
-    final db = await resqlite.Database.open(path);
+    // The tree store is written by the tree build (`_publishCompactPgnGameIndex`
+    // replaces the file through `.previous`) while position queries open it for
+    // reading. Opening it inside that replace window fails with resqlite's
+    // all-or-nothing `Failed to open database at "<path>"`, because
+    // `sqlite3_open_v2` and the `journal_mode=WAL` probe inside resqlite's
+    // `open_connection` run with no busy timeout at all. A bounded retry (the
+    // guard) covers that window; a store that is present but unopenable after
+    // the retries fails loudly instead of silently answering from the main
+    // cache database.
+    final db = await openLocalChessDatabaseHandle(
+      path: path,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'opening-tree game index',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fallBackToExistingConnection,
+    );
+    if (db == null) return null;
     try {
       await db.execute('PRAGMA busy_timeout=5000');
       await db.execute('PRAGMA query_only=ON');
@@ -3470,7 +3524,13 @@ class LocalChessDatabaseRepository {
     if (resolver != null) {
       final path = await resolver();
       if (path == null || path.trim().isEmpty) return false;
-      final db = await resqlite.Database.open(path);
+      final db = await openLocalChessDatabaseHandle(
+        path: path,
+        operation: LocalChessDatabaseOperation.write,
+        purpose: 'compact opening-tree metadata publish',
+        absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+      );
+      if (db == null) return false;
       try {
         await db.execute('PRAGMA busy_timeout=20000');
         final result = await db.execute(
@@ -7940,7 +8000,20 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
   CompactLocalTreeIndexBuilder? builder;
   try {
     emit(LocalChessScanProgress(fraction: 0.01, message: 'Opening cache...'));
-    db = await resqlite.Database.open(request.databaseFilePath);
+    db = await openLocalChessDatabaseHandle(
+      path: request.databaseFilePath,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'opening-tree cache rebuild (worker)',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+    );
+    if (db == null) {
+      throw LocalChessDatabaseUnavailableException(
+        path: request.databaseFilePath,
+        operation: LocalChessDatabaseOperation.open,
+        attempts: 1,
+        purpose: 'opening-tree cache rebuild (worker)',
+      );
+    }
 
     final repository = LocalChessDatabaseRepository(database: () async => db!);
     final databaseId = _databaseId(request.databasePath);
@@ -8194,7 +8267,20 @@ Future<_LocalTreePositionRefStage> _openLocalTreePositionRefStage(
     'chessever-tree-stage-${_stableId(databaseId)}-'
     '${DateTime.now().microsecondsSinceEpoch}.db',
   );
-  final db = await resqlite.Database.open(path);
+  final db = await openLocalChessDatabaseHandle(
+    path: path,
+    operation: LocalChessDatabaseOperation.write,
+    purpose: 'disposable tree position ref stage',
+    absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+  );
+  if (db == null) {
+    throw LocalChessDatabaseUnavailableException(
+      path: path,
+      operation: LocalChessDatabaseOperation.write,
+      attempts: 1,
+      purpose: 'disposable tree position ref stage',
+    );
+  }
   await db.execute('''
     CREATE TABLE $_localTreePositionRefStageTable (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,7 +1,9 @@
+import 'package:chessever/desktop/services/local_chess_database_open_guard.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -66,19 +68,28 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
     if (localOpeningTreeIndex.gamesByFen.isEmpty &&
         localDatabasePath != null &&
         localDatabasePath.isNotEmpty) {
-      final localResponse = await ref
-          .read(localChessDatabaseRepositoryProvider)
-          .localPositionGamesResponse(
-            databasePath: localDatabasePath,
-            fen: query.fen,
-            moves: query.moves,
-            uci: query.uci,
-            filters: localCriteria,
-            sortBy: query.sortBy,
-            sortDirection: query.sortDirection,
-            pageNumber: query.pageNumber,
-            pageSize: query.pageSize,
-          );
+      final GamebaseSearchQueryResponse? localResponse;
+      try {
+        localResponse = await ref
+            .read(localChessDatabaseRepositoryProvider)
+            .localPositionGamesResponse(
+              databasePath: localDatabasePath,
+              fen: query.fen,
+              moves: query.moves,
+              uci: query.uci,
+              filters: localCriteria,
+              sortBy: query.sortBy,
+              sortDirection: query.sortDirection,
+              pageNumber: query.pageNumber,
+              pageSize: query.pageSize,
+            );
+      } on LocalChessDatabaseUnavailableException catch (error) {
+        // The tree store is generated: name the user's own database instead of
+        // `<name>.pgn.cetg`, keep the failure retryable (a build may still be
+        // publishing the store) and let the panel recover in place rather than
+        // dead-ending on a raw native string.
+        throw error.withLabel(p.basename(localDatabasePath));
+      }
       if (localResponse != null) {
         return DesktopPositionGamesPageResult(
           response: localResponse,

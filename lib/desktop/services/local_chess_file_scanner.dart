@@ -12,6 +12,7 @@ import 'package:libcompress/libcompress.dart';
 import 'package:resqlite/resqlite.dart' as resqlite;
 
 import 'package:chessever/desktop/services/compact_local_tree_index.dart';
+import 'package:chessever/desktop/services/local_chess_database_open_guard.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
@@ -2147,7 +2148,20 @@ Future<void> _buildCompactPgnTreeWorker(
         '$gameIndexPath.build-${DateTime.now().microsecondsSinceEpoch}';
     final temporaryGameIndex = File(temporaryGameIndexPath);
     if (await temporaryGameIndex.exists()) await temporaryGameIndex.delete();
-    gameDatabase = await resqlite.Database.open(temporaryGameIndexPath);
+    gameDatabase = await openLocalChessDatabaseHandle(
+      path: temporaryGameIndexPath,
+      operation: LocalChessDatabaseOperation.write,
+      purpose: 'opening-tree game index build',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+    );
+    if (gameDatabase == null) {
+      throw LocalChessDatabaseUnavailableException(
+        path: temporaryGameIndexPath,
+        operation: LocalChessDatabaseOperation.write,
+        attempts: 1,
+        purpose: 'opening-tree game index build',
+      );
+    }
     await _createCompactPgnGameDatabase(gameDatabase);
     final databaseId = _compactPgnDatabaseId(request.path);
     var processed = 0;
@@ -2223,17 +2237,24 @@ Future<void> _buildCompactPgnTreeWorker(
       throw LocalChessFileAccessException.changed(path: request.path);
     }
     emit(0.92, 'Finalizing tree...');
-    final result = compactBuilder.finish();
-    if (result.metadata.positionCount <= 0) {
-      deleteCompactLocalTreeIndexBestEffort(request.path);
-      throw StateError('Opening tree build did not produce an index.');
-    }
+    // Publish in the order readers depend on: the tree store first, then the
+    // `.ceti` metadata that makes a reader treat the tree as fresh. The store is
+    // replaced through `.previous` (`_publishCompactPgnGameIndex`), so a reader
+    // that saw fresh metadata could otherwise open the store inside that replace
+    // window and fail with resqlite's all-or-nothing
+    // `Failed to open database at "<path>"`. Committing and releasing the store
+    // handle before the rename keeps the window as short as the OS allows.
     await gameDatabase.close();
     gameDatabase = null;
     _publishCompactPgnGameIndex(
       temporaryPath: temporaryGameIndexPath,
       targetPath: gameIndexPath,
     );
+    final result = compactBuilder.finish();
+    if (result.metadata.positionCount <= 0) {
+      deleteCompactLocalTreeIndexBestEffort(request.path);
+      throw StateError('Opening tree build did not produce an index.');
+    }
     gameIndexPublished = true;
     emit(1, 'Tree ready.');
     request.sendPort.send(_CompactPgnTreeWorkerSuccess(result));

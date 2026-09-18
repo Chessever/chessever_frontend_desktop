@@ -17,6 +17,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
+import 'package:chessever/desktop/services/local_chess_database_open_guard.dart';
+import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 
@@ -308,6 +310,8 @@ class _DesktopPositionGamesTableState
   final Set<String> _loadingFullContinuations = <String>{};
   Timer? _localTreeRefreshDebounce;
   Timer? _resetFetchDebounce;
+  Timer? _errorRetryTimer;
+  int _errorRetryAttempts = 0;
   String? _lastPreviewedRowId;
   bool _lastPreviewAutoplay = true;
   int? _lastPreviewStep;
@@ -328,6 +332,7 @@ class _DesktopPositionGamesTableState
   GamebasePositionGamesQuery? _lastSuccessfulQuery;
   String? _lastSuccessfulSourceKey;
   String? _error;
+  bool _errorRetryable = false;
   String? _waitingForTreeMessage;
   bool _needsRefresh = false;
 
@@ -417,6 +422,7 @@ class _DesktopPositionGamesTableState
   void dispose() {
     _localTreeRefreshDebounce?.cancel();
     _resetFetchDebounce?.cancel();
+    _errorRetryTimer?.cancel();
     widget.controller?._detach(this);
     widget.externalScrollController?.removeListener(_onScroll);
     _scroll.removeListener(_onScroll);
@@ -464,6 +470,7 @@ class _DesktopPositionGamesTableState
       _resolvedApi = null;
       _lastSuccessfulQuery = null;
       _error = null;
+      _errorRetryable = false;
       _waitingForTreeMessage = null;
     });
     _pruneRowKeys(const <String>[]);
@@ -537,7 +544,12 @@ class _DesktopPositionGamesTableState
   Future<void> _fetchPage({
     required bool reset,
     bool preserveRows = false,
+    bool fromAutoRetry = false,
   }) async {
+    if (!fromAutoRetry) {
+      // A user-driven or event-driven fetch replaces any recovery in flight.
+      _cancelErrorAutoRetry();
+    }
     if (!mounted) return;
     // Denied => no request, no rows from a previous (free) position.
     if (!_positionQueryAllowed) {
@@ -668,7 +680,10 @@ class _DesktopPositionGamesTableState
         _lastSuccessfulSourceKey = _sourceKey;
         _isInitialLoading = false;
         _isLoadingMore = false;
+        _error = null;
+        _errorRetryable = false;
       });
+      _errorRetryAttempts = 0;
       if (kDebugMode) {
         debugPrint(
           '[DesktopPositionGamesTable] fetch done '
@@ -686,18 +701,67 @@ class _DesktopPositionGamesTableState
       );
     } catch (e) {
       if (!mounted || requestToken != _requestToken) return;
+      // A localized database open failure is transient by nature (a tree store
+      // being published, another writer holding the file): show actionable
+      // wording, keep the last good rows on screen, and retry on a bounded
+      // backoff so the panel recovers in place instead of dead-ending and
+      // making the user leave and re-enter the tab.
+      final retryable = isRetryableLocalChessDatabaseFailure(e);
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = localChessDatabaseUserMessage(e);
+        _errorRetryable = retryable;
         _isInitialLoading = false;
         _isLoadingMore = false;
       });
+      if (retryable) _scheduleErrorAutoRetry();
       if (kDebugMode) {
         debugPrint(
           '[DesktopPositionGamesTable] fetch failed '
-          '${stopwatch.elapsedMilliseconds}ms reset=$reset error=$_error',
+          '${stopwatch.elapsedMilliseconds}ms reset=$reset '
+          'retryable=$retryable error=$_error cause=$e',
         );
       }
     }
+  }
+
+  /// Two bounded retries cover a tree-store publish that is still finishing;
+  /// after that the panel keeps the last good rows (or the error surface) and
+  /// waits for the user's Retry so a genuinely broken database cannot spin.
+  static const int _maxErrorAutoRetries = 2;
+  static const List<Duration> _errorAutoRetryDelays = <Duration>[
+    Duration(milliseconds: 400),
+    Duration(milliseconds: 1200),
+  ];
+
+  void _scheduleErrorAutoRetry() {
+    if (!widget.active) return;
+    if (_errorRetryAttempts >= _maxErrorAutoRetries) return;
+    final delay = _errorAutoRetryDelays[_errorRetryAttempts];
+    _errorRetryAttempts += 1;
+    _errorRetryTimer?.cancel();
+    _errorRetryTimer = Timer(delay, () {
+      _errorRetryTimer = null;
+      if (!mounted || !widget.active) {
+        _needsRefresh = true;
+        return;
+      }
+      _fetchPage(reset: true, fromAutoRetry: true);
+    });
+  }
+
+  void _cancelErrorAutoRetry() {
+    _errorRetryTimer?.cancel();
+    _errorRetryTimer = null;
+    _errorRetryAttempts = 0;
+  }
+
+  void _retryAfterError() {
+    _cancelErrorAutoRetry();
+    if (!mounted || !widget.active) {
+      _needsRefresh = true;
+      return;
+    }
+    _fetchPage(reset: true);
   }
 
   String? _playerTreeWaitMessage() {
@@ -1511,6 +1575,8 @@ class _DesktopPositionGamesTableState
         icon: Icons.cloud_off_outlined,
         title: "Couldn't load games",
         message: _error!,
+        actionLabel: _errorRetryable ? 'Retry' : null,
+        onAction: _errorRetryable ? _retryAfterError : null,
       );
     }
     if (_rows.isEmpty) {
@@ -2515,14 +2581,24 @@ class _Empty extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.message,
+    this.actionLabel,
+    this.onAction,
   });
 
   final IconData icon;
   final String title;
   final String message;
 
+  /// Optional recovery action. A failure the user can retry (`Retry`) must
+  /// never be a dead end.
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
   @override
   Widget build(BuildContext context) {
+    final label = actionLabel?.trim() ?? '';
+    final action = onAction;
+    final hasAction = label.isNotEmpty && action != null;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -2546,6 +2622,15 @@ class _Empty extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(color: kLightGreyColor, fontSize: 11),
             ),
+            if (hasAction) ...[
+              const SizedBox(height: 12),
+              DesktopHeaderActionButton(
+                label: label,
+                icon: Icons.refresh_rounded,
+                onPress: action,
+                accented: true,
+              ),
+            ],
           ],
         ),
       ),

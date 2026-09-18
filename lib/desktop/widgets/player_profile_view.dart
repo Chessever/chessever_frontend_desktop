@@ -747,16 +747,13 @@ class _Header extends StatelessWidget {
           if (hasFideId) ...[
             const SizedBox(width: 8),
             DesktopHeaderActionButton(
-              label: hasPlayerWorkspace ? 'Player Profile' : 'Build Profile',
-              icon:
-                  hasPlayerWorkspace
-                      ? Icons.person_outline_rounded
-                      : Icons.person_add_alt_1_outlined,
+              label: 'Prepare',
+              icon: Icons.person_search_outlined,
               onPress: isBuildingTree ? null : onOpenPlayerWorkspace,
               tooltip:
                   hasPlayerWorkspace
-                      ? 'Open this player in Players'
-                      : 'Create this FIDE player in Players',
+                      ? 'Open this player in Prepare'
+                      : 'Create this FIDE player in Prepare',
               accented: hasPlayerWorkspace,
               loading: isBuildingProfile,
             ),
