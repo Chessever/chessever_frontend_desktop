@@ -226,6 +226,10 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
             if (error.isForMainFrame != true || !mounted) return;
             _markFrameFailed();
           },
+          // Deliberately not filtered on the reported url: a redirect (or a
+          // normalized trailing slash) would no longer match the url we asked
+          // for and the frame check would never run, leaving a dead embed with
+          // no fallback. Staleness is handled inside the check instead.
           onPageFinished: (_) => unawaited(_verifyEmbedDocument()),
         ),
       );
@@ -297,7 +301,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   /// external link rather than showing that page in the rail.
   Future<void> _verifyEmbedDocument() async {
     final controller = _controller;
-    if (controller == null || _loadedEmbedUrl == null) return;
+    final expectedUrl = _loadedEmbedUrl;
+    if (controller == null || expectedUrl == null) return;
     Object? result;
     try {
       result = await controller.runJavaScriptReturningResult(
@@ -307,7 +312,9 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       return; // Not answerable (page torn down); the next load re-checks.
     }
     final hasFrame = result == true || result.toString() == 'true';
-    if (!mounted || _loadedEmbedUrl == null) return;
+    // The stream was switched while the query was in flight: that answer
+    // describes the old document, so it can neither clear nor fail this one.
+    if (!mounted || _loadedEmbedUrl != expectedUrl) return;
     if (hasFrame) {
       _autoRetries = 0;
       return;
@@ -326,7 +333,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     _loadedEmbedUrl = key;
     _frameFailed = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      // A newer selection (or a stop) already claimed the slot in this frame.
+      if (!mounted || _loadedEmbedUrl != key) return;
       unawaited(_ensureController().loadRequest(url));
     });
   }
@@ -337,7 +345,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     final controller = _controller;
     if (controller == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      // A load that landed in the same frame must survive the queued stop.
+      if (!mounted || _loadedEmbedUrl != null) return;
       unawaited(controller.loadRequest(Uri.parse('about:blank')));
     });
   }

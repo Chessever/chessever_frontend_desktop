@@ -34,7 +34,7 @@ void main() {
     expect(observed.latest.rows, isNull);
 
     fetches.completeNext(<SavedAnalysis>[_analysis('game-1')]);
-    await tester.pump();
+    await _publishFetch(tester);
     expect(observed.latest.rows?.map((row) => row.id), <String>['game-1']);
     expect(observed.latest.isInitialLoading, isFalse);
     expect(observed.latest.isRefreshing, isFalse);
@@ -50,7 +50,7 @@ void main() {
       _analysis('game-2'),
       _analysis('game-1'),
     ]);
-    await tester.pump();
+    await _publishFetch(tester);
     expect(observed.latest.rows?.map((row) => row.id), <String>[
       'game-2',
       'game-1',
@@ -75,11 +75,11 @@ void main() {
 
     // The superseded first fetch lands after the second one started.
     fetches.complete(0, <SavedAnalysis>[_analysis('stale')]);
-    await tester.pump();
+    await _publishFetch(tester);
     expect(observed.latest.rows, isNull);
 
     fetches.completeNext(<SavedAnalysis>[_analysis('fresh')]);
-    await tester.pump();
+    await _publishFetch(tester);
     expect(observed.latest.rows?.map((row) => row.id), <String>['fresh']);
   });
 
@@ -98,7 +98,7 @@ void main() {
       ),
     );
     fetches.completeNext(<SavedAnalysis>[_analysis('mehmet-1')]);
-    await tester.pump();
+    await _publishFetch(tester);
     expect(observed.latest.rows?.map((row) => row.id), <String>['mehmet-1']);
 
     await tester.pumpWidget(
@@ -113,7 +113,7 @@ void main() {
     expect(observed.latest.isInitialLoading, isTrue);
 
     fetches.completeNext(<SavedAnalysis>[_analysis('karim-1')]);
-    await tester.pump();
+    await _publishFetch(tester);
     expect(observed.latest.rows?.map((row) => row.id), <String>['karim-1']);
   });
 
@@ -131,12 +131,12 @@ void main() {
 
     await tester.pumpWidget(harness);
     fetches.completeNext(<SavedAnalysis>[_analysis('game-1')]);
-    await tester.pump();
+    await _publishFetch(tester);
     expect(observed.latest.rows?.length, 1);
 
     await tester.pumpWidget(harness.withRefreshKey(1));
     fetches.failNext(StateError('temporary network failure'));
-    await tester.pump();
+    await _publishFetch(tester);
     expect(observed.latest.rows?.map((row) => row.id), <String>['game-1']);
     expect(observed.latest.isInitialLoading, isFalse);
     // The failure is only worth surfacing when it left nothing to show.
@@ -158,11 +158,21 @@ void main() {
       ),
     );
     fetches.failNext(StateError('offline'));
-    await tester.pump();
+    await _publishFetch(tester);
     expect(observed.latest.rows, isNull);
     expect(observed.latest.isInitialLoading, isFalse);
     expect(observed.latest.error, isA<StateError>());
   });
+}
+
+/// Pumps the two frames a settled fetch needs to reach the widget.
+///
+/// The hook tags each fetch with its scope through a derived future, so a
+/// completion resolves one microtask later than the raw fetch: the first frame
+/// runs that hop, the second renders the publication it produced.
+Future<void> _publishFetch(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump();
 }
 
 class _Observations {

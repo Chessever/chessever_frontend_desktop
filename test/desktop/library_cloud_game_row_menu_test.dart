@@ -36,7 +36,7 @@ void main() {
     expect(find.text('Delete game'), findsOneWidget);
 
     await tester.tap(find.text('Game info'));
-    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pumpAndSettle();
 
     expect(dispatched, LibraryGameAction.gameInfo);
   });
@@ -61,11 +61,11 @@ void main() {
     expect(find.text('Delete game'), findsOneWidget);
 
     await tester.tap(find.text('Paste games'));
-    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pumpAndSettle();
     expect(dispatched, isNull);
 
     await tester.tap(find.text('Delete game'));
-    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pumpAndSettle();
     expect(dispatched, isNull);
   });
 
@@ -79,7 +79,7 @@ void main() {
 
     await _openMenu(tester);
     await tester.tap(find.text('Copy PGN'));
-    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pumpAndSettle();
 
     expect(dispatched, LibraryGameAction.copyPgn);
   });
@@ -149,6 +149,5 @@ Future<void> _openMenu(WidgetTester tester) async {
     tester.getCenter(find.text('Cloud game row')),
     buttons: kSecondaryMouseButton,
   );
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 250));
+  await tester.pumpAndSettle();
 }

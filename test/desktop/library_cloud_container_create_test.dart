@@ -33,8 +33,11 @@ void main() {
         icon: 'folder_container',
         nodeType: kLibraryNodeTypeDatabase,
       );
-      expect(libraryFolderIsDatabase(legacy, <LibraryFolder>[legacy]), isTrue,
-          reason: 'node_type is authoritative for what may contain children');
+      expect(
+        libraryFolderIsDatabase(legacy, <LibraryFolder>[legacy], gameCount: 3),
+        isTrue,
+        reason: 'node_type is authoritative for what may contain children',
+      );
 
       final folder = _folder(
         id: 'students',
@@ -68,15 +71,45 @@ void main() {
       );
     });
 
-    test('a childless database node is never presented as a folder', () {
+    test('a childless node the client typed as a database stays one', () {
       final database = _folder(
         id: 'mehmet',
         name: 'Mehmet',
-        icon: 'folder_container',
+        icon: 'database',
         nodeType: kLibraryNodeTypeDatabase,
       );
       expect(
         libraryFolderIsDatabase(database, <LibraryFolder>[database]),
+        isTrue,
+      );
+    });
+
+    test('an empty legacy container keeps the folder it was created as', () {
+      // Builds up to 20.32.16 wrote the container icon but never `node_type`,
+      // so the column default is the only thing calling this a database. It
+      // holds no games, the server accepts a child under it and promotes the
+      // row, and demoting it here would lock an empty folder out of the insert
+      // that repairs it.
+      final legacy = _folder(
+        id: 'students',
+        name: 'Students',
+        icon: 'folder_container',
+        nodeType: kLibraryNodeTypeDatabase,
+      );
+      expect(
+        libraryFolderIsDatabase(legacy, <LibraryFolder>[legacy]),
+        isFalse,
+      );
+      expect(
+        libraryCurrentChildCreateParent('students', <LibraryFolder>[legacy])?.id,
+        'students',
+        reason: 'creation stays inside the folder the user is standing in',
+      );
+
+      // The same row once it is known to hold games is a database, and the
+      // create guard must move the new node up to the top level.
+      expect(
+        libraryFolderIsDatabase(legacy, <LibraryFolder>[legacy], gameCount: 12),
         isTrue,
       );
     });
@@ -140,14 +173,13 @@ void main() {
         name: 'Sources',
         nodeType: kLibraryNodeTypeFolder,
       );
-      // A legacy node that renders as a folder but is still a database on the
-      // server, holding 76 games: the guard would reject the insert, so the
-      // create moves one level up instead of failing.
+      // A database holds games only, so there is no legal place inside it for a
+      // new folder: the create moves one level up instead of failing.
       final database = _folder(
         id: 'mehmet',
         name: 'Mehmet',
         parentId: 'sources',
-        icon: 'folder_container',
+        icon: 'database',
         nodeType: kLibraryNodeTypeDatabase,
       );
       final folders = <LibraryFolder>[parent, database];

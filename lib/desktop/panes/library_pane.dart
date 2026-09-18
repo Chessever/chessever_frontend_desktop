@@ -3894,10 +3894,22 @@ bool libraryFolderIsDatabase(
     // A database node holds games only. A *mixed* legacy node (children created
     // before the container guard shipped) stays navigable so those children
     // remain reachable, and the server's invariant repair promotes it to a
-    // folder. A childless database node is exact and must not be presented as a
-    // folder: that mismatch is what made child creation fail with a generic
-    // error.
-    return !libraryFolderHasChildren(folders, folder.id);
+    // folder.
+    if (libraryFolderHasChildren(folders, folder.id)) return false;
+    // A node the client itself typed as a database is exact.
+    if (folder.icon == 'database' || folder.icon == 'twic') return true;
+    // Once it is known to hold games it is a database whatever its icon says,
+    // and the create guard retargets away from it.
+    if (gameCount != null && gameCount > 0) return true;
+    // Otherwise this is a legacy container: builds up to 20.32.16 wrote the
+    // folder icon without ever writing `node_type`, so the column default
+    // ('database') is all that makes it look like one. The server accepts — and
+    // promotes — a child under such a node while it holds no games, so leave it
+    // presented as the folder the user created and let the first child repair
+    // the row. Demoting it here would lock an empty folder into a kind it never
+    // chose and block the very insert that heals it; if the live guard does
+    // reject the insert anyway, `libraryCreateFolderRejectionMessage` says so in
+    // words instead of failing generically.
   }
   if (folder.icon == 'database' || folder.icon == 'twic') return true;
   if (_isKnownRootDatabase(folder) &&
@@ -7947,13 +7959,21 @@ class _HeaderCellState extends State<_HeaderCell>
                     ? MainAxisAlignment.end
                     : MainAxisAlignment.start,
             children: [
-              Text(
-                widget.label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.4,
+              // Columns are user-resizable, so a label must give way inside its
+              // own cell instead of spilling past it: a header sliced by the
+              // column edge reads as broken, an ellipsis reads as narrowed.
+              Flexible(
+                child: Text(
+                  widget.label,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                  ),
                 ),
               ),
               if (active) ...[
