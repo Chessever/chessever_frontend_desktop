@@ -8,6 +8,7 @@ import 'dart:math' as math;
 import 'package:chessever/desktop/services/retained_local_pgn.dart';
 import 'package:chessever/desktop/widgets/desktop_game_points.dart';
 import 'package:chessever/utils/awarded_points.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -2329,7 +2330,9 @@ Future<int> _copyEventGameSummariesAsPgn({
     return 0;
   }
 
-  await Clipboard.setData(ClipboardData(text: pgns.join('\n\n')));
+  await Clipboard.setData(
+    ClipboardData(text: toExternalCompatiblePgn(pgns.join('\n\n'))),
+  );
   if (!context.mounted) return pgns.length;
   final count = pgns.length;
   final suffix = skipped > 0 ? ' ($skipped skipped without moves)' : '';

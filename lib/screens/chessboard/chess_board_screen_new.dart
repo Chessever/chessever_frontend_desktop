@@ -21,6 +21,7 @@ import 'package:chessever/screens/chessboard/notation/notation_cache.dart';
 import 'package:chessever/screens/chessboard/notation/notation_token_builder.dart';
 import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/chessboard/view_model/chess_board_state_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/providers/gamebase_overlay_settings_provider.dart';
@@ -2933,7 +2934,9 @@ class _AppBarState extends ConsumerState<_AppBar> {
         );
         return;
       }
-      await Clipboard.setData(ClipboardData(text: resolved.pgn));
+      await Clipboard.setData(
+        ClipboardData(text: toExternalCompatiblePgn(resolved.pgn)),
+      );
       HapticFeedback.lightImpact();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

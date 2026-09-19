@@ -16,6 +16,7 @@ import 'package:chessever/repository/library/models/saved_analysis.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart'
     show kTwicBookId, libraryFoldersStreamProvider, subscribedBooksProvider;
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
@@ -187,7 +188,9 @@ Future<int> copyPgnTextsAsPgn({
     }
     return 0;
   }
-  await Clipboard.setData(ClipboardData(text: parts.join('\n\n')));
+  await Clipboard.setData(
+    ClipboardData(text: toExternalCompatiblePgn(parts.join('\n\n'))),
+  );
   if (context.mounted) {
     final n = parts.length;
     final skipped = rawPgns.length - n;
