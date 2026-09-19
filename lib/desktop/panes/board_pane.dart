@@ -75,6 +75,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/desktop/widgets/board_actions_popover.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_panel.dart';
@@ -2904,7 +2905,13 @@ class _BoardPaneContent extends HookConsumerWidget {
             lastAppliedPgn: lastAppliedPgn.value,
           );
         }
-        await Clipboard.setData(ClipboardData(text: pgn));
+        // Copied PGN leaves the app, so it must import in stricter consumers:
+        // standard NAGs only, wrapped movetext, terminated file. The exact
+        // ChessEver class travels in the private `[ChessEverClassification …]`
+        // header tag, which our own import restores and no other app renders.
+        await Clipboard.setData(
+          ClipboardData(text: toExternalCompatiblePgn(pgn)),
+        );
         showToast('PGN copied to clipboard');
       } catch (e) {
         showToast('Failed to copy PGN: $e', error: true);

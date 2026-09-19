@@ -1,6 +1,7 @@
 import 'package:dartchess/dartchess.dart';
 
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
 
 /// A fully prepared edit. The caller publishes it with one undo snapshot.
@@ -25,7 +26,17 @@ BoardPgnInsertion? insertBoardPgn({
     final parsed = PgnGame.parsePgn(pgn);
     final incoming = _PositionNode();
     final start = PgnGame.startingPosition(parsed.headers);
-    _readPgn(incoming, parsed.moves, start);
+    _readPgn(
+      incoming,
+      parsed.moves,
+      start,
+      key: kChesseverFirstMainlineMoveKey,
+      // Same private carrier `ChessGame.fromPgn` reads: the classes a copied
+      // game brought home, addressed to the move they belong to.
+      headerCodes: parseChesseverClassificationHeader(
+        chesseverClassificationHeaderOf(parsed.headers),
+      ),
+    );
     if (incoming.children.isEmpty) return null;
     // ChessMove has no before-move comment field. Keep all introductory prose
     // on the first move rather than silently dropping it as fromPgn does.
@@ -166,7 +177,18 @@ void _readLine(
   }
 }
 
-void _readPgn(_PositionNode target, PgnNode<PgnNodeData> source, Position pos) {
+void _readPgn(
+  _PositionNode target,
+  PgnNode<PgnNodeData> source,
+  Position pos, {
+  required String? key,
+  required Map<String, int> headerCodes,
+}) {
+  // The level's first child is the move that is written first here; its
+  // siblings are the variation blocks that follow it, so they are addressed
+  // from its key.
+  final first = source.children.isEmpty ? null : source.children.first;
+  var alternative = 0;
   for (final child in source.children) {
     final data = child.data;
     final move = pos.parseSan(data.san);
@@ -176,7 +198,20 @@ void _readPgn(_PositionNode target, PgnNode<PgnNodeData> source, Position pos) {
       throw const FormatException('Illegal PGN move');
     }
     final next = pos.play(move);
-    final comments = _union(data.startingComments, data.comments);
+    final String? moveKey;
+    if (identical(child, first)) {
+      moveKey = key;
+    } else {
+      alternative++;
+      moveKey = key == null
+          ? null
+          : chesseverMoveKey(parentKey: key, variation: alternative, index: 1);
+    }
+    // Read the private classification from the raw payload: the classes go into
+    // the move's NAGs, where the rest of the app already looks for them, and a
+    // legacy in-comment marker is dropped so it cannot ride into a file.
+    final rawComments = _union(data.startingComments, data.comments);
+    final comments = stripChesseverMarker(rawComments);
     String? clock;
     String? evaluation;
     for (final comment in comments ?? const <String>[]) {
@@ -193,12 +228,23 @@ void _readPgn(_PositionNode target, PgnNode<PgnNodeData> source, Position pos) {
         uci: move.uci,
         turn: pos.turn == Side.white ? ChessColor.white : ChessColor.black,
         comments: comments,
-        nags: data.nags,
+        nags: restoreChesseverClassificationNags(
+          nags: data.nags,
+          comments: rawComments,
+          moveKey: moveKey,
+          headerCodes: headerCodes,
+        ),
         clockTime: clock,
         eval: evaluation,
       ),
     );
-    _readPgn(node, child, next);
+    _readPgn(
+      node,
+      child,
+      next,
+      key: moveKey == null ? null : chesseverNextMoveKey(moveKey),
+      headerCodes: headerCodes,
+    );
     // Duplicate sibling UCIs may occur in hand-edited PGNs.
     final existing = target.children.where((n) => n.move!.uci == move.uci);
     if (existing.isEmpty) {

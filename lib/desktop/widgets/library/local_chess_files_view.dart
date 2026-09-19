@@ -17,6 +17,7 @@ import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -1522,7 +1523,9 @@ class _LocalGamesTable extends HookConsumerWidget {
         );
         return;
       }
-      await Clipboard.setData(ClipboardData(text: '${parts.join('\n\n')}\n'));
+      await Clipboard.setData(
+        ClipboardData(text: toExternalCompatiblePgn(parts.join('\n\n'))),
+      );
       if (!context.mounted) return;
       final skipped = gamesToCopy.length - parts.length;
       showDesktopToast(

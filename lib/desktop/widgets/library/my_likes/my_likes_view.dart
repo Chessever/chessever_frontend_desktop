@@ -32,6 +32,7 @@ import 'package:chessever/repository/liked_games/liked_games_provider.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/chessboard/models/like_tag.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/save_to_library_guard.dart';
 import 'package:chessever/widgets/paywall/premium_paywall_sheet.dart';
@@ -452,7 +453,9 @@ Future<void> _handleRowAction(
         return;
       }
       await Clipboard.setData(
-        ClipboardData(text: exportGameToPgn(analysis.chessGame).trim()),
+        ClipboardData(
+          text: toExternalCompatiblePgn(exportGameToPgn(analysis.chessGame)),
+        ),
       );
       if (context.mounted) showDesktopToast(context, 'PGN copied');
     case _LikeRowAction.copyTo:

@@ -11,6 +11,8 @@ import 'package:path/path.dart' as p;
 import 'package:libcompress/libcompress.dart';
 import 'package:resqlite/resqlite.dart' as resqlite;
 
+import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
+
 import 'package:chessever/desktop/services/compact_local_tree_index.dart';
 import 'package:chessever/desktop/services/local_chess_database_open_guard.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
@@ -4069,7 +4071,11 @@ _ParsedLocalChessGame? _entryFromPgnChunk(String rawPgn) {
     game: ChessGame(
       gameId: 'pending',
       startingFen: startingFen,
-      metadata: headers,
+      // A PGN copied out of ChessEver carries the classes in its private
+      // `[ChessEverClassification …]` header tag. Scanning such a file must not
+      // turn that private carrier into a user-visible header (or into a header
+      // the app writes back out).
+      metadata: withoutChesseverClassificationHeader(headers),
       mainline: const [],
     ),
     rawPgn: rawPgn,

@@ -1,4 +1,5 @@
 import 'package:chessever/desktop/widgets/event_info_popover.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -120,6 +121,31 @@ void main() {
       );
 
       expect(eventInfoSelectedText(value), isNull);
+    });
+  });
+
+  group('private ChessEver headers stay hidden', () {
+    test('the classification carrier is never shown as a header', () {
+      final entries = eventInfoExtraHeaderEntries(const {
+        'White': 'Rewitz, Poul',
+        'BroadcastName': 'Test Open',
+        // What a copied game carries: the classes, addressed by ply. It is
+        // machine data, and it must never be rendered as a header row.
+        'ChessEverClassification': '1=244 2=247 3=242',
+        'ChessEverSourceUrl': 'https://chessever.com/games/abc',
+        ChessGame.metadataIsLiveKey: 'true',
+      });
+
+      expect(entries, isEmpty);
+    });
+
+    test('a real PGN tag beside them is still shown', () {
+      final entries = eventInfoExtraHeaderEntries(const {
+        'PlyCount': '60',
+        'ChessEverClassification': '1=244',
+      });
+
+      expect(entries.map((entry) => entry.key), ['PlyCount']);
     });
   });
 }

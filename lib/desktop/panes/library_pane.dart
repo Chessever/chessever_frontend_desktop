@@ -108,6 +108,7 @@ import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/library/providers/gamebase_database_games_provider.dart';
 import 'package:chessever/screens/library/providers/gamebase_filter_provider.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart';
@@ -8844,8 +8845,11 @@ Future<void> _onCopyPgn({
   required BuildContext context,
   required SavedAnalysis analysis,
 }) async {
-  final pgn = exportGameToPgn(analysis.chessGame).trim();
-  if (pgn.isEmpty) {
+  // Leaves the app: standard NAGs only, wrapped movetext, terminated file.
+  // The exact ChessEver class travels in the private
+  // `[ChessEverClassification …]` header tag.
+  final pgn = toExternalCompatiblePgn(exportGameToPgn(analysis.chessGame));
+  if (pgn.trim().isEmpty) {
     if (!context.mounted) return;
     _toast(context, 'Nothing to copy — the game has no moves.', error: true);
     return;
