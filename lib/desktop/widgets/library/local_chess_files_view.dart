@@ -30,6 +30,7 @@ import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/library/local_database_show_in_folder.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
@@ -641,6 +642,21 @@ class LocalChessFilesView extends HookConsumerWidget {
                             ? cancelDatabaseTreeBuild
                             : null,
                     onSelectPath: selectLocalPath,
+                    onShowInFolder:
+                        selectedDatabase == null
+                            ? null
+                            : () => unawaited(
+                                revealLocalDatabasePath(
+                                  context,
+                                  selectedDatabase.path,
+                                ),
+                              ),
+                    onRevealFolder:
+                        node is LocalChessFolderNode
+                            ? () => unawaited(
+                                revealLocalFolderPath(context, node.path),
+                              )
+                            : null,
                   ),
                 if (!isBrowsingFolder)
                   DecoratedBox(
@@ -783,6 +799,8 @@ class _LocalHeader extends StatelessWidget {
     required this.onBuildTree,
     required this.onCancelTreeBuild,
     required this.onSelectPath,
+    this.onShowInFolder,
+    this.onRevealFolder,
   });
 
   final LocalChessSource source;
@@ -799,9 +817,18 @@ class _LocalHeader extends StatelessWidget {
   final VoidCallback? onCancelTreeBuild;
   final ValueChanged<String> onSelectPath;
 
+  /// Reveals the open database's own file in the OS file manager. `null` when
+  /// the selected node is not a single local database file.
+  final VoidCallback? onShowInFolder;
+
+  /// Reveals the open FOLDER itself in the OS file manager. `null` when the
+  /// selected node is not a folder.
+  final VoidCallback? onRevealFolder;
+
   @override
   Widget build(BuildContext context) {
     final selectedDatabase = selectedLocalChessDatabaseFile(node);
+    final showInFolder = onShowInFolder;
     final isDatabaseView = selectedDatabase != null;
     final (gameCount, fileCount, unsupportedCount) = switch (node) {
       LocalChessFolderNode(
@@ -902,6 +929,14 @@ class _LocalHeader extends StatelessWidget {
               icon: Icons.refresh_rounded,
               onPress: onRefresh,
             ),
+            if (onRevealFolder != null) ...[
+              const SizedBox(width: 2),
+              _HeaderAction(
+                tooltip: kLocalDatabaseShowInFolderLabel,
+                icon: Icons.folder_open_outlined,
+                onPress: onRevealFolder!,
+              ),
+            ],
             const SizedBox(width: 6),
           ],
           if (isDatabaseView) ...[
@@ -911,6 +946,13 @@ class _LocalHeader extends StatelessWidget {
               onBuild: onBuildTree,
               onCancel: onCancelTreeBuild,
             ),
+            const SizedBox(width: 2),
+            if (showInFolder != null)
+              _HeaderAction(
+                tooltip: kLocalDatabaseShowInFolderLabel,
+                icon: Icons.folder_open_outlined,
+                onPress: showInFolder,
+              ),
             const SizedBox(width: 6),
           ],
           DesktopToolbarPillButton(
