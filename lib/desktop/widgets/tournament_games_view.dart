@@ -24,6 +24,7 @@ import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart' show gameCardEvalScrollGate;
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
@@ -364,6 +365,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
 
   void _markLiveCardsScrolling() {
     _setLiveCardsPausedForScroll(true);
+    // WEB PARITY: while this surface scrolls, a card whose eval is not cached
+    // locally does no evaluation I/O at all.
+    gameCardEvalScrollGate = true;
     _scrollIdleTimer?.cancel();
     _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
   }
@@ -376,6 +380,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   void _markLiveCardsIdle() {
     if (!mounted) return;
     _setLiveCardsPausedForScroll(false);
+    gameCardEvalScrollGate = false;
   }
 
   void _setLiveCardsPausedForScroll(bool paused) {
@@ -1031,12 +1036,30 @@ class _RoundSliverSection extends ConsumerWidget {
     final contentSlivers = <Widget>[];
     if (expanded) {
       if (showTeamMatches) {
-        for (final group in buildDesktopTeamMatchGroups(games)) {
+        // WEB PARITY (BoardGrid.tsx:366 `key={board.id}`, StackedRounds.tsx
+        // section keys): a sliver list is matched positionally, so an
+        // unkeyed run of [header, grid, header, grid, ...] re-inflates
+        // every group after the first structural change. Keying each
+        // group's slivers by its own identity lets a refresh MOVE them
+        // instead of rebuilding the whole wall.
+        final teamGroups = buildDesktopTeamMatchGroups(games);
+        for (final group in teamGroups) {
+          final groupKey = '${group.leftTeam}|${group.rightTeam}';
           contentSlivers
-            ..add(SliverToBoxAdapter(child: _TeamMatchHeader(group: group)))
+            ..add(
+              SliverToBoxAdapter(
+                key: ValueKey<String>(
+                  'team-match-header:$scopeId:${round.id}:$groupKey',
+                ),
+                child: _TeamMatchHeader(group: group),
+              ),
+            )
             ..add(const SliverToBoxAdapter(child: SizedBox(height: 8)))
             ..add(
               _TournamentGamesSliverGrid(
+                key: ValueKey<String>(
+                  'team-match-grid:$scopeId:${round.id}:$groupKey',
+                ),
                 scopeId: scopeId,
                 selectedGameId: selectedGameId,
                 onSelectGame: onSelectGame,
@@ -1085,6 +1108,7 @@ class _RoundSliverSection extends ConsumerWidget {
       } else {
         contentSlivers.add(
           _TournamentGamesSliverGrid(
+            key: ValueKey<String>('round-grid:$scopeId:${round.id}'),
             scopeId: scopeId,
             selectedGameId: selectedGameId,
             onSelectGame: onSelectGame,
@@ -1136,6 +1160,7 @@ class _RoundSliverSection extends ConsumerWidget {
 
 class _TournamentGamesSliverGrid extends StatelessWidget {
   const _TournamentGamesSliverGrid({
+    super.key,
     required this.scopeId,
     required this.selectedGameId,
     required this.onSelectGame,
@@ -1214,10 +1239,19 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
       delegate: SliverChildBuilderDelegate(
         (context, index) {
           final game = games[index];
-          return DesktopGameKeyboardItem(
+          // WEB PARITY (.ce-cell `contain: layout paint`, components.css): a
+          // card's own clock/eval repaint must not dirty its neighbours.
+          // WEB PARITY (BoardGrid.tsx:366 `key={board.id}` + TanStack row
+          // recycling): the card's identity key lives on the delegate's
+          // own child, and `findChildIndexCallback` maps it back to its
+          // index, so a filtered/reordered round moves a card's element
+          // instead of destroying and re-inflating it (and its Realtime
+          // subscription).
+          return RepaintBoundary(
             key: ValueKey<String>(
               'tournament-lazy-card:$scopeId:${game.gameId}',
             ),
+          child: DesktopGameKeyboardItem(
             itemKey: keyForGame(game.gameId),
             gameId: game.gameId,
             onSelect: onSelectGame,
@@ -1234,9 +1268,21 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
               roundNameById: roundNameById,
               streamingEnabled: streamingEnabled,
             ),
+          ),
           );
         },
         childCount: games.length,
+        findChildIndexCallback: (Key key) {
+          if (key is! ValueKey<String>) return null;
+          final prefix = 'tournament-lazy-card:$scopeId:';
+          final value = key.value;
+          if (!value.startsWith(prefix)) return null;
+          final gameId = value.substring(prefix.length);
+          for (var i = 0; i < games.length; i++) {
+            if (games[i].gameId == gameId) return i;
+          }
+          return null;
+        },
         // Cards outside the viewport must dispose their Riverpod listeners.
         // Selection lives in DesktopGameKeyboardFocus, not in card State, so
         // keeping every historical child alive only wastes realtime/CPU work.
@@ -2671,7 +2717,23 @@ class LiveDesktopGameCard extends ConsumerWidget {
       );
     }
 
-    return DesktopGameCard(
+    final resolvedAllowStockfishFallback =
+        streamingEnabled && allowStockfishFallback && shouldStream &&
+        !liveCardsPaused;
+    // WEB PARITY (RoundGameRow.tsx:294 `railRowEqual`, RoundGamesList.tsx:396):
+    // the card subtree is memoized on the exact fields it renders, so a
+    // Realtime batch tick that only touches another board (or a flag/clock it
+    // does not draw) no longer rebuilds this card's mini board. Without this
+    // the grid rebuilt ~520 cards/second during a Round-4 scroll.
+    return _LiveCardMemo(
+      signature: _liveCardSignature(
+        data: data,
+        selected: selected,
+        allowStockfishFallback: resolvedAllowStockfishFallback,
+        layout: layout,
+        lockedReason: lockedReason,
+      ),
+      builder: () => DesktopGameCard(
       // Re-derive every rebuild so the eval bar's FEN, the status pill,
       // and the "In play"/result label pick up Realtime deltas.
       data: data,
@@ -2726,13 +2788,91 @@ class LiveDesktopGameCard extends ConsumerWidget {
       layout: layout,
       selected: selected,
       lockedReason: lockedReason,
-      allowStockfishFallback:
-          streamingEnabled &&
-          allowStockfishFallback &&
-          shouldStream &&
-          !liveCardsPaused,
+      allowStockfishFallback: resolvedAllowStockfishFallback,
+      ),
     );
   }
+}
+
+/// Content signature of one tournament game card - the Flutter equivalent of
+/// the web rail's `railRowEqual`: only the values the card actually renders.
+Object _liveCardSignature({
+  required GameCardData data,
+  required bool selected,
+  required bool allowStockfishFallback,
+  required DesktopCardLayout layout,
+  required String? lockedReason,
+}) {
+  return Object.hashAll(<Object?>[
+    data.id,
+    data.title,
+    data.whiteName,
+    data.blackName,
+    data.whiteFederation,
+    data.blackFederation,
+    data.whiteTitle,
+    data.blackTitle,
+    data.whiteRating,
+    data.blackRating,
+    data.whiteFideId,
+    data.blackFideId,
+    data.whiteCustomPoints,
+    data.blackCustomPoints,
+    data.fen,
+    data.lastMove,
+    data.status,
+    data.hasStarted,
+    data.openingName,
+    data.subtitle,
+    data.whiteClockSeconds,
+    data.blackClockSeconds,
+    data.whiteClockCentiseconds,
+    data.blackClockCentiseconds,
+    data.lastMoveTime,
+    data.activePlayer,
+    data.canResolveRemoteFen,
+    selected,
+    allowStockfishFallback,
+    layout,
+    lockedReason,
+  ]);
+}
+
+/// Hands back the SAME widget instance while [signature] is unchanged, so
+/// `Element.updateChild` short-circuits and the card's mini board, players,
+/// clocks and eval bar are not rebuilt for an unrelated live tick.
+class _LiveCardMemo extends StatefulWidget {
+  const _LiveCardMemo({required this.signature, required this.builder});
+
+  final Object signature;
+  final Widget Function() builder;
+
+  @override
+  State<_LiveCardMemo> createState() => _LiveCardMemoState();
+}
+
+class _LiveCardMemoState extends State<_LiveCardMemo> {
+  Object? _signature;
+  Widget? _child;
+
+  @override
+  void initState() {
+    super.initState();
+    _signature = widget.signature;
+    _child = widget.builder();
+  }
+
+  @override
+  void didUpdateWidget(_LiveCardMemo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(_signature, widget.signature)) {
+      _signature = widget.signature;
+      _child = widget.builder();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _child!;
 }
 
 class _TournamentLiveBatchScope extends InheritedWidget {
