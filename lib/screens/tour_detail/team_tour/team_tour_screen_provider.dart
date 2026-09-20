@@ -45,8 +45,9 @@ final selectedTeamStandingProvider = Provider<TeamStandingModel?>((ref) {
 List<GamesTourModel> _watchTeamGamesForTour(Ref ref, String tourId) {
   final games = <GamesTourModel>[];
   if (tourId.isEmpty) return games;
-  ref.watch(gamesTourProvider(tourId).select(standingsGamesSignature));
-  final raw = ref.watch(gamesTourProvider(tourId)).valueOrNull ?? const [];
+  ref.watch(completeGamesTourProvider(tourId).select(standingsGamesSignature));
+  final raw =
+      ref.watch(completeGamesTourProvider(tourId)).valueOrNull ?? const [];
   for (final g in raw) {
     try {
       games.add(GamesTourModel.fromGame(g));

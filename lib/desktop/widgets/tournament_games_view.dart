@@ -6,6 +6,7 @@ import 'package:chessever/desktop/auth/desktop_access_context.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -64,12 +65,10 @@ import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
 /// Per-round expansion for the desktop Games tab.
 ///
-/// Keyed by `(roundId, initiallyExpanded)` so the default follows round status
-/// — future rounds collapse while a round is live / the latest one is finished,
-/// past + focus rounds stay open — and re-seeds when that live-state flips (the
-/// key changes), while still honouring a manual toggle until then. Kept local
-/// to the desktop tab so the shared `roundExpansionProvider` (mobile app-bar
-/// scroll logic) is left untouched.
+/// Keyed by `(roundId, initiallyExpanded)` so only the current/top round mounts
+/// its board wall initially, while still honouring a manual toggle afterwards.
+/// Kept local to the desktop tab so the shared `roundExpansionProvider`
+/// (mobile app-bar scroll logic) is left untouched.
 typedef _TournamentRoundExpansionKey = ({String id, bool initiallyExpanded});
 
 typedef _TournamentMatchExpansionKey =
@@ -99,6 +98,18 @@ bool shouldShowKnockoutMatchSections({
     isKnockout &&
     canGroup &&
     presentation == DesktopKnockoutGamesPresentation.matchSeries;
+
+@visibleForTesting
+bool shouldInitiallyExpandTournamentRound({
+  required String roundId,
+  required String? topRoundId,
+}) => roundId == topRoundId;
+
+const int _kTournamentCardStockfishGameLimit = 24;
+
+@visibleForTesting
+bool shouldAllowTournamentCardStockfishFallback(int tournamentGameCount) =>
+    tournamentGameCount <= _kTournamentCardStockfishGameLimit;
 
 /// Orders match sections by elimination stage, then by pairing start time with
 /// the latest pairing first. Some feeds number matches in their slug
@@ -221,6 +232,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   Set<String> _registeredPollingTourIds = const <String>{};
   final Map<String, GamesTourNotifier> _pollingNotifiersByTourId =
       <String, GamesTourNotifier>{};
+  List<String> _liveBatchMembership = const <String>[];
+  Map<String, LiveGamesBatchKey> _cachedLiveBatchKeys =
+      const <String, LiveGamesBatchKey>{};
   Set<String> _pendingPollingTourIds = const <String>{};
   bool? _registeredPollingActive;
   bool _pendingPollingActive = false;
@@ -393,6 +407,24 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     );
   }
 
+  Map<String, LiveGamesBatchKey> _liveBatchKeysForExpandedGames(
+    List<GamesTourModel> games, {
+    required bool enabled,
+  }) {
+    if (!enabled) return const <String, LiveGamesBatchKey>{};
+    final membership = <String>[for (final game in games) game.gameId];
+    if (listEquals(_liveBatchMembership, membership)) {
+      return _cachedLiveBatchKeys;
+    }
+    _liveBatchMembership = List<String>.unmodifiable(membership);
+    _cachedLiveBatchKeys = liveBatchKeysForGames(
+      games: games,
+      scopePrefix: 'desktop_context:${widget.tabId}',
+      includeFinishedGames: true,
+    );
+    return _cachedLiveBatchKeys;
+  }
+
   Future<void> _retryTournamentGames() async {
     if (!mounted) return;
     final canonicalTourId =
@@ -482,17 +514,6 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       active: streamingEnabled,
     );
     final cardStreamingEnabled = streamingEnabled;
-    // Build deterministic chunks once for the whole tournament render. Doing
-    // this inside every card turns one parent refresh into O(gameCount^2)
-    // filtering/key allocation on large broadcasts.
-    final liveBatchKeyByGameId =
-        cardStreamingEnabled
-            ? liveBatchKeysForGames(
-              games: grouped.allGames,
-              scopePrefix: 'desktop_context:${widget.tabId}',
-              includeFinishedGames: true,
-            )
-            : const <String, LiveGamesBatchKey>{};
     // Source of truth: the persisted board-settings store. Toggling here
     // (or anywhere else — Settings, Library, etc.) writes to the same
     // record, so every desktop pane stays in sync. See `desktop_game_card.dart`
@@ -538,10 +559,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     );
     final topRoundId = displayRounds.isEmpty ? null : displayRounds.first.id;
     final tournamentScopeId = 'tournament:${widget.tournamentId}';
-    // Open the actual top round plus every already-started round. There is no
-    // separate focus scroll; opening a tournament naturally starts at the top.
+    // Mount only the current/top round initially. Building mini boards for
+    // every historical round at once makes large events hitch badly; older
+    // rounds remain available through their headers and expand on demand.
     bool initialExpanded(GamesAppBarModel round) =>
-        round.id == topRoundId || round.roundStatus != RoundStatus.upcoming;
+        shouldInitiallyExpandTournamentRound(
+          roundId: round.id,
+          topRoundId: topRoundId,
+        );
     bool isRoundExpanded(GamesAppBarModel round) => ref.watch(
       _tournamentRoundExpandedProvider((
         id: round.id,
@@ -555,6 +580,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     // invisible item with no `currentContext` for `Scrollable.ensureVisible`.
     // Filter to expanded rounds only, in on-screen (descending) order.
     final keyboardGroups = <DesktopGameKeyboardGroup>[];
+    final expandedGames = <GamesTourModel>[];
     for (final round in displayRounds) {
       final expanded = isRoundExpanded(round);
       final roundGames =
@@ -583,6 +609,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
           }
         }
       }
+      expandedGames.addAll(visibleRoundGames);
       keyboardGroups.add(
         DesktopGameKeyboardGroup(
           id: round.id,
@@ -591,6 +618,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         ),
       );
     }
+
+    // Only expanded rounds can mount cards. Building Realtime chunks for the
+    // complete historical catalog made a lazy grid pay eager O(allGames) work
+    // on every parent refresh.
+    final liveBatchKeyByGameId = _liveBatchKeysForExpandedGames(
+      expandedGames,
+      enabled: cardStreamingEnabled,
+    );
 
     void toggleRound(String roundId) {
       final round = displayRounds.firstWhere((item) => item.id == roundId);
@@ -708,7 +743,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                               // A small overscan keeps wheel/trackpad scrolling
                               // smooth without mounting an entire 1,000-board
                               // broadcast and its realtime subscriptions.
-                              cacheExtent: 400,
+                              // Flutter's sliver builder is the RecyclerView
+                              // equivalent. Keep a small prefetch band so a
+                              // fast wheel scroll stays smooth without eagerly
+                              // mounting several extra rows of chessboards.
+                              scrollCacheExtent:
+                                  const ScrollCacheExtent.viewport(
+                                0.15,
+                              ),
                               slivers: [
                                 SliverPadding(
                                   padding: const EdgeInsets.fromLTRB(
@@ -1234,6 +1276,10 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
               crossAxisSpacing: metrics.spacing,
               mainAxisExtent: metrics.tileHeight,
             );
+    final indexByGameId = <String, int>{
+      for (var index = 0; index < games.length; index++)
+        games[index].gameId: index,
+    };
     return SliverGrid(
       gridDelegate: gridDelegate,
       delegate: SliverChildBuilderDelegate(
@@ -1265,9 +1311,14 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
               layout: layout,
               selected: selectedGameId == game.gameId,
               roundStartsAtById: roundStartsAtById,
-              roundNameById: roundNameById,
-              streamingEnabled: streamingEnabled,
-            ),
+                roundNameById: roundNameById,
+                streamingEnabled:
+                    streamingEnabled && !game.gameStatus.isFinished,
+                allowStockfishFallback:
+                    shouldAllowTournamentCardStockfishFallback(
+                      eventGames.length,
+                    ),
+              ),
           ),
           );
         },
@@ -1278,15 +1329,15 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
           final value = key.value;
           if (!value.startsWith(prefix)) return null;
           final gameId = value.substring(prefix.length);
-          for (var i = 0; i < games.length; i++) {
-            if (games[i].gameId == gameId) return i;
-          }
-          return null;
+          return indexByGameId[gameId];
         },
         // Cards outside the viewport must dispose their Riverpod listeners.
         // Selection lives in DesktopGameKeyboardFocus, not in card State, so
         // keeping every historical child alive only wastes realtime/CPU work.
         addAutomaticKeepAlives: false,
+        // Each child already has an explicit RepaintBoundary above. Avoid the
+        // delegate adding a second layer around the same expensive mini-board.
+        addRepaintBoundaries: false,
       ),
     );
   }
@@ -1508,7 +1559,7 @@ Widget buildLazyTournamentGamesViewportForTesting({
         keysByGameId: batchKeys,
         child: CustomScrollView(
           controller: scrollController,
-          cacheExtent: cacheExtent,
+          scrollCacheExtent: ScrollCacheExtent.pixels(cacheExtent),
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.all(24),
@@ -2651,15 +2702,18 @@ class LiveDesktopGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final batchScope = _TournamentLiveBatchScope.maybeOf(context);
     final effectiveLiveBatchKey =
         liveBatchKey ??
-        _TournamentLiveBatchScope.keyFor(context, game.gameId) ??
-        liveContextBatchKeyForGame(
-          game: game,
-          contextGames: eventGames.isNotEmpty ? eventGames : routeGames,
-          scopePrefix: 'desktop_context',
-          includeFinishedGames: true,
-        );
+        batchScope?.keysByGameId[game.gameId] ??
+        (batchScope == null
+            ? liveContextBatchKeyForGame(
+              game: game,
+              contextGames: eventGames.isNotEmpty ? eventGames : routeGames,
+              scopePrefix: 'desktop_context',
+              includeFinishedGames: true,
+            )
+            : null);
     final liveGame = watchLiveGame(
       ref,
       game,
@@ -2883,11 +2937,8 @@ class _TournamentLiveBatchScope extends InheritedWidget {
 
   final Map<String, LiveGamesBatchKey> keysByGameId;
 
-  static LiveGamesBatchKey? keyFor(BuildContext context, String gameId) {
-    return context
-        .dependOnInheritedWidgetOfExactType<_TournamentLiveBatchScope>()
-        ?.keysByGameId[gameId];
-  }
+  static _TournamentLiveBatchScope? maybeOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_TournamentLiveBatchScope>();
 
   @override
   bool updateShouldNotify(_TournamentLiveBatchScope oldWidget) {
