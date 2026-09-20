@@ -77,6 +77,25 @@ final _eventRoundExpandedProvider = StateProvider.autoDispose
 final _eventRailExpandedRoundsProvider = StateProvider.autoDispose
     .family<Set<String>?, String>((ref, scope) => null);
 
+/// Matchup sections collapsed inside an expanded event-rail round.
+///
+/// The scope includes the Board tab and event identity, so two open broadcasts
+/// keep independent disclosure state. [collapseNewMatchups] is the important
+/// default for matchup rows that arrive after the user presses collapse-all;
+/// [exceptions] holds individual sections toggled away from that default.
+typedef EventRailMatchupExpansionState = ({
+  bool collapseNewMatchups,
+  Set<String> exceptions,
+});
+
+final _eventRailMatchupExpansionProvider = StateProvider.autoDispose
+    .family<EventRailMatchupExpansionState, String>(
+      (ref, scope) => (
+        collapseNewMatchups: false,
+        exceptions: const <String>{},
+      ),
+    );
+
 Set<String> _resolveExpandedEventRoundIds({
   required Set<String>? stored,
   required List<String> orderedRoundIds,
@@ -87,6 +106,34 @@ Set<String> _resolveExpandedEventRoundIds({
         : <String>{orderedRoundIds.first};
   }
   return stored.where(orderedRoundIds.contains).toSet();
+}
+
+String _eventRailMatchupId(
+  _EventRoundGroup group,
+  _EventRoundSegment segment,
+) => '${group.id}:${segment.id}';
+
+@visibleForTesting
+bool eventRailMatchupIsExpanded({
+  required EventRailMatchupExpansionState state,
+  required String matchupId,
+}) =>
+    state.collapseNewMatchups
+        ? state.exceptions.contains(matchupId)
+        : !state.exceptions.contains(matchupId);
+
+@visibleForTesting
+EventRailMatchupExpansionState eventRailMatchupStateAfterToggleAll({
+  required EventRailMatchupExpansionState state,
+  required List<String> matchupIds,
+}) {
+  final allExpanded = matchupIds.every(
+    (id) => eventRailMatchupIsExpanded(state: state, matchupId: id),
+  );
+  return (
+    collapseNewMatchups: allExpanded,
+    exceptions: const <String>{},
+  );
 }
 
 @visibleForTesting
@@ -1743,6 +1790,15 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     // be built and streamed at once for large broadcasts.
     final expandedRoundScope =
         '$activeTabId:${eventRailProviderKey?.eventKey.tourId.trim() ?? eventTourId ?? resolved.title}';
+    final matchupExpansionState =
+        isEventRail
+            ? ref.watch(
+              _eventRailMatchupExpansionProvider(expandedRoundScope),
+            )
+            : (
+              collapseNewMatchups: false,
+              exceptions: const <String>{},
+            );
     final storedExpandedRoundIds =
         isEventRail
             ? ref.watch(_eventRailExpandedRoundsProvider(expandedRoundScope))
@@ -1774,12 +1830,19 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             ? resolved.games
             : visibleRoundGroups
                 .expand(
-                  (round) => round.displaySegments.expand(
-                    (segment) => orderEventRailGamesForDisplay(
-                      segment.games,
-                      liveFirst: liveFirst,
-                    ),
-                  ),
+                  (round) => round.displaySegments
+                      .where(
+                        (segment) => eventRailMatchupIsExpanded(
+                          state: matchupExpansionState,
+                          matchupId: _eventRailMatchupId(round, segment),
+                        ),
+                      )
+                      .expand(
+                        (segment) => orderEventRailGamesForDisplay(
+                          segment.games,
+                          liveFirst: liveFirst,
+                        ),
+                      ),
                 )
                 .toList(growable: false);
     final selectedGameId = resolved.selectedGameId;
@@ -2076,6 +2139,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                           isEventRail: isEventRail,
                           expandedRoundScope: expandedRoundScope,
                           expandedRoundIds: expandedRoundIds,
+                          matchupExpansionState: matchupExpansionState,
                           eventWindow: eventPage,
                           hasEventRailPagination:
                               resolved.kind == _GameListKind.event &&
@@ -2152,6 +2216,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     required bool isEventRail,
     required String expandedRoundScope,
     required Set<String> expandedRoundIds,
+    required EventRailMatchupExpansionState matchupExpansionState,
     required _EventRailWindow? eventWindow,
     required bool hasEventRailPagination,
     required bool isLoadingMoreContinuation,
@@ -2212,61 +2277,119 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     _railLatestTitle = resolved.title;
     _railLatestLiveBatchKeys = liveBatchKeyByGameId;
     const rowChunkSize = 24;
+    final allMatchupIds = <String>[
+      for (final group in roundGroups)
+        for (final segment in group.segments ?? const <_EventRoundSegment>[])
+          _eventRailMatchupId(group, segment),
+    ];
+    final allMatchupsExpanded = allMatchupIds.every(
+      (id) => eventRailMatchupIsExpanded(
+        state: matchupExpansionState,
+        matchupId: id,
+      ),
+    );
     for (var groupIndex = 0; groupIndex < roundGroups.length; groupIndex++) {
       final group = roundGroups[groupIndex];
       final expansionKey = expansionKeys[group.id]!;
       final expanded = expandedByGroup[group.id] == true;
       entry(
         id: 'rail-header-${group.id}',
-        build: () => _EventRoundHeaderItem(
-            group: group,
-            expanded: expanded,
-            liveFirst: liveFirst,
-            onLiveFirstToggle:
-                isEventRail && groupIndex == 0
-                    ? () =>
+        build:
+            () => _EventRoundHeaderItem(
+              group: group,
+              expanded: expanded,
+              allMatchupsExpanded: allMatchupsExpanded,
+              onToggleAllMatchups:
+                  isEventRail && groupIndex == 0 && allMatchupIds.isNotEmpty
+                      ? () {
                         ref
                             .read(
-                              _eventRailLiveFirstProvider(widget.tabId).notifier,
+                              _eventRailMatchupExpansionProvider(
+                                expandedRoundScope,
+                              ).notifier,
                             )
-                            .state = !liveFirst
-                    : null,
-            onToggle: () {
-              if (isEventRail) {
-                final nextExpandedRoundIds = <String>{...expandedRoundIds};
-                if (expanded) {
-                  nextExpandedRoundIds.remove(group.id);
-                } else {
-                  nextExpandedRoundIds.add(group.id);
+                            .state = eventRailMatchupStateAfterToggleAll(
+                          state: matchupExpansionState,
+                          matchupIds: allMatchupIds,
+                        );
+                      }
+                      : null,
+              liveFirst: liveFirst,
+              onLiveFirstToggle:
+                  isEventRail && groupIndex == 0
+                      ? () =>
+                          ref
+                              .read(
+                                _eventRailLiveFirstProvider(
+                                  widget.tabId,
+                                ).notifier,
+                              )
+                              .state = !liveFirst
+                      : null,
+              onToggle: () {
+                if (isEventRail) {
+                  final nextExpandedRoundIds = <String>{...expandedRoundIds};
+                  if (expanded) {
+                    nextExpandedRoundIds.remove(group.id);
+                  } else {
+                    nextExpandedRoundIds.add(group.id);
+                  }
+                  ref
+                      .read(
+                        _eventRailExpandedRoundsProvider(
+                          expandedRoundScope,
+                        ).notifier,
+                      )
+                      .state = Set<String>.unmodifiable(nextExpandedRoundIds);
+                  return;
                 }
                 ref
-                    .read(
-                      _eventRailExpandedRoundsProvider(
-                        expandedRoundScope,
-                      ).notifier,
-                    )
-                    .state = Set<String>.unmodifiable(nextExpandedRoundIds);
-                return;
-              }
-              ref.read(_eventRoundExpandedProvider(expansionKey).notifier).state =
-                  !expanded;
-            },
-          )
+                    .read(_eventRoundExpandedProvider(expansionKey).notifier)
+                    .state = !expanded;
+              },
+            ),
       );
       if (expanded) {
         for (final segment in group.displaySegments) {
+          final matchupId = _eventRailMatchupId(group, segment);
+          final segmentExpanded = eventRailMatchupIsExpanded(
+            state: matchupExpansionState,
+            matchupId: matchupId,
+          );
           if (segment.title != null) {
             entry(
-              id: 'rail-label-${group.id}-${group.displaySegments.indexOf(segment)}',
-              build: () => Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: _EventMatchupHeader(
-                    title: segment.title!,
-                    score: segment.score,
+              id: 'rail-label-$matchupId',
+              build:
+                  () => Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: _EventMatchupHeader(
+                      title: segment.title!,
+                      score: segment.score,
+                      expanded: segmentExpanded,
+                      onToggle: () {
+                        final nextExceptions = <String>{
+                          ...matchupExpansionState.exceptions,
+                        };
+                        if (!nextExceptions.add(matchupId)) {
+                          nextExceptions.remove(matchupId);
+                        }
+                        ref
+                            .read(
+                              _eventRailMatchupExpansionProvider(
+                                expandedRoundScope,
+                              ).notifier,
+                            )
+                            .state = (
+                          collapseNewMatchups:
+                              matchupExpansionState.collapseNewMatchups,
+                          exceptions: Set<String>.unmodifiable(nextExceptions),
+                        );
+                      },
+                    ),
                   ),
-                )
             );
           }
+          if (!segmentExpanded) continue;
           final segmentGames = orderEventRailGamesForDisplay(
             segment.games,
             liveFirst: liveFirst,
@@ -2279,10 +2402,10 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             final end = math.min(start + rowChunkSize, segmentGames.length);
             final chunk = segmentGames.sublist(start, end);
             entry(
-              id: 'rail-chunk-${group.id}-$start',
+              id: 'rail-chunk-$matchupId-$start',
               signature: _RailChunkSignature(
                 tabId: widget.tabId,
-                groupId: group.id,
+                groupId: matchupId,
                 kind: resolved.kind,
                 start: start,
                 games: chunk,
@@ -2292,80 +2415,78 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                 highlightedGameId: _highlightedGameId,
                 highlightedGameIds: _highlightedGameIds,
               ),
-              build: () => Padding(
-                  padding: EdgeInsets.only(top: start == 0 ? 5 : 0),
-                  child: _EventRoundTable(
-                    games: chunk,
-                    copyScopeGamesOf: () => _railLatestScopeGames,
-                    selectedGameId: selectedGameId,
-                    selectedGameIds: _highlightedGameIds,
-                    highlightedGameId: _highlightedGameId,
-                    selectedRowKey:
-                        chunk.any(
-                              (game) =>
-                                  game.id ==
-                                  (_highlightedGameId ?? selectedGameId),
-                            )
-                            ? selectedRowKey
-                            : null,
-                    liveBatchKeyByGameId: liveBatchKeyByGameId,
-                    showBoardColumn: showBoardColumn,
-                    onHighlightGame: _highlightGame,
-                    onRangeHighlightGame:
-                        (game) => _highlightGameRange(
-                          _railLatestOrderedGames,
-                          game,
-                          fallbackAnchorGameId: selectedGameId,
-                        ),
-                    onOpenGame: (
-                      game, {
-                      required bool inNewTab,
-                      bool inNewWindow = false,
-                    }) async {
-                      await _openEventGame(
-                        ref: ref,
-                        context: context,
-                        container: ProviderScope.containerOf(
-                          context,
-                          listen: false,
-                        ),
-                        kind: _railLatestKind,
-                        game: _eventSummaryWithCurrentLiveUpdate(
-                          ref,
-                          game,
-                          _railLatestLiveBatchKeys[game.id],
-                        ),
-                        eventGames: _railLatestScopeGames,
-                        tournamentTitle: _railLatestTitle,
-                        activeArgs: _railLatestArgs,
-                        inNewTab: inNewTab,
-                        inNewWindow: inNewWindow,
-                      );
-                    },
-                    onInsertGame:
-                        (game) => _insertEventGame(
+              build:
+                  () => Padding(
+                    padding: EdgeInsets.only(top: start == 0 ? 5 : 0),
+                    child: _EventRoundTable(
+                      games: chunk,
+                      copyScopeGamesOf: () => _railLatestScopeGames,
+                      selectedGameId: selectedGameId,
+                      selectedGameIds: _highlightedGameIds,
+                      highlightedGameId: _highlightedGameId,
+                      selectedRowKey:
+                          chunk.any(
+                                (game) =>
+                                    game.id ==
+                                    (_highlightedGameId ?? selectedGameId),
+                              )
+                              ? selectedRowKey
+                              : null,
+                      liveBatchKeyByGameId: liveBatchKeyByGameId,
+                      showBoardColumn: showBoardColumn,
+                      onHighlightGame: _highlightGame,
+                      onRangeHighlightGame:
+                          (game) => _highlightGameRange(
+                            _railLatestOrderedGames,
+                            game,
+                            fallbackAnchorGameId: selectedGameId,
+                          ),
+                      onOpenGame: (
+                        game, {
+                        required bool inNewTab,
+                        bool inNewWindow = false,
+                      }) async {
+                        await _openEventGame(
                           ref: ref,
-                          game: game,
+                          context: context,
+                          container: ProviderScope.containerOf(
+                            context,
+                            listen: false,
+                          ),
+                          kind: _railLatestKind,
+                          game: _eventSummaryWithCurrentLiveUpdate(
+                            ref,
+                            game,
+                            _railLatestLiveBatchKeys[game.id],
+                          ),
+                          eventGames: _railLatestScopeGames,
                           tournamentTitle: _railLatestTitle,
                           activeArgs: _railLatestArgs,
-                        ),
-                    onCopyGames:
-                        (games) => _copyEventGameSummariesAsPgn(
-                          context: context,
-                          ref: ref,
-                          games: games,
-                          activeArgs: _railLatestArgs,
-                        ),
+                          inNewTab: inNewTab,
+                          inNewWindow: inNewWindow,
+                        );
+                      },
+                      onInsertGame:
+                          (game) => _insertEventGame(
+                            ref: ref,
+                            game: game,
+                            tournamentTitle: _railLatestTitle,
+                            activeArgs: _railLatestArgs,
+                          ),
+                      onCopyGames:
+                          (games) => _copyEventGameSummariesAsPgn(
+                            context: context,
+                            ref: ref,
+                            games: games,
+                            activeArgs: _railLatestArgs,
+                          ),
+                    ),
                   ),
-                )
             );
           }
         }
       }
-      entry(
-        id: 'rail-gap-${group.id}',
-        build: () => const SizedBox(height: 8),
-      );
+      entry(id: 'rail-gap-${group.id}', build: () => const SizedBox(height: 8));
     }
 
     if ((activeContinuation != null || hasEventRailPagination) &&
@@ -2374,17 +2495,15 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             continuationLoadError != null)) {
       entry(
         id: 'rail-pagination',
-        build: () => _GamesPaginationSection(
-            isLoading: isLoadingMoreContinuation,
-            error: continuationLoadError,
-          )
+        build:
+            () => _GamesPaginationSection(
+              isLoading: isLoadingMoreContinuation,
+              error: continuationLoadError,
+            ),
       );
     }
     if (resolved.isLoading) {
-      entry(
-        id: 'rail-loading',
-        build: () => const _EventGamesLoadingSection()
-      );
+      entry(id: 'rail-loading', build: () => const _EventGamesLoadingSection());
     }
     // Entries whose round is no longer rendered drop out of the cache.
     _railEntryCache.removeWhere((id, _) => !entryIds.contains(id));
@@ -2413,7 +2532,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       },
     );
   }
-
 }
 
 @visibleForTesting
@@ -3523,7 +3641,7 @@ class _EventRoundGroup {
   final List<_EventRoundSegment>? segments;
 
   List<_EventRoundSegment> get displaySegments =>
-      segments ?? [_EventRoundSegment(games: games)];
+      segments ?? [_EventRoundSegment(id: 'all', games: games)];
 }
 
 /// A slice of a round's rows rendered under an optional matchup header.
@@ -3531,8 +3649,14 @@ class _EventRoundGroup {
 /// by team matchup; knockout match rounds group by player pairing —
 /// mirroring the mobile Games tab's team / knockout match cards.
 class _EventRoundSegment {
-  const _EventRoundSegment({this.title, this.score, required this.games});
+  const _EventRoundSegment({
+    required this.id,
+    this.title,
+    this.score,
+    required this.games,
+  });
 
+  final String id;
   final String? title;
   final String? score;
   final List<TournamentGameSummary> games;
@@ -4011,6 +4135,7 @@ List<_EventRoundSegment> _matchupSegments(
   return [
     for (final entry in buckets.entries)
       _EventRoundSegment(
+        id: entry.key,
         title:
             compactLabels
                 ? '${_compactPlayerName(labels[entry.key]!.$1)} vs ${_compactPlayerName(labels[entry.key]!.$2)}'
@@ -6047,6 +6172,8 @@ class _EventRoundHeaderItem extends StatelessWidget {
   const _EventRoundHeaderItem({
     required this.group,
     required this.expanded,
+    required this.allMatchupsExpanded,
+    this.onToggleAllMatchups,
     required this.liveFirst,
     this.onLiveFirstToggle,
     required this.onToggle,
@@ -6054,6 +6181,8 @@ class _EventRoundHeaderItem extends StatelessWidget {
 
   final _EventRoundGroup group;
   final bool expanded;
+  final bool allMatchupsExpanded;
+  final VoidCallback? onToggleAllMatchups;
   final bool liveFirst;
   final VoidCallback? onLiveFirstToggle;
   final VoidCallback onToggle;
@@ -6063,6 +6192,8 @@ class _EventRoundHeaderItem extends StatelessWidget {
     return _EventRoundHeader(
       group: group,
       expanded: expanded,
+      allMatchupsExpanded: allMatchupsExpanded,
+      onToggleAllMatchups: onToggleAllMatchups,
       liveFirst: liveFirst,
       onLiveFirstToggle: onLiveFirstToggle,
       onToggle: onToggle,
@@ -6361,6 +6492,8 @@ class _EventRoundHeader extends StatefulWidget {
   const _EventRoundHeader({
     required this.group,
     required this.expanded,
+    required this.allMatchupsExpanded,
+    this.onToggleAllMatchups,
     required this.liveFirst,
     this.onLiveFirstToggle,
     required this.onToggle,
@@ -6368,6 +6501,8 @@ class _EventRoundHeader extends StatefulWidget {
 
   final _EventRoundGroup group;
   final bool expanded;
+  final bool allMatchupsExpanded;
+  final VoidCallback? onToggleAllMatchups;
   final bool liveFirst;
   final VoidCallback? onLiveFirstToggle;
   final VoidCallback onToggle;
@@ -6379,6 +6514,7 @@ class _EventRoundHeader extends StatefulWidget {
 class _EventRoundHeaderState extends State<_EventRoundHeader> {
   bool _hovered = false;
   bool _pressed = false;
+  bool _toggleAllFocused = false;
 
   @override
   Widget build(BuildContext context) {
@@ -6449,6 +6585,82 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
                         color: kLightGreyColor,
                         fontSize: 9.5,
                         fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                  if (widget.onToggleAllMatchups != null) ...[
+                    const SizedBox(width: 6),
+                    DesktopTooltip(
+                      message:
+                          widget.allMatchupsExpanded
+                              ? 'Collapse all matchups'
+                              : 'Expand all matchups',
+                      child: Semantics(
+                        button: true,
+                        toggled: !widget.allMatchupsExpanded,
+                        label:
+                            widget.allMatchupsExpanded
+                                ? 'Collapse all matchups'
+                                : 'Expand all matchups',
+                        child: Focus(
+                          onFocusChange:
+                              (focused) =>
+                                  setState(() => _toggleAllFocused = focused),
+                          onKeyEvent: (node, event) {
+                            if (event is! KeyDownEvent) {
+                              return KeyEventResult.ignored;
+                            }
+                            if (event.logicalKey == LogicalKeyboardKey.enter ||
+                                event.logicalKey == LogicalKeyboardKey.space) {
+                              widget.onToggleAllMatchups?.call();
+                              return KeyEventResult.handled;
+                            }
+                            return KeyEventResult.ignored;
+                          },
+                          child: ClickCursor(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: widget.onToggleAllMatchups,
+                              child: Container(
+                                key: const Key(
+                                  'event-rail-toggle-all-matchups',
+                                ),
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  color:
+                                      widget.allMatchupsExpanded &&
+                                              !_toggleAllFocused
+                                          ? Colors.transparent
+                                          : kPrimaryColor.withValues(
+                                            alpha: 0.12,
+                                          ),
+                                  borderRadius: BorderRadius.circular(7),
+                                  border: Border.all(
+                                    color:
+                                        widget.allMatchupsExpanded &&
+                                                !_toggleAllFocused
+                                            ? kDividerColor
+                                            : kPrimaryColor.withValues(
+                                              alpha: 0.42,
+                                            ),
+                                  ),
+                                ),
+                                child: Icon(
+                                  widget.allMatchupsExpanded
+                                      ? Icons.unfold_less_rounded
+                                      : Icons.unfold_more_rounded,
+                                  size: 16,
+                                  color:
+                                      widget.allMatchupsExpanded &&
+                                              !_toggleAllFocused
+                                          ? kWhiteColor70
+                                          : kPrimaryColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -6528,46 +6740,117 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
 
 /// Slim matchup label above a segment of rows: `Team A vs Team B  2½–1½`
 /// for team rounds, `Player 1 vs Player 2  1½–½` for knockout matches.
-class _EventMatchupHeader extends StatelessWidget {
-  const _EventMatchupHeader({required this.title, this.score});
+class _EventMatchupHeader extends StatefulWidget {
+  const _EventMatchupHeader({
+    required this.title,
+    this.score,
+    required this.expanded,
+    required this.onToggle,
+  });
 
   final String title;
   final String? score;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  State<_EventMatchupHeader> createState() => _EventMatchupHeaderState();
+}
+
+class _EventMatchupHeaderState extends State<_EventMatchupHeader> {
+  bool _hovered = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
-    final scoreText = score?.trim() ?? '';
+    final scoreText = widget.score?.trim() ?? '';
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.2,
+      child: Semantics(
+        button: true,
+        expanded: widget.expanded,
+        label: widget.title,
+        child: Focus(
+          onFocusChange: (focused) => setState(() => _focused = focused),
+          onKeyEvent: (node, event) {
+            if (event is! KeyDownEvent) return KeyEventResult.ignored;
+            if (event.logicalKey == LogicalKeyboardKey.enter ||
+                event.logicalKey == LogicalKeyboardKey.space) {
+              widget.onToggle();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: ClickCursor(
+            child: MouseRegion(
+              onEnter: (_) => setState(() => _hovered = true),
+              onExit: (_) => setState(() => _hovered = false),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.onToggle,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 100),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color:
+                        _hovered || _focused
+                            ? kBlack3Color
+                            : Colors.transparent,
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Row(
+                    children: [
+                      SingleMotionBuilder(
+                        value: widget.expanded ? 1.0 : 0.0,
+                        motion: DesktopMotion.layout,
+                        builder:
+                            (context, t, child) => Transform.rotate(
+                              angle: t * 3.14159,
+                              child: child,
+                            ),
+                        child: const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: 15,
+                          color: kWhiteColor70,
+                        ),
+                      ),
+                      const SizedBox(width: 3),
+                      Expanded(
+                        child: Text(
+                          widget.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ),
+                      if (scoreText.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          scoreText,
+                          maxLines: 1,
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
-          if (scoreText.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            Text(
-              scoreText,
-              maxLines: 1,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w800,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
