@@ -763,6 +763,13 @@ class _CompactTournamentStandings extends StatelessWidget {
           itemBuilder: (context, index) {
             final player = players[index];
             return _CompactStandingRow(
+              // Stable per-player identity, mirroring the web rail's
+              // `key={row.playerId}` (CompactStandingsList.tsx:130), so a
+              // standings refresh reuses each row's element and hover state
+              // instead of rebuilding from the first changed row down.
+              key: ValueKey<String>(
+                'event-standing-${player.fideId ?? player.name}',
+              ),
               player: player,
               rank: player.overallRank ?? index + 1,
               photoResolver: photoResolver,
@@ -798,6 +805,7 @@ class _CompactTournamentStandings extends StatelessWidget {
 
 class _CompactStandingRow extends StatefulWidget {
   const _CompactStandingRow({
+    super.key,
     required this.player,
     required this.rank,
     required this.photoResolver,

@@ -81,6 +81,11 @@ class _RetainedMergedTournamentGamesNotifier
       return _lastSnapshot;
     }
 
+    final primaryCatalog = ref.watch(
+      completeGamesTourProvider(aboutTourModel.id),
+    );
+    if (!primaryCatalog.hasValue) return _lastSnapshot;
+
     bool isPaginationCategory(String name) {
       return RegExp(
         r'Boards?\s+\d+[\-\+]?\d*\+?$',
@@ -113,26 +118,57 @@ class _RetainedMergedTournamentGamesNotifier
       if (relatedTours.length > 1) {
         for (final tourModel in relatedTours) {
           final tourGamesAsync = ref.watch(
-            gamesTourProvider(tourModel.tour.id),
+            completeGamesTourProvider(tourModel.tour.id),
           );
-          if (tourGamesAsync.hasValue) {
-            for (final g in tourGamesAsync.value!) {
-              try {
-                allGames.add(GamesTourModel.fromGame(g));
-              } catch (_) {}
-            }
+          if (!tourGamesAsync.hasValue) return _lastSnapshot;
+          for (final g in tourGamesAsync.requireValue) {
+            try {
+              allGames.add(GamesTourModel.fromGame(g));
+            } catch (_) {}
           }
         }
       } else {
-        allGames.addAll(gamesTourAsync.value?.gamesTourModels ?? []);
+        allGames.addAll(
+          _completeTournamentModels(
+            screen: gamesTourAsync.requireValue,
+            complete: primaryCatalog.requireValue,
+          ),
+        );
       }
     } else {
-      allGames.addAll(gamesTourAsync.value?.gamesTourModels ?? []);
+      allGames.addAll(
+        _completeTournamentModels(
+          screen: gamesTourAsync.requireValue,
+          complete: primaryCatalog.requireValue,
+        ),
+      );
     }
 
     _lastSnapshot = List<GamesTourModel>.unmodifiable(allGames);
     return _lastSnapshot;
   }
+}
+
+List<GamesTourModel> _completeTournamentModels({
+  required GamesScreenModel screen,
+  required List<Games> complete,
+}) {
+  final screenIsComplete =
+      !screen.isSearchMode &&
+      screen.gameDisplayMode == GameDisplayMode.all &&
+      screen.sourceGameCount == complete.length &&
+      screen.gamesTourModels.length == complete.length;
+  if (screenIsComplete) return screen.gamesTourModels;
+
+  final models = <GamesTourModel>[];
+  for (final game in complete) {
+    try {
+      models.add(GamesTourModel.fromGame(game));
+    } catch (_) {
+      // One malformed row must not make all tournament standings disappear.
+    }
+  }
+  return models;
 }
 
 /// Search query for the standings tab
@@ -700,10 +736,20 @@ class PlayerTourScreenNotifier
               .toList();
     }
 
-    // Watch only the part of live games that can change standings. Move/clock
-    // ticks should not rebuild this provider, but new games or result changes
-    // should update scores gracefully while the list keeps its scroll offset.
-    final allGames = _watchStandingsGamesForTours(relatedTours);
+    final catalogs = [
+      for (final tour in relatedTours)
+        ref.watch(completeGamesTourFutureProvider(tour.tour.id).future),
+    ];
+    final allGames = <GamesTourModel>[];
+    for (final games in await Future.wait(catalogs)) {
+      for (final game in games) {
+        try {
+          allGames.add(GamesTourModel.fromGame(game));
+        } catch (_) {
+          // Skip malformed rows to keep standings resilient during live ingest.
+        }
+      }
+    }
 
     final allPlayers = <TournamentPlayer>[];
     for (final tourModel in relatedTours) {
@@ -764,29 +810,6 @@ class PlayerTourScreenNotifier
       return null;
     }
     return previous;
-  }
-
-  List<GamesTourModel> _watchStandingsGamesForTours(
-    List<TourModel> relatedTours,
-  ) {
-    final allGames = <GamesTourModel>[];
-
-    for (final tourModel in relatedTours) {
-      final tourId = tourModel.tour.id;
-      ref.watch(gamesTourProvider(tourId).select(_standingsGamesSignature));
-      final games = ref.read(gamesTourProvider(tourId)).valueOrNull;
-      if (games == null || games.isEmpty) continue;
-
-      for (final game in games) {
-        try {
-          allGames.add(GamesTourModel.fromGame(game));
-        } catch (_) {
-          // Skip malformed rows to keep standings resilient during live ingest.
-        }
-      }
-    }
-
-    return allGames;
   }
 
   /// Identifies categories like "Boards 1-66", "Boards 67-126", "Boards 252+"
