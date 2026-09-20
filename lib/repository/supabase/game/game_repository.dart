@@ -544,6 +544,88 @@ class GameRepository extends BaseRepository {
     });
   }
 
+  /// Fetches a tournament's current round before the remaining catalog.
+  ///
+  /// Large broadcasts can contain thousands of boards. Publishing one whole
+  /// round first gives the UI a useful, correctly sortable snapshot while the
+  /// older rounds continue loading in the background.
+  Future<List<Games>> getTourGamePreviews(
+    String tourId, {
+    String? priorityRoundId,
+    void Function(List<Games>)? onPriorityRound,
+    Future<void> Function()? afterPriorityRound,
+  }) {
+    return handleApiCall(() async {
+      const pageSize = 1000;
+      final games = <Games>[];
+      String? loadedRoundId;
+
+      if (priorityRoundId != null && priorityRoundId.isNotEmpty) {
+        try {
+          var offset = 0;
+          while (true) {
+            final page = await _getTourSummaryPage(
+              tourId,
+              offset: offset,
+              pageSize: pageSize,
+              roundId: priorityRoundId,
+            );
+            games.addAll(page);
+            if (page.length < pageSize) break;
+            offset += page.length;
+          }
+          loadedRoundId = priorityRoundId;
+        } catch (_) {
+          // Round metadata can race a replaced round. Fall back to the full
+          // catalog, but never publish a partially fetched priority round.
+          games.clear();
+        }
+
+        if (games.isNotEmpty) {
+          onPriorityRound?.call(List<Games>.unmodifiable(games));
+          await afterPriorityRound?.call();
+        }
+      }
+
+      var offset = 0;
+      while (true) {
+        final page = await _getTourSummaryPage(
+          tourId,
+          offset: offset,
+          pageSize: pageSize,
+          excludingRoundId: loadedRoundId,
+        );
+        games.addAll(page);
+        if (page.length < pageSize) break;
+        offset += page.length;
+      }
+      return _deduplicateGames(games);
+    });
+  }
+
+  Future<List<Games>> _getTourSummaryPage(
+    String tourId, {
+    required int offset,
+    required int pageSize,
+    String? roundId,
+    String? excludingRoundId,
+  }) async {
+    var query = supabase
+        .from('games')
+        .select(_gameSummarySelectColumns)
+        .eq('tour_id', tourId);
+    if (roundId != null) query = query.eq('round_id', roundId);
+    if (excludingRoundId != null) {
+      query = query.neq('round_id', excludingRoundId);
+    }
+    final response = await query
+        .order('id', ascending: true)
+        .range(offset, offset + pageSize - 1);
+    final jsonList =
+        (response as List).map((item) => json.encode(item)).toList();
+    return compute(_decodeGamesInIsolate, jsonList);
+  }
+
   Future<List<Games>> getEventRailGamesByTourId(
     String tourId, {
     required int limit,
@@ -761,8 +843,9 @@ class GameRepository extends BaseRepository {
         // remains subject to identity checks at the consumer boundary.
       }
     }
-    if (normalizedName.isEmpty)
+    if (normalizedName.isEmpty) {
       return mergeEventPlayerGameQueryResults(byFide: byFide);
+    }
     final byName = await loadPages(byId: false);
     return mergeEventPlayerGameQueryResults(byFide: byFide, byName: byName);
   }

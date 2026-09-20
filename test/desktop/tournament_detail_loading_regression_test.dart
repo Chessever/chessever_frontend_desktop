@@ -476,6 +476,9 @@ class _FixtureGamesLocalStorage extends GamesLocalStorage {
   Future<List<Games>> fetchAndSaveGames(
     String tourId, {
     bool forceRefresh = false,
+    String? priorityRoundId,
+    void Function(List<Games>)? onPriorityRound,
+    Future<void> Function()? afterPriorityRound,
   }) async => gamesByTourId[tourId] ?? const <Games>[];
 }
 

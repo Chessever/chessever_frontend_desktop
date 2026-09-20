@@ -11,6 +11,7 @@ import 'package:chessever/screens/standings/providers/twic_scorecard_event_games
 import 'package:chessever/screens/standings/providers/player_utils_provider.dart';
 import 'package:chessever/screens/standings/widget/scoreboard_card_widget.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/screens/player_profile/widgets/performance_stats_row.dart';
 import 'package:chessever/services/fide_photo_service.dart';
@@ -329,6 +330,12 @@ class ScoreCardScreen extends ConsumerWidget {
       // If the merged provider is empty, we still want to check if the
       // underlying data is loading to show the skeleton loader
       final gamesTourAsync = ref.watch(gamesTourScreenProvider);
+      final selectedTourId =
+          ref.watch(tourDetailScreenProvider).valueOrNull?.aboutTourModel.id;
+      if (selectedTourId != null) {
+        isLoadingGames =
+            ref.watch(completeGamesTourProvider(selectedTourId)).isLoading;
+      }
 
       allGames = gamesTourAsync.when(
         data: (_) => mergedGames,
@@ -343,7 +350,7 @@ class ScoreCardScreen extends ConsumerWidget {
       // clear selectedBroadcastModelProvider so we can't rely on the merged
       // tournament provider. Fetch full event games by tourId to include all
       // rounds for the player.
-      final fullGamesAsync = ref.watch(gamesTourProvider(contextEvent));
+      final fullGamesAsync = ref.watch(completeGamesTourProvider(contextEvent));
       allGames = fullGamesAsync.when(
         data: (games) {
           final converted = _toGamesTourModels(games);
@@ -513,7 +520,6 @@ class ScoreCardScreen extends ConsumerWidget {
           fideId1: game.whitePlayer.fideId,
           fideId2: player.fideId,
         );
-        final opponent = isWhite ? game.blackPlayer : game.whitePlayer;
         final playerRating = _getPlayerRatingForSide(game, isWhite);
         final opponentRating = _getPlayerRatingForSide(game, !isWhite);
 
