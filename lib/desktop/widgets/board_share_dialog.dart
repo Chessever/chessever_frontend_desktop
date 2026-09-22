@@ -20,6 +20,7 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -517,7 +518,9 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
 
   Future<void> _copyPgn() async {
     try {
-      await BoardShareService.copyToClipboard(_pgn);
+      // The clipboard leaves the app; the GIF job above keeps the native
+      // `$240`–`$247` block it renders badges from.
+      await BoardShareService.copyToClipboard(toExternalCompatiblePgn(_pgn));
       _showToast('PGN copied to clipboard', isError: false);
     } catch (e) {
       _showToast('Failed to copy PGN', isError: true);

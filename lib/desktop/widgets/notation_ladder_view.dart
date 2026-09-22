@@ -19,6 +19,7 @@ import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -439,7 +440,11 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   }
 
   Future<void> _copyPgnToClipboard() async {
-    await Clipboard.setData(ClipboardData(text: exportGameToPgn(widget.game)));
+    await Clipboard.setData(
+      ClipboardData(
+        text: toExternalCompatiblePgn(exportGameToPgn(widget.game)),
+      ),
+    );
   }
 
   void _toggleAllVariationsFromMenu() {
