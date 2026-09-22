@@ -1,4 +1,5 @@
 import 'package:chessever/desktop/services/local_pgn_source.dart';
+import 'package:chessever/desktop/services/local_pgn_source_recovery.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -1508,10 +1509,12 @@ class _LocalGamesTable extends HookConsumerWidget {
       final game = games[index < 0 ? 0 : index];
       _openLocalGame(
         ref,
+        context,
         game,
         sourceLabel: databaseTitle,
         databaseGames: databaseGames,
         localOpeningTreeIndex: openableTreeIndex,
+        onRefresh: onRefresh,
       );
       return true;
     }
@@ -1823,10 +1826,12 @@ class _LocalGamesTable extends HookConsumerWidget {
                                   selectIndex(index);
                                   _openLocalGame(
                                     ref,
+                                    context,
                                     game,
                                     sourceLabel: databaseTitle,
                                     databaseGames: databaseGames,
                                     localOpeningTreeIndex: openableTreeIndex,
+                                    onRefresh: onRefresh,
                                   );
                                 },
                                 onSecondaryTapUp:
@@ -2618,6 +2623,10 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
                       metadata: md,
                       side: 'White',
                       padding: EdgeInsets.zero,
+                      // A record whose players are placeholders still names
+                      // its sides, so the row never reads as a blank/broken
+                      // entry next to games that carry full headers.
+                      unknownSideLabel: true,
                     ),
                   ),
                   Padding(
@@ -2636,6 +2645,7 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
                       metadata: md,
                       side: 'Black',
                       padding: EdgeInsets.zero,
+                      unknownSideLabel: true,
                     ),
                   ),
                   Padding(
@@ -3065,15 +3075,20 @@ void _openLocalDatabaseTree(
 
 void _openLocalGame(
   WidgetRef ref,
+  BuildContext context,
   LocalChessGame localGame, {
   required String sourceLabel,
   required List<LocalChessGame> databaseGames,
   PlayerOpeningTreeIndex? localOpeningTreeIndex,
   bool focus = true,
+  Future<void> Function()? onRefresh,
 }) {
-  openBoardGameTab(
-    ref,
-    _boardArgsForLocalGame(
+  final BoardTabGameArgs args;
+  try {
+    // The picked record is read here (its physical range, then its identity
+    // checks) before anything opens, so a record that genuinely cannot be read
+    // reports which record and why instead of a dead click.
+    args = _boardArgsForLocalGame(
       localGame,
       sourceLabel: sourceLabel,
       databaseGames: databaseGames,
@@ -3081,10 +3096,25 @@ void _openLocalGame(
           localOpeningTreeIndex == null
               ? null
               : _localOpeningTreeHandle(localOpeningTreeIndex),
-    ),
-    reuseExisting: false,
-    focus: focus,
-  );
+    );
+  } on Object catch (error) {
+    // Never a silent no-op: name the record, state the reason, offer the
+    // repair. Wording comes from the shared local-PGN failure vocabulary.
+    showDesktopToast(
+      context,
+      localPgnOpenRecordErrorMessage(
+        indexInFile: localGame.indexInFile,
+        fileName: localGame.fileName,
+        title: localGame.title,
+        error: error,
+      ),
+      error: true,
+      actionLabel: onRefresh == null ? null : 'Refresh',
+      onAction: onRefresh == null ? null : () => unawaited(onRefresh()),
+    );
+    return;
+  }
+  openBoardGameTab(ref, args, reuseExisting: false, focus: focus);
 }
 
 PlayerOpeningTreeIndex _localOpeningTreeHandle(PlayerOpeningTreeIndex index) {
@@ -3198,7 +3228,16 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
     return value > 0 ? value : null;
   }
 
-  final pgn = localGame.rawPgn.trim();
+  // One unreadable neighbour must not abort the open of the row the user
+  // picked: this summary is rail context, so it degrades to "no PGN". Nothing
+  // is invented — an unread record gets no fingerprint and no revision, so a
+  // later save still fails safe instead of adopting an unverified identity.
+  String pgn;
+  try {
+    pgn = localGame.rawPgn.trim();
+  } on Object {
+    pgn = '';
+  }
   final lastFen =
       game.mainline.isNotEmpty ? game.mainline.last.fen : game.startingFen;
   return TournamentGameSummary(
@@ -3226,7 +3265,7 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
       pgnFingerprint: localGame.pgnFingerprint,
-      recordRevision: localPgnRecordRevision(pgn),
+      recordRevision: pgn.isEmpty ? '' : localPgnRecordRevision(pgn),
       title: localGame.title,
     ),
   );

@@ -343,6 +343,25 @@ String localPgnOpenErrorMessage(Object error) {
   return text;
 }
 
+/// User-facing wording for one local database row that could not be opened.
+///
+/// Names the record (`#133 · 133 of Francis.pgn`) before the reason, because
+/// "the database is broken" is not actionable when a single record is at
+/// fault — and never a silent dead click. [fileName] is the user's own file
+/// name, [indexInFile] the physical ordinal and [title] the row's label.
+String localPgnOpenRecordErrorMessage({
+  required int indexInFile,
+  required String fileName,
+  required String title,
+  required Object error,
+}) {
+  final file = fileName.trim().isEmpty ? 'this database' : fileName.trim();
+  final position = indexInFile < 0 ? '' : 'Game ${indexInFile + 1} of ';
+  final label = title.trim();
+  final name = label.isEmpty ? '' : ' ($label)';
+  return 'Could not open $position$file$name: ${localPgnOpenErrorMessage(error)}';
+}
+
 /// File state used as the memo key for "this source was already re-indexed".
 class LocalPgnFileStat {
   const LocalPgnFileStat({required this.sizeBytes, required this.modifiedAtMs});
