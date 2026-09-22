@@ -23,6 +23,7 @@ import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/utils/local_pgn_metadata.dart';
 
 const localChessSupportedExtensions = <String>{
   '.pgn',
@@ -634,16 +635,17 @@ class LocalChessGame {
   }
 
   String get title {
-    final white = (game.metadata['White']?.toString().trim() ?? '');
-    final black = (game.metadata['Black']?.toString().trim() ?? '');
     final event = (game.metadata['Event']?.toString().trim() ?? '');
     final isPosition =
         !hasMoves &&
         (game.metadata['SetUp']?.toString().trim() == '1' ||
             game.metadata['FEN']?.toString().trim().isNotEmpty == true);
     if (isPosition && event.isNotEmpty && event != '?') return event;
-    return '${white.isEmpty ? 'White' : white} vs '
-        '${black.isEmpty ? 'Black' : black}';
+    // Player-aware: a record whose headers are still placeholders (a PGN
+    // exported before its players were known) names the side that is unknown
+    // instead of a bare "? vs ?" that reads like a broken entry.
+    return '${localPgnDisplayPlayerName(game.metadata, 'White')} vs '
+        '${localPgnDisplayPlayerName(game.metadata, 'Black')}';
   }
 }
 
@@ -4085,12 +4087,64 @@ _ParsedLocalChessGame? _entryFromPgnChunk(String rawPgn) {
 
 bool _pgnHasMoves(String movetext) {
   if (movetext.isEmpty) return false;
-  // A cheap probe — a move-number token ("1.", "12.", etc.) within the first
-  // chunk of movetext is a strong signal that real moves follow. We avoid
-  // scrubbing comments/variations because that work would dominate the scan
-  // on large databases.
-  final sample = movetext.length > 256 ? movetext.substring(0, 256) : movetext;
-  return _kPgnMoveHintRegex.hasMatch(sample);
+  // A cheap probe — a move-number token ("1.", "12.", etc.) in the opening
+  // stretch of *notation*. Comments and variation text are skipped: a game
+  // exported with a long leading `{[%evp …]}` evaluation comment used to hide
+  // every move number from this probe, so the record was reported as having no
+  // movetext while the line scanner's hint said the opposite, and
+  // `LocalChessGame.rawPgn` refuses a record whose stored hint and parsed
+  // movetext disagree — which made such games impossible to open from a local
+  // database. Sampling stops after [_kPgnMoveHintSampleChars] code characters
+  // so the probe stays cheap on large databases.
+  final sample = _pgnMoveHintSample(movetext);
+  return sample.isNotEmpty && _kPgnMoveHintRegex.hasMatch(sample);
+}
+
+/// Code characters [_pgnHasMoves] samples before giving up.
+const int _kPgnMoveHintSampleChars = 512;
+
+/// The opening stretch of [movetext] with comments (`{…}`, `;…`) and variation
+/// text removed, so a move hint is read from real notation only.
+String _pgnMoveHintSample(String movetext) {
+  final sample = StringBuffer();
+  var braceDepth = 0;
+  var variationDepth = 0;
+  var inLineComment = false;
+  for (var index = 0; index < movetext.length; index++) {
+    final code = movetext.codeUnitAt(index);
+    if (inLineComment) {
+      if (code == 0x0A) inLineComment = false;
+      continue;
+    }
+    if (braceDepth > 0) {
+      if (code == 0x7D) braceDepth--;
+      continue;
+    }
+    if (code == 0x7B) {
+      braceDepth++;
+      continue;
+    }
+    if (code == 0x3B) {
+      inLineComment = true;
+      continue;
+    }
+    if (code == 0x28) {
+      variationDepth++;
+      continue;
+    }
+    if (code == 0x29) {
+      if (variationDepth > 0) variationDepth--;
+      continue;
+    }
+    if (variationDepth > 0) continue;
+    if (code == 0x20 || code == 0x09 || code == 0x0A || code == 0x0D) {
+      sample.writeCharCode(0x20);
+    } else {
+      sample.writeCharCode(code);
+    }
+    if (sample.length >= _kPgnMoveHintSampleChars) break;
+  }
+  return sample.toString();
 }
 
 String _unescapePgnHeader(String value) {

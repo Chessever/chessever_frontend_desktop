@@ -37,6 +37,7 @@ class LocalGamePlayerCell extends ConsumerWidget {
     required this.side,
     this.padding = const EdgeInsets.symmetric(horizontal: 8),
     this.rating = '',
+    this.unknownSideLabel = false,
   });
 
   final Map<String, dynamic> metadata;
@@ -50,10 +51,20 @@ class LocalGamePlayerCell extends ConsumerWidget {
   /// keeps its dedicated Elo columns and leaves this empty).
   final String rating;
 
+  /// When true, a missing or placeholder name renders as `White ?` / `Black ?`
+  /// instead of an empty cell, so a local database row whose players were
+  /// never known is not painted as a blank row that looks broken. Off by
+  /// default: cloud and mini-preview tables keep hiding unknown placeholders.
+  final bool unknownSideLabel;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final rawName = metadata[side]?.toString().trim() ?? '';
-    final displayName = desktopTablePlayerValue(rawName);
+    final storedName = desktopTablePlayerValue(rawName);
+    final displayName =
+        storedName.isNotEmpty || !unknownSideLabel
+            ? storedName
+            : localPgnDisplayPlayerName(metadata, side);
     if (displayName.isEmpty) {
       return Padding(padding: padding, child: const SizedBox.shrink());
     }
@@ -79,7 +90,11 @@ class LocalGamePlayerCell extends ConsumerWidget {
           ],
           Expanded(
             child: Text(
-              libraryStandardTablePlayerName(displayName),
+              // Only real names are abbreviated ("Zhou, Francis" -> "Zhou, F.");
+              // a synthesised side label is shown verbatim.
+              storedName.isEmpty
+                  ? displayName
+                  : libraryStandardTablePlayerName(displayName),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
