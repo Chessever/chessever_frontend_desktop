@@ -159,6 +159,24 @@ void main() {
       'enum _GameRowAction',
     );
     expect(matchupHeader, contains('title'));
+    expect(matchupHeader, contains('expanded: widget.expanded'));
+    expect(matchupHeader, contains('LogicalKeyboardKey.enter'));
+    expect(matchupHeader, contains('LogicalKeyboardKey.space'));
+  });
+
+  test('event rail puts matchup toggle-all before live-first', () {
+    final rail = source('lib/desktop/widgets/event_games_table.dart');
+    final header = section(
+      rail,
+      'class _EventRoundHeaderState ',
+      'class _EventMatchupHeader',
+    );
+    expect(header, contains('event-rail-toggle-all-matchups'));
+    expect(header, contains('event-rail-live-first-toggle'));
+    expect(
+      header.indexOf('event-rail-toggle-all-matchups'),
+      lessThan(header.indexOf('event-rail-live-first-toggle')),
+    );
   });
 
   test('round header always reserves date and start time beside its name', () {

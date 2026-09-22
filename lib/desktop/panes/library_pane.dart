@@ -78,6 +78,7 @@ import 'package:chessever/desktop/widgets/library/folder_drop_target.dart';
 import 'package:chessever/desktop/widgets/library/library_actions_toolbar.dart';
 import 'package:chessever/desktop/widgets/library/library_chrome_bar.dart';
 import 'package:chessever/desktop/widgets/library/library_cloud_rows.dart';
+import 'package:chessever/desktop/widgets/library/local_database_show_in_folder.dart';
 import 'package:chessever/desktop/widgets/library/library_folder_context_menu.dart';
 import 'package:chessever/desktop/widgets/library/library_folder_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_game_context_menu.dart';
@@ -1590,6 +1591,7 @@ enum _CloudDatabaseBoardAction {
 
 enum _LocalGroupBoardAction {
   open,
+  showInFolder,
   pin,
   unpin,
   removeFromLibraryHome,
@@ -1599,6 +1601,7 @@ enum _LocalGroupBoardAction {
 enum _LocalDatabaseBoardAction {
   preview,
   open,
+  showInFolder,
   pin,
   unpin,
   removeFromLibraryHome,
@@ -2615,6 +2618,12 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     ) async {
       final pinKey = libraryLocalDatabasePinKey(entry.path);
       final isPinned = pinnedDatabaseKeys.contains(pinKey);
+      // The shared builder is the single authority for the action, so a local
+      // row without a usable file path omits it instead of offering a broken
+      // one; cloud rows never reach this menu at all.
+      final showInFolder = localDatabaseShowInFolderMenuItem<
+        _LocalDatabaseBoardAction
+      >(value: _LocalDatabaseBoardAction.showInFolder, localPath: entry.path);
       final picked = await showDesktopContextMenu<_LocalDatabaseBoardAction>(
         context: context,
         position: position,
@@ -2630,6 +2639,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             icon: Icons.open_in_new_rounded,
             label: 'Open full database',
           ),
+          if (showInFolder != null) showInFolder,
           const DesktopContextMenuDivider(),
           DesktopContextMenuItem(
             value:
@@ -2660,6 +2670,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           await previewLocalEntry(entry);
         case _LocalDatabaseBoardAction.open:
           await openLocalEntry(entry);
+        case _LocalDatabaseBoardAction.showInFolder:
+          // A record that points at a folder opens that folder; a record that
+          // points at a file keeps the shipped "folder + file selected" reveal.
+          await revealLocalRecordPath(context, entry.path);
         case _LocalDatabaseBoardAction.pin:
           await updateDatabasePin(
             key: pinKey,
@@ -2721,6 +2735,18 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     ) async {
       final pinKey = 'group:${group.id}';
       final isPinned = pinnedDatabaseKeys.contains(pinKey);
+      // The folder this group's records live in is derived from those records'
+      // own stored paths. A group whose records do not share one folder omits
+      // the action instead of opening an arbitrary location.
+      final groupFolder = localLibraryGroupFolderPath(
+        group.entries.map((entry) => entry.path),
+      );
+      final showInFolder = groupFolder == null
+          ? null
+          : localFolderShowInFolderMenuItem<_LocalGroupBoardAction>(
+              value: _LocalGroupBoardAction.showInFolder,
+              localPath: groupFolder,
+            );
       final picked = await showDesktopContextMenu<_LocalGroupBoardAction>(
         context: context,
         position: position,
@@ -2731,6 +2757,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             icon: Icons.folder_open_outlined,
             label: 'Open folder',
           ),
+          if (showInFolder != null) showInFolder,
           const DesktopContextMenuDivider(),
           DesktopContextMenuItem(
             value:
@@ -2759,6 +2786,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       switch (picked) {
         case _LocalGroupBoardAction.open:
           onCurrentLocalGroupChanged(group.id);
+        case _LocalGroupBoardAction.showInFolder:
+          if (groupFolder != null) {
+            await revealLocalFolderPath(context, groupFolder);
+          }
         case _LocalGroupBoardAction.pin:
           await updateDatabasePin(
             key: pinKey,

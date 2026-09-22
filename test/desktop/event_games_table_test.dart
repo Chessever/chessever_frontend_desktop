@@ -1717,6 +1717,35 @@ void main() {
     expect(segments[1].gameIds, ['cd-b1', 'cd-b2']);
   });
 
+  test('event rail collapse-all also collapses matchups loaded later', () {
+    const initial = (collapseNewMatchups: false, exceptions: <String>{});
+    final collapsed = eventRailMatchupStateAfterToggleAll(
+      state: initial,
+      matchupIds: const ['round-1:alpha|beta', 'round-1:gamma|delta'],
+    );
+    expect(collapsed.collapseNewMatchups, isTrue);
+    expect(
+      eventRailMatchupIsExpanded(
+        state: collapsed,
+        matchupId: 'round-1:newly-loaded',
+      ),
+      isFalse,
+    );
+
+    final expanded = eventRailMatchupStateAfterToggleAll(
+      state: collapsed,
+      matchupIds: const ['round-1:alpha|beta', 'round-1:gamma|delta'],
+    );
+    expect(expanded.collapseNewMatchups, isFalse);
+    expect(
+      eventRailMatchupIsExpanded(
+        state: expanded,
+        matchupId: 'round-1:another-new-matchup',
+      ),
+      isTrue,
+    );
+  });
+
   test('event rail groups knockout stages into per-matchup game lists', () {
     final started = DateTime.now().subtract(const Duration(days: 1));
     TournamentGameSummary stageGame({
