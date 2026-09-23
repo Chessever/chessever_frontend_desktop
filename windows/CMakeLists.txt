@@ -120,6 +120,13 @@ install(CODE "
 install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
 
+# Install the locally built converter only for isolated Development. Release
+# distribution/signing remains a separate gate; missing helper fails visibly.
+if(CHESSEVER_DEV_ISOLATED)
+  install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../build/cbh_converter/dist/chessever_cbh/"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/cbh_converter" COMPONENT Runtime)
+endif()
+
 # Install the AOT library on non-Debug builds only.
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release

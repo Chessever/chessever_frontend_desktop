@@ -1,10 +1,12 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:crypto/crypto.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_pgn_rename.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 
 const Object _localLibraryUnset = Object();
@@ -226,6 +228,13 @@ class LocalLibraryRegistryNotifier
 
   final AppDatabase _db;
   late final Future<void> _hydration;
+  Future<void> _mutations = Future<void>.value();
+
+  Future<T> _queue<T>(Future<T> Function() action) {
+    final result = _mutations.then((_) => action());
+    _mutations = result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return result;
+  }
 
   Future<void> _hydrate() async {
     try {
@@ -241,6 +250,29 @@ class LocalLibraryRegistryNotifier
             } catch (_) {}
           }
         }
+      }
+      // Recover only our exact interrupted move, never infer identity from a
+      // filename belonging to some unrelated replacement file.
+      try {
+        final rawPending = await _db.getJson<Object>('desktop.local_library_rename.v1');
+        final pending = rawPending is Map ? rawPending : null;
+        final from = pending?['from'] as String?;
+        final to = pending?['to'] as String?;
+        final hash = pending?['sha256'] as String?;
+        if (from != null && to != null && hash != null &&
+            !File(from).existsSync() && File(to).existsSync() &&
+            (await sha256.bind(File(to).openRead()).first).toString() == hash) {
+          final index = entries.indexWhere((e) => _canonical(e.path) == _canonical(from));
+          if (index >= 0) {
+            entries[index] = entries[index].copyWith(path: to);
+            await _db.setJson(_kvKey, entries.map((e) => e.toJson()).toList());
+          }
+        }
+        if (pending != null && pending.isNotEmpty) {
+          await _db.setJson('desktop.local_library_rename.v1', <String, String>{});
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('LocalLibraryRegistry rename recovery: $e');
       }
       if (!mounted) return;
       state = state.copyWith(entries: entries, loaded: true);
@@ -273,6 +305,11 @@ class LocalLibraryRegistryNotifier
   /// Register every opened local PGN/file/folder as a removable My Databases item.
   /// Duplicate paths preserve the original entry and insertion time.
   Future<List<LocalLibraryEntry>> registerAll(
+    List<String> paths, {
+    Map<String, LocalLibraryEntryMetadata> metadataByPath = const {},
+  }) => _queue(() => _registerAll(paths, metadataByPath: metadataByPath));
+
+  Future<List<LocalLibraryEntry>> _registerAll(
     List<String> paths, {
     Map<String, LocalLibraryEntryMetadata> metadataByPath = const {},
   }) async {
@@ -329,7 +366,9 @@ class LocalLibraryRegistryNotifier
   }
 
   /// Drop [path] from the registry. Files on disk are not touched.
-  Future<void> unregister(String path) async {
+  Future<void> unregister(String path) => _queue(() => _unregister(path));
+
+  Future<void> _unregister(String path) async {
     await _hydration;
     final normalized = _canonical(path);
     final next = state.entries
@@ -345,6 +384,11 @@ class LocalLibraryRegistryNotifier
   /// [paths] lets callers remove legacy entries whose persisted group id was
   /// inferred from the on-disk player directory rather than the stable player id.
   Future<void> unregisterPlayerWorkspace(
+    String playerId, {
+    Iterable<String> paths = const <String>[],
+  }) => _queue(() => _unregisterPlayerWorkspace(playerId, paths: paths));
+
+  Future<void> _unregisterPlayerWorkspace(
     String playerId, {
     Iterable<String> paths = const <String>[],
   }) async {
@@ -381,6 +425,53 @@ class LocalLibraryRegistryNotifier
     state = state.copyWith(entries: next);
     await _persist(next);
   }
+
+  /// Caller holds the local PGN write queue and refuses sources retained by
+  /// Board/workspace/child windows. Keep metadata and bytes, change only identity.
+  Future<String> renamePgn(String path, String name, {void Function()? ensureUnused}) => _queue(() async {
+    await _hydration;
+    final index = state.entries.indexWhere((e) => _canonical(e.path) == _canonical(path));
+    if (index < 0) throw StateError('This database is no longer in your library.');
+    final entry = state.entries[index];
+    if (entry.groupId != null || entry.playerWorkspaceSource != null) {
+      throw StateError('Generated player databases cannot be renamed.');
+    }
+    final destination = localPgnRenameDestination(entry.path, name);
+    if (p.normalize(destination) == p.normalize(entry.path)) return entry.path;
+    if (_canonical(destination) == _canonical(entry.path)) {
+      throw const FormatException('Choose a name that differs by more than letter case.');
+    }
+    if (FileSystemEntity.typeSync(entry.path, followLinks: false) != FileSystemEntityType.file) {
+      throw FileSystemException('The PGN is missing or is a symbolic link.', entry.path);
+    }
+    if (FileSystemEntity.typeSync(destination, followLinks: false) != FileSystemEntityType.notFound ||
+        state.entries.any((e) => _canonical(e.path) == _canonical(destination))) {
+      throw const FormatException('A database with this filename already exists.');
+    }
+    ensureUnused?.call();
+    final next = [...state.entries];
+    next[index] = entry.copyWith(path: destination);
+    // A durable intent allows startup to finish a rename interrupted between
+    // the filesystem move and registry commit, without ever replacing a PGN.
+    final hash = (await sha256.bind(File(entry.path).openRead()).first).toString();
+    await _db.setJson('desktop.local_library_rename.v1', {'from': entry.path, 'to': destination, 'sha256': hash});
+    if (FileSystemEntity.typeSync(entry.path, followLinks: false) != FileSystemEntityType.file ||
+        (await sha256.bind(File(entry.path).openRead()).first).toString() != hash) {
+      throw StateError('The PGN changed while preparing the rename. Please try again.');
+    }
+    ensureUnused?.call();
+    moveLocalPgnWithoutReplacing(entry.path, destination);
+    try {
+      await _db.setJson(_kvKey, next.map((e) => e.toJson()).toList());
+    } catch (_) {
+      moveLocalPgnWithoutReplacing(destination, entry.path);
+      rethrow;
+    }
+    if (mounted) state = state.copyWith(entries: next);
+    // The registry is already committed. Clearing intent is best-effort.
+    try { await _db.setJson('desktop.local_library_rename.v1', <String, String>{}); } catch (_) {}
+    return destination;
+  });
 
   String _canonical(String path) {
     final trimmed = path.trim();

@@ -65,6 +65,7 @@ class ChessGame {
   final String startingFen;
   final Map<String, dynamic> metadata;
   final ChessLine mainline;
+  final List<String> rootComments;
 
   /// Analysis displaced by an authoritative takeback to the root position.
   ///
@@ -79,6 +80,7 @@ class ChessGame {
     required this.startingFen,
     required this.metadata,
     required this.mainline,
+    this.rootComments = const [],
     this.detachedRootAnalysis,
   });
 
@@ -86,6 +88,7 @@ class ChessGame {
     return ChessGame(
       gameId: json['id'] as String,
       startingFen: json['sf'] as String,
+      rootComments: (json['rc'] as List?)?.cast<String>() ?? const [],
       metadata: (json['md'] as Map).cast<String, dynamic>(),
       mainline:
           (json['m'] as List)
@@ -115,6 +118,7 @@ class ChessGame {
   Map<String, dynamic> toJson() => {
     'id': gameId,
     'sf': startingFen,
+    if (rootComments.isNotEmpty) 'rc': rootComments,
     'md': metadata,
     'm': mainline.map((move) => move.toJson()).toList(),
     if (detachedRootAnalysis != null)
@@ -129,6 +133,7 @@ class ChessGame {
     String? startingFen,
     Map<String, dynamic>? metadata,
     ChessLine? mainline,
+    List<String>? rootComments,
     List<ChessLine>? detachedRootAnalysis,
     bool overrideDetachedRootAnalysis = false,
   }) {
@@ -137,6 +142,7 @@ class ChessGame {
       startingFen: startingFen ?? this.startingFen,
       metadata: metadata ?? this.metadata,
       mainline: mainline ?? this.mainline,
+      rootComments: rootComments ?? this.rootComments,
       detachedRootAnalysis:
           overrideDetachedRootAnalysis
               ? detachedRootAnalysis
@@ -217,17 +223,13 @@ class ChessGame {
       startingPosition,
       headerCodes,
     );
-    if (mainline.isNotEmpty && pgnGame.comments.isNotEmpty) {
-      mainline[0] = mainline[0].copyWith(
-        comments: [...pgnGame.comments, ...?mainline[0].comments],
-      );
-    }
 
     return ChessGame(
       gameId: gameId,
       startingFen: startingPosition.fen,
       metadata: withoutChesseverClassificationHeader(pgnGame.headers),
       mainline: mainline,
+      rootComments: pgnGame.comments,
     );
   }
 
@@ -268,9 +270,8 @@ class ChessGame {
         ),
       );
     }
-    final usableVariations = rootVariations
-        .where((variation) => variation.isNotEmpty)
-        .toList();
+    final usableVariations =
+        rootVariations.where((variation) => variation.isNotEmpty).toList();
     if (usableVariations.isNotEmpty) {
       line[0] = line[0].copyWith(
         variations: [...usableVariations, ...?line[0].variations],
@@ -287,10 +288,22 @@ class ChessGame {
     required Map<String, int> headerCodes,
   }) {
     final data = node.data;
+    // CBH analysis uses explicit null moves. dartchess has no NullMove type;
+    // preserve the analysis ply and position instead of truncating its subtree.
+    final isNullMove = data.san == '--';
     final move = position.parseSan(data.san);
-    if (move == null) return const [];
+    if (move == null && !isNullMove) return const [];
 
-    final nextPosition = position.play(move);
+    final nextPosition =
+        isNullMove
+            ? position.copyWith(
+              turn: position.turn == Side.white ? Side.black : Side.white,
+              epSquare: null,
+              halfmoves: position.halfmoves + 1,
+              fullmoves:
+                  position.fullmoves + (position.turn == Side.black ? 1 : 0),
+            )
+            : position.play(move!);
     final continuationKey = key == null ? null : chesseverNextMoveKey(key);
 
     final variations = <ChessLine>[];
@@ -305,13 +318,14 @@ class ChessGame {
           _parsePgnLineFromChild(
             variationNode,
             nextPosition,
-            key: continuationKey == null
-                ? null
-                : chesseverMoveKey(
-                    parentKey: continuationKey,
-                    variation: alternative,
-                    index: 1,
-                  ),
+            key:
+                continuationKey == null
+                    ? null
+                    : chesseverMoveKey(
+                      parentKey: continuationKey,
+                      variation: alternative,
+                      index: 1,
+                    ),
             headerCodes: headerCodes,
           ),
         );
@@ -337,11 +351,12 @@ class ChessGame {
       num: position.fullmoves,
       fen: nextPosition.fen,
       san: data.san,
-      uci: move.uci,
+      uci: isNullMove ? '0000' : move!.uci,
       turn: position.turn == Side.black ? ChessColor.black : ChessColor.white,
       clockTime: clockTime,
       eval: eval,
-      comments: importedMoveComments(data.startingComments, data.comments),
+      startingComments: importedMoveComments(data.startingComments, null),
+      comments: importedMoveComments(null, data.comments),
       nags: restoredMoveNags(
         data.nags,
         data,
@@ -394,6 +409,7 @@ class ChessMove {
   final String? clockTime;
   final String? eval;
   final List<String>? comments;
+  final List<String>? startingComments;
   final List<int>? nags;
   final List<ChessLine>? variations;
 
@@ -406,6 +422,7 @@ class ChessMove {
     this.clockTime,
     this.eval,
     this.comments,
+    this.startingComments,
     this.nags,
     this.variations,
   });
@@ -420,6 +437,7 @@ class ChessMove {
       clockTime: json['ct'] as String?,
       eval: json['e'] as String?,
       comments: (json['c'] as List?)?.cast<String>(),
+      startingComments: (json['sc'] as List?)?.cast<String>(),
       nags: (json['g'] as List?)?.cast<int>(),
       variations:
           json['v'] == null
@@ -448,6 +466,7 @@ class ChessMove {
     'ct': clockTime,
     'e': eval,
     if (comments != null) 'c': comments,
+    if (startingComments != null) 'sc': startingComments,
     if (nags != null) 'g': nags,
     if (variations != null)
       'v':
@@ -467,6 +486,7 @@ class ChessMove {
     String? clockTime,
     String? eval,
     List<String>? comments,
+    List<String>? startingComments,
     List<int>? nags,
     List<ChessLine>? variations,
     bool overrideVariations = false,
@@ -480,6 +500,7 @@ class ChessMove {
       clockTime: clockTime ?? this.clockTime,
       eval: eval ?? this.eval,
       comments: comments ?? this.comments,
+      startingComments: startingComments ?? this.startingComments,
       nags: nags ?? this.nags,
       variations: overrideVariations ? variations : this.variations,
     );

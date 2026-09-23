@@ -43,6 +43,7 @@ import 'package:chessever/desktop/widgets/desktop_team_standings_view.dart';
 import 'package:chessever/desktop/widgets/tournament_standings_view.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:chessever/desktop/widgets/table_display_value.dart';
+import 'package:chessever/desktop/widgets/database_game_label.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
@@ -5770,27 +5771,33 @@ class _DatabaseGameRowState extends State<_DatabaseGameRow> {
               ),
               child: Row(
                 children: [
-                  Expanded(
-                    child: _PlayerCell(
-                      name: game.whitePlayer,
-                      federation: game.whiteFederation,
-                      fideId: game.whiteFideId,
-                      title: game.whiteTitle,
-                      rating: game.whiteRating,
-                      selected: selected,
+                  ...[
+                    Expanded(
+                      child: _PlayerCell(
+                        key: ValueKey('database-player-white-${game.id}'),
+                        databaseSide: 'White',
+                        name: game.whitePlayer,
+                        federation: game.whiteFederation,
+                        fideId: game.whiteFideId,
+                        title: game.whiteTitle,
+                        rating: game.whiteRating,
+                        selected: selected,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _PlayerCell(
-                      name: game.blackPlayer,
-                      federation: game.blackFederation,
-                      fideId: game.blackFideId,
-                      title: game.blackTitle,
-                      rating: game.blackRating,
-                      selected: selected,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _PlayerCell(
+                        key: ValueKey('database-player-black-${game.id}'),
+                        databaseSide: 'Black',
+                        name: game.blackPlayer,
+                        federation: game.blackFederation,
+                        fideId: game.blackFideId,
+                        title: game.blackTitle,
+                        rating: game.blackRating,
+                        selected: selected,
+                      ),
                     ),
-                  ),
+                  ],
                   const SizedBox(width: 8),
                   SizedBox(
                     width: 38,
@@ -6907,6 +6914,8 @@ String _compactPlayerName(String name) {
 
 class _PlayerCell extends StatelessWidget {
   const _PlayerCell({
+    super.key,
+    this.databaseSide,
     required this.name,
     required this.federation,
     required this.fideId,
@@ -6915,6 +6924,7 @@ class _PlayerCell extends StatelessWidget {
     required this.selected,
   });
 
+  final String? databaseSide;
   final String name;
   final String federation;
   final int? fideId;
@@ -6924,7 +6934,9 @@ class _PlayerCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final playerName = _compactPlayerName(name);
+    final playerName = databaseSide == null
+        ? _compactPlayerName(name)
+        : databaseGamePlayerLabel(name, databaseSide!);
     if (playerName.isEmpty) return const SizedBox.shrink();
     final titleText = title.trim();
     final ratingText = rating > 0 ? rating.toString() : '';

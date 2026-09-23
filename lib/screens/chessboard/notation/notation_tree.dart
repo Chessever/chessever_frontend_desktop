@@ -186,7 +186,7 @@ String exportGameToPgn(ChessGame game) {
       PgnGame<PgnNodeData>(
         headers: headers,
         moves: root,
-        comments: const [],
+        comments: game.rootComments,
       ).makePgn();
   return _withRepairedMoveNumbers(pgn);
 }
@@ -332,20 +332,24 @@ PgnNodeData _toPgnNodeData(ChessMove move) {
   for (final comment in move.comments ?? const <String>[]) {
     // Strip only the machine values already emitted above, never the prose or
     // graphic/source directives that happen to share their comment block.
-    final remaining = comment.replaceAllMapped(
-      RegExp(r'\[%(clk|eval)\s+[^\]]+\]'),
-      (match) =>
-          (match.group(1) == 'clk'
-                  ? (move.clockTime?.isNotEmpty ?? false)
-                  : (move.eval?.isNotEmpty ?? false))
-              ? ''
-              : match.group(0)!,
-    ).trim();
+    final remaining =
+        comment
+            .replaceAllMapped(
+              RegExp(r'\[%(clk|eval)\s+[^\]]+\]'),
+              (match) =>
+                  (match.group(1) == 'clk'
+                          ? (move.clockTime?.isNotEmpty ?? false)
+                          : (move.eval?.isNotEmpty ?? false))
+                      ? ''
+                      : match.group(0)!,
+            )
+            .trim();
     if (remaining.isNotEmpty) comments.add(remaining);
   }
 
   return PgnNodeData(
     san: move.san,
+    startingComments: move.startingComments,
     comments: comments.isEmpty ? null : comments,
     nags: move.nags,
   );

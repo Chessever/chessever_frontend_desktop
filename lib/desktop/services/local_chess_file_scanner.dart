@@ -45,7 +45,7 @@ const localChessRecognizedExtensions = <String>{
   '.ctg',
 };
 
-const localChessPickerExtensions = <String>['pgn', 'bz2', 'zst'];
+const localChessPickerExtensions = <String>['pgn', 'bz2', 'zst', 'cbh'];
 
 const localChessReadableFormatsLabel = 'PGN databases';
 

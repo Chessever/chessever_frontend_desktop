@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:chessever/desktop/widgets/event_games_table.dart';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -22,6 +24,121 @@ import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 void main() {
+  final actualPgn = Platform.environment['CBH_ACCEPTANCE_PGN'];
+  testWidgets(
+    'real Son table opener and rail preserve physical 1424-1426 labels',
+    (tester) async {
+      late LocalChessSource catalog;
+      await tester.runAsync(() async {
+        catalog = await scanLocalChessPgnCatalog(actualPgn!);
+      });
+      final entries = catalog.root.files.single.games.sublist(1423, 1426);
+      // A paged catalog shell; row data and physical identity are the real scan.
+      final source = _sourceWithGame(entries.first, gameCount: 1436);
+      final repository = _FakeLocalChessDatabaseRepository(
+        page: LocalChessGameQueryPage(
+          games: entries,
+          totalCount: 3,
+          pageNumber: 0,
+          pageSize: 200,
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localChessDatabaseRepositoryProvider.overrideWithValue(repository),
+            localChessLibraryProvider.overrideWith(
+              (ref) => LocalChessLibraryNotifier(),
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: LocalChessFilesView(
+                selectedPath: source.root.files.single.path,
+                onSelectPath: (_) {},
+                stateOverride: LocalChessLibraryState(
+                  source: source,
+                  selectedPath: source.root.files.single.path,
+                ),
+                onRefreshOverride: () async {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('French, D'), findsOneWidget);
+      expect(find.text('Nc3 Bb4 Bd2'), findsOneWidget);
+      expect(find.text('White ?'), findsNWidgets(2));
+      expect(find.text('Black ?'), findsNWidgets(2));
+      // Open physical #1426 through the actual table handler, not a hand-built summary.
+      final pick = find.text('White ?').last;
+      await tester.tap(pick);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(pick);
+      await tester.pump(const Duration(milliseconds: 250));
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(LocalChessFilesView)),
+      );
+      final args =
+          container.read(boardTabGameArgsByTabIdProvider).values.single;
+      expect(args.gameListSelectedId, entries.last.id);
+      expect(args.librarySaveOrigin!.sourceIndex, 1425);
+      expect(args.librarySaveOrigin!.sourceFileGameCount, 1436);
+      expect(args.pgn.trim(), entries.last.rawPgn.trim());
+      expect(args.databaseGames.map((g) => g.id), entries.map((e) => e.id));
+      expect(args.databaseGames.map((g) => g.localPgnSource!.sourceIndex), [
+        1423,
+        1424,
+        1425,
+      ]);
+      expect(args.databaseGames.map((g) => g.whitePlayer), [
+        'French, D',
+        '?',
+        '?',
+      ]);
+      expect(args.databaseGames.map((g) => g.blackPlayer), [
+        'Nc3 Bb4 Bd2',
+        '?',
+        '?',
+      ]);
+      expect(args.databaseGames.map((g) => g.openingName), [
+        'C17',
+        'A18',
+        'A68',
+      ]);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            boardTabGameArgsByTabIdProvider.overrideWith(
+              (ref) => {'tournaments-default': args},
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 373,
+                child: EventGamesTable(tabId: 'tournaments-default'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('French, D'), findsOneWidget);
+      expect(find.text('Nc3 Bb4 Bd2'), findsOneWidget);
+      expect(find.text('White ?'), findsNWidgets(2));
+      expect(find.text('Black ?'), findsNWidgets(2));
+      expect(find.textContaining('· Game #'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+    skip: actualPgn == null,
+  );
+
   test('header-only player games preserve Overview filters without SQLite', () {
     final game = _localGame(
       id: 'direct-filter',
@@ -152,9 +269,9 @@ void main() {
       find.byKey(const ValueKey<String>('local-column-resizer-date')),
       findsOneWidget,
     );
-    // Row player names render in the shared library-table abbreviated form.
-    expect(find.text('Only, D.'), findsOneWidget);
-    expect(find.text('Hou, Y.'), findsNothing);
+    // Local PGN player labels retain their source spelling.
+    expect(find.text('Database Only'), findsOneWidget);
+    expect(find.text('Hou, Yifan'), findsNothing);
 
     await tester.tap(find.text('WHITE'));
     await tester.pump();
@@ -179,7 +296,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(repository.queries.last.search, 'database only');
-    expect(find.text('Only, D.'), findsOneWidget);
+    expect(find.text('Database Only'), findsOneWidget);
     expect(find.text('1 / 42 entries'), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 250));
   });
@@ -232,7 +349,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     await tester.tapAt(
-      tester.getCenter(find.text('Only, D.')),
+      tester.getCenter(find.text('Database Only')),
       buttons: kSecondaryMouseButton,
     );
     await tester.pump();
@@ -483,7 +600,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.text('42 entries'), findsNothing);
       expect(find.textContaining('indexed positions'), findsNothing);
-      expect(find.text('Only, D.'), findsOneWidget);
+      expect(find.text('Database Only'), findsOneWidget);
     },
   );
 
@@ -793,7 +910,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    final rowFinder = find.text('White, M.');
+    final rowFinder = find.text('Metadata White');
     expect(rowFinder, findsOneWidget);
     await tester.tap(rowFinder);
     await tester.pump(const Duration(milliseconds: 50));

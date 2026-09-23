@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:chessever/desktop/services/cbh_conversion_origin.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:chessever/desktop/services/cbh_conversion_service.dart';
+import 'package:chessever/desktop/services/local_pgn_rename.dart';
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -254,6 +257,28 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     final token = Object();
     _scanToken = token;
     _invalidateTreeBuilds();
+    if (paths.any((path) => p.extension(path).toLowerCase() == '.cbh')) {
+      // This request supersedes any older scan, including its progress UI.
+      state = state.copyWith(isScanning: false, scanProgress: null, error: null);
+      try {
+        // A binary database is never passed to the PGN scanner or registry.
+        // Conversion is explicit, and an edited converted copy is never replaced.
+        final resolved = <String>[];
+        for (final path in paths) {
+          final converted = p.extension(path).toLowerCase() == '.cbh'
+              ? await CbhConversionGateway.convert(path)
+              : path;
+          if (_scanToken != token || converted == null) return false;
+          resolved.add(converted);
+        }
+        paths = resolved;
+      } catch (error) {
+        if (_scanToken == token) {
+          state = state.copyWith(error: error.toString(), isScanning: false);
+        }
+        return false;
+      }
+    }
     final sessionSource =
         !forceRefresh && paths.length == 1
             ? state.sessionSourceForPath(paths.single)
@@ -546,6 +571,39 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     final source = state.source;
     if (source == null || source.nodeForPath(path) == null) return;
     state = state.copyWith(source: source, selectedPath: path);
+  }
+
+  /// Rename only a closed PGN. Active editor ownership is checked by the
+  /// shell before and after every await leading up to the filesystem commit.
+  Future<String> renameRegisteredPgn(String path, String name, {
+    required void Function() ensureUnused,
+  }) async {
+    final target = localPgnRenameDestination(path, name);
+    if (p.normalize(target) == p.normalize(path)) return path;
+    if (localChessInputPathKey(target) == localChessInputPathKey(path)) {
+      throw const FormatException('Choose a name that differs by more than letter case.');
+    }
+    final registry = this.registry;
+    final repository = localDatabaseRepository;
+    if (registry == null || repository == null) {
+      throw StateError('The local database library is unavailable.');
+    }
+    return repository.runLocalPgnWriteQueued(() async {
+      ensureUnused();
+      if (FileSystemEntity.typeSync(target, followLinks: false) != FileSystemEntityType.notFound ||
+          registry.state.entries.any((entry) => localChessInputPathKey(entry.path) == localChessInputPathKey(target))) {
+        throw const FormatException('A database with this filename already exists.');
+      }
+      // Both path-identified caches are invalidated before changing the file.
+      // Failure here leaves the original PGN and registry intact.
+      await repository.deleteCachedSource(path);
+      await repository.deleteCachedSource(target);
+      await prepareCbhCopyRename(path, target);
+      ensureUnused();
+      final result = await registry.renamePgn(path, name, ensureUnused: ensureUnused);
+      if (mounted) clear();
+      return result;
+    });
   }
 
   void clear() {

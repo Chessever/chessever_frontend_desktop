@@ -2008,6 +2008,76 @@ void main() {
     );
   });
 
+  testWidgets('unnamed database studies have labels and retain row identity', (
+    tester,
+  ) async {
+    final rows = [
+      for (var i = 0; i < 2; i++)
+        TournamentGameSummary(
+          id: 'unnamed-$i',
+          name: 'White ? vs Black ?',
+          whitePlayer: '?',
+          blackPlayer: '?',
+          hasPgn: true,
+          pgn:
+              '[Event "?"]\n[White "?"]\n[Black "?"]\n[Result "*"]\n[ECO "${i == 0 ? 'A18' : 'A68'}"]\n\n1. ${i == 0 ? 'c4' : 'd4'} Nf6 *',
+          openingName: i == 0 ? 'A18' : 'A68',
+          localPgnSource: TournamentGameLocalPgnSource(
+            sourcePath: 'studies.pgn',
+            sourceIndex: 1424 + i,
+            sourceFileGameCount: 1436,
+            title: 'White ? vs Black ?',
+          ),
+        ),
+    ];
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          pgn: rows.first.pgn!,
+          label: rows.first.name,
+          whiteName: '?',
+          blackName: '?',
+          databaseTitle: 'Studies',
+          databaseGames: rows,
+          gameListSelectedId: rows.first.id,
+        ),
+        overrides: [
+          retainedLocalPgnHydratorProvider.overrideWithValue(
+            (row) async => row,
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+    expect(find.text('White ?'), findsNWidgets(2));
+    expect(find.text('Black ?'), findsNWidgets(2));
+    expect(find.textContaining('· Game #'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('database-player-white-unnamed-1')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(EventGamesTable)),
+    );
+    final opened =
+        container.read(boardTabGameArgsByTabIdProvider).values.single;
+    expect(opened.gameListSelectedId, rows.last.id);
+    expect(opened.librarySaveOrigin?.sourceIndex, 1425);
+    expect(opened.librarySaveOrigin?.sourceFileGameCount, 1436);
+    expect(opened.whiteName, '?');
+    expect(opened.blackName, '?');
+    expect(opened.pgn, rows.last.pgn);
+    expect(opened.databaseGames.map((e) => e.id), rows.map((e) => e.id));
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    final previous = container.read(boardTabGameArgsByTabIdProvider).values.single;
+    expect(previous.gameListSelectedId, rows.first.id);
+    expect(previous.librarySaveOrigin?.sourceIndex, 1424);
+    expect(previous.pgn, rows.first.pgn);
+  });
+
   testWidgets('database games hide the board and round column', (tester) async {
     await tester.pumpWidget(
       _wrap(
