@@ -2876,8 +2876,9 @@ class LocalChessDatabaseRepository {
   static Future<void> _serviceSmallImportAtBatchBoundary() async {
     if (_servicingSmallImport ||
         _activeImportPaths.isEmpty ||
-        Zone.current[_localCacheWriteQueueZoneKey] != true)
+        Zone.current[_localCacheWriteQueueZoneKey] != true) {
       return;
+    }
     final pending =
         _pendingSmallImports
             .where(

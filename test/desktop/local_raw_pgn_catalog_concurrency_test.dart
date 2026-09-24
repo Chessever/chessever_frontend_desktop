@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:chessever/desktop/services/local_raw_pgn_catalog.dart';
@@ -11,7 +10,7 @@ void main() {
     final dir = await Directory.systemTemp.createTemp('catalog-concurrent-idle-');
     try {
       final file = File('${dir.path}/one.pgn');
-      final text = '[Event "One"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 {' + ('a' * 100000) + 'OLD' + ('b' * 1000000) + '} e5 *\n';
+      final text = '[Event "One"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 {${'a' * 100000}OLD${'b' * 1000000}} e5 *\n';
       await file.writeAsString(text);
       final handle = await openLocalRawPgnCatalog(file.path, debugValidationDelay: const Duration(milliseconds:100));
       final query = LocalRawPgnCatalogPageQuery(descriptor:handle.descriptor,pageNumber:0,pageSize:100);

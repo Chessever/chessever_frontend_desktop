@@ -38,8 +38,9 @@ void main() {
           .importSingleFileSource(
             path: large.path,
             onProgress: (p) {
-              if (p.message == 'Importing games...' && !started.isCompleted)
+              if (p.message == 'Importing games...' && !started.isCompleted) {
                 started.complete();
+              }
             },
           )
           .then((s) {
@@ -82,8 +83,9 @@ void main() {
     final big = repo.importSingleFileSource(
       path: large.path,
       onProgress: (p) {
-        if (p.message == 'Importing games...' && !started.isCompleted)
+        if (p.message == 'Importing games...' && !started.isCompleted) {
           started.complete();
+        }
       },
     );
     await started.future;
@@ -120,8 +122,9 @@ void main() {
       final big = repo.importSingleFileSource(
         path: large.path,
         onProgress: (p) {
-          if (p.message == 'Importing games...' && !started.isCompleted)
+          if (p.message == 'Importing games...' && !started.isCompleted) {
             started.complete();
+          }
         },
       );
       await started.future;
@@ -190,8 +193,9 @@ void main() {
         path: large.path,
         cancellationToken: token,
         onProgress: (p) {
-          if (p.message == 'Importing games...' && !started.isCompleted)
+          if (p.message == 'Importing games...' && !started.isCompleted) {
             started.complete();
+          }
         },
       );
       final canceled = expectLater(
@@ -237,8 +241,9 @@ void main() {
       final big = repo.importSingleFileSource(
         path: large.path,
         onProgress: (p) {
-          if (p.message == 'Importing games...' && !started.isCompleted)
+          if (p.message == 'Importing games...' && !started.isCompleted) {
             started.complete();
+          }
         },
       );
       await started.future;
