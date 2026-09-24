@@ -1,5 +1,6 @@
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
+import 'local_pgn_position.dart';
 
 typedef SupabasePgnFetcher = Future<String?> Function(String gameId);
 typedef GamebaseGameWithPgnFetcher =
@@ -24,7 +25,11 @@ Future<String?> resolveBoardTabPgn({
 
   final initial = _nonEmpty(initialPgn);
   if (initial != null) {
-    if (!requireMoves || pgnHasMoves(initial)) return initial;
+    if (!requireMoves ||
+        pgnHasMoves(initial) ||
+        localPgnHasValidSetupPosition(initial)) {
+      return initial;
+    }
   }
 
   String? fallback = initial;

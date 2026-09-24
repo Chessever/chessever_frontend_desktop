@@ -2866,6 +2866,94 @@ class LocalChessDatabaseRepository {
     }
   }
 
+  // Small, independent imports may run at another import's batch boundary.
+  // The outer import STILL owns the global writer queue throughout: this is
+  // cooperative execution by that owner, never a second concurrent writer.
+  static final _pendingSmallImports = <_QueuedLocalChessImport>[];
+  static final _activeImportPaths = <String>{};
+  static bool _servicingSmallImport = false;
+
+  static Future<void> _serviceSmallImportAtBatchBoundary() async {
+    if (_servicingSmallImport ||
+        _activeImportPaths.isEmpty ||
+        Zone.current[_localCacheWriteQueueZoneKey] != true)
+      return;
+    final pending =
+        _pendingSmallImports
+            .where(
+              (job) =>
+                  !job.started &&
+                  !job.result.isCompleted &&
+                  !_activeImportPaths.contains(job.path),
+            )
+            .firstOrNull;
+    if (pending == null) return;
+    _servicingSmallImport = true;
+    try {
+      await _executeQueuedImport(pending);
+    } finally {
+      _servicingSmallImport = false;
+    }
+  }
+
+  static Future<void> _executeQueuedImport(_QueuedLocalChessImport job) async {
+    if (job.started || job.result.isCompleted) return;
+    job.started = true;
+    _pendingSmallImports.remove(job);
+    _activeImportPaths.add(job.path);
+    try {
+      job.token?.throwIfCanceled();
+      job.result.complete(await job.action());
+    } catch (error, stack) {
+      job.result.completeError(error, stack);
+    } finally {
+      _activeImportPaths.remove(job.path);
+    }
+  }
+
+  static Future<LocalChessSource> _runImportWriteQueued({
+    required String path,
+    required Future<LocalChessSource> Function() action,
+    OperationCancellationToken? cancellationToken,
+    void Function()? onWaiting,
+  }) async {
+    // A nested caller may own a wider file mutation lifetime. Do not turn its
+    // import into a cooperative scheduling point for unrelated work.
+    if (Zone.current[_localCacheWriteQueueZoneKey] == true) return action();
+    final stat = await File(path).stat();
+    cancellationToken?.throwIfCanceled();
+    final job = _QueuedLocalChessImport(
+      _databaseId(path),
+      action,
+      cancellationToken,
+    );
+    // Bound the exceptional lane by source bytes, and exclude compressed input
+    // whose decoded cost cannot be bounded by its on-disk length.
+    if (p.extension(path).toLowerCase() == '.pgn' && stat.size <= 64 * 1024) {
+      _pendingSmallImports.add(job);
+    }
+    final removeCancellation = cancellationToken?.addListener(() {
+      if (!job.started && !job.result.isCompleted) {
+        _pendingSmallImports.remove(job);
+        job.result.completeError(const OperationCanceledException());
+      }
+    });
+    unawaited(
+      _runLocalCacheWriteQueued(
+        () => _executeQueuedImport(job),
+        onWaiting: () {
+          if (!job.result.isCompleted && !job.started) onWaiting?.call();
+        },
+      ),
+    );
+    try {
+      return await job.result.future;
+    } finally {
+      removeCancellation?.call();
+      _pendingSmallImports.remove(job);
+    }
+  }
+
   Future<LocalChessSource?> _importSingleFileSourceUnlocked({
     required String path,
     String? sourceLabel,
@@ -2899,15 +2987,18 @@ class LocalChessDatabaseRepository {
       // app cache may itself need that queue for schema or migration work; if
       // import holds it while awaiting a pending open, the UI stalls around the
       // early import progress range.
-      final source = await _runLocalCacheWriteQueued(
-        () => _importSingleLocalChessFileInline(
-          path: trimmed,
-          sourceLabel: sourceLabel,
-          deduplicateGames: deduplicateGames,
-          writerRepository: session.repository,
-          cancellationToken: cancellationToken,
-          onProgress: onProgress,
-        ),
+      final source = await _runImportWriteQueued(
+        path: trimmed,
+        cancellationToken: cancellationToken,
+        action:
+            () => _importSingleLocalChessFileInline(
+              path: trimmed,
+              sourceLabel: sourceLabel,
+              deduplicateGames: deduplicateGames,
+              writerRepository: session.repository,
+              cancellationToken: cancellationToken,
+              onProgress: onProgress,
+            ),
         onWaiting:
             onProgress == null
                 ? null
@@ -2992,6 +3083,8 @@ class LocalChessDatabaseRepository {
         onProgress: emit,
         onImportStart: (start) async {
           cancellationToken?.throwIfCanceled();
+          await _serviceSmallImportAtBatchBoundary();
+          cancellationToken?.throwIfCanceled();
           await writerRepository._beginImportedFileNode(
             start,
             sourceLabel: label,
@@ -3002,6 +3095,8 @@ class LocalChessDatabaseRepository {
           cancellationToken?.throwIfCanceled();
         },
         onGameBatch: (batch) async {
+          cancellationToken?.throwIfCanceled();
+          await _serviceSmallImportAtBatchBoundary();
           cancellationToken?.throwIfCanceled();
           await writerRepository._persistImportedGameBatch(path, batch.games);
           cancellationToken?.throwIfCanceled();
@@ -7974,6 +8069,15 @@ final localChessDatabaseRepositoryProvider =
             () => LocalChessResqliteDatabase.instance.openDedicatedConnection(),
       );
     });
+
+class _QueuedLocalChessImport {
+  _QueuedLocalChessImport(this.path, this.action, this.token);
+  final String path;
+  final Future<LocalChessSource> Function() action;
+  final OperationCancellationToken? token;
+  final result = Completer<LocalChessSource>();
+  bool started = false;
+}
 
 class _LocalChessInlineImportSession {
   const _LocalChessInlineImportSession({

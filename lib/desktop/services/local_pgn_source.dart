@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:isolate';
@@ -145,6 +146,67 @@ String readLocalPgnRecord({
   expectedRecordRevision: expectedRecordRevision,
 );
 
+/// Resolve one record from an immutable byte snapshot. Keep the same physical
+/// boundary tracker/count checks as the mutation reader, but decode only the
+/// selected record, avoiding whole-file UTF-16 conversion and offset mapping.
+/// No cached spans or file stamps are trusted; no cache writer queue is entered.
+String _readLocalPgnRecordBytes({
+  required String path,
+  required int indexInFile,
+  int? expectedFileGameCount,
+  String? expectedPgnFingerprint,
+  String? expectedRecordRevision,
+}) {
+  final bytes = File(path).readAsBytesSync();
+  var snapshot = _workerSnapshot;
+  if (snapshot == null ||
+      snapshot.path != path ||
+      !_samePgnBytes(snapshot.bytes, bytes)) {
+    final ranges = <PgnGameRange>[];
+    final boundary = PgnRecordBoundaryTracker();
+    var start = 0;
+    void flush(int end) {
+      if (boundary.isRecord) ranges.add(PgnGameRange(start, end));
+      boundary.reset();
+    }
+
+    PgnByteLineScanner((line) {
+      if (boundary.startsNewRecord(line)) flush(line.startOffset);
+      final hadCurrent = boundary.hasCurrent;
+      if (boundary.add(line) && !hadCurrent) start = line.contentStartOffset;
+    }).scanBytes(bytes);
+    flush(bytes.length);
+    snapshot = _PgnByteSnapshot(path, bytes, ranges);
+    // One source only, bounded, owned by the worker (never copied to the UI).
+    // Oversized sources retain correctness but do not retain their bytes.
+    _workerSnapshot = bytes.length <= 256 * 1024 * 1024 ? snapshot : null;
+  }
+  final count = snapshot.ranges.length;
+  if (expectedFileGameCount != null &&
+      expectedFileGameCount > 0 &&
+      count != expectedFileGameCount) {
+    throw StateError(
+      'The source PGN game count changed. Refresh the database.',
+    );
+  }
+  if (indexInFile < 0 || indexInFile >= count) {
+    throw StateError(
+      'The original PGN record is missing. Refresh the database.',
+    );
+  }
+  final range = snapshot.ranges[indexInFile];
+  final raw = decodeLocalPgnText(
+    Uint8List.sublistView(bytes, range.start, range.end),
+  );
+  return localPgnRecordFromSnapshot(
+    text: raw,
+    recordRanges: [PgnGameRange(0, raw.length)],
+    indexInFile: 0,
+    expectedPgnFingerprint: expectedPgnFingerprint,
+    expectedRecordRevision: expectedRecordRevision,
+  );
+}
+
 /// [readLocalPgnRecord] on a worker isolate, so a large database's read and
 /// boundary scan never stall the UI isolate. Validation failures surface as
 /// the same [StateError]s the synchronous reader throws.
@@ -155,25 +217,155 @@ Future<String> readLocalPgnRecordInBackground({
   String? expectedPgnFingerprint,
   String? expectedRecordRevision,
 }) async {
-  final outcome = await Isolate.run(() {
+  // A worker may retire during the send/idle boundary. Retry that transport
+  // race once; source-validation failures are never retried or hidden here.
+  for (var attempt = 0; ; attempt++) {
+    final worker = _readWorker ??= _PgnReadWorker();
     try {
-      return (
-        pgn: readLocalPgnRecord(
-          path: path,
-          indexInFile: indexInFile,
-          expectedFileGameCount: expectedFileGameCount,
-          expectedPgnFingerprint: expectedPgnFingerprint,
-          expectedRecordRevision: expectedRecordRevision,
-        ),
-        error: null,
-      );
-    } on StateError catch (error) {
-      return (pgn: null, error: error.message);
+      return await worker.read([
+        path,
+        indexInFile,
+        expectedFileGameCount,
+        expectedPgnFingerprint,
+        expectedRecordRevision,
+      ]);
+    } on _PgnWorkerClosed {
+      if (attempt > 0) rethrow;
     }
+  }
+}
+
+class _PgnByteSnapshot {
+  _PgnByteSnapshot(this.path, this.bytes, this.ranges);
+  final String path;
+  final Uint8List bytes;
+  final List<PgnGameRange> ranges;
+}
+
+// These bytes exist only on the read worker. Reuse requires exact equality of
+// EVERY byte in a fresh read, not sampled hashes, length/mtime or cached offsets.
+_PgnByteSnapshot? _workerSnapshot;
+bool _samePgnBytes(Uint8List a, Uint8List b) {
+  if (a.length != b.length) return false;
+  final words = a.length ~/ 8;
+  final aw = a.buffer.asUint64List(a.offsetInBytes, words);
+  final bw = b.buffer.asUint64List(b.offsetInBytes, words);
+  for (var i = 0; i < words; i++) {
+    if (aw[i] != bw[i]) return false;
+  }
+  for (var i = words * 8; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+_PgnReadWorker? _readWorker;
+
+class _PgnWorkerClosed implements Exception {}
+
+class _PgnReadWorker {
+  _PgnReadWorker() {
+    _replies.listen(_receive);
+    Isolate.spawn(
+      _runPgnReads,
+      _replies.sendPort,
+      onExit: _replies.sendPort,
+      onError: _replies.sendPort,
+    ).catchError((Object error, StackTrace stack) {
+      _close(error, stack);
+      throw error;
+    }).ignore();
+  }
+  final _replies = ReceivePort();
+  final _ready = Completer<SendPort>();
+  final _pending = <int, Completer<String>>{};
+  var _next = 0;
+  bool _closed = false;
+
+  Future<String> read(List<Object?> args) async {
+    final port = await _ready.future;
+    if (_closed) throw _PgnWorkerClosed();
+    final id = _next++;
+    final result = Completer<String>();
+    _pending[id] = result;
+    port.send([id, ...args]);
+    return result.future;
+  }
+
+  void _receive(dynamic message) {
+    if (message is SendPort) {
+      _ready.complete(message);
+    } else if (message == null) {
+      _close(_PgnWorkerClosed(), StackTrace.current);
+    } else if (message is List && message.first is int) {
+      final result = _pending.remove(message[0]);
+      if (result == null) return;
+      switch (message[1]) {
+        case 'ok':
+          result.complete(message[2] as String);
+        case 'state':
+          result.completeError(StateError(message[2]));
+        case 'file':
+          result.completeError(
+            FileSystemException(message[2] as String, message[3] as String),
+          );
+        default:
+          result.completeError(
+            RemoteError(message[2].toString(), message[3].toString()),
+          );
+      }
+    } else {
+      _close(RemoteError(message.toString(), ''), StackTrace.current);
+    }
+  }
+
+  void _close(Object error, StackTrace stack) {
+    if (_closed) return;
+    _closed = true;
+    if (identical(_readWorker, this)) _readWorker = null;
+    if (!_ready.isCompleted) _ready.completeError(error, stack);
+    for (final result in _pending.values) {
+      result.completeError(error, stack);
+    }
+    _pending.clear();
+    _replies.close();
+  }
+}
+
+void _runPgnReads(SendPort replies) {
+  final requests = ReceivePort();
+  Timer? idle;
+  void retireWhenIdle() {
+    idle?.cancel();
+    // The snapshot and all retained bytes disappear with the worker. This
+    // timer lives off the UI isolate and cannot keep a disposed widget alive.
+    idle = Timer(const Duration(seconds: 30), () => Isolate.exit());
+  }
+
+  replies.send(requests.sendPort);
+  retireWhenIdle();
+  requests.listen((dynamic request) {
+    idle?.cancel();
+    final args = request as List;
+    final id = args[0] as int;
+    try {
+      final pgn = _readLocalPgnRecordBytes(
+        path: args[1] as String,
+        indexInFile: args[2] as int,
+        expectedFileGameCount: args[3] as int?,
+        expectedPgnFingerprint: args[4] as String?,
+        expectedRecordRevision: args[5] as String?,
+      );
+      replies.send([id, 'ok', pgn]);
+    } on StateError catch (error) {
+      replies.send([id, 'state', error.message]);
+    } on FileSystemException catch (error) {
+      replies.send([id, 'file', error.message, error.path]);
+    } catch (error, stack) {
+      replies.send([id, 'other', error.toString(), stack.toString()]);
+    }
+    retireWhenIdle();
   });
-  final error = outcome.error;
-  if (error != null) throw StateError(error);
-  return outcome.pgn!;
 }
 
 String replaceLocalPgnRecordInSnapshot({

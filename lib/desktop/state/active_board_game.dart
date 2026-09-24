@@ -259,9 +259,8 @@ class BoardTabGameArgs {
     final analysisId = origin.analysisId?.trim();
     return base.copyWith(
       ownedDocument: true,
-      retainedSaveId: analysisId == null || analysisId.isEmpty
-          ? null
-          : analysisId,
+      retainedSaveId:
+          analysisId == null || analysisId.isEmpty ? null : analysisId,
     );
   }
 
@@ -342,7 +341,10 @@ class BoardTabGameArgs {
         eventBroadcastId == null &&
         eventGamesKey == null &&
         sourceGame == null) {
-      return source(DesktopFeature.localFiles, DesktopDiscoveryOrigin.localFile);
+      return source(
+        DesktopFeature.localFiles,
+        DesktopDiscoveryOrigin.localFile,
+      );
     }
     return source(DesktopFeature.broadcast, DesktopDiscoveryOrigin.broadcast);
   }
@@ -508,6 +510,7 @@ enum BoardTabGamesContinuationKind {
   countrymen,
   playerProfile,
   twicDatabase,
+  localPgn,
 }
 
 @immutable
@@ -534,7 +537,9 @@ class BoardTabGamesContinuation {
     : kind = BoardTabGamesContinuationKind.twicDatabase,
       argument = null;
 
-
+  const BoardTabGamesContinuation.localPgn(Object source)
+    : kind = BoardTabGamesContinuationKind.localPgn,
+      argument = source;
 
   final BoardTabGamesContinuationKind kind;
 
@@ -544,12 +549,12 @@ class BoardTabGamesContinuation {
   final Object? argument;
 
   String get signature => switch (kind) {
-
     BoardTabGamesContinuationKind.smartGames => 'smartGames:$argument',
     BoardTabGamesContinuationKind.favorites => 'favorites',
     BoardTabGamesContinuationKind.countrymen => 'countrymen',
     BoardTabGamesContinuationKind.playerProfile => 'playerProfile:$argument',
     BoardTabGamesContinuationKind.twicDatabase => 'twicDatabase',
+    BoardTabGamesContinuationKind.localPgn => 'localPgn:$argument',
   };
 }
 
@@ -925,7 +930,10 @@ String _openBoardGameTabUnchecked(
 }) {
   final eventPlayerScope = args.eventPlayerScope;
   if (eventPlayerScope is EventPlayerBoardScope) {
-    args = args.copyWith(label: eventPlayerScope.title, clearEventGamesKey: true);
+    args = args.copyWith(
+      label: eventPlayerScope.title,
+      clearEventGamesKey: true,
+    );
   }
   final tabsNotifier = container.read(desktopTabsProvider.notifier);
   final byTab = container.read(boardTabGameArgsByTabIdProvider);
@@ -946,8 +954,10 @@ String _openBoardGameTabUnchecked(
   if (reuseExisting && args.gameId != null) {
     for (final entry in byTab.entries) {
       if (entry.value.gameId == args.gameId &&
-          entry.value.eventGamesContinuation?.signature == args.eventGamesContinuation?.signature &&
-          entry.value.eventPlayerScope?.toString() == args.eventPlayerScope?.toString()) {
+          entry.value.eventGamesContinuation?.signature ==
+              args.eventGamesContinuation?.signature &&
+          entry.value.eventPlayerScope?.toString() ==
+              args.eventPlayerScope?.toString()) {
         if (focus) tabsNotifier.activate(entry.key);
         // Refresh args so changing PGN (live update arrived since first
         // open) sticks. Keeps the tab chip + board synced.

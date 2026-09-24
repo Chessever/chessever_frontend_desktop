@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../state/local_board_games.dart';
 
 import 'package:chessever/utils/awarded_points.dart';
 
@@ -241,8 +242,7 @@ Map<String, Object?> _argsToJson(BoardTabGameArgs args) => <String, Object?>{
   // Provenance survives the window boundary. Absent on payloads from builds
   // before freemium; the decoder then leaves it null and the board infers it
   // conservatively from the args shape.
-  if (args.accessContext != null)
-    'accessContext': args.accessContext!.toJson(),
+  if (args.accessContext != null) 'accessContext': args.accessContext!.toJson(),
 };
 
 BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
@@ -481,6 +481,9 @@ Map<String, Object?>? _continuationToJson(
   if (continuation == null) return null;
   return <String, Object?>{
     'kind': continuation.kind.name,
+    if (continuation.argument is LocalBoardGamesSource)
+      'localPgnSource':
+          (continuation.argument! as LocalBoardGamesSource).toJson(),
 
     if (continuation.argument is PremiumGamesType)
       'premiumGamesType': (continuation.argument! as PremiumGamesType).name,
@@ -511,7 +514,6 @@ BoardTabGamesContinuation? _continuationFromJson(Object? value) {
           .firstOrNull;
   if (kind == null) return null;
   switch (kind) {
-
     case BoardTabGamesContinuationKind.smartGames:
       final typeName = json['premiumGamesType']?.toString();
       final type =
@@ -525,6 +527,12 @@ BoardTabGamesContinuation? _continuationFromJson(Object? value) {
       return const BoardTabGamesContinuation.countrymen();
     case BoardTabGamesContinuationKind.twicDatabase:
       return const BoardTabGamesContinuation.twicDatabase();
+    case BoardTabGamesContinuationKind.localPgn:
+      final source = json['localPgnSource'];
+      if (source is! Map) return null;
+      return BoardTabGamesContinuation.localPgn(
+        LocalBoardGamesSource.fromJson(Map<String, dynamic>.from(source)),
+      );
     case BoardTabGamesContinuationKind.playerProfile:
       final keyJson = json['playerProfileKey'];
       if (keyJson is! Map) return null;

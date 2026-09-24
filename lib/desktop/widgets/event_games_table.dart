@@ -1,4 +1,6 @@
 import 'dart:async';
+import '../state/local_board_games.dart';
+import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
@@ -11,6 +13,7 @@ import 'package:chessever/utils/awarded_points.dart';
 import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -85,18 +88,13 @@ final _eventRailExpandedRoundsProvider = StateProvider.autoDispose
 /// keep independent disclosure state. [collapseNewMatchups] is the important
 /// default for matchup rows that arrive after the user presses collapse-all;
 /// [exceptions] holds individual sections toggled away from that default.
-typedef EventRailMatchupExpansionState = ({
-  bool collapseNewMatchups,
-  Set<String> exceptions,
-});
+typedef EventRailMatchupExpansionState =
+    ({bool collapseNewMatchups, Set<String> exceptions});
 
-final _eventRailMatchupExpansionProvider = StateProvider.autoDispose
-    .family<EventRailMatchupExpansionState, String>(
-      (ref, scope) => (
-        collapseNewMatchups: false,
-        exceptions: const <String>{},
-      ),
-    );
+final _eventRailMatchupExpansionProvider = StateProvider.autoDispose.family<
+  EventRailMatchupExpansionState,
+  String
+>((ref, scope) => (collapseNewMatchups: false, exceptions: const <String>{}));
 
 Set<String> _resolveExpandedEventRoundIds({
   required Set<String>? stored,
@@ -132,10 +130,7 @@ EventRailMatchupExpansionState eventRailMatchupStateAfterToggleAll({
   final allExpanded = matchupIds.every(
     (id) => eventRailMatchupIsExpanded(state: state, matchupId: id),
   );
-  return (
-    collapseNewMatchups: allExpanded,
-    exceptions: const <String>{},
-  );
+  return (collapseNewMatchups: allExpanded, exceptions: const <String>{});
 }
 
 @visibleForTesting
@@ -1240,6 +1235,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
 
     final continuation = _continuationForKind(activeArgs, resolved.kind);
     if (continuation == null) return;
+    if (continuation.kind == BoardTabGamesContinuationKind.localPgn) return;
     final loadKey = _continuationKey(activeTabId, continuation);
     if (_loadingContinuationKey == loadKey) return;
     if (!force && _continuationLoadErrorKey == loadKey) return;
@@ -1353,6 +1349,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return null;
+
         final async = ref.watch(premiumGamesProvider(argument));
         final state = async.valueOrNull;
         return snapshot(
@@ -1402,6 +1399,23 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           totalCount: state.totalCount > 0 ? state.totalCount : null,
           error: state.error,
         );
+      case BoardTabGamesContinuationKind.localPgn:
+        final source = continuation.argument;
+        if (source is! LocalBoardGamesSource) return null;
+        final page = _localPage(source, selectedGameId);
+        final value = ref.watch(
+          localBoardGamesPageProvider((source: source, page: page)),
+        );
+        return _ContinuationSnapshot(
+          games: value.valueOrNull ?? fallbackGames,
+          isLoading: value.isLoading,
+          hasMore: false,
+          totalCount: source.totalCount,
+          error:
+              value.hasError
+                  ? 'Could not load this page. Retry or reopen the database.'
+                  : null,
+        );
     }
   }
 
@@ -1427,6 +1441,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
 
   bool _canLoadMoreContinuation(BoardTabGamesContinuation continuation) {
     switch (continuation.kind) {
+      case BoardTabGamesContinuationKind.localPgn:
+        return false;
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return false;
@@ -1466,6 +1482,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     BoardTabGamesContinuation continuation,
   ) async {
     switch (continuation.kind) {
+      case BoardTabGamesContinuationKind.localPgn:
+        return;
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return;
@@ -1514,6 +1532,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         isForegroundTab && streamingEnabled && _appLifecycleAllowsStreaming;
     final activeSelectedGameId = _selectedGameIdForArgs(activeArgs);
     final requestedRailTab = ref.watch(_gameRailTabProvider(activeTabId));
+    final pendingOpen = ref.watch(_localRailOpenPendingProvider(activeTabId));
+    final pendingOpenLabel =
+        pendingOpen != null && identical(pendingOpen.ownerArgs, activeArgs)
+            ? pendingOpen.label
+            : null;
     final eventRailProviderKey =
         activeArgs?.eventGamesKey == null
             ? null
@@ -1794,13 +1817,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         '$activeTabId:${eventRailProviderKey?.eventKey.tourId.trim() ?? eventTourId ?? resolved.title}';
     final matchupExpansionState =
         isEventRail
-            ? ref.watch(
-              _eventRailMatchupExpansionProvider(expandedRoundScope),
-            )
-            : (
-              collapseNewMatchups: false,
-              exceptions: const <String>{},
-            );
+            ? ref.watch(_eventRailMatchupExpansionProvider(expandedRoundScope))
+            : (collapseNewMatchups: false, exceptions: const <String>{});
     final storedExpandedRoundIds =
         isEventRail
             ? ref.watch(_eventRailExpandedRoundsProvider(expandedRoundScope))
@@ -1973,6 +1991,22 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (pendingOpenLabel != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      pendingOpenLabel,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kPrimaryColor,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
                 child: Column(
@@ -2090,37 +2124,57 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                               compact: true,
                             )
                         : resolved.kind == _GameListKind.database
-                        ? _DatabaseGamesList(
-                          controller: _scrollController,
-                          games: orderedGames,
-                          copyScopeGames: railActivationGames,
-                          selectedGameId: selectedGameId,
-                          selectedGameIds: _highlightedGameIds,
-                          highlightedGameId: _highlightedGameId,
-                          selectedRowKey:
-                              (_highlightedGameId ?? selectedGameId) == null
-                                  ? null
-                                  : _rowKeyFor(
-                                    _highlightedGameId ?? selectedGameId!,
-                                  ),
-                          tournamentTitle: resolved.title,
-                          activeArgs: effectiveArgs,
-                          isLoadingMoreDatabase: isLoadingMoreDatabase,
-                          databaseHasMore: databasePagination?.hasMore == true,
-                          databaseLoadError: databaseLoadError,
-                          activeContinuation: activeContinuation,
-                          isLoadingMoreContinuation: isLoadingMoreContinuation,
-                          continuationHasMore:
-                              continuationSnapshot?.hasMore == true,
-                          continuationLoadError: continuationLoadError,
-                          isLoading: resolved.isLoading,
-                          onHighlightGame: _highlightGame,
-                          onRangeHighlightGame:
-                              (game) => _highlightGameRange(
-                                orderedGames,
-                                game,
-                                fallbackAnchorGameId: selectedGameId,
+                        ? Column(
+                          children: [
+                            Expanded(
+                              child: NotificationListener<ScrollNotification>(
+                                onNotification: _onLocalPageScroll,
+                                child: _DatabaseGamesList(
+                                  controller: _scrollController,
+                                  games: orderedGames,
+                                  copyScopeGames: railActivationGames,
+                                  selectedGameId: selectedGameId,
+                                  selectedGameIds: _highlightedGameIds,
+                                  highlightedGameId: _highlightedGameId,
+                                  selectedRowKey:
+                                      (_highlightedGameId ?? selectedGameId) ==
+                                              null
+                                          ? null
+                                          : _rowKeyFor(
+                                            _highlightedGameId ??
+                                                selectedGameId!,
+                                          ),
+                                  tournamentTitle: resolved.title,
+                                  activeArgs: effectiveArgs,
+                                  isLoadingMoreDatabase: isLoadingMoreDatabase,
+                                  databaseHasMore:
+                                      databasePagination?.hasMore == true,
+                                  databaseLoadError: databaseLoadError,
+                                  activeContinuation: activeContinuation,
+                                  isLoadingMoreContinuation:
+                                      isLoadingMoreContinuation,
+                                  continuationHasMore:
+                                      continuationSnapshot?.hasMore == true,
+                                  continuationLoadError: continuationLoadError,
+                                  isLoading: resolved.isLoading,
+                                  onHighlightGame: _highlightGame,
+                                  onRangeHighlightGame:
+                                      (game) => _highlightGameRange(
+                                        orderedGames,
+                                        game,
+                                        fallbackAnchorGameId: selectedGameId,
+                                      ),
+                                ),
                               ),
+                            ),
+                            if (activeContinuation?.argument
+                                is LocalBoardGamesSource)
+                              _localPager(
+                                activeContinuation!.argument!
+                                    as LocalBoardGamesSource,
+                                selectedGameId,
+                              ),
+                          ],
                         )
                         : _buildRoundGroupsList(
                           roundGroups: roundGroups,
@@ -2159,6 +2213,198 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     );
   }
 
+  final _localPages =
+      <LocalBoardGamesSource, ({String? selection, int page})>{};
+
+  int _localPage(LocalBoardGamesSource source, String? selection) {
+    final saved = _localPages[source];
+    if (saved != null && saved.selection == selection) return saved.page;
+    return (source.rankOf(selection ?? '') ?? 0) ~/
+        LocalBoardGamesSource.pageSize;
+  }
+
+  ({LocalBoardGamesSource source, String? selection, int page})?
+  _localPagerScope;
+  int _localScrollBoundary = 0;
+  bool _localUserScrolling = false;
+  bool? _localPendingEntryBottom;
+
+  bool _onLocalPageScroll(ScrollNotification notification) {
+    final scope = _localPagerScope;
+    if (scope == null ||
+        notification.depth != 0 ||
+        notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
+    if (ref
+        .read(
+          localBoardGamesPageProvider((source: scope.source, page: scope.page)),
+        )
+        .isLoading) {
+      return false;
+    }
+    if (notification is UserScrollNotification) {
+      _localUserScrolling = notification.direction != ScrollDirection.idle;
+    } else if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      _localUserScrolling = true;
+    }
+    final metrics = notification.metrics;
+    final boundary =
+        metrics.maxScrollExtent - metrics.minScrollExtent <= 1
+            ? 0
+            : metrics.extentBefore <= 1
+            ? -1
+            : metrics.extentAfter <= 1
+            ? 1
+            : 0;
+    // Programmatic selection/restore can clear a stale hint, never create one.
+    final hint =
+        _localUserScrolling
+            ? boundary
+            : boundary == _localScrollBoundary
+            ? _localScrollBoundary
+            : 0;
+    if (hint != _localScrollBoundary) {
+      setState(() => _localScrollBoundary = hint);
+    }
+    if (notification is ScrollEndNotification) _localUserScrolling = false;
+    return false;
+  }
+
+  Widget _localPager(LocalBoardGamesSource source, String? selection) {
+    final page = _localPage(source, selection);
+    final provider = localBoardGamesPageProvider((source: source, page: page));
+    final value = ref.watch(provider);
+    final scope = (source: source, selection: selection, page: page);
+    if (_localPagerScope != scope) {
+      // A different source/selection is not a continuation of a pager click.
+      if (_localPagerScope?.source != source ||
+          _localPagerScope?.selection != selection) {
+        _localPendingEntryBottom = null;
+      }
+      _localPagerScope = scope;
+      _localScrollBoundary = 0;
+      _localUserScrolling = false;
+    }
+    if (!value.isLoading &&
+        !value.hasError &&
+        _localPendingEntryBottom != null) {
+      final bottom = _localPendingEntryBottom!;
+      _localPendingEntryBottom = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            _localPagerScope != scope ||
+            !_scrollController.hasClients) {
+          return;
+        }
+        final position = _scrollController.position;
+        _scrollController.jumpTo(
+          bottom ? position.maxScrollExtent : position.minScrollExtent,
+        );
+      });
+    }
+    void move(int target) {
+      // Guard the callback too: two clicks can arrive before the next frame.
+      if (_localPage(source, selection) != page ||
+          ref.read(provider).isLoading) {
+        return;
+      }
+      setState(() {
+        _localPendingEntryBottom =
+            target == page - 1 && _localScrollBoundary == -1;
+        _localScrollBoundary = 0;
+        _localUserScrolling = false;
+        _localPages[source] = (selection: selection, page: target);
+      });
+    }
+
+    Widget button(String label, int target, bool enabled, {IconData? icon}) =>
+        DesktopTooltip(
+          message: '$label page',
+          child: FButton.raw(
+            key: ValueKey('local-page-$label'),
+            style: FButtonStyle.ghost(),
+            onPress: enabled && !value.isLoading ? () => move(target) : null,
+            child: SizedBox(
+              height: 34,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                child: Center(
+                  child:
+                      icon != null
+                          ? Icon(icon, size: 16, semanticLabel: '$label page')
+                          : Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color:
+                                  enabled &&
+                                          !value.isLoading &&
+                                          ((label == 'Next' &&
+                                                  _localScrollBoundary == 1) ||
+                                              (label == 'Previous' &&
+                                                  _localScrollBoundary == -1))
+                                      ? kPrimaryColor
+                                      : null,
+                            ),
+                          ),
+                ),
+              ),
+            ),
+          ),
+        );
+    return Container(
+      key: const ValueKey('local-page-footer'),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: kDividerColor)),
+      ),
+      child: Column(
+        children: [
+          if (value.hasError)
+            FButton.raw(
+              style: FButtonStyle.ghost(),
+              onPress: () => ref.invalidate(provider),
+              child: const Padding(
+                padding: EdgeInsets.all(8),
+                child: Text(
+                  'Could not load page · Retry',
+                  style: TextStyle(fontSize: 11),
+                ),
+              ),
+            ),
+          Row(
+            children: [
+              button('First', 0, page > 0, icon: Icons.first_page),
+              button('Previous', page - 1, page > 0),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    value.isLoading
+                        ? 'Loading…'
+                        : 'Page ${page + 1} / ${source.lastPage + 1}',
+                    maxLines: 1,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ),
+              button('Next', page + 1, page < source.lastPage),
+              button(
+                'Last',
+                source.lastPage,
+                page < source.lastPage,
+                icon: Icons.last_page,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Keeps the user's scroll position when the rail's list identity changes.
   ///
   /// [streamedListIdentity] is the boolean in the rail [ListView]'s key. When
@@ -2186,9 +2432,10 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       if (target == null || !_scrollController.hasClients) return;
       final position = _scrollController.position;
       if (position.pixels > 0.5) return;
-      final clamped = target
-          .clamp(position.minScrollExtent, position.maxScrollExtent)
-          .toDouble();
+      final clamped =
+          target
+              .clamp(position.minScrollExtent, position.maxScrollExtent)
+              .toDouble();
       if (clamped <= 0.5) return;
       _scrollController.jumpTo(clamped);
     });
@@ -2697,6 +2944,7 @@ Future<void> navigateActiveEventGame(
       delta: delta,
       activeTabId: activeTabId,
       liveOnly: liveOnly,
+      isCurrentOwner: () => !leftOwner,
     );
   } finally {
     ownership.close();
@@ -2713,6 +2961,7 @@ Future<void> _navigateActiveEventGameNow(
   required int delta,
   required String activeTabId,
   required bool liveOnly,
+  bool Function()? isCurrentOwner,
 }) async {
   var activeArgs = _readNavigationBoardArgs(ref, activeTabId);
   var legacy = activeArgs == null ? ref.read(tournamentGamesProvider) : null;
@@ -2722,6 +2971,50 @@ Future<void> _navigateActiveEventGameNow(
   );
   var navigationRoundCatalog = const <EventRailRoundMetadata>[];
   if (resolved == null || resolved.games.isEmpty) return;
+
+  // A keyed event rail may still be publishing its initial bounded page.
+  final localSource = activeArgs?.databaseGamesContinuation?.argument;
+  if (resolved.kind == _GameListKind.database &&
+      localSource is LocalBoardGamesSource) {
+    final owner = ref.read(boardTabGameArgsByTabIdProvider)[activeTabId];
+    final rank = localSource.rankOf(activeArgs?.gameListSelectedId ?? '');
+    if (rank == null) return;
+    final next = rank + delta;
+    if (next < 0 || next >= localSource.totalCount) return;
+    try {
+      final games = await localSource.page(
+        ref.read(localChessDatabaseRepositoryProvider),
+        next ~/ LocalBoardGamesSource.pageSize,
+      );
+      if (!context.mounted ||
+          isCurrentOwner?.call() == false ||
+          ref.read(desktopTabsProvider).activeId != activeTabId ||
+          !identical(
+            ref.read(boardTabGameArgsByTabIdProvider)[activeTabId],
+            owner,
+          )) {
+        return;
+      }
+      await _openEventGame(
+        ref: ref,
+        context: context,
+        kind: _GameListKind.database,
+        game: games[next % LocalBoardGamesSource.pageSize],
+        eventGames: games,
+        tournamentTitle: resolved.title,
+        activeArgs: activeArgs,
+      );
+    } catch (_) {
+      if (context.mounted) {
+        showDesktopToast(
+          context,
+          'Could not load the next game. Reopen the database to refresh it.',
+          error: true,
+        );
+      }
+    }
+    return;
+  }
 
   // A keyed event rail may still be publishing its initial bounded page.
   // Await that provider only when the Event list is actually selected; Source
@@ -3256,6 +3549,7 @@ List<TournamentGameSummary> _readContinuationProviderGames(
   BoardTabGamesContinuation continuation,
 ) {
   return switch (continuation.kind) {
+    BoardTabGamesContinuationKind.localPgn => const <TournamentGameSummary>[],
     BoardTabGamesContinuationKind.smartGames => () {
       final argument = continuation.argument;
       if (argument is! PremiumGamesType) {
@@ -4478,38 +4772,38 @@ class _EventGamePlayerLine extends StatelessWidget {
         // the 1 Hz digit repaints this slot, not the row chunk behind it.
         RepaintBoundary(
           child: SizedBox(
-          key: Key(
-            'event-game-${game.id}-${isWhite ? 'white' : 'black'}-trailing',
-          ),
-          width: 64,
-          child:
-              result != null
-                  ? Text(
-                    desktopGamePointsLabel(
-                      game.status,
-                      isWhite: isWhite,
-                      customPoints:
-                          isWhite
-                              ? game.whiteCustomPoints
-                              : game.blackCustomPoints,
-                    ),
-                    textAlign: TextAlign.right,
-                    style: trailingStyle,
-                  )
-                  : Align(
-                    alignment: Alignment.centerRight,
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
+            key: Key(
+              'event-game-${game.id}-${isWhite ? 'white' : 'black'}-trailing',
+            ),
+            width: 64,
+            child:
+                result != null
+                    ? Text(
+                      desktopGamePointsLabel(
+                        game.status,
+                        isWhite: isWhite,
+                        customPoints:
+                            isWhite
+                                ? game.whiteCustomPoints
+                                : game.blackCustomPoints,
+                      ),
+                      textAlign: TextAlign.right,
+                      style: trailingStyle,
+                    )
+                    : Align(
                       alignment: Alignment.centerRight,
-                      child: AtomicCountdownText(
-                        clockSeconds: clockSeconds,
-                        clockCentiseconds: 0,
-                        lastMoveTime: game.lastMoveTime,
-                        isActive: clockSeconds != null && clockActive,
-                        style: trailingStyle,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: AtomicCountdownText(
+                          clockSeconds: clockSeconds,
+                          clockCentiseconds: 0,
+                          lastMoveTime: game.lastMoveTime,
+                          isActive: clockSeconds != null && clockActive,
+                          style: trailingStyle,
+                        ),
                       ),
                     ),
-                  ),
           ),
         ),
       ],
@@ -5068,6 +5362,11 @@ Future<void> _refreshLocalDatabaseSource({
   }
 }
 
+final _localRailOpenPendingProvider = StateProvider.autoDispose.family<
+  ({Object request, BoardTabGameArgs? ownerArgs, String label})?,
+  String
+>((ref, tabId) => null);
+
 Future<void> _openEventGame({
   required WidgetRef ref,
   BuildContext? context,
@@ -5150,9 +5449,25 @@ Future<void> _openEventGame({
 
   TournamentGameSummary localGame = game;
   if (kind == _GameListKind.database && game.localPgnSource != null) {
+    final pendingProvider = _localRailOpenPendingProvider(
+      ownerTabs.activeId ?? '',
+    );
+    ownerContainer.read(pendingProvider.notifier).state = (
+      request: request,
+      ownerArgs: ownerArgs,
+      label: 'Opening ${game.whitePlayer} vs ${game.blackPlayer}…',
+    );
     try {
+      final source = activeArgs?.databaseGamesContinuation?.argument;
+      if (source is LocalBoardGamesSource) {
+        localGame = await source.prepareSelection(
+          ownerContainer.read(localChessDatabaseRepositoryProvider),
+          game,
+        );
+        if (!stillOwnsOpen()) return;
+      }
       localGame = await ownerContainer.read(retainedLocalPgnHydratorProvider)(
-        game,
+        localGame,
       );
     } catch (error) {
       if (stillOwnsOpen() && context != null && context.mounted) {
@@ -5174,6 +5489,14 @@ Future<void> _openEventGame({
         );
       }
       return; // Never fall back to the stale inline PGN or a remote id.
+    } finally {
+      // An older completion must not erase a newer request's feedback. Do not
+      // recreate an auto-disposed rail merely to clear its pending state.
+      if (ownerContext.mounted &&
+          ownerContainer.exists(pendingProvider) &&
+          identical(ownerContainer.read(pendingProvider)?.request, request)) {
+        ownerContainer.read(pendingProvider.notifier).state = null;
+      }
     }
     if (!stillOwnsOpen()) return;
   }
@@ -6934,9 +7257,10 @@ class _PlayerCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final playerName = databaseSide == null
-        ? _compactPlayerName(name)
-        : databaseGamePlayerLabel(name, databaseSide!);
+    final playerName =
+        databaseSide == null
+            ? _compactPlayerName(name)
+            : databaseGamePlayerLabel(name, databaseSide!);
     if (playerName.isEmpty) return const SizedBox.shrink();
     final titleText = title.trim();
     final ratingText = rating > 0 ? rating.toString() : '';

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'pgn_record_boundaries.dart';
+import 'local_pgn_position.dart';
 import 'dart:isolate';
 
 import 'package:archive/archive.dart';
@@ -398,6 +399,7 @@ class LocalChessFileNode extends LocalChessNode {
     this.message,
     this.openingTreeIndex,
     this.pgnOffsetIndex,
+    this.rawPgnCatalog,
     this.contentFingerprint = '',
     this.isWritableEmptyDatabase = false,
     int? gameCount,
@@ -413,6 +415,7 @@ class LocalChessFileNode extends LocalChessNode {
   final String? message;
   final PlayerOpeningTreeIndex? openingTreeIndex;
   final LocalChessPgnOffsetIndex? pgnOffsetIndex;
+  final LocalRawPgnCatalogDescriptor? rawPgnCatalog;
   final String contentFingerprint;
   final bool isWritableEmptyDatabase;
 
@@ -461,6 +464,60 @@ class LocalChessPgnOffsetIndex {
 
   bool matchesFileStat(FileStat stat) {
     return fileSizeBytes == stat.size && modifiedAt == stat.modified;
+  }
+}
+
+@immutable
+class LocalRawPgnCatalogDescriptor {
+  const LocalRawPgnCatalogDescriptor({
+    required this.sessionId,
+    required this.path,
+    required this.label,
+    required this.rootPath,
+    required this.fileSizeBytes,
+    required this.modifiedAt,
+    required this.contentFingerprint,
+    this.fullSha256 = '',
+    required this.totalGames,
+  });
+
+  final String sessionId;
+  final String path;
+  final String label;
+  final String rootPath;
+  final int fileSizeBytes;
+  final DateTime? modifiedAt;
+  final String contentFingerprint;
+  final String fullSha256;
+  final int totalGames;
+
+  Map<String, Object?> toJson() => {
+    'sessionId': sessionId,
+    'path': path,
+    'label': label,
+    'rootPath': rootPath,
+    'fileSizeBytes': fileSizeBytes,
+    'modifiedAtMs': modifiedAt?.millisecondsSinceEpoch,
+    'contentFingerprint': contentFingerprint,
+    'fullSha256': fullSha256,
+    'totalGames': totalGames,
+  };
+
+  factory LocalRawPgnCatalogDescriptor.fromJson(Map<String, dynamic> json) {
+    final modifiedAtMs = json['modifiedAtMs'] as int?;
+    return LocalRawPgnCatalogDescriptor(
+      sessionId: json['sessionId'] as String,
+      path: json['path'] as String,
+      label: json['label'] as String,
+      rootPath: json['rootPath'] as String,
+      fileSizeBytes: json['fileSizeBytes'] as int,
+      modifiedAt: modifiedAtMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(modifiedAtMs),
+      contentFingerprint: json['contentFingerprint'] as String,
+      fullSha256: json['fullSha256'] as String? ?? '',
+      totalGames: json['totalGames'] as int,
+    );
   }
 }
 
@@ -539,7 +596,9 @@ class LocalChessGame {
         expectedPgnFingerprint: pgnFingerprint,
       );
       final entry = _entryFromPgnChunk(raw);
-      if (entry == null || (hasMoves && !entry.hasMoves)) {
+      if (entry == null ||
+          (hasMoves && !entry.hasMoves &&
+              !localPgnHasValidSetupHeaders(entry.game.metadata))) {
         throw StateError(
           'The local PGN moves are unavailable. Refresh the database.',
         );
@@ -557,7 +616,7 @@ class LocalChessGame {
   }
 
   bool _matchesKnownIdentity(_ParsedLocalChessGame entry) {
-    for (final key in const ['Event', 'White', 'Black', 'Date', 'Round']) {
+    for (final key in const ['Event', 'White', 'Black', 'Date', 'Round', 'SetUp', 'FEN']) {
       final expected = game.metadata[key]?.toString().trim() ?? '';
       if (expected.isNotEmpty &&
           expected != '?' &&
@@ -629,7 +688,11 @@ class LocalChessGame {
       return null;
     }
     final entry = _entryFromPgnChunk(raw);
-    if (entry == null || (hasMoves && !entry.hasMoves)) return null;
+    if (entry == null ||
+        (hasMoves && !entry.hasMoves &&
+            !localPgnHasValidSetupHeaders(entry.game.metadata))) {
+      return null;
+    }
     if (pgnFingerprint.isEmpty && !_matchesKnownIdentity(entry)) return null;
     return raw;
   }
@@ -695,7 +758,10 @@ LocalChessGame? localChessGameFromRawPgnChunk({
   int? sourceByteEnd,
 }) {
   final entry = _entryFromPgnChunk(rawPgn.trim());
-  if (entry == null || !entry.hasMoves) return null;
+  if (entry == null ||
+      (!entry.hasMoves && !localPgnHasValidSetupHeaders(entry.game.metadata))) {
+    return null;
+  }
   final id = 'local_${_stableId('$sourcePath#$indexInFile')}';
   final relativePath = _relative(rootPath, sourcePath);
   return LocalChessGame(
@@ -1882,6 +1948,23 @@ Future<LocalChessSource> scanLocalChessPgnCatalog(
     buildOpeningTree: false,
     fullPgnCatalog: true,
     inactivityTimeout: inactivityTimeout,
+    onProgress: onProgress,
+  );
+}
+
+Future<LocalChessSource> scanLocalChessPgnCatalogInlineForWorker(
+  String path, {
+  String? sourceLabel,
+  int maxGames = _kMaxTotalGames,
+  void Function(LocalChessScanProgress progress)? onProgress,
+}) {
+  return _runScan(
+    <String>[path],
+    sourceLabel: sourceLabel,
+    maxDecodedBytes: _kMaxParseBytes,
+    maxGames: maxGames,
+    buildOpeningTree: false,
+    fullPgnCatalog: true,
     onProgress: onProgress,
   );
 }
@@ -4063,6 +4146,13 @@ _ParsedLocalChessGame? _entryFromPgnChunk(String rawPgn) {
 
   // A chunk that carries neither headers nor moves isn't a playable PGN.
   if (headers.isEmpty && !hasMoves) return null;
+
+  // A setup is data, not a hint: reject invalid FEN (including missing FEN
+  // with SetUp=1) rather than allowing Board to fall back to the initial board.
+  if ((headers.containsKey('FEN') || headers['SetUp'] == '1') &&
+      !localPgnHasValidSetupHeaders(headers)) {
+    return null;
+  }
 
   final startingFen =
       (headers['FEN']?.toString().trim().isNotEmpty == true)
