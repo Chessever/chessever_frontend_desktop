@@ -662,6 +662,9 @@ void main() {
     expect(jumps, [
       const [0, 0, 0],
     ]);
+    await gesture.removePointer();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('right-click move menu folds/unfolds and copies PGN', (

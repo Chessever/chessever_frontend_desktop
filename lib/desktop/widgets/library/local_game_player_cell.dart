@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
-import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
-import 'package:chessever/desktop/widgets/table_display_value.dart';
+import 'package:chessever/desktop/widgets/database_game_label.dart';
+
 import 'package:chessever/providers/player_backfill_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
@@ -22,10 +22,8 @@ const double _kLibraryPlayerRatingGap = 5;
 
 /// Player cell for the local games table: federation flag + title + name.
 ///
-/// Renders identically to the shared library table player cell
-/// ([LibraryTablePlayerCell]) — same flag size, title style and abbreviated
-/// name format — so imported databases match the cloud/TWIC tables next to
-/// them. The one difference is that TWIC-style exports carry
+/// Keeps local PGN player/study labels verbatim, like the database rail.
+/// Flag/title geometry matches the other Library tables. TWIC-style exports carry
 /// `WhiteTitle`/`WhiteFideId` but no country tag, so both the flag and the
 /// title resolve on demand through the chess_players FIDE-ID lookup (repo-level
 /// per-ID cache, negative hits included) while a shimmer holds the title slot.
@@ -60,11 +58,11 @@ class LocalGamePlayerCell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final rawName = metadata[side]?.toString().trim() ?? '';
-    final storedName = desktopTablePlayerValue(rawName);
-    final displayName =
-        storedName.isNotEmpty || !unknownSideLabel
-            ? storedName
-            : localPgnDisplayPlayerName(metadata, side);
+    final displayName = databaseGamePlayerLabel(
+      rawName,
+      side,
+      showUnknown: unknownSideLabel,
+    );
     if (displayName.isEmpty) {
       return Padding(padding: padding, child: const SizedBox.shrink());
     }
@@ -90,11 +88,7 @@ class LocalGamePlayerCell extends ConsumerWidget {
           ],
           Expanded(
             child: Text(
-              // Only real names are abbreviated ("Zhou, Francis" -> "Zhou, F.");
-              // a synthesised side label is shown verbatim.
-              storedName.isEmpty
-                  ? displayName
-                  : libraryStandardTablePlayerName(displayName),
+              displayName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(

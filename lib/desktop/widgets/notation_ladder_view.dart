@@ -614,7 +614,19 @@ class _NotationLadderViewState extends State<NotationLadderView> {
               Expanded(
                 child:
                     mainline.isEmpty
-                        ? const _EmptyLadderHint()
+                        ? widget.game.rootComments.isEmpty
+                            ? const _EmptyLadderHint()
+                            : SingleChildScrollView(
+                              child: _MoveComments(
+                                depth: 0,
+                                comments:
+                                    _annotationsHidden
+                                        ? const []
+                                        : _cleanPgnComments(
+                                          widget.game.rootComments,
+                                        ),
+                              ),
+                            )
                         : _layoutMode == NotationLayoutMode.inline
                         ? SingleChildScrollView(
                           controller: _scroll,
@@ -624,6 +636,14 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (!_annotationsHidden &&
+                                  widget.game.rootComments.isNotEmpty)
+                                _MoveComments(
+                                  depth: 0,
+                                  comments: _cleanPgnComments(
+                                    widget.game.rootComments,
+                                  ),
+                                ),
                               KeyedSubtree(
                                 key: _inlineNotationKey,
                                 child: _InlineNotationBlock(
@@ -1308,6 +1328,13 @@ class _LineBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final children = <Widget>[];
+    final owner = context.findAncestorStateOfType<_NotationLadderViewState>();
+    if (isMainlineRoot && depth == 0 && !(owner?._annotationsHidden ?? false)) {
+      final roots = _cleanPgnComments(owner?.widget.game.rootComments);
+      if (roots.isNotEmpty) {
+        children.add(_MoveComments(depth: 0, comments: roots));
+      }
+    }
     var i = 0;
     var ply = startPly;
     while (i < line.length) {
@@ -2020,6 +2047,11 @@ class _InlineNotationBlock extends StatelessWidget {
     for (var i = 0; i < line.length; i++) {
       final move = line[i];
       final pointer = <int>[...pointerPrefix, i];
+      if (!annotationsHidden) {
+        for (final comment in _cleanPgnComments(move.startingComments)) {
+          spans.add(TextSpan(text: '$comment ', style: commentStyle));
+        }
+      }
       final selected = _pointersEqual(pointer, activePointer);
       final isMainlineMove = depth == 0 && isMainlineRoot;
       final variationHeadPointer =
@@ -3760,14 +3792,17 @@ class _LadderChipState extends State<_LadderChip>
       ],
       for (final d in nags) ...[
         const SizedBox(width: 3),
-        Text(
-          d.symbol,
-          style: TextStyle(
-            color: widget.selected ? kBackgroundColor : d.color,
-            fontSize: d.isQuality ? 13 : 12,
-            fontWeight: d.isQuality ? FontWeight.w800 : FontWeight.w600,
-            height: 1.0,
-            letterSpacing: -0.2,
+        DesktopTooltip(
+          message: d.description ?? d.symbol,
+          child: Text(
+            d.symbol,
+            style: TextStyle(
+              color: widget.selected ? kBackgroundColor : d.color,
+              fontSize: d.isQuality ? 13 : 12,
+              fontWeight: d.isQuality ? FontWeight.w800 : FontWeight.w600,
+              height: 1.0,
+              letterSpacing: -0.2,
+            ),
           ),
         ),
       ],

@@ -38,11 +38,10 @@ BoardPgnInsertion? insertBoardPgn({
       ),
     );
     if (incoming.children.isEmpty) return null;
-    // ChessMove has no before-move comment field. Keep all introductory prose
-    // on the first move rather than silently dropping it as fromPgn does.
+    // An inserted source introduction belongs before its first move.
     final first = incoming.principal!;
     first.move = first.move!.copyWith(
-      comments: _union(parsed.comments, first.move!.comments),
+      startingComments: _union(parsed.comments, first.move!.startingComments),
     );
 
     final candidates = <String, List<_PositionNode>>{};
@@ -203,15 +202,20 @@ void _readPgn(
       moveKey = key;
     } else {
       alternative++;
-      moveKey = key == null
-          ? null
-          : chesseverMoveKey(parentKey: key, variation: alternative, index: 1);
+      moveKey =
+          key == null
+              ? null
+              : chesseverMoveKey(
+                parentKey: key,
+                variation: alternative,
+                index: 1,
+              );
     }
     // Read the private classification from the raw payload: the classes go into
     // the move's NAGs, where the rest of the app already looks for them, and a
     // legacy in-comment marker is dropped so it cannot ride into a file.
     final rawComments = _union(data.startingComments, data.comments);
-    final comments = stripChesseverMarker(rawComments);
+    final comments = stripChesseverMarker(data.comments);
     String? clock;
     String? evaluation;
     for (final comment in comments ?? const <String>[]) {
@@ -228,6 +232,7 @@ void _readPgn(
         uci: move.uci,
         turn: pos.turn == Side.white ? ChessColor.white : ChessColor.black,
         comments: comments,
+        startingComments: stripChesseverMarker(data.startingComments),
         nags: restoreChesseverClassificationNags(
           nags: data.nags,
           comments: rawComments,
@@ -279,6 +284,7 @@ void _merge(
     final added = source.move!;
     target.move = old.copyWith(
       comments: _union(old.comments, added.comments),
+      startingComments: _union(old.startingComments, added.startingComments),
       nags: _union(old.nags, added.nags),
       clockTime: old.clockTime ?? added.clockTime,
       eval: old.eval ?? added.eval,

@@ -2,6 +2,9 @@ import 'package:chessever/desktop/services/shared_books.dart';
 import 'package:chessever/desktop/widgets/library/shared_book_dialogs.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
+import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:chessever/desktop/services/local_pgn_rename.dart';
+import 'package:chessever/desktop/widgets/library/local_database_rename_dialog.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
@@ -1599,6 +1602,7 @@ enum _LocalGroupBoardAction {
 }
 
 enum _LocalDatabaseBoardAction {
+  rename,
   preview,
   open,
   showInFolder,
@@ -2612,6 +2616,65 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       );
     }
 
+    Future<void> renameLocalEntry(LocalLibraryEntry entry) async {
+      final container = ProviderScope.containerOf(context, listen: false);
+      final library = container.read(localChessLibraryProvider.notifier);
+      final focus = container.read(myDatabasesFocusProvider.notifier);
+
+      void ensureUnused() {
+        if (!context.mounted) throw StateError('The Library was closed.');
+        final local = container.read(localChessLibraryProvider);
+        if (local.isScanning || local.backgroundImports.isNotEmpty ||
+            local.treeBuilds.values.any((build) => build.isActive)) {
+          throw StateError('Wait for local database imports and tree builds to finish.');
+        }
+        // Retained rails, route history and scratch save origins also own file
+        // coordinates. Do not retarget dirty editors or detach payloads behind
+        // their back: ask for a guarded close instead of clearing their state.
+        final boards = container.read(boardTabGameArgsByTabIdProvider).values;
+        final attached = container.read(boardTabAttachedLibrarySaveOriginByTabIdProvider).values;
+        final workspaces = container.read(databaseWorkspaceArgsByTabIdProvider).values;
+        if (boards.any((args) => args.librarySaveOrigin?.sourcePath != null ||
+                args.databaseTitle.isNotEmpty || args.localOpeningTreeIndex != null ||
+                args.enableLocalOpeningTreePicker) ||
+            attached.any((origin) => origin.sourcePath != null) ||
+            workspaces.any((args) => args.source == DatabaseWorkspaceSource.local)) {
+          throw StateError('Save and close your local database and local-game Board tabs before renaming. Your open work has not been changed.');
+        }
+      }
+
+      final renamed = await showDesktopDialog<String>(
+        context,
+        barrierDismissible: false,
+        child: LocalDatabaseRenameDialog(
+          path: entry.path,
+          onRename: (name) async {
+            final target = localPgnRenameDestination(entry.path, name);
+            if (p.normalize(target) == p.normalize(entry.path)) return entry.path;
+            ensureUnused();
+            final windows = await WindowController.getAll();
+            if (windows.any((window) => window.arguments.trim().isNotEmpty)) {
+              throw StateError('Save and close detached Board windows before renaming a database.');
+            }
+            final result = await library.renameRegisteredPgn(entry.path, name, ensureUnused: ensureUnused);
+            try {
+              await focus.renameLocalDatabase(entry.path, result);
+            } catch (_) {
+              // The file and registry already committed. Never invite a retry
+              // of the durable operation for optional pin/recency bookkeeping.
+              if (context.mounted) {
+                showDesktopToast(context, 'Database renamed. Please pin it again if needed.', error: true);
+              }
+            }
+            return result;
+          },
+        ),
+      );
+      if (renamed != null && renamed != entry.path && context.mounted) {
+        showDesktopToast(context, 'Renamed to "${p.basename(renamed)}".');
+      }
+    }
+
     Future<void> showLocalContextMenu(
       LocalLibraryEntry entry,
       Offset position,
@@ -2640,6 +2703,12 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             label: 'Open full database',
           ),
           if (showInFolder != null) showInFolder,
+          if (p.extension(entry.path).toLowerCase() == '.pgn' && entry.groupId == null && entry.playerWorkspaceSource == null)
+            const DesktopContextMenuItem(
+              value: _LocalDatabaseBoardAction.rename,
+              icon: Icons.edit_outlined,
+              label: 'Rename',
+            ),
           const DesktopContextMenuDivider(),
           DesktopContextMenuItem(
             value:
@@ -2666,6 +2735,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       );
       if (picked == null || !context.mounted) return;
       switch (picked) {
+        case _LocalDatabaseBoardAction.rename:
+          await renameLocalEntry(entry);
         case _LocalDatabaseBoardAction.preview:
           await previewLocalEntry(entry);
         case _LocalDatabaseBoardAction.open:

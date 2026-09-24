@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/cbh_conversion_service.dart';
+import 'package:chessever/desktop/widgets/cbh_convert_dialog.dart';
 import 'package:chessever/desktop/auth/desktop_auth_gate.dart';
 import 'package:chessever/desktop/auth/desktop_guest_gate.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
@@ -36,9 +38,24 @@ class _DesktopAppState extends ConsumerState<DesktopApp> {
   @override
   void initState() {
     super.initState();
+    CbhConversionGateway.handler = _convertCbh;
     // Silicon package on Intel (or the reverse) gets a recovery dialog with
     // the correct download link — silent dead Stockfish is not acceptable.
     scheduleMacOsWrongChipCheck(navigatorKey: _desktopNavigatorKey);
+  }
+
+  Future<String?> _convertCbh(String source) async {
+    final dialogContext = _desktopNavigatorKey.currentContext;
+    if (!mounted || dialogContext == null) {
+      throw const CbhConversionException('Desktop is not ready. Open the CBH again after startup.');
+    }
+    return showCbhConvertDialog(dialogContext, source);
+  }
+
+  @override
+  void dispose() {
+    if (CbhConversionGateway.handler == _convertCbh) CbhConversionGateway.handler = null;
+    super.dispose();
   }
 
   @override
