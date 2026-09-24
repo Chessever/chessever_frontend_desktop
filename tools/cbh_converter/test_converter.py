@@ -16,6 +16,58 @@ class PublisherTest(unittest.TestCase):
                    for key in ('CBH_TEST_FIXTURE', 'CBH_TEST_PROBE')):
             self.skipTest('Set CBH_TEST_FIXTURE and CBH_TEST_PROBE to local fixture/native decoder files')
 
+    def test_undecodable_metadata_is_contextual_and_atomic(self):
+        import converter
+        fixture = Path(os.environ['CBH_TEST_FIXTURE'])
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for ext, file in zip(converter.EXTENSIONS, converter.sources(fixture)):
+                shutil.copy2(file, root / ('sample' + ext))
+            source = root / 'sample.cbh'
+            index = bytearray(source.read_bytes()[:92])
+            index[6:10] = (2).to_bytes(4, 'big')
+            source.write_bytes(index)
+            annotators = source.with_suffix('.cbc')
+            data = bytearray(annotators.read_bytes())
+            start = 28 + data[24] + int.from_bytes(index[64:67], 'big') * 62 + 9
+            data[start:start + 45] = b'bad\x9d'.ljust(45, b'\0')
+            annotators.write_bytes(data)
+            before = converter.fingerprints(converter.sources(source))
+            with self.assertRaisesRegex(ValueError, 'Record 1: Annotator:.*explicit source encoding'):
+                converter.convert(source, root / 'out', probe=Path(os.environ['CBH_TEST_PROBE']))
+            self.assertEqual(list((root / 'out').iterdir()), [])
+            self.assertEqual(before, converter.fingerprints(converter.sources(source)))
+
+    def test_unknown_comment_bytes_are_declared_in_publication(self):
+        import base64
+        import io
+        import chess.pgn
+        import converter
+        fixture = Path(os.environ['CBH_TEST_FIXTURE'])
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for ext, file in zip(converter.EXTENSIONS, converter.sources(fixture)):
+                shutil.copy2(file, root / ('sample' + ext))
+            source = root / 'sample.cbh'
+            index = bytearray(source.read_bytes()[:92])
+            index[6:10] = (2).to_bytes(4, 'big')
+            index[51:55] = (26).to_bytes(4, 'big')
+            source.write_bytes(index)
+            payload = b'\0\0\x81Against'
+            entry = bytes(3) + b'\x82' + (6 + len(payload)).to_bytes(2, 'big') + payload
+            frame = bytes(10) + (14 + len(entry)).to_bytes(4, 'big') + entry
+            source.with_suffix('.cba').write_bytes(bytes(26) + frame)
+            result = converter.convert(source, root / 'out', probe=Path(os.environ['CBH_TEST_PROBE']))
+            self.assertEqual(result['preservation']['unknownTextByteRecords'], [1])
+            self.assertEqual(result['preservation']['uninterpretedRecords'], [1])
+            pgn = Path(result['path'])
+            parsed = chess.pgn.read_game(io.StringIO(pgn.read_text(encoding='utf8')))
+            self.assertIn('[ChessBase unknown byte 0x81]Against', str(parsed))
+            self.assertEqual(base64.b64decode(parsed.headers['ChessBaseAnnotationFrame']), frame)
+            receipt = json.loads((pgn.parent / 'conversion.json').read_text())
+            self.assertEqual(receipt['preservation'], result['preservation'])
+            self.assertIn('visible-undefined-byte-escapes', receipt['commentEncoding'])
+
     def test_exact_stems_and_legacy_receipts(self):
         module = importlib.util.module_from_spec(SPEC)
         SPEC.loader.exec_module(module)

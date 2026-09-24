@@ -25,21 +25,38 @@ also included. No binary or third-party fixture is checked into this integration
 
 ## Supported scope
 
-Windows x64, classic CBH with all seven core companion files. Metadata uses the
-explicitly confirmed Windows-1252 profile. Text comments use the declared rendering
-policy UTF-8-if-valid, otherwise strict Windows-1252, with original bytes retained;
-this is not automatic encoding detection. Orthodox/Chess960
+Windows x64, classic CBH with all seven core companion files. Metadata keeps the
+selected Windows-1252 profile when valid. If that strict decoder rejects a field,
+a complete strictly valid UTF-8 field is accepted instead, with its original bytes
+in `ChessBaseRawText` (base64 ASCII JSON entries: `field`, `hex`, `encoding`). The
+`ChessBaseMetadataEncoding` header and receipt `metadataEncoding` declare this
+policy. These are original-source fields, not rebound after user edits. Ambiguous
+strings valid in both encodings keep the legacy interpretation; no code-page
+heuristics, character replacement, stripping, or mojibake repair is performed.
+Metadata fields invalid in both encodings still reject atomically with record/field
+context and require explicit source-encoding resolution. Game text comments use
+UTF-8-if-valid, otherwise Windows-1252. In raw-preservation mode only, undefined
+Windows-1252 bytes render visibly as `[ChessBase unknown byte 0x81]` (with the
+actual two-digit hex identity), never as a guessed glyph/control or replacement
+character. All defined bytes retain the selected rendering profile. This requires
+matching original text in `ChessBaseRawAnnotations`; the publisher independently
+verifies the complete frame against source bytes. Strict adapter callers and guiding
+text decoding remain strict. `ChessBaseUnknownTextBytes` declares the limitation;
+receipt `unknownTextByteRecords` and `uninterpretedRecords` expose affected one-based
+record ordinals. This is recoverable preservation, NOT exact ChessBase display fidelity
+or automatic encoding detection. Literal lookalike escape text is not decoded back:
+recovery uses the ordered raw archive (including language bytes, type and original
+move address), not string substitution. No source corruption is inferred from an
+undefined byte. Orthodox/Chess960
 moves, supported variations, text, NAGs, board arrows/squares, and stored final
 clocks are preserved. Native null opcodes are explicit null moves. Engine scores
 (0x21, ordinary/mate with nonnegative depth) use standard [%eval]; 0x07 elapsed
 H/M/S uses [%emt], never [%clk]. Its auxiliary fourth byte is retained verbatim
 as [%cbh_emt_flags N], not guessed or silently discarded; a paired export rounds
 some nonzero-byte values differently. The auxiliary byte's semantics remain
-unverified. Verified whole-second sudden-death and three-period 0x24 controls
-use TimeControl and root text. Multi-stage layout reference: Yarin78/morphy
-commit e171eba41ba0f8ca661d9fb6933a42f867b6c5b2, TimeControlAnnotation.TimeSerie
-and Serializer. Unverified stages, nonzero tails and fractional controls remain
-raw fields, not guessed clock semantics.
+unverified. Simple whole-second sudden-death 0x24 controls use TimeControl;
+unverified stages, nonzero tails and fractional controls are retained as raw fields,
+not rendered as guessed clock semantics.
 Mandatory roster and decoded source/annotator tags are emitted. Unknown/partial
 CBH date components remain PGN question marks. Result bytes 4/5/6 mean black/draw/
 white by forfeit (Morphy's `CBUtil.decodeGameResult` and `GameResult`); they retain
@@ -62,13 +79,23 @@ not promises that another PGN viewer renders ChessBase-only features. Unknown
 annotations are not discarded or given guessed meanings. The receipt and helper
 completion response enumerate records with uninterpreted or unattached fields.
 
-Version-3 UTF-8 guiding HTML containers with the verified zero-trailer profile
-become distinct zero-move PGN records with readable root text, original complete
-container in `ChessBaseGuidingText`, and original index bytes. Empty bodies stay
-empty documents, never skipped or fabricated chess positions. Other container
-versions, separate guiding annotations and unknown trailers remain refused.
-This layout was independently derived from byte framing; no Morphy code was
-copied. Its public annotation-text specification corroborates direct numeric NAG
+Version-1 plain-text/formatting and version-3 HTML guiding containers become
+distinct zero-move PGN records with all titles and language bodies, original
+complete container in `ChessBaseGuidingText`, and original index bytes. Guiding
+index bytes 7..9 are a tournament id, not part of a CBA pointer. The index and
+container layouts are corroborated by the locally available Morphy
+`GameHeaderIndex.deserializeItem`, `TextContentsModel`, and format/v1 documents;
+no Java implementation is copied. Body decoding uses UTF-8-if-valid then strict
+Windows-1252. HTML stays inert; image references have visible placeholders and
+are never fetched. V1 formatting/object data remain archived, with an explicit
+`ChessBaseGuidingRendering` limitation and receipt uninterpreted-record entry;
+control-byte identities are visible, not discarded or invented diagrams.
+Empty bodies stay empty documents. Version 2 and unknown flags/trailers still
+reject; other unknown text encodings require explicit resolution.
+Literal braces in game comments render as `&#123;`/`&#125;` only with a raw
+annotation archive, avoiding PGN's silent closing-brace loss. The source bytes
+remain exact; the `ChessBaseCommentRendering` header declares the rendering.
+Morphy's public annotation-text specification corroborates direct numeric NAG
 identities, including the additional stored 7/8/10/30 values; these are preserved
 as numbers rather than color-dependent reinterpretations.
 

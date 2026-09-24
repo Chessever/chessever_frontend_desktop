@@ -1,6 +1,7 @@
 """Windows development CBH publisher. No source writes, no partial databases.
 
-The only text profile currently supported is explicitly selected Windows-1252.
+Metadata uses Windows-1252, with strict UTF-8 fallback for undefined bytes.
+Fallback fields are archived exactly; ambiguous legacy strings are unchanged.
 Native parsing is isolated in a bounded child process over a private snapshot.
 """
 import argparse
@@ -21,7 +22,7 @@ from adapter import make_game, tree
 from preservation import guiding_game, encoded
 from origin import origin_id, existing_copies
 
-VERSION = 'chessever-cbh-5-multi-stage-controls'
+VERSION = 'chessever-cbh-7-visible-unknown-bytes'
 EXTENSIONS = ('.cbh', '.cbp', '.cbt', '.cbc', '.cbs', '.cbg', '.cba')
 MAX_BYTES = 512 * 1024 * 1024
 MAX_GAMES = 100000
@@ -96,8 +97,11 @@ def validate_snapshot(source):
 
 
 def read_guiding(source, record):
-    if record[5:9] != bytes(4):
-        raise ValueError('Guiding text with separate annotations is unsupported')
+    # Guiding index schema differs from games: bytes 5..6 are reserved,
+    # 7..9 are the tournament id, NOT a four-byte CBA annotation offset.
+    # Corroborated by Morphy GameHeaderIndex.deserializeItem (guiding branch).
+    if record[5:7] != bytes(2):
+        raise ValueError('Unsupported guiding-text reserved index bytes')
     path = source.with_suffix('.cbg')
     offset = int.from_bytes(record[1:5], 'big')
     if offset < 26 or offset > path.stat().st_size - 4:
@@ -214,7 +218,7 @@ def convert(source, destination, *, probe=None, cancel=None, progress=None,
         publish.mkdir()
         pgn = publish / (source.stem + '.pgn')
         preservation = dict(guidingTextRecords=[], rawAnnotationRecords=0,
-                            uninterpretedRecords=[], unattachedRecords=[])
+                            uninterpretedRecords=[], unattachedRecords=[], unknownTextByteRecords=[])
         with decoded.open(encoding='utf8') as rows, pgn.open('x', encoding='utf8', newline='\n') as target:
             if json.loads(next(rows))['records'] != count:
                 raise ValueError('Native record count does not match the source.')
@@ -229,16 +233,23 @@ def convert(source, destination, *, probe=None, cancel=None, progress=None,
                 if guiding:
                     game = read_guiding(snapshot_source, index_record)
                     preservation['guidingTextRecords'].append(actual + 1)
+                    if 'ChessBaseGuidingRendering' in game.headers:
+                        preservation['uninterpretedRecords'].append(actual + 1)
                 else:
                     if row['error']:
                         raise ValueError(f'Record {actual + 1}: native game decoding failed; nothing published.')
                     frame = annotation_frame(snapshot_source, index_record, row.get('rawAnnotations'))
-                    game = make_game(row, row['chess960'], preserve_raw=True)
+                    try:
+                        game = make_game(row, row['chess960'], preserve_raw=True)
+                    except ValueError as error:
+                        raise ValueError(f'Record {actual + 1}: {error}') from error
                     game.headers['ChessBaseIndex'] = encoded(index_record)
                     if frame:
                         game.headers['ChessBaseAnnotationFrame'] = encoded(frame)
                         preservation['rawAnnotationRecords'] += 1
-                    if row.get('unsupportedAnnotations'):
+                    if 'ChessBaseUnknownTextBytes' in game.headers:
+                        preservation['unknownTextByteRecords'].append(actual + 1)
+                    if row.get('unsupportedAnnotations') or 'ChessBaseUnknownTextBytes' in game.headers:
                         preservation['uninterpretedRecords'].append(actual + 1)
                     if row.get('unconsumedAnnotations'):
                         preservation['unattachedRecords'].append(actual + 1)
@@ -266,7 +277,8 @@ def convert(source, destination, *, probe=None, cancel=None, progress=None,
             os.fsync(target.fileno())
         manifest = dict(version=VERSION, key=key, source=str(source), sourceSha256=identity,
                         games=count, pgnSha256=digest(pgn), pgnFile=pgn.name, encoding='windows-1252',
-                        commentEncoding='utf8-if-valid-else-windows-1252', preservation=preservation)
+                        metadataEncoding='windows-1252-if-valid-else-strict-utf8; fallback fields archived',
+                        commentEncoding='utf8-if-valid-else-windows-1252-with-visible-undefined-byte-escapes; raw archived', preservation=preservation)
         with (publish / 'conversion.json').open('x', encoding='utf8') as stream:
             json.dump(manifest, stream, indent=2)
             stream.flush()

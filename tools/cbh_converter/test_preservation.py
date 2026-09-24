@@ -44,6 +44,8 @@ class PreservationTest(unittest.TestCase):
             source = root / 'text.cbh'
             header = bytearray(source.read_bytes()[:46]); header[6:10] = (2).to_bytes(4, 'big')
             index = bytearray(46); index[0] = 3; index[1:5] = (26).to_bytes(4, 'big')
+            # A guiding tournament id is not a CBA offset (old code rejected it).
+            index[7:10] = (865).to_bytes(3, 'big')
             raw = guiding_frame([(0, '<html><body>A study.</body></html>')])
             source.write_bytes(header + index)
             source.with_suffix('.cbg').write_bytes(bytes(26) + raw)
@@ -78,6 +80,35 @@ class PreservationTest(unittest.TestCase):
             self.assertEqual(base64.b64decode(game.headers['ChessBaseAnnotationFrame']), frame)
             self.assertEqual(base64.b64decode(game.headers['ChessBaseIndex']), bytes(index[46:]))
             self.assertEqual(result['preservation']['rawAnnotationRecords'], 1)
+
+    def test_guiding_titles_and_legacy_formatting_are_preserved(self):
+        title = b'Chapter 1'
+        body = b'Plan\r\x04\rCaf\xe9 {diagram}'
+        formatting = bytes(range(32))
+        data = (b'\x01\0\x01\0\0\0' + len(title).to_bytes(2, 'little') + title +
+                b'\x01\x01\0\0\0' + len(body).to_bytes(2, 'little') + body +
+                len(formatting).to_bytes(2, 'little') + formatting)
+        raw = b'\x80' + (len(data) + 4).to_bytes(3, 'big') + data
+        game = guiding_game(raw, bytes(46))
+        self.assertIn('Title (language 0): Chapter 1', game.comment)
+        self.assertIn('Café &#123;diagram&#125;', game.comment)
+        self.assertIn('[ChessBase object 0x04]', game.comment)
+        self.assertIn('archived', game.headers['ChessBaseGuidingRendering'])
+        parsed = chess.pgn.read_game(io.StringIO(str(game)))
+        self.assertEqual(base64.b64decode(parsed.headers['ChessBaseGuidingText']), raw)
+        self.assertEqual(parsed.comment, game.comment)
+
+    def test_guiding_html_titles_are_not_mistaken_for_version_bytes(self):
+        title = b'Opening'
+        document = b'<body>Idea <img alt="diagram" src="private.png"></body>'
+        body = (b'\x03\0\x01\0\0\0' + len(title).to_bytes(2, 'little') + title +
+                b'\x01\x01\0\0\0' + len(document).to_bytes(4, 'little') + document + bytes(4))
+        raw = b'\x80' + (len(body) + 4).to_bytes(3, 'big') + body
+        game = guiding_game(raw, bytes(46))
+        self.assertIn('Opening', game.comment)
+        self.assertIn('Idea', game.comment)
+        self.assertIn('[Image: diagram]', game.comment)
+        self.assertEqual(base64.b64decode(game.headers['ChessBaseGuidingText']), raw)
 
     def test_guiding_frames_are_bounded_and_unknown_versions_refused(self):
         raw = guiding_frame([(0, '<html><body></body></html>')])

@@ -2,8 +2,25 @@
 import chess
 import chess.pgn
 
-def text(raw):
-    return raw.encode('latin1').decode('cp1252', errors='strict')
+def text(raw, *, field='metadata', archive=None):
+    """Keep the selected legacy profile unless it cannot represent the field.
+
+    Some CBH metadata contains complete UTF-8 sequences (notably C3 9D).
+    Only fall back after strict Windows-1252 fails; do not reinterpret ambiguous
+    legacy names, guess another code page, strip controls, or repair mojibake.
+    """
+    data = raw.encode('latin1')  # Native JSON is a reversible byte transport.
+    try:
+        return data.decode('cp1252', errors='strict')
+    except UnicodeDecodeError:
+        try:
+            value = data.decode('utf8', errors='strict')
+        except UnicodeDecodeError as error:
+            raise ValueError(f'{field}: text is neither Windows-1252 nor valid UTF-8; '
+                             'an explicit source encoding is required; no text discarded') from error
+        if archive is not None:
+            archive.append(dict(field=field, hex=data.hex(), encoding='utf-8'))
+        return value
 
 
 def comment_text(raw):
@@ -14,7 +31,7 @@ def comment_text(raw):
     try:
         return data.decode('utf8', errors='strict')
     except UnicodeDecodeError:
-        return data.decode('cp1252', errors='strict')
+        return text(raw, field='comment')
 
 
 def make_game(record, is960, *, allow_unsupported=False, preserve_raw=False):
@@ -23,10 +40,37 @@ def make_game(record, is960, *, allow_unsupported=False, preserve_raw=False):
     if record.get('unsupportedAnnotations') and not (allow_unsupported or preserve_raw):
         raise ValueError('unsupported annotation content; conversion refused')
     game = chess.pgn.Game()
+    text_archive = []
+
+    def render_comment(raw):
+        try:
+            value = comment_text(raw)
+        except ValueError:
+            if not preserve_raw:
+                raise
+            # Undefined legacy bytes have no verified glyph/control meaning.
+            # Visible identity is not decoding; require matching archived text.
+            if not any(e['type'] in (0x02, 0x82) and e['payloadBytes'][2:] == raw
+                       for e in record.get('rawAnnotations', [])):
+                raise ValueError('Unknown text byte requires a matching raw annotation archive')
+            value = raw.encode('latin1').decode('cp1252', errors='surrogateescape')
+            value = ''.join(f'[ChessBase unknown byte 0x{ord(c) - 0xDC00:02X}]'
+                            if 0xDC80 <= ord(c) <= 0xDCFF else c for c in value)
+            game.headers['ChessBaseUnknownTextBytes'] = (
+                'v1; undefined Windows-1252 bytes visibly escaped, not interpreted; '
+                'exact text, language, type and source move address in ChessBaseRawAnnotations')
+        if preserve_raw and ('{' in value or '}' in value):
+            if not record.get('rawAnnotations'):
+                raise ValueError('Raw annotation archive required for literal comment braces')
+            # PGN brace comments cannot contain a literal closing brace.
+            # Keep a visible reversible rendering; exact text remains archived.
+            game.headers['ChessBaseCommentRendering'] = 'literal braces rendered as numeric entities; original bytes archived'
+            value = value.replace('{', '&#123;').replace('}', '&#125;')
+        return value
     board = chess.Board(record['fen'], chess960=is960)
     game.setup(board)
     for key, raw in [('White', 'white'), ('Black', 'black'), ('Event', 'event'), ('Site', 'site')]:
-        game.headers[key] = text(record[raw]) or '?'
+        game.headers[key] = text(record[raw], field=key, archive=text_archive) or '?'
     game.headers['Date'] = '.'.join(f'{v:0{w}d}' if v else '?' * w for v, w in zip(record['date'], [4, 2, 2]))
     game.headers['Round'] = str(record['round']) if record['round'] else '?'
     if record['subround']:
@@ -42,11 +86,16 @@ def make_game(record, is960, *, allow_unsupported=False, preserve_raw=False):
     for name, value in record['tags']:
         # Extra metadata only; mandatory roster is derived above.
         if name not in game.headers:
-            game.headers[name] = text(value)
+            game.headers[name] = text(value, field=name, archive=text_archive)
+    if preserve_raw and text_archive:
+        import json
+        from preservation import encoded
+        game.headers['ChessBaseRawText'] = encoded(json.dumps(text_archive, separators=(',', ':')).encode('ascii'))
+        game.headers['ChessBaseMetadataEncoding'] = 'Windows-1252; strict UTF-8 only for undefined legacy bytes; original fields archived'
     for comment in record.get('pregameComments', []):
         if comment['kind'] not in ('before', 'after'):
             raise ValueError('unsupported annotation at game root')
-        game.comment = (game.comment + ' ' + comment_text(comment['textBytes'])).strip()
+        game.comment = (game.comment + ' ' + render_comment(comment['textBytes'])).strip()
     moves = record['moves']
 
     def line(index, parent, position, depth=0):
@@ -82,7 +131,7 @@ def make_game(record, is960, *, allow_unsupported=False, preserve_raw=False):
             for comment in m['comments']:
                 kind = comment['kind']
                 if kind in ('before', 'after'):
-                    value = comment_text(comment['textBytes'])
+                    value = render_comment(comment['textBytes'])
                     if kind == 'before' and node.starts_variation():
                         node.starting_comment = (node.starting_comment + ' ' + value).strip()
                     else:
@@ -106,7 +155,7 @@ def make_game(record, is960, *, allow_unsupported=False, preserve_raw=False):
     if preserve_raw and record.get('rawAnnotations'):
         from preservation import preserve_annotations
         preserve_annotations(game, record['rawAnnotations'])
-        game.headers['ChessBaseCommentEncoding'] = 'UTF-8 if valid; otherwise Windows-1252; raw bytes retained'
+        game.headers['ChessBaseCommentEncoding'] = 'UTF-8 if valid; otherwise Windows-1252 with undefined bytes visibly escaped; raw bytes retained'
         if record.get('unconsumedAnnotations'):
             game.headers['ChessBaseUnattachedAnnotations'] = 'true'
     elif preserve_raw and (record.get('unsupportedAnnotations') or record.get('unconsumedAnnotations')):

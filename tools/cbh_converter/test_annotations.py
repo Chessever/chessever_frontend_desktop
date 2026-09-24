@@ -19,7 +19,7 @@ class AnnotationTest(unittest.TestCase):
                    for key in ('CBH_TEST_FIXTURE', 'CBH_TEST_PROBE')):
             self.skipTest('Set CBH_TEST_FIXTURE and CBH_TEST_PROBE to local fixture/native decoder files')
 
-    def decode(self, entries, null_moves=False, event_bytes=None):
+    def decode(self, entries, null_moves=False, event_bytes=None, annotator_bytes=None):
         fixture = Path(os.environ['CBH_TEST_FIXTURE'])
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -40,6 +40,11 @@ class AnnotationTest(unittest.TestCase):
                 start = 28 + data[24] + int.from_bytes(index[61:64], 'big') * 99 + 9
                 data[start:start + 40] = event_bytes.ljust(40, b'\0')
                 source.with_suffix('.cbt').write_bytes(data)
+            if annotator_bytes is not None:
+                data = bytearray(source.with_suffix('.cbc').read_bytes())
+                start = 28 + data[24] + int.from_bytes(index[64:67], 'big') * 62 + 9
+                data[start:start + 45] = annotator_bytes.ljust(45, b'\0')
+                source.with_suffix('.cbc').write_bytes(data)
             source.write_bytes(index)
             frame = b''.join(move.to_bytes(3, 'big') + bytes([kind]) +
                              (len(payload) + 6).to_bytes(2, 'big') + payload
@@ -71,6 +76,31 @@ class AnnotationTest(unittest.TestCase):
         # Metadata strings are mutable lvalues in the probe: these must use
         # the byte encoder too, not ADL's std::quoted overload.
         self.assertEqual(row['event'], 'Caf\xe9\nCup')
+
+    def test_utf8_annotator_bytes_survive_native_transport_and_pgn(self):
+        import base64
+        raw = bytes.fromhex('4d53c39d')
+        code, row = self.decode([], annotator_bytes=raw)
+        self.assertEqual(code, 0)
+        self.assertEqual(dict(row['tags'])['Annotator'].encode('latin1'), raw)
+        game = make_game(row, False, preserve_raw=True)
+        self.assertEqual(game.headers['Annotator'], 'MS\u00dd')
+        parsed = chess.pgn.read_game(io.StringIO(str(game)))
+        self.assertEqual(dict(game.headers), dict(parsed.headers))
+        archive = json.loads(base64.b64decode(parsed.headers['ChessBaseRawText']))
+        self.assertEqual(bytes.fromhex(archive[0]['hex']), raw)
+
+    def test_literal_comment_braces_are_visible_and_raw_bytes_roundtrip(self):
+        import base64
+        payload = b'\0\0Text } { conclusion (ol} 1984'
+        code, row = self.decode([(0, 2, payload)])
+        self.assertEqual(code, 0)
+        game = make_game(row, False, preserve_raw=True)
+        parsed = chess.pgn.read_game(io.StringIO(str(game)))
+        self.assertEqual(tree(game, True), tree(parsed, True))
+        self.assertIn('Text &#125; &#123; conclusion (ol&#125; 1984', parsed.variations[0].comment)
+        archive = json.loads(base64.b64decode(parsed.headers['ChessBaseRawAnnotations']))
+        self.assertEqual(bytes.fromhex(archive[0]['hex']), payload)
 
     def test_utf8_comment_is_decoded_before_legacy_fallback(self):
         value = 'Позиция café \ue00d'
