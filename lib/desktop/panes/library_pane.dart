@@ -4,6 +4,8 @@ import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:chessever/desktop/services/local_pgn_rename.dart';
+import 'package:chessever/desktop/services/local_raw_pgn_catalog.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/widgets/library/local_database_rename_dialog.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
@@ -1355,6 +1357,17 @@ final _twicWorkspaceGamesProvider = StateNotifierProvider.autoDispose.family<
   );
 });
 
+/// Activation is distinct from the Library's single-click preview command.
+Future<void> activateLibraryLocalEntry(
+  LocalLibraryEntry entry,
+  ValueChanged<String> onOpenLocalPath,
+) async {
+  // Route from the activation's immutable identity before any disk/cache work.
+  // The workspace's path-keyed provider owns hydration, errors and disposal;
+  // the global Library scanner is only for single-click previews.
+  onOpenLocalPath(entry.path);
+}
+
 String openDatabaseWorkspaceTab(WidgetRef ref, DatabaseWorkspaceArgs args) {
   return _openDatabaseWorkspaceTab(ref.read, args);
 }
@@ -2270,14 +2283,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       if (selected != null) onSelectLocalPath(selected);
     }
 
-    Future<void> openLocalEntry(LocalLibraryEntry entry) async {
-      final opened = await ref
-          .read(localChessLibraryProvider.notifier)
-          .openPaths(<String>[entry.path], sourceLabel: entry.displayName);
-      if (!opened) return;
-      final selected = ref.read(localChessLibraryProvider).selectedPath;
-      if (selected != null) onOpenLocalPath(selected);
-    }
+    Future<void> openLocalEntry(LocalLibraryEntry entry) =>
+        activateLibraryLocalEntry(entry, onOpenLocalPath);
 
     Future<({bool sourceDeleted})> deleteLocalEntryData(
       LocalLibraryEntry entry, {
@@ -11470,6 +11477,8 @@ class LocalDatabaseWorkspaceKey {
 /// [LocalDatabaseWorkspaceKey.revision]; explicit refresh invalidates the entry.
 final localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
     .family<LocalChessSource, LocalDatabaseWorkspaceKey>((ref, key) async {
+      final cancellation = OperationCancellationToken();
+      ref.onDispose(cancellation.cancel);
       final path = key.path;
       final live = ref.watch(
         localChessLibraryProvider.select(
@@ -11484,22 +11493,41 @@ final localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
       final repository = ref.read(localChessDatabaseRepositoryProvider);
       final cached = await repository.loadFreshSource(<String>[path]);
       if (cached != null) {
-        ref.keepAlive();
+        if (!cancellation.isCanceled) ref.keepAlive();
         return cached;
       }
+      cancellation.throwIfCanceled();
       final type = await io.FileSystemEntity.type(path, followLinks: false);
+      cancellation.throwIfCanceled();
+      if (type == io.FileSystemEntityType.file &&
+          p.extension(path).toLowerCase() == '.pgn') {
+        final handle = await openLocalRawPgnCatalog(
+          path,
+          cancellationToken: cancellation,
+        );
+        if (cancellation.isCanceled) {
+          handle.release();
+          throw const OperationCanceledException();
+        }
+        ref.onDispose(handle.release);
+        // Unlike a lightweight persisted-cache descriptor, this owns a worker.
+        // Final tab disposal must release it; Board continuation can reacquire.
+        return handle.source;
+      }
       if (type == io.FileSystemEntityType.file &&
           looksLikeLocalChessFile(path)) {
         final imported = await repository.importSingleFileSource(path: path);
         if (imported != null) {
-          ref.keepAlive();
+          if (!cancellation.isCanceled) ref.keepAlive();
           return imported;
         }
       }
+      cancellation.throwIfCanceled();
       final paths = <String>[path];
       final source = await scanLocalChessPaths(paths, buildOpeningTree: false);
       await repository.persistSource(source);
-      ref.keepAlive();
+      cancellation.throwIfCanceled();
+      if (!cancellation.isCanceled) ref.keepAlive();
       return source;
     });
 
@@ -11574,12 +11602,47 @@ class _LocalDatabaseWorkspace extends HookConsumerWidget {
     }
 
     return sourceAsync.when(
-      loading: () => const _RailLoading(),
+      skipLoadingOnRefresh: false,
+      loading:
+          () => const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(height: 12),
+                Text(
+                  'Opening database…',
+                  style: TextStyle(color: kWhiteColor70),
+                ),
+              ],
+            ),
+          ),
       error:
-          (error, _) => _LibraryEmpty(
-            icon: Icons.error_outline_rounded,
-            title: 'Could not open local database',
-            message: localChessOpenErrorMessage(error),
+          (error, _) => Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _LibraryEmpty(
+                  icon: Icons.error_outline_rounded,
+                  title: 'Could not open local database',
+                  message: localChessOpenErrorMessage(error),
+                ),
+                SizedBox(
+                  width: 120,
+                  child: FButton(
+                    onPress:
+                        () => ref.invalidate(
+                          localDatabaseWorkspaceSourceProvider(workspaceKey),
+                        ),
+                    child: const Text('Retry'),
+                  ),
+                ),
+              ],
+            ),
           ),
       data:
           (source) => LocalChessFilesView(
@@ -11608,7 +11671,13 @@ String localDatabaseWorkspaceTitle(LocalChessSource? source, String path) {
   final nodeName = node?.name.trim() ?? '';
   if (nodeName.isNotEmpty) return nodeName;
   final sourceLabel = source?.label.trim() ?? '';
-  if (sourceLabel.isNotEmpty) return sourceLabel;
+  final ownsPath =
+      source?.paths.any(
+        (candidate) =>
+            localChessInputPathKey(candidate) == localChessInputPathKey(path),
+      ) ??
+      false;
+  if (ownsPath && sourceLabel.isNotEmpty) return sourceLabel;
   final basename = p.basename(path).trim();
   return basename.isNotEmpty ? basename : 'Local database';
 }
