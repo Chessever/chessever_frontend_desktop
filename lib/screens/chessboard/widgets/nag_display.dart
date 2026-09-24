@@ -1,4 +1,5 @@
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:flutter/material.dart';
 
@@ -174,6 +175,14 @@ NagDisplay? getNagDisplay(int nag) {
     case 146:
       return const NagDisplay('N', _kObservationDim, NagCategory.observation);
     default:
+      // ChessEver's private report codes (240-247) and the user-override
+      // marker (248) ride in move.nags but are not glyphs. Rendering them
+      // would put "$242" chips on every reviewed game, and it would let
+      // category toggles strip the override.
+      if (isChesseverClassificationCode(nag) ||
+          nag == kChesseverUserQualityOverrideNag) {
+        return null;
+      }
       return NagDisplay(
         '\$$nag',
         _kObservationDim,

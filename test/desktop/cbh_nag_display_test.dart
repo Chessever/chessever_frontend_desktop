@@ -11,4 +11,9 @@ void main() {
     expect(getNagDisplay(200)?.symbol, r'$200');
     expect(getNagDisplay(0), isNull);
   });
+  test('ChessEver private report and override codes stay hidden', () {
+    for (final code in [240, 241, 242, 243, 244, 245, 246, 247, 248]) {
+      expect(getNagDisplay(code), isNull, reason: 'NAG $code');
+    }
+  });
 }

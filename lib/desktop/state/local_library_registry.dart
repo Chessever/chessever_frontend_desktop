@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:crypto/crypto.dart';
@@ -261,7 +262,7 @@ class LocalLibraryRegistryNotifier
         final hash = pending?['sha256'] as String?;
         if (from != null && to != null && hash != null &&
             !File(from).existsSync() && File(to).existsSync() &&
-            (await sha256.bind(File(to).openRead()).first).toString() == hash) {
+            await _fileSha256(to) == hash) {
           final index = entries.indexWhere((e) => _canonical(e.path) == _canonical(from));
           if (index >= 0) {
             entries[index] = entries[index].copyWith(path: to);
@@ -453,10 +454,10 @@ class LocalLibraryRegistryNotifier
     next[index] = entry.copyWith(path: destination);
     // A durable intent allows startup to finish a rename interrupted between
     // the filesystem move and registry commit, without ever replacing a PGN.
-    final hash = (await sha256.bind(File(entry.path).openRead()).first).toString();
+    final hash = await _fileSha256(entry.path);
     await _db.setJson('desktop.local_library_rename.v1', {'from': entry.path, 'to': destination, 'sha256': hash});
     if (FileSystemEntity.typeSync(entry.path, followLinks: false) != FileSystemEntityType.file ||
-        (await sha256.bind(File(entry.path).openRead()).first).toString() != hash) {
+        await _fileSha256(entry.path) != hash) {
       throw StateError('The PGN changed while preparing the rename. Please try again.');
     }
     ensureUnused?.call();
@@ -558,3 +559,9 @@ String _playerWorkspaceGroupLabel(String directory) {
       .map((word) => '${word[0].toUpperCase()}${word.substring(1)}')
       .join(' ');
 }
+
+/// Hashes a PGN off the UI isolate: multi-gigabyte databases would otherwise
+/// spend seconds of main-isolate CPU per rename, twice.
+Future<String> _fileSha256(String path) => Isolate.run(
+  () async => (await sha256.bind(File(path).openRead()).first).toString(),
+);

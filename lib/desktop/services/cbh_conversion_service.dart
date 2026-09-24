@@ -33,6 +33,7 @@ class CbhConversionService {
   final String? executable;
   final Directory? destination;
   File? _cancelFile;
+  Process? _process;
   bool _cancelled = false;
   bool _running = false;
   String? _preservationSummary;
@@ -52,9 +53,41 @@ class CbhConversionService {
         'ChessBase fields retained as raw metadata, not displayed.';
   }
 
+  /// How long the helper gets to notice the cancel file before it is killed.
+  static const cancelGrace = Duration(seconds: 5);
+
+  /// The helper is packaged only by the isolated Windows development build.
+  /// Release builds hide the `.cbh` picker option rather than offer a
+  /// conversion that can only fail.
+  static String defaultHelperPath() => p.join(
+    p.dirname(Platform.resolvedExecutable),
+    'cbh_converter',
+    'chessever_cbh.exe',
+  );
+
+  static bool get isAvailable =>
+      Platform.isWindows && File(defaultHelperPath()).existsSync();
+
   Future<void> cancel() async {
     _cancelled = true;
-    await _cancelFile?.writeAsString('cancel', flush: true);
+    final process = _process;
+    try {
+      await _cancelFile?.writeAsString('cancel', flush: true);
+    } on FileSystemException {
+      // The conversion finished and removed its control directory first.
+    }
+    if (process == null) return;
+    // A helper that stops polling the cancel file must not strand the
+    // dialog, which cannot be dismissed while a conversion is running.
+    unawaited(
+      process.exitCode.timeout(
+        cancelGrace,
+        onTimeout: () {
+          process.kill();
+          return -1;
+        },
+      ),
+    );
   }
 
   Future<String?> convert(
@@ -71,19 +104,13 @@ class CbhConversionService {
     try {
       if (!Platform.isWindows && executable == null) {
         throw const CbhConversionException(
-          'CBH conversion is currently available in the Windows development build only. Export as PGN on this platform.',
+          'Opening ChessBase (.cbh) databases is not available in this version. Export the database as PGN from ChessBase, then open the PGN.',
         );
       }
-      final helper =
-          executable ??
-          p.join(
-            p.dirname(Platform.resolvedExecutable),
-            'cbh_converter',
-            'chessever_cbh.exe',
-          );
+      final helper = executable ?? defaultHelperPath();
       if (!await File(helper).exists()) {
         throw const CbhConversionException(
-          'The CBH converter is not packaged in this build. Use the Windows development builder, or export the database as PGN.',
+          'Opening ChessBase (.cbh) databases is not available in this version. Export the database as PGN from ChessBase, then open the PGN.',
         );
       }
       const configured = String.fromEnvironment('CHESSEVER_DATA_DIR');
@@ -114,6 +141,7 @@ class CbhConversionService {
         existingCopyChoice,
         if (selectedCopyPath != null) ...['--selected-copy', selectedCopyPath!],
       ]);
+      _process = process;
       String? path;
       String? failure;
       final errors = process.stderr.drain<void>();
@@ -147,7 +175,9 @@ class CbhConversionService {
             }
           });
       final finished = Completer<void>();
-      output.onDone(() => finished.complete());
+      output.onDone(() {
+        if (!finished.isCompleted) finished.complete();
+      });
       output.onError((Object error) {
         failure = 'Could not read converter output.';
         if (!finished.isCompleted) finished.complete();
@@ -171,6 +201,7 @@ class CbhConversionService {
       }
       return existingCopyPath == null ? result.path : null;
     } finally {
+      _process = null;
       _cancelFile = null;
       _running = false;
       if (control != null && await control.exists()) {

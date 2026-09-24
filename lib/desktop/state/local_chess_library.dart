@@ -233,7 +233,10 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Open chess files',
       type: FileType.custom,
-      allowedExtensions: localChessPickerExtensions,
+      allowedExtensions: [
+        ...localChessPickerExtensions,
+        if (CbhConversionService.isAvailable) 'cbh',
+      ],
       allowMultiple: true,
       withData: false,
       lockParentWindow: true,
@@ -594,13 +597,21 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
           registry.state.entries.any((entry) => localChessInputPathKey(entry.path) == localChessInputPathKey(target))) {
         throw const FormatException('A database with this filename already exists.');
       }
-      // Both path-identified caches are invalidated before changing the file.
-      // Failure here leaves the original PGN and registry intact.
-      await repository.deleteCachedSource(path);
+      // A stale cache keyed by the unused target name is safe to drop first.
+      // The original's cache and opening tree are dropped only once the
+      // rename has committed, so a failed move (a Windows file lock, a
+      // refused link) leaves the database fully usable under its old name.
       await repository.deleteCachedSource(target);
       await prepareCbhCopyRename(path, target);
       ensureUnused();
       final result = await registry.renamePgn(path, name, ensureUnused: ensureUnused);
+      try {
+        await repository.deleteCachedSource(path);
+      } catch (error, stackTrace) {
+        // The PGN already lives under its new name; an orphaned cache for the
+        // old path is dead weight, not a correctness problem.
+        _debugLocalChessCacheFailure('cleanup after rename', error, stackTrace);
+      }
       if (mounted) clear();
       return result;
     });

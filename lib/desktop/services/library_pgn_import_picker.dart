@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/cbh_conversion_service.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 
 /// Lets the user pick PGN files for the Library local-database import flow.
@@ -9,7 +10,7 @@ Future<List<String>?> pickLibraryPgnDatabasePaths() async {
   final result = await FilePicker.platform.pickFiles(
     dialogTitle: 'Import PGN',
     type: FileType.custom,
-    allowedExtensions: const ['pgn', 'cbh'],
+    allowedExtensions: ['pgn', if (CbhConversionService.isAvailable) 'cbh'],
     allowMultiple: true,
     withData: false,
     lockParentWindow: true,

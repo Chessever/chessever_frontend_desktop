@@ -121,9 +121,12 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
 
 # Install the locally built converter only for isolated Development. Release
-# distribution/signing remains a separate gate; missing helper fails visibly.
-if(CHESSEVER_DEV_ISOLATED)
-  install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../build/cbh_converter/dist/chessever_cbh/"
+# distribution/signing remains a separate gate. When the helper has not been
+# built (a fresh checkout run without build_windows.py) the install is skipped
+# and the app reports CBH as unavailable instead of failing the build.
+set(CHESSEVER_CBH_HELPER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../build/cbh_converter/dist/chessever_cbh")
+if(CHESSEVER_DEV_ISOLATED AND EXISTS "${CHESSEVER_CBH_HELPER_DIR}")
+  install(DIRECTORY "${CHESSEVER_CBH_HELPER_DIR}/"
     DESTINATION "${CMAKE_INSTALL_PREFIX}/cbh_converter" COMPONENT Runtime)
 endif()
 

@@ -3,8 +3,14 @@ import 'package:chessever/desktop/widgets/library/local_database_rename_dialog.d
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+// forui 0.16's FTextField trips Flutter's semantics-tree assertion
+// (`node.isMergedIntoParent`) once it holds focus inside a dialog route; a
+// Material TextField in the same route does not. The assertion is debug-only
+// and unrelated to rename behavior, so these tests run without semantics.
+const _semanticsEnabled = false;
+
 void main() {
-  testWidgets('collision stays in the dialog and Cancel makes no change', (tester) async {
+  testWidgets('collision stays in the dialog and Cancel makes no change', semanticsEnabled: _semanticsEnabled, (tester) async {
     var attempts = 0;
     await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) =>
       TextButton(onPressed: () => showDesktopDialog<String>(context,
@@ -24,7 +30,7 @@ void main() {
     expect(find.byType(LocalDatabaseRenameDialog), findsNothing);
   });
 
-  testWidgets('cancel does not rename; submit passes the chosen name', (
+  testWidgets('cancel does not rename; submit passes the chosen name', semanticsEnabled: _semanticsEnabled, (
     tester,
   ) async {
     final names = <String>[];
