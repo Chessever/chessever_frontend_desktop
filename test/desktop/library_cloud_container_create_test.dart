@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/panes/library_pane.dart';
 import 'package:chessever/desktop/services/library_folder_create_guard.dart';
+import 'package:chessever/repository/api_utils/api_exceptions.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart'
     show kTwicBookId;
@@ -317,6 +318,40 @@ void main() {
       );
     });
   });
+  group('the save dialog reports the mapped duplicate rejection', () {
+    test('translates the mapped 23505 into actionable copy', () {
+      // `LibraryRepository.createFolder` runs through `handleApiCall`, which
+      // maps 23505 to `GenericApiException('Duplicate entry')`; the save dialog
+      // used to print that raw string ("Failed to create folder: Duplicate
+      // entry") instead of a user-facing sentence.
+      final message = libraryCreateFolderRejectionMessage(
+        GenericApiException('Duplicate entry'),
+        name: 'Aadvik Prep',
+      );
+      expect(message, contains('Aadvik Prep'));
+      expect(message, contains('already have'));
+      expect(message, isNot(contains('Duplicate entry')));
+    });
+
+    test('keeps the raw PostgrestException path working', () {
+      expect(
+        libraryCreateFolderRejectionMessage(
+          _postgrest(code: '23505', message: 'duplicate key value'),
+          name: 'Mehmet',
+        ),
+        libraryDuplicateCloudNodeMessage('Mehmet'),
+      );
+    });
+
+    test('the shared duplicate copy trims the typed name', () {
+      expect(
+        libraryDuplicateCloudNodeMessage('  Savio  '),
+        'You already have a library item named "Savio". '
+        'Choose a different name.',
+      );
+    });
+  });
+
 }
 
 PostgrestException _postgrest({required String code, required String message}) {

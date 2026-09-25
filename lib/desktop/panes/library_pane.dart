@@ -3988,53 +3988,15 @@ bool libraryCanRemoveCloudFolderFromBoard(LibraryFolder folder) {
   return folder.id != kTwicBookId && !folder.isPermanentLibraryFolder;
 }
 
+/// The container classification lives with the rest of the cloud-container
+/// invariants (`library_folder_create_guard.dart`) so the Library panes and the
+/// save dialog cannot drift apart; these thin wrappers keep the pane-level call
+/// sites and their regressions unchanged.
 bool libraryFolderIsDatabase(
   LibraryFolder folder,
   List<LibraryFolder> folders, {
   int? gameCount,
-}) {
-  // The server's container guard acts on `user_folders.node_type`, so a row that
-  // carries it is classified by it and never by presentation. This is what keeps
-  // the Desktop from calling a legacy node a folder when the server will refuse
-  // child inserts under it (icon 'folder_container' + column default
-  // 'database').
-  final nodeType = folder.nodeType;
-  if (nodeType == kLibraryNodeTypeFolder) return false;
-  if (nodeType == kLibraryNodeTypeDatabase) {
-    // A database node holds games only. A *mixed* legacy node (children created
-    // before the container guard shipped) stays navigable so those children
-    // remain reachable, and the server's invariant repair promotes it to a
-    // folder.
-    if (libraryFolderHasChildren(folders, folder.id)) return false;
-    // A node the client itself typed as a database is exact.
-    if (folder.icon == 'database' || folder.icon == 'twic') return true;
-    // Once it is known to hold games it is a database whatever its icon says,
-    // and the create guard retargets away from it.
-    if (gameCount != null && gameCount > 0) return true;
-    // Otherwise this is a legacy container: builds up to 20.32.16 wrote the
-    // folder icon without ever writing `node_type`, so the column default
-    // ('database') is all that makes it look like one. The server accepts — and
-    // promotes — a child under such a node while it holds no games, so leave it
-    // presented as the folder the user created and let the first child repair
-    // the row. Demoting it here would lock an empty folder into a kind it never
-    // chose and block the very insert that heals it; if the live guard does
-    // reject the insert anyway, `libraryCreateFolderRejectionMessage` says so in
-    // words instead of failing generically.
-  }
-  if (folder.icon == 'database' || folder.icon == 'twic') return true;
-  if (_isKnownRootDatabase(folder) &&
-      !libraryFolderHasChildren(folders, folder.id)) {
-    return true;
-  }
-  if (folder.icon != 'folder') return false;
-  if (libraryFolderHasChildren(folders, folder.id)) return false;
-  if (folder.parentId != null) return true;
-  return gameCount != null && gameCount > 0;
-}
-
-bool _isKnownRootDatabase(LibraryFolder folder) {
-  return folder.name.trim().toLowerCase() == 'liked games';
-}
+}) => libraryCloudNodeIsDatabase(folder, folders, gameCount: gameCount);
 
 /// The container a new folder/database must be created under while
 /// [currentFolderId] is the open cloud node.
@@ -9062,8 +9024,7 @@ Future<void> _onCreateFolder({
     if (!context.mounted) return;
     _toast(
       context,
-      'You already have a library item named "${draft.name.trim()}". '
-      'Choose a different name.',
+      libraryDuplicateCloudNodeMessage(draft.name),
       error: true,
     );
     return;
@@ -13735,9 +13696,8 @@ String localLibraryEntryStatusLine(LocalLibraryEntry entry, {int? count}) {
 }
 
 @visibleForTesting
-bool libraryFolderHasChildren(List<LibraryFolder> folders, String folderId) {
-  return folders.any((folder) => folder.parentId == folderId);
-}
+bool libraryFolderHasChildren(List<LibraryFolder> folders, String folderId) =>
+    libraryCloudNodeHasChildren(folders, folderId);
 
 @visibleForTesting
 List<LibraryFolder> libraryVisibleCloudFolders({

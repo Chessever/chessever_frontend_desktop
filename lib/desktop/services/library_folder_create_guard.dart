@@ -1,6 +1,8 @@
 import 'package:collection/collection.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/repository/api_utils/api_exceptions.dart';
+
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart'
     show kTwicBookId;
@@ -78,6 +80,66 @@ LibraryChildCreateTarget libraryChildCreateTarget({
   );
 }
 
+/// True when [folder] must be treated as a games-only database rather than a
+/// container that may hold folders and databases.
+///
+/// The server's container guard acts on `user_folders.node_type`, so a row that
+/// carries it is classified by it and never by presentation. This is what keeps
+/// the Desktop from calling a legacy node a folder when the server will refuse
+/// child inserts under it (icon 'folder_container' + column default
+/// 'database').
+///
+/// [gameCount] is only known to callers that also read the saved-game counts;
+/// it upgrades an untyped legacy node to a database once it is known to hold
+/// games.
+bool libraryCloudNodeIsDatabase(
+  LibraryFolder folder,
+  Iterable<LibraryFolder> folders, {
+  int? gameCount,
+}) {
+  final nodeType = folder.nodeType;
+  if (nodeType == kLibraryNodeTypeFolder) return false;
+  if (nodeType == kLibraryNodeTypeDatabase) {
+    // A database node holds games only. A *mixed* legacy node (children created
+    // before the container guard shipped) stays navigable so those children
+    // remain reachable, and the server's invariant repair promotes it to a
+    // folder.
+    if (libraryCloudNodeHasChildren(folders, folder.id)) return false;
+    // A node the client itself typed as a database is exact.
+    if (folder.icon == 'database' || folder.icon == 'twic') return true;
+    // Once it is known to hold games it is a database whatever its icon says,
+    // and the create guard retargets away from it.
+    if (gameCount != null && gameCount > 0) return true;
+    // Otherwise this is a legacy container: builds up to 20.32.16 wrote the
+    // folder icon without ever writing `node_type`, so the column default
+    // ('database') is all that makes it look like one. The server accepts — and
+    // promotes — a child under such a node while it holds no games, so leave it
+    // presented as the folder the user created and let the first child repair
+    // the row. Demoting it here would lock an empty folder into a kind it never
+    // chose and block the very insert that heals it; if the live guard does
+    // reject the insert anyway, [libraryCreateFolderRejectionMessage] says so in
+    // words instead of failing generically.
+    return false;
+  }
+  if (folder.icon == 'database' || folder.icon == 'twic') return true;
+  if (_isKnownRootDatabase(folder) &&
+      !libraryCloudNodeHasChildren(folders, folder.id)) {
+    return true;
+  }
+  if (folder.icon != 'folder') return false;
+  if (libraryCloudNodeHasChildren(folders, folder.id)) return false;
+  if (folder.parentId != null) return true;
+  return gameCount != null && gameCount > 0;
+}
+
+bool libraryCloudNodeHasChildren(
+  Iterable<LibraryFolder> folders,
+  String folderId,
+) => folders.any((folder) => folder.parentId == folderId);
+
+bool _isKnownRootDatabase(LibraryFolder folder) =>
+    folder.name.trim().toLowerCase() == 'liked games';
+
 /// The account's own cloud node that already uses [name], or `null`.
 ///
 /// Mirrors `UNIQUE (user_id, name)`: the conflict is account-wide (not scoped to
@@ -98,6 +160,45 @@ LibraryFolder? libraryCloudNodeNamed(
   return null;
 }
 
+/// The node a *new* cloud database name would clash with, or `null`.
+///
+/// Same account-wide `UNIQUE (user_id, name)` rule as [libraryCloudNodeNamed],
+/// but the nodes the caller's own save created are excluded. A local-database
+/// save inserts its destination database *before* the first game row, and
+/// `user_folders` is streamed over realtime, so the node this very save is
+/// filling arrives in the folder list while its rows are still streaming.
+/// Matching the name against that list would report the save as an existing
+/// clash against itself.
+///
+/// [createdIds] / [createdNames] are the nodes this save created (both are
+/// matched, so a realtime payload and a create response name the same node
+/// even if only one identity is known), and [saveInFlight] suppresses the
+/// hint for the whole write. Neither can hide a real conflict: a name that
+/// already existed when Save was pressed is refused by the pre-save guard
+/// (with [libraryDuplicateCloudNodeMessage]) before any database is created,
+/// and the server's unique constraint rejects a concurrent insert.
+LibraryFolder? libraryNewCloudDatabaseNameConflict(
+  String name,
+  Iterable<LibraryFolder> folders, {
+  Iterable<String> createdIds = const <String>[],
+  Iterable<String> createdNames = const <String>[],
+  bool saveInFlight = false,
+}) {
+  if (saveInFlight) return null;
+  final createdIdSet = createdIds.toSet();
+  final createdNameSet = <String>{
+    for (final created in createdNames) created.trim(),
+  };
+  return libraryCloudNodeNamed(
+    name,
+    folders.where(
+      (folder) =>
+          !createdIdSet.contains(folder.id) &&
+          !createdNameSet.contains(folder.name.trim()),
+    ),
+  );
+}
+
 /// A precise, actionable reason for a rejected `createFolder` insert, or `null`
 /// when the failure is something else (network, auth, quota, unknown) and the
 /// caller should keep its generic handling.
@@ -106,12 +207,21 @@ String? libraryCreateFolderRejectionMessage(
   required String name,
   String? parentName,
 }) {
-  if (error is! PostgrestException) return null;
-  final code = error.code ?? '';
-  final text = '${error.message} ${error.details ?? ''}'.toLowerCase();
-  if (code == '23505' || text.contains('duplicate key')) {
-    return 'You already have a library item named "$name". '
-        'Choose a different name.';
+  // `LibraryRepository.createFolder` runs through `handleApiCall`, which maps
+  // `23505` to `GenericApiException('Duplicate entry')` before the caller can see
+  // it, so the mapped text is matched here as well as the raw code. Both the
+  // mapped and the raw rejection are an expected server-side guard, not a crash.
+  final code = error is PostgrestException ? (error.code ?? '') : '';
+  final text =
+      switch (error) {
+        PostgrestException e => '${e.message} ${e.details ?? ''}',
+        GenericApiException e => e.message,
+        _ => error.toString(),
+      }.toLowerCase();
+  if (code == '23505' ||
+      text.contains('duplicate entry') ||
+      text.contains('duplicate key')) {
+    return libraryDuplicateCloudNodeMessage(name);
   }
   if (code == '23514' || text.contains('databases can only contain games')) {
     final where = parentName == null ? 'That item' : '"$parentName"';
@@ -120,3 +230,24 @@ String? libraryCreateFolderRejectionMessage(
   }
   return null;
 }
+
+/// The account-wide duplicate-name message every cloud create surface shows.
+///
+/// `user_folders` is `UNIQUE (user_id, name)` for the whole account and
+/// case-sensitive, so the conflict is never scoped to the folder being browsed.
+String libraryDuplicateCloudNodeMessage(String name) =>
+    'You already have a library item named "${name.trim()}". '
+    'Choose a different name.';
+
+/// True when a save may go on even though a node named [name] already exists.
+///
+/// Only nodes this same dialog created for its own saves are tolerated
+/// ([ownNodeIds]): a destination database whose save failed before a single row
+/// landed and whose removal did not happen (or whose removal the live folder
+/// list has not caught up with). Those are not a pre-existing clash the user
+/// has to rename for — the retry fills that same database. Every node the
+/// dialog did not create stays a real clash, refused exactly as before.
+bool librarySaveToleratesOwnCloudName({
+  required LibraryFolder? clash,
+  required Set<String> ownNodeIds,
+}) => clash == null || ownNodeIds.contains(clash.id);
