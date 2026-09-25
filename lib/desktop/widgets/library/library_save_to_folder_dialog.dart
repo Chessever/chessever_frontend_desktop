@@ -12,7 +12,9 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:chessever/desktop/services/library_folder_create_guard.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_database_save_source.dart';
 import 'package:chessever/desktop/services/library_save_destination_recency.dart';
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/services/local_library_writer.dart';
@@ -49,6 +51,7 @@ class LibrarySaveOutcome {
     this.localUpdateTarget,
     this.cloudUpdateTarget,
     this.committedGame,
+    this.newDatabaseNames = const <String>[],
   });
 
   /// Number of rows written to the cloud `saved_analyses` table.
@@ -79,6 +82,11 @@ class LibrarySaveOutcome {
   /// metadata edited in this dialog. Never reconstructed after the await.
   final ChessGame? committedGame;
 
+  /// Names of the cloud databases this save created, one per destination
+  /// folder. Only a local-database save to the cloud creates databases, so the
+  /// list is empty for every other flow.
+  final List<String> newDatabaseNames;
+
   /// Total entries persisted across cloud + local destinations.
   int get totalEntries => savedRows + localFilesWritten;
 
@@ -90,9 +98,14 @@ class LibrarySaveOutcome {
     if (didUpdateOriginal) return 'Updated existing game';
     final parts = <String>[];
     if (savedRows > 0) {
+      final cloudTarget =
+          newDatabaseNames.isEmpty
+              ? 'the cloud library'
+              : newDatabaseNames.length == 1
+              ? 'new database "${newDatabaseNames.single}"'
+              : '${newDatabaseNames.length} new databases';
       parts.add(
-        '$savedRows ${savedRows == 1 ? 'entry' : 'entries'} to the '
-        'cloud library',
+        '$savedRows ${savedRows == 1 ? 'entry' : 'entries'} to $cloudTarget',
       );
     }
     if (localFilesWritten > 0) {
@@ -135,6 +148,25 @@ BoardTabLibrarySaveOrigin? libraryCloudUpdateTargetForCompletedSave({
   required BoardTabLibrarySaveOrigin? insertedOrigin,
 }) => gameCount == 1 && selectedCloudFolderCount == 1 &&
     selectedLocalPathCount == 0 ? insertedOrigin : null;
+
+/// Ids of the destination databases a failed save must remove again.
+///
+/// A save creates its destination database(s) *before* the first game row, so a
+/// failure that lands **zero** rows — the batch carrying an impossible date like
+/// `2005.06.31` is rejected as a whole — would otherwise leave an empty
+/// same-name database in the library that refuses every retry by name. Only the
+/// nodes this very call created are returned, and only while nothing at all was
+/// written: a save that already landed rows keeps them and does not retry
+/// silently.
+@visibleForTesting
+List<String> libraryFailedSaveEmptyCloudDatabaseIds({
+  required Iterable<String> createdNodeIds,
+  required int savedRows,
+  required int localFilesWritten,
+}) {
+  if (savedRows > 0 || localFilesWritten > 0) return const <String>[];
+  return List<String>.unmodifiable(createdNodeIds);
+}
 
 /// Retain a durable outcome even if a route is forcibly removed while busy.
 @visibleForTesting
@@ -182,15 +214,65 @@ String librarySaveDialogTitle(LibrarySaveDestinationMode mode) {
 List<LibraryFolder> librarySaveWritableCloudFolders({
   required List<LibraryFolder> folders,
   required LibrarySaveDestinationMode destinationMode,
+  bool foldersOnly = false,
 }) {
   if (!librarySaveAllowsCloudDestinations(destinationMode)) {
     return const <LibraryFolder>[];
   }
+  // A local-database save creates a database inside the chosen container, so
+  // only containers (folders) are offered as destinations — a database holds
+  // games only and is never a valid place for a new database, and picking one
+  // must not be read as "put these games in that database".
+  final candidates =
+      foldersOnly
+          ? folders
+                .where(
+                  (folder) => !libraryCloudNodeIsDatabase(folder, folders),
+                )
+                .toList(growable: false)
+          : folders;
   // The Likes collection is written only by the like toggle. Saving into it
   // here would create a like outside the Likes policy (flag, never name).
-  return folders
+  return candidates
       .where((folder) => !folder.isSubscribed && !folder.isLikedGames)
       .toList(growable: false);
+}
+
+/// The destination containers a "save as a new cloud database" writes into,
+/// one entry per distinct parent.
+///
+/// A selected folder is its own parent; a selected database node retargets to
+/// the folder that holds it, because a database holds games only and the server
+/// rejects child inserts under one that already has games. Selecting a folder
+/// and its own database therefore resolves to the same parent and creates a
+/// single database, never a duplicate.
+@visibleForTesting
+List<LibraryFolder?> libraryNewDatabaseParents({
+  required List<LibraryFolder> selected,
+  required List<LibraryFolder> allFolders,
+}) {
+  final parents = <String, LibraryFolder?>{};
+  for (final folder in selected) {
+    final target = libraryChildCreateTarget(
+      current: folder,
+      folders: allFolders,
+      currentIsDatabase: libraryCloudNodeIsDatabase(folder, allFolders),
+    );
+    parents.putIfAbsent(target.parent?.id ?? '', () => target.parent);
+  }
+  return parents.values.toList(growable: false);
+}
+
+@visibleForTesting
+LibraryFolder? librarySaveFolderById(
+  List<LibraryFolder> folders,
+  String? id,
+) {
+  if (id == null) return null;
+  for (final folder in folders) {
+    if (folder.id == id) return folder;
+  }
+  return null;
 }
 
 /// Resolve existing user pin keys only, in their persisted order. Never infer
@@ -228,19 +310,36 @@ List<String> librarySavePinnedDestinationKeys({
 /// `LibraryRepository.createSavedAnalysesBulk` (the same pipeline mobile
 /// uses for clipboard / file imports).
 ///
+/// A whole local database is handed over as a [gameSource] instead of a
+/// materialized list, so the dialog writes one bounded batch at a time and a
+/// 78 000-game database is never resident in memory.
+///
 /// Returns a [LibrarySaveOutcome] describing what was written, or `null`
 /// if the user dismissed the dialog without saving.
 Future<LibrarySaveOutcome?> showLibrarySaveToFolderDialog({
   required BuildContext context,
   required WidgetRef ref,
-  required List<ChessGame> games,
+  List<ChessGame> games = const <ChessGame>[],
+  LibrarySaveGameSource? gameSource,
   String? suggestedFolderId,
   String? sourceLabel,
   LibraryUpdateTarget? updateTarget,
   LibrarySaveDestinationMode destinationMode =
       LibrarySaveDestinationMode.cloudAndLocal,
+  String? newDatabaseName,
 }) async {
-  if (games.isEmpty) return null;
+  final gameCount = gameSource?.totalCount ?? games.length;
+  if (gameCount <= 0) return null;
+  assert(
+    gameSource == null || games.isEmpty,
+    'A save takes either materialized `games` or a `gameSource`, not both.',
+  );
+  assert(
+    gameSource == null ||
+        destinationMode == LibrarySaveDestinationMode.cloudOnly,
+    'A paged game source is a whole-database cloud save; it has no local '
+    'destination to write to.',
+  );
   // A dismissed route does not cancel a durable write. Keep the caller's save
   // boundary alive until every started operation has actually settled.
   final pendingWrites = <Future<void>>[];
@@ -255,10 +354,12 @@ Future<LibrarySaveOutcome?> showLibrarySaveToFolderDialog({
         (ctx, _, _) => _SaveToFolderDialog(
           ref: ref,
           games: games,
+          gameSource: gameSource,
           sourceLabel: sourceLabel ?? 'imported',
           onWriteStarted: pendingWrites.add,
           onCommitted: (outcome) => committedOutcome = outcome,
           suggestedFolderId: suggestedFolderId,
+          newDatabaseName: newDatabaseName,
           updateTarget: updateTarget,
           destinationMode: destinationMode,
         ),
@@ -285,18 +386,29 @@ class _SaveToFolderDialog extends ConsumerStatefulWidget {
     required this.games,
     required this.sourceLabel,
     required this.suggestedFolderId,
+    required this.newDatabaseName,
     required this.onWriteStarted,
     required this.onCommitted,
     required this.updateTarget,
     required this.destinationMode,
+    this.gameSource,
   });
 
   final WidgetRef ref;
   final void Function(Future<void>) onWriteStarted;
   final void Function(LibrarySaveOutcome) onCommitted;
   final List<ChessGame> games;
+
+  /// Paged whole-database source. When set, [games] is empty and every write
+  /// pulls one bounded batch instead of a materialized list.
+  final LibrarySaveGameSource? gameSource;
   final String sourceLabel;
   final String? suggestedFolderId;
+
+  /// When set, this save creates a *new* cloud database with this name inside
+  /// every chosen destination folder instead of writing into an existing node.
+  final String? newDatabaseName;
+
   final LibraryUpdateTarget? updateTarget;
   final LibrarySaveDestinationMode destinationMode;
 
@@ -315,6 +427,45 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   int _localWritten = 0;
   bool _isUpdatingOriginal = false;
   bool _isDeletingLocalDestination = false;
+
+  /// Cloud databases this dialog's own save created, by id and by name.
+  ///
+  /// The destination database is inserted *before* the first game row and
+  /// `user_folders` is streamed over realtime, so the node this save is
+  /// filling reaches the live folder list while its rows are still
+  /// streaming. Excluding it is what keeps the name hint below from
+  /// reporting that save's own database as a pre-existing clash.
+  final Set<String> _createdCloudNodeIds = <String>{};
+  final Set<String> _createdCloudNodeNames = <String>{};
+
+  /// Nodes this dialog created and then removed again: the empty destination
+  /// database of a save that failed before a single row landed. The live folder
+  /// list can still carry such a node for a moment after the delete, and it
+  /// must not be read as a pre-existing name clash on a retry.
+  final Set<String> _removedCloudNodeIds = <String>{};
+
+  /// Destination databases this dialog created whose attempt has not written a
+  /// row yet, keyed by the create parent (`''` = library top level).
+  ///
+  /// A failed attempt removes its node again (see
+  /// [_removeEmptyCloudDatabasesFromFailedSave]); an entry survives only when
+  /// that removal failed, and it is what lets the next attempt fill the same
+  /// database instead of being refused by `UNIQUE (user_id, name)`.
+  final List<_PendingCloudDatabase> _pendingCloudDatabases =
+      <_PendingCloudDatabase>[];
+
+  /// Ids of the cloud nodes this dialog created for its own saves, whether they
+  /// are still there (a failed attempt's cleanup did not complete) or already
+  /// removed again (the folder list lags behind the delete).
+  Set<String> get _ownCloudNodeIds => <String>{
+    ..._createdCloudNodeIds,
+    ..._removedCloudNodeIds,
+    for (final pending in _pendingCloudDatabases) pending.id,
+  };
+
+  /// Only allocated when [widget.newDatabaseName] is set: the name edited for
+  /// the cloud database this save creates.
+  TextEditingController? _newDatabaseNameCtrl;
   LibrarySaveDestinationRecency _destinationRecency =
       const LibrarySaveDestinationRecency();
 
@@ -344,6 +495,11 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     if (widget.destinationMode != LibrarySaveDestinationMode.localOnly &&
         widget.suggestedFolderId != null) {
       _selected.add(widget.suggestedFolderId!);
+    }
+    if (widget.newDatabaseName != null) {
+      _newDatabaseNameCtrl = TextEditingController(
+        text: widget.newDatabaseName!.trim(),
+      );
     }
     _supportsMetadataEdit = widget.games.length == 1;
     // Existing-library saves are usually quick "update this game" actions.
@@ -405,6 +561,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
 
   @override
   void dispose() {
+    _newDatabaseNameCtrl?.dispose();
     _whiteSurnameCtrl?.dispose();
     _whiteFirstNameCtrl?.dispose();
     _blackSurnameCtrl?.dispose();
@@ -420,6 +577,16 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     _dayCtrl?.dispose();
     super.dispose();
   }
+
+  /// Games this save covers.
+  ///
+  /// A paged whole-database source reports its own total, so the header, the
+  /// destination row and the progress bar all describe the whole database
+  /// rather than the page that happened to be loaded.
+  int get _gameCount => librarySaveDialogGameCount(
+    materializedCount: widget.games.length,
+    sourceTotal: widget.gameSource?.totalCount,
+  );
 
   List<ChessGame> _gamesForSave() {
     if (!_supportsMetadataEdit) return widget.games;
@@ -529,6 +696,17 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     );
     if (draft == null) return;
     final isDatabase = draft.kind == LibraryFolderCreateKind.database;
+    final allFolders =
+        ref.read(libraryFoldersStreamProvider).valueOrNull ??
+        const <LibraryFolder>[];
+    final parent = librarySaveFolderById(allFolders, draft.parentId);
+    // `user_folders` carries UNIQUE(user_id, name) for the whole account, not
+    // per folder. Catch the conflict here so the user gets an actionable message
+    // instead of a 23505 mapped to `Duplicate entry`.
+    if (libraryCloudNodeNamed(draft.name, allFolders) != null) {
+      _showToast(libraryDuplicateCloudNodeMessage(draft.name), error: true);
+      return;
+    }
     // Folders are unlimited; only a new database asks for a slot.
     if (isDatabase) {
       if (!mounted) return;
@@ -560,10 +738,20 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         e,
         fallbackKind: FreemiumQuotaKind.ownedDatabases,
       );
+      // A rejected container insert is an expected server-side guard (a legacy
+      // node the server still treats as a database, or an account-wide duplicate
+      // name), so it is said in words rather than dumped as a raw database
+      // error.
+      final containerRejection = libraryCreateFolderRejectionMessage(
+        e,
+        name: draft.name,
+        parentName: parent?.name,
+      );
       _showToast(
         rejection != null
             ? freemiumQuotaBlockedMessage(rejection)
-            : 'Failed to create folder: $e',
+            : containerRejection ??
+                  'Failed to create folder. Please try again.',
         error: true,
       );
     }
@@ -607,6 +795,128 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     return operation;
   }
 
+  /// Games for this save, one bounded batch at a time.
+  ///
+  /// A whole local database arrives as [widget.gameSource] and is pulled page
+  /// by page, so peak memory stays at one batch instead of the database. Every
+  /// other flow hands over an already materialized list and is yielded as a
+  /// single batch, exactly as before.
+  Stream<List<ChessGame>> _gameBatches(List<ChessGame> materialized) async* {
+    final source = widget.gameSource;
+    if (source == null) {
+      if (materialized.isNotEmpty) yield materialized;
+      return;
+    }
+    while (true) {
+      final batch = await source.nextBatch();
+      if (batch.isEmpty) return;
+      yield batch;
+    }
+  }
+
+  /// The destination database this dialog already created for [parentKey] under
+  /// [name] and whose attempt has not landed a row, or `null`.
+  _PendingCloudDatabase? _pendingCloudDatabaseFor(String parentKey, String name) {
+    for (final pending in _pendingCloudDatabases) {
+      if (pending.parentKey == parentKey && pending.name == name) {
+        return pending;
+      }
+    }
+    return null;
+  }
+
+  /// Removes the destination databases a just-failed save created when it wrote
+  /// nothing at all.
+  ///
+  /// The destination database is created before the first game row, so a
+  /// failure that lands no row — for example a batch the server rejects as a
+  /// whole — would otherwise leave an empty same-name database behind that
+  /// refuses every retry. Only nodes this very attempt created are passed in,
+  /// and only while nothing was written anywhere. Returns the names that could
+  /// not be removed: those databases stay usable, and the next attempt fills
+  /// them instead of creating a second node.
+  Future<List<String>> _removeEmptyCloudDatabasesFromFailedSave(
+    List<String> createdNodeIds,
+    LibraryRepository repo,
+  ) async {
+    final ids = libraryFailedSaveEmptyCloudDatabaseIds(
+      createdNodeIds: createdNodeIds,
+      savedRows: _savedRows,
+      localFilesWritten: _localWritten,
+    );
+    if (ids.isEmpty) return const <String>[];
+    final kept = <String>[];
+    var removedAny = false;
+    for (final id in ids) {
+      final index = _pendingCloudDatabases.indexWhere(
+        (pending) => pending.id == id,
+      );
+      final name = index < 0 ? '' : _pendingCloudDatabases[index].name;
+      try {
+        await repo.deleteFolder(id);
+        removedAny = true;
+        _removedCloudNodeIds.add(id);
+        if (index >= 0) _pendingCloudDatabases.removeAt(index);
+      } catch (_) {
+        // A node that cannot be removed is not a dead end: keeping its entry is
+        // what makes the next attempt fill it instead of creating a duplicate.
+        if (name.isNotEmpty) kept.add(name);
+      }
+    }
+    if (removedAny && mounted) {
+      ref.invalidate(libraryFoldersStreamProvider);
+      ref.invalidate(subscribedBooksProvider);
+    }
+    return kept;
+  }
+
+  /// Writes one batch of games into every folder in [folderIds], 250-row
+  /// request chunks at a time, reporting progress after each chunk.
+  ///
+  /// Returns the number of rows written. Peak memory stays at the batch size,
+  /// which is what lets a whole 78 000-game database be saved without ever
+  /// being resident in memory.
+  Future<int> _writeGamesBatch({
+    required LibraryRepository repo,
+    required String userId,
+    required List<ChessGame> batch,
+    required List<String> folderIds,
+    required DateTime now,
+    required void Function() onProgress,
+  }) async {
+    const chunkSize = 250;
+    var written = 0;
+    final rows = <SavedAnalysis>[
+      for (final game in batch)
+        for (final folderId in folderIds)
+          SavedAnalysis(
+            id: '',
+            userId: userId,
+            folderId: folderId,
+            title: _titleFor(game),
+            chessGame: game,
+            analysisState: const {},
+            variationComments: const {},
+            lastViewedPosition: -1,
+            tags: const [],
+            isFavorite: false,
+            createdAt: now,
+            updatedAt: now,
+          ),
+    ];
+    for (var i = 0; i < rows.length; i += chunkSize) {
+      final end = math.min(i + chunkSize, rows.length);
+      final chunk = rows.sublist(i, end);
+      await repo.createSavedAnalysesBulk(chunk);
+      written += chunk.length;
+      _savedRows += chunk.length;
+      onProgress();
+      if (!mounted) return written;
+      setState(() {});
+    }
+    return written;
+  }
+
   Future<void> _save(
     List<LibraryFolder> selectedFolders,
     List<String> selectedLocalPaths,
@@ -615,10 +925,31 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     if (selectedFolders.isEmpty && selectedLocalPaths.isEmpty) return;
 
     final effectiveGames = _gamesForSave();
+    final gameCount = _gameCount;
+    final usesGameSource = widget.gameSource != null;
+    if (usesGameSource && selectedLocalPaths.isNotEmpty) {
+      // A paged source is a whole-database cloud save: it has no local
+      // destination, and materializing it just to write PGN copies would
+      // defeat the bounded-memory contract it exists for.
+      _showToast(
+        'Saving a whole local database only supports cloud destinations. '
+        'Pick a folder instead.',
+        error: true,
+      );
+      return;
+    }
     var localFoldersUsed = 0;
     var cloudFoldersUsed = 0;
     final localWriteOutcomes = <LocalLibraryWriteOutcome>[];
     BoardTabLibrarySaveOrigin? insertedCloudOrigin;
+    final newCloudDatabaseNames = <String>[];
+    // Destination databases this attempt created. A failure that wrote no row
+    // at all must remove them again (see the catch below): an empty same-name
+    // database refuses every retry.
+    final createdCloudDatabaseIds = <String>[];
+    // Captured for the whole operation so the failed-save cleanup can still run
+    // after the dialog was dismissed mid-save, when `ref` is no longer usable.
+    final repo = ref.read(libraryRepositoryProvider);
     LibrarySaveOutcome? committedOutcome;
     void retainCommittedOutcome() {
       if (_savedRows == 0 && _localWritten == 0) return;
@@ -629,17 +960,18 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         localFilesWritten: _localWritten,
         localFoldersUsed: localFoldersUsed,
         cloudUpdateTarget: libraryCloudUpdateTargetForCompletedSave(
-          gameCount: effectiveGames.length,
+          gameCount: gameCount,
           selectedCloudFolderCount: selectedFolders.length,
           selectedLocalPathCount: selectedLocalPaths.length,
           insertedOrigin: insertedCloudOrigin,
         ),
         localUpdateTarget: libraryLocalUpdateTargetForCompletedSave(
-          gameCount: effectiveGames.length,
+          gameCount: gameCount,
           selectedCloudFolderCount: selectedFolders.length,
           selectedLocalPathCount: selectedLocalPaths.length,
           outcomes: localWriteOutcomes,
         ),
+        newDatabaseNames: List<String>.unmodifiable(newCloudDatabaseNames),
       );
       widget.onCommitted(committedOutcome!);
     }
@@ -652,8 +984,12 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     try {
       // Claim the dialog before this first await so Save and Update cannot
       // overlap during the cloud permission check. Local saves are exempt.
-      final cloudRows = effectiveGames.length * selectedFolders.length;
-      // Every destination copy counts: N games into M databases is N x M.
+      // Every destination copy counts: N games into M databases is N x M, and
+      // a whole-database save asks for the database's real row count.
+      final cloudRows = librarySaveEntryTarget(
+        gameCount: gameCount,
+        destinationCount: selectedFolders.length,
+      );
       if (cloudRows > 0) {
         final quota = await requestSaveGamesQuota(
           context,
@@ -669,7 +1005,6 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       // Cloud writes first so a disk failure later can be reported with the
       // cloud progress already on screen.
       if (selectedFolders.isNotEmpty) {
-        final repo = ref.read(libraryRepositoryProvider);
         final userId = repo.supabase.auth.currentUser?.id;
         if (userId == null) {
           throw Exception(
@@ -678,17 +1013,119 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         }
 
         final now = DateTime.now();
-        const chunkSize = 250;
-        final rows = <SavedAnalysis>[];
-        for (final game in effectiveGames) {
-          for (final folder in selectedFolders) {
-            rows.add(
+        final nameCtrl = _newDatabaseNameCtrl;
+
+        if (nameCtrl != null) {
+          final allFolders =
+              ref.read(libraryFoldersStreamProvider).valueOrNull ??
+              const <LibraryFolder>[];
+          final newName = nameCtrl.text.trim();
+          if (newName.isEmpty) {
+            _showToast('Name the new cloud database first.', error: true);
+            setState(() => _isSaving = false);
+            return;
+          }
+          // Account-wide UNIQUE(user_id, name): refuse before the request so the
+          // user gets the actionable message instead of a duplicate rejection.
+          // A node this dialog created itself is never that clash: the attempt
+          // either removed it again or keeps it for the retry to fill.
+          if (!librarySaveToleratesOwnCloudName(
+            clash: libraryCloudNodeNamed(newName, allFolders),
+            ownNodeIds: _ownCloudNodeIds,
+          )) {
+            _showToast(libraryDuplicateCloudNodeMessage(newName), error: true);
+            setState(() => _isSaving = false);
+            return;
+          }
+          final parents = libraryNewDatabaseParents(
+            selected: selectedFolders,
+            allFolders: allFolders,
+          );
+          // One new database per destination folder is a new database slot.
+          final ownedQuota = await requestFreemiumQuota(
+            context,
+            FreemiumQuotaKind.ownedDatabases,
+            additions: parents.length,
+          );
+          if (!mounted) return;
+          if (!ownedQuota.isAllowed) {
+            _showToast(
+              freemiumQuotaBlockedMessage(ownedQuota),
+              error: true,
+            );
+            setState(() => _isSaving = false);
+            return;
+          }
+          // Create every destination database before writing a single game:
+          // the source is enumerated exactly once and each batch streams into
+          // all of them, so N folders no longer multiply the row set in memory
+          // and a rejected container insert cannot leave a half-filled copy.
+          final createdFolderIds = <String>[];
+          for (final parent in parents) {
+            final parentKey = parent?.id ?? '';
+            final pending = _pendingCloudDatabaseFor(parentKey, newName);
+            if (pending != null) {
+              // A previous attempt in this dialog created this destination,
+              // never wrote a row into it and could not remove it again. Fill
+              // that database instead of creating a second node under the same
+              // account-wide name, which the server would refuse: the user just
+              // presses Save again.
+              createdFolderIds.add(pending.id);
+              newCloudDatabaseNames.add(pending.name);
+              continue;
+            }
+            // Create first, write second: no game row is ever inserted into a
+            // pre-existing node, so a local database cannot land in an unrelated
+            // cloud database (a `folder` write is redirected server-side into a
+            // child database of its own choosing).
+            final created = await repo.createFolder(
+              name: newName,
+              parentId: parent?.id,
+              icon: 'database',
+              nodeType: kLibraryNodeTypeDatabase,
+            );
+            // Remember the identity this save created: its own database is
+            // not a name clash for itself once the folders stream
+            // publishes it mid-write.
+            _createdCloudNodeIds.add(created.id);
+            _createdCloudNodeNames.add(created.name.trim());
+            _pendingCloudDatabases.add(
+              _PendingCloudDatabase(
+                parentKey: parentKey,
+                id: created.id,
+                name: created.name.trim(),
+              ),
+            );
+            createdCloudDatabaseIds.add(created.id);
+            newCloudDatabaseNames.add(created.name);
+            createdFolderIds.add(created.id);
+          }
+          // Whole-database save: one bounded batch per page of the local
+          // database, hydrated off the UI isolate, written and forgotten.
+          await for (final batch in _gameBatches(effectiveGames)) {
+            await _writeGamesBatch(
+              repo: repo,
+              userId: userId,
+              batch: batch,
+              folderIds: createdFolderIds,
+              now: now,
+              onProgress: retainCommittedOutcome,
+            );
+            cloudFoldersUsed = newCloudDatabaseNames.length;
+            if (!mounted) return;
+          }
+        } else {
+          if (!usesGameSource &&
+              effectiveGames.length == 1 &&
+              selectedFolders.length == 1 &&
+              selectedLocalPaths.isEmpty) {
+            final inserted = await repo.createSavedAnalysis(
               SavedAnalysis(
                 id: '',
                 userId: userId,
-                folderId: folder.id,
-                title: _titleFor(game),
-                chessGame: game,
+                folderId: selectedFolders.single.id,
+                title: _titleFor(effectiveGames.single),
+                chessGame: effectiveGames.single,
                 analysisState: const {},
                 variationComments: const {},
                 lastViewedPosition: -1,
@@ -698,33 +1135,33 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                 updatedAt: now,
               ),
             );
-          }
-        }
-
-        if (effectiveGames.length == 1 && selectedFolders.length == 1 &&
-            selectedLocalPaths.isEmpty) {
-          final inserted = await repo.createSavedAnalysis(rows.single);
-          insertedCloudOrigin = BoardTabLibrarySaveOrigin.cloudSavedAnalysis(
-            analysisId: inserted.id,
-            title: inserted.title,
-          );
-          _savedRows = 1;
-          cloudFoldersUsed = 1;
-          retainCommittedOutcome();
-          if (!mounted) return;
-          setState(() {});
-        } else {
-          final writtenFolderIds = <String>{};
-          for (var i = 0; i < rows.length; i += chunkSize) {
-            final end = math.min(i + chunkSize, rows.length);
-            final chunk = rows.sublist(i, end);
-            await repo.createSavedAnalysesBulk(chunk);
-            _savedRows += chunk.length;
-            writtenFolderIds.addAll(chunk.map((row) => row.folderId).whereType<String>());
-            cloudFoldersUsed = writtenFolderIds.length;
+            insertedCloudOrigin = BoardTabLibrarySaveOrigin.cloudSavedAnalysis(
+              analysisId: inserted.id,
+              title: inserted.title,
+            );
+            _savedRows = 1;
+            cloudFoldersUsed = 1;
             retainCommittedOutcome();
             if (!mounted) return;
             setState(() {});
+          } else {
+            final folderIds = selectedFolders
+                .map((folder) => folder.id)
+                .toList(growable: false);
+            final writtenFolderIds = <String>{};
+            await for (final batch in _gameBatches(effectiveGames)) {
+              final written = await _writeGamesBatch(
+                repo: repo,
+                userId: userId,
+                batch: batch,
+                folderIds: folderIds,
+                now: now,
+                onProgress: retainCommittedOutcome,
+              );
+              if (written > 0) writtenFolderIds.addAll(folderIds);
+              cloudFoldersUsed = writtenFolderIds.length;
+              if (!mounted) return;
+            }
           }
         }
 
@@ -800,6 +1237,14 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
 
       Navigator.of(context).pop(committedOutcome);
     } catch (e) {
+      // A failure before the first row leaves the destination database this
+      // attempt created behind as an empty same-name node that refuses every
+      // retry. Remove it again before reporting, even if the dialog was
+      // dismissed mid-save: `repo` is captured and this is not UI work.
+      final keptNames = await _removeEmptyCloudDatabasesFromFailedSave(
+        createdCloudDatabaseIds,
+        repo,
+      );
       if (!mounted) return;
       // A write that lost the race for the last slot is a quota answer, not a
       // failure: name the allowance instead of dumping the database error.
@@ -809,6 +1254,12 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       );
       final detail =
           rejection != null ? freemiumQuotaBlockedMessage(rejection) : '$e';
+      final keptNote =
+          keptNames.isEmpty
+              ? ''
+              : ' The empty database '
+                    '${keptNames.map((name) => '"$name"').join(', ')} '
+                    'could not be removed and will be reused by the next save.';
       if (committedOutcome != null) {
         // A retry here would duplicate already committed destinations.
         _showToast(
@@ -818,11 +1269,16 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         Navigator.of(context).pop(committedOutcome);
       } else {
         _showToast(
-          rejection != null ? detail : 'Save failed: $detail',
+          rejection != null ? detail : 'Save failed: $detail$keptNote',
           error: true,
         );
         setState(() => _isSaving = false);
       }
+    } finally {
+      // The paged source owns whatever backs it (for example a raw-PGN catalog
+      // handle). Hand it back however the save ended, including a mid-save
+      // dismissal of the dialog.
+      widget.gameSource?.release();
     }
   }
 
@@ -862,6 +1318,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     final writable = librarySaveWritableCloudFolders(
       folders: folders,
       destinationMode: widget.destinationMode,
+      foldersOnly: widget.newDatabaseName != null,
     );
     final ordered = orderLibrarySaveCloudFolders(
       folders: writable,
@@ -906,8 +1363,14 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       ...selectedLocalPaths.map(libraryLocalDatabasePinKey),
     };
 
-    final cloudRowsTarget = widget.games.length * selectedFolders.length;
-    final localFilesTarget = widget.games.length * selectedLocalPaths.length;
+    final cloudRowsTarget = librarySaveEntryTarget(
+      gameCount: _gameCount,
+      destinationCount: selectedFolders.length,
+    );
+    final localFilesTarget = librarySaveEntryTarget(
+      gameCount: _gameCount,
+      destinationCount: selectedLocalPaths.length,
+    );
     final totalTarget = cloudRowsTarget + localFilesTarget;
     final totalDone = _savedRows + _localWritten;
 
@@ -962,8 +1425,8 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                   _Header(
                     title: librarySaveDialogTitle(widget.destinationMode),
                     subtitle:
-                        '${widget.games.length} '
-                        '${librarySaveEntryLabel(widget.games.length)} from '
+                        '$_gameCount '
+                        '${librarySaveEntryLabel(_gameCount)} from '
                         '${widget.sourceLabel}',
                   ),
                   const FDivider(),
@@ -1011,6 +1474,13 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                 ),
                                 const SizedBox(height: 12),
                               ],
+                              if (_newDatabaseNameCtrl != null) ...[
+                                _buildNewDatabaseSection(
+                                  allFolders: folders,
+                                  selectedFolders: selectedFolders,
+                                ),
+                                const SizedBox(height: 8),
+                              ],
                               if (pinnedKeys.isNotEmpty) ...[
                                 LibrarySaveSection(
                                   key: const ValueKey('save-pinned'),
@@ -1034,7 +1504,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                 LibrarySaveSection(
                                   key: const ValueKey('save-cloud'),
                                   icon: Icons.cloud_outlined,
-                                  label: 'CLOUD LIBRARY',
+                                  label:
+                                      widget.newDatabaseName == null
+                                          ? 'CLOUD LIBRARY'
+                                          : 'DESTINATION FOLDER',
                                   enabled: !busy,
                                   selectedCount: selectedFolders.length,
                                   children: [
@@ -1252,6 +1725,109 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         if (!_selectedLocalPaths.add(key)) _selectedLocalPaths.remove(key);
       }),
       onForget: busy ? null : () => unawaited(_deleteLocalDestination(entry)),
+    );
+  }
+
+  /// Name block for a local database being saved to the cloud as a *new* cloud
+  /// database.
+  ///
+  /// The name is pre-filled from the local file and stays editable, because
+  /// `user_folders` is `UNIQUE (user_id, name)` for the whole account: a
+  /// conflict has to be visible *before* Save is pressed instead of surfacing
+  /// as a database rejection afterwards. The hint line names the folder the
+  /// database will actually be created in, so a destination that retargets is
+  /// never silent.
+  ///
+  /// That makes the hint a *pre-save* signal: while the save runs, its own
+  /// destination database is already in the folder stream, so the conflict
+  /// is evaluated against the nodes that predate the save and is suppressed
+  /// for the whole write (see [libraryNewCloudDatabaseNameConflict]).
+  Widget _buildNewDatabaseSection({
+    required List<LibraryFolder> allFolders,
+    required List<LibraryFolder> selectedFolders,
+  }) {
+    final ctrl = _newDatabaseNameCtrl!;
+    final typed = ctrl.text.trim();
+    // A conflict is a node that already existed when Save was pressed. The
+    // database this save created itself is never one, and a save that is
+    // running has already had its name accepted, so the hint stays quiet
+    // until the write finishes.
+    final conflict =
+        libraryNewCloudDatabaseNameConflict(
+          typed,
+          allFolders,
+          createdIds: _createdCloudNodeIds,
+          createdNames: _createdCloudNodeNames,
+          saveInFlight: _isSaving,
+        ) !=
+        null;
+    final destinations = <String>{
+      for (final parent in libraryNewDatabaseParents(
+        selected: selectedFolders,
+        allFolders: allFolders,
+      ))
+        parent?.name ?? 'Library Home',
+    };
+    final hint =
+        typed.isEmpty
+            ? 'Name the new cloud database.'
+            : conflict
+            ? libraryDuplicateCloudNodeMessage(typed)
+            : switch (destinations.length) {
+              0 => 'Created inside the folder you pick.',
+              1 => 'Created inside "${destinations.single}".',
+              _ => 'Created inside ${destinations.length} folders.',
+            };
+    final hintIsProblem = typed.isEmpty || conflict;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: kBlack3Color.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kDividerColor.withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LibrarySaveSectionHeader(
+            label: 'NEW DATABASE',
+            icon: Icons.storage_rounded,
+            expanded: true,
+            onToggle: null,
+            trailing:
+                '$_gameCount '
+                '${librarySaveEntryLabel(_gameCount)}',
+          ),
+          const FDivider(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _FieldLabel(label: 'Database name'),
+                const SizedBox(height: 6),
+                FTextField(
+                  controller: ctrl,
+                  enabled:
+                      !_isSaving &&
+                      !_isUpdatingOriginal &&
+                      !_isDeletingLocalDestination,
+                  hint: 'Database name',
+                  onChange: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  hint,
+                  style: TextStyle(
+                    color: hintIsProblem ? kRedColor : kLightGreyColor,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1823,6 +2399,32 @@ class _LocalFolderRowState extends State<_LocalFolderRow>
 @visibleForTesting
 String librarySaveEntryLabel(int count) => count == 1 ? 'entry' : 'entries';
 
+/// Entries a save writes for [gameCount] games and [destinationCount]
+/// destinations.
+///
+/// A whole-database save passes the database's own row count, so the progress
+/// bar and the cloud quota request describe every game that will be uploaded
+/// instead of the table page that happened to be loaded.
+@visibleForTesting
+int librarySaveEntryTarget({
+  required int gameCount,
+  required int destinationCount,
+}) {
+  if (gameCount <= 0 || destinationCount <= 0) return 0;
+  return gameCount * destinationCount;
+}
+
+/// Games a dialog instance covers.
+///
+/// A paged [LibrarySaveGameSource] supplies its own total and arrives with an
+/// empty materialized list, so `games.isEmpty` must never be read as "nothing
+/// to save" for a whole-database save.
+@visibleForTesting
+int librarySaveDialogGameCount({
+  required int materializedCount,
+  required int? sourceTotal,
+}) => sourceTotal ?? materializedCount;
+
 /// PGN-recognized result codes, in the order shown in the dropdown.
 /// `*` (ongoing) is the safe default for partially-edited games.
 const List<String> kSupportedPgnResults = <String>[
@@ -2181,4 +2783,25 @@ class _FolderRowState extends State<_FolderRow>
       ),
     );
   }
+}
+
+/// One destination database this dialog created for a save that has not written
+/// a row yet, remembered so a retry can reuse it instead of creating a
+/// duplicate same-name node.
+class _PendingCloudDatabase {
+  const _PendingCloudDatabase({
+    required this.parentKey,
+    required this.id,
+    required this.name,
+  });
+
+  /// Canonical key of the create parent (`''` = library top level), the same
+  /// key `libraryNewDatabaseParents` groups by.
+  final String parentKey;
+
+  /// `user_folders` row id of the created database.
+  final String id;
+
+  /// Trimmed name it was created with.
+  final String name;
 }

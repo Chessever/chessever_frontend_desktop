@@ -111,6 +111,22 @@ String localChessDatabaseDisplayNameForPath(String path) {
   return '${_polishLocalDatabaseStem(stem)}$extension';
 }
 
+/// Cloud database name for a local PGN database: the file's display name with
+/// the trailing `.pgn` removed (`Aadvik Prep.pgn` -> `Aadvik Prep`).
+///
+/// Saving a local database to the cloud creates a cloud database under this
+/// name, so it must be derived from the file, never from a tab label.
+String localChessDatabaseStemForPath(String path) =>
+    localChessDatabaseStemForLabel(localChessDatabaseDisplayNameForPath(path));
+
+/// Same derivation for a caller that only holds the displayed label.
+String localChessDatabaseStemForLabel(String label) {
+  final trimmed = label.trim();
+  final dot = trimmed.lastIndexOf('.');
+  if (dot <= 0) return trimmed;
+  return trimmed.substring(0, dot).trim();
+}
+
 String localChessDatabaseDisplayNameForPaths(List<String> paths) {
   final cleaned = paths
       .map((path) => path.trim())

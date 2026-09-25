@@ -6,7 +6,6 @@ import '../../state/local_board_games.dart';
 import 'package:chessever/desktop/state/local_game_grid_layout.dart';
 import 'package:chessever/desktop/state/local_game_page_loader.dart';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -17,12 +16,12 @@ import 'package:chessever/desktop/services/local_chess_database_repository.dart'
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
+import 'package:chessever/desktop/services/local_database_save_source.dart';
 import 'package:chessever/desktop/services/local_raw_pgn_catalog.dart';
 import 'package:chessever/desktop/services/local_player_enrichment_service.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
-import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
@@ -343,7 +342,10 @@ class LocalChessFilesView extends HookConsumerWidget {
         Object.hashAll(playerAliases),
       ],
     );
-    final pageLoader = useMemoized(() {
+    // One paged query backs both the table's page loader and the
+    // whole-database cloud save, so "Save to cloud" enumerates exactly the rows
+    // the user is looking at — all of them, not the loaded window.
+    final databasePageLoad = useMemoized<LocalDatabasePageLoad?>(() {
       final database = selectedDatabase;
       if (database == null ||
           databaseEntryCount <= 0 ||
@@ -355,38 +357,41 @@ class LocalChessFilesView extends HookConsumerWidget {
       final filter = gameFilter.value;
       final descriptor = database.rawPgnCatalog;
       if (descriptor != null) {
-        return LocalGamePageLoader(
-          (page) => localRawPgnCatalogPage(
-            LocalRawPgnCatalogPageQuery(
-              descriptor: descriptor,
-              search: search,
-              sortBy: _localRepositorySortField(querySort.key),
-              sortDirection: _localRepositorySortDirection(querySort.dir),
-              filter: filter,
-              playerFideId: playerFideId,
-              playerAliases: playerAliases,
-              pageNumber: page,
-              pageSize: _kLocalDatabaseGameQueryPageSize,
-            ),
+        return (int page) => localRawPgnCatalogPage(
+          LocalRawPgnCatalogPageQuery(
+            descriptor: descriptor,
+            search: search,
+            sortBy: _localRepositorySortField(querySort.key),
+            sortDirection: _localRepositorySortDirection(querySort.dir),
+            filter: filter,
+            playerFideId: playerFideId,
+            playerAliases: playerAliases,
+            pageNumber: page,
+            pageSize: _kLocalDatabaseGameQueryPageSize,
           ),
         );
       }
       if (!hasSearchIndex) return null;
       final repository = ref.read(localChessDatabaseRepositoryProvider);
-      return LocalGamePageLoader(
-        (page) => repository.localDatabaseGamesPage(
-          databasePath: database.path,
-          search: search,
-          sortBy: _localRepositorySortField(querySort.key),
-          sortDirection: _localRepositorySortDirection(querySort.dir),
-          filter: filter,
-          playerFideId: playerFideId,
-          playerAliases: playerAliases,
-          pageNumber: page,
-          pageSize: _kLocalDatabaseGameQueryPageSize,
-        ),
+      return (int page) => repository.localDatabaseGamesPage(
+        databasePath: database.path,
+        search: search,
+        sortBy: _localRepositorySortField(querySort.key),
+        sortDirection: _localRepositorySortDirection(querySort.dir),
+        filter: filter,
+        playerFideId: playerFideId,
+        playerAliases: playerAliases,
+        pageNumber: page,
+        pageSize: _kLocalDatabaseGameQueryPageSize,
       );
     }, [databaseQueryKey]);
+    final pageLoader = useMemoized(
+      () =>
+          databasePageLoad == null
+              ? null
+              : LocalGamePageLoader(databasePageLoad),
+      [databasePageLoad],
+    );
     useListenable(pageLoader);
     useEffect(() {
       pageLoader?.request(0);
@@ -436,21 +441,156 @@ class LocalChessFilesView extends HookConsumerWidget {
       onSelectPath(path);
     }
 
-    Future<void> saveVisible() async {
-      if (filtered.isEmpty) return;
-      // Scanner builds light ChessGames with empty mainlines. Re-parse the
-      // raw PGN on a worker isolate so saved rows carry full move data.
-      final hydrated = await compute(_hydrateLocalGamesForSave, filtered);
-      if (!context.mounted) return;
-      final outcome = await showLibrarySaveToFolderDialog(
-        context: context,
-        ref: ref,
-        games: hydrated,
-        sourceLabel: databaseTitle,
-        destinationMode: LibrarySaveDestinationMode.cloudOnly,
+    /// Builds the whole-database save source, or explains why it cannot.
+    ///
+    /// Never returns a source that only covers a loaded page: an unfinished
+    /// index is reported as such, and a session-only preview is replaced by an
+    /// enumeration read straight from the source PGN.
+    Future<LibrarySaveGameSource?> openDatabaseSaveSource(String path) async {
+      // Preferred: the exact paged query the table reads, walked through every
+      // page instead of the loaded window.
+      final loadPage = databasePageLoad;
+      if (loadPage != null) {
+        // Read page 0 before handing the source over: the save's total must be
+        // the query's own answer, never what the table happens to have loaded
+        // (clicking Save to cloud before the first page lands must not shrink
+        // the upload to the session preview). The page is reused, not re-read.
+        try {
+          final firstPage = await loadPage(0);
+          if (firstPage == null) {
+            if (context.mounted) {
+              showDesktopToast(
+                context,
+                'The local database could not be read. Refresh it and try '
+                'again.',
+                error: true,
+              );
+            }
+            return null;
+          }
+          return LocalDatabaseSaveEnumeration(
+            loadPage: loadPage,
+            totalCount: firstPage.totalCount,
+            pageSize: _kLocalDatabaseGameQueryPageSize,
+            prefetchedPages: <int, LocalChessGameQueryPage>{0: firstPage},
+          );
+        } catch (error) {
+          if (context.mounted) {
+            showDesktopToast(
+              context,
+              'Could not read the whole local database: $error',
+              error: true,
+            );
+          }
+          return null;
+        }
+      }
+      // No paged query exists yet. A running index build is transient — the
+      // database is about to become fully searchable, so say so rather than
+      // uploading whatever subset happens to be in memory.
+      final importProgress = backgroundImportProgress;
+      if (importProgress != null) {
+        final percent = (importProgress.fraction * 100).round().clamp(0, 100);
+        showDesktopToast(
+          context,
+          'This database is still being prepared ($percent%). '
+          'Try Save to cloud again when it finishes.',
+          error: true,
+        );
+        return null;
+      }
+      // A workspace in session-preview state holds only the file's first page
+      // in memory. Enumerate the source PGN itself so the preview is never what
+      // gets uploaded.
+      if (path.toLowerCase().endsWith('.pgn')) {
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Reading the whole local database before saving...',
+          );
+        }
+        try {
+          return await openLocalDatabaseSaveEnumerationFromPgn(
+            path: path,
+            sourceLabel: databaseTitle,
+            search: query.value,
+            sortBy: _localRepositorySortField(sort.value.key),
+            sortDirection: _localRepositorySortDirection(sort.value.dir),
+            filter: gameFilter.value,
+            playerFideId: playerFideId,
+            playerAliases: playerAliases,
+            pageSize: _kLocalDatabaseGameQueryPageSize,
+          );
+        } catch (error) {
+          if (context.mounted) {
+            showDesktopToast(
+              context,
+              'Could not read the whole local database: $error',
+              error: true,
+            );
+          }
+          return null;
+        }
+      }
+      showDesktopToast(
+        context,
+        'Only a single local PGN database can be saved to the cloud.',
+        error: true,
       );
-      if (outcome == null || !outcome.didSave || !context.mounted) return;
-      showDesktopToast(context, outcome.toToastMessage());
+      return null;
+    }
+
+    /// Saves the WHOLE local database to the cloud — every page of the current
+    /// query, not the window that happens to be loaded.
+    ///
+    /// With an active search or filter the save covers everything that filter
+    /// matches across all pages. The dialog pulls one bounded batch at a time,
+    /// so even a 78 000-game database never has to be resident in memory.
+    Future<void> saveVisible() async {
+      final database = selectedDatabase;
+      final path = database?.path;
+      final databaseSourceName =
+          database == null
+              ? localChessDatabaseStemForLabel(databaseTitle)
+              : localChessDatabaseStemForPath(database.path);
+      if (path == null || path.trim().isEmpty) {
+        showDesktopToast(
+          context,
+          'Open a single local database before saving it to the cloud.',
+          error: true,
+        );
+        return;
+      }
+      final source = await openDatabaseSaveSource(path);
+      if (source == null) return;
+      try {
+        if (source.totalCount <= 0) {
+          if (context.mounted) {
+            showDesktopToast(
+              context,
+              'This local database has no entries to save.',
+            );
+          }
+          return;
+        }
+        if (!context.mounted) return;
+        // This workspace *is* one local database, so the cloud copy is a new
+        // cloud database named after the file, created inside the destination
+        // folder the user picks — never a dump of these games into an existing
+        // cloud database, and never a truncated page of them.
+        final outcome = await showLibrarySaveToFolderDialog(
+          context: context,
+          ref: ref,
+          gameSource: source,
+          sourceLabel: databaseTitle,
+          destinationMode: LibrarySaveDestinationMode.cloudOnly,
+          newDatabaseName: databaseSourceName,
+        );
+        if (outcome == null || !outcome.didSave || !context.mounted) return;
+        showDesktopToast(context, outcome.toToastMessage());
+      } finally {
+        source.release();
+      }
     }
 
     useEffect(() {
@@ -779,6 +919,7 @@ class LocalChessFilesView extends HookConsumerWidget {
                             onSortChange: (next) => sort.value = next,
                             onRefresh: onRefreshOverride,
                             onPaste: pasteIntoLocalDatabase,
+                            onSaveToCloud: () => unawaited(saveVisible()),
                             onSelectPath: onSelectPath,
                             totalCount: totalFilteredCount,
                             virtualRows: databaseRows,
@@ -979,7 +1120,7 @@ class _LocalHeader extends StatelessWidget {
             tooltip:
                 onSave == null
                     ? 'No parsed local entries here'
-                    : 'Save visible local entries to your cloud library',
+                    : 'Save the whole local database to your cloud library',
           ),
         ],
       ),
@@ -1270,6 +1411,7 @@ class _LocalGamesTable extends HookConsumerWidget {
     required this.onSortChange,
     required this.onRefresh,
     required this.onPaste,
+    required this.onSaveToCloud,
     required this.onSelectPath,
     required this.totalCount,
     required this.virtualRows,
@@ -1290,6 +1432,9 @@ class _LocalGamesTable extends HookConsumerWidget {
   final ValueChanged<_LocalGamesSortConfig> onSortChange;
   final Future<void> Function()? onRefresh;
   final Future<void> Function() onPaste;
+
+  /// Whole-database cloud save, owned by the view that knows the paging query.
+  final VoidCallback onSaveToCloud;
   final ValueChanged<String> onSelectPath;
   final int totalCount;
   final _LoadedLocalDatabasePages? virtualRows;
@@ -1716,22 +1861,6 @@ class _LocalGamesTable extends HookConsumerWidget {
       );
     }
 
-    Future<void> saveSelectedGames({List<LocalChessGame>? scope}) async {
-      final gamesToSave = scope ?? currentSelectedGames();
-      if (gamesToSave.isEmpty) return;
-      final hydrated = await compute(_hydrateLocalGamesForSave, gamesToSave);
-      if (!context.mounted) return;
-      final outcome = await showLibrarySaveToFolderDialog(
-        context: context,
-        ref: ref,
-        games: hydrated,
-        sourceLabel: databaseTitle,
-        destinationMode: LibrarySaveDestinationMode.cloudOnly,
-      );
-      if (outcome == null || !outcome.didSave || !context.mounted) return;
-      showDesktopToast(context, outcome.toToastMessage());
-    }
-
     Future<void> deleteSelectedGames({List<LocalChessGame>? scope}) async {
       final target = database;
       final gamesToDelete = scope ?? currentSelectedGames();
@@ -1850,7 +1979,12 @@ class _LocalGamesTable extends HookConsumerWidget {
         case _LocalGameRowAction.pasteGames:
           unawaited(onPaste());
         case _LocalGameRowAction.saveToCloud:
-          unawaited(saveSelectedGames(scope: rowScope));
+          // The row action names the same destination as the header action: a
+          // NEW cloud database named after this local database. Saving only the
+          // clicked or selected rows would create a database under the
+          // database's own name holding a fraction of it, so it saves the whole
+          // database just like the header button.
+          onSaveToCloud();
         case _LocalGameRowAction.delete:
           unawaited(deleteSelectedGames(scope: rowScope));
       }
@@ -2090,7 +2224,11 @@ class _LocalGamesTable extends HookConsumerWidget {
 }
 
 const double _kLocalGameRowHeight = 44;
-const int _kLocalDatabaseGameQueryPageSize = 200;
+
+/// Rows per page for the database table. Shared with the whole-database cloud
+/// save so the upload enumerates the table's own paging (`Save to cloud` used
+/// to stop at whatever this page size had loaded).
+const int _kLocalDatabaseGameQueryPageSize = kLocalDatabaseSaveBatchSize;
 const String _kLocalDatabaseTreeStartingFen =
     'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -3618,26 +3756,4 @@ IconData _iconFor(LocalChessNode node) {
       Icons.error_outline_rounded,
     _ => Icons.insert_drive_file_outlined,
   };
-}
-
-List<ChessGame> _hydrateLocalGamesForSave(List<LocalChessGame> games) {
-  final out = <ChessGame>[];
-  for (final game in games) {
-    try {
-      final parsed = ChessGame.fromPgn(game.id, game.rawPgn);
-      // The stored header bag may carry backfilled tags (WhiteTitle/WhiteFed)
-      // the raw PGN never had; keep them when saving to the library.
-      out.add(
-        parsed.copyWith(
-          metadata: <String, dynamic>{
-            ...game.game.metadata,
-            ...parsed.metadata,
-          },
-        ),
-      );
-    } catch (_) {
-      out.add(game.game);
-    }
-  }
-  return out;
 }
