@@ -4894,6 +4894,13 @@ class _BoardPaneContent extends HookConsumerWidget {
         onCopyFen: copyFenAction,
         onSavePgn: savePgnAction,
         onSaveGameToLibrary: () => unawaited(saveGameToLibraryAction()),
+        onSaveSourceDatabaseToCloud:
+            (attachedLibrarySaveOrigin?.sourcePath ??
+                        boardArgs?.librarySaveOrigin?.sourcePath)
+                    ?.toLowerCase()
+                    .endsWith('.pgn') == true
+                ? () => unawaited(saveSourceDatabaseToCloud())
+                : null,
         onOpenBoardSettings: openBoardSettingsTab,
         onOpenPositionSetup: openPositionSetup,
         onClearAnalysis:
@@ -4921,13 +4928,6 @@ class _BoardPaneContent extends HookConsumerWidget {
               headers: pgnHeaders.value,
               eventInfoTrigger: eventInfoTrigger.value,
               onSaveGame: () => unawaited(saveGameToLibraryAction()),
-              onSaveDatabase:
-                  (attachedLibrarySaveOrigin?.sourcePath ??
-                          boardArgs?.librarySaveOrigin?.sourcePath)
-                      ?.toLowerCase()
-                      .endsWith('.pgn') == true
-                  ? () => unawaited(saveSourceDatabaseToCloud())
-                  : null,
               canSaveGame: chessGame.value.mainline.isNotEmpty,
               saveShortcutLabel:
                   shortcutMap
@@ -7651,7 +7651,6 @@ class _RightRailBoardActions extends StatelessWidget {
     required this.eventInfoTrigger,
     required this.onPlayFromHere,
     required this.onSaveGame,
-    this.onSaveDatabase,
     required this.canSaveGame,
     required this.saveShortcutLabel,
     this.onPlayAgain,
@@ -7661,7 +7660,6 @@ class _RightRailBoardActions extends StatelessWidget {
   final int eventInfoTrigger;
   final VoidCallback onPlayFromHere;
   final VoidCallback onSaveGame;
-  final VoidCallback? onSaveDatabase;
   final bool canSaveGame;
   final String? saveShortcutLabel;
   final VoidCallback? onPlayAgain;
@@ -7682,14 +7680,6 @@ class _RightRailBoardActions extends StatelessWidget {
             icon: FIcons.bookmarkPlus,
             onPress: canSaveGame ? onSaveGame : null,
           ),
-          if (onSaveDatabase != null) ...[
-            const SizedBox(width: 4),
-            _RailIconAction(
-              tooltip: 'Save all games from this PGN to cloud',
-              icon: Icons.storage_rounded,
-              onPress: onSaveDatabase,
-            ),
-          ],
           const SizedBox(width: 4),
           if (onPlayAgain != null) ...[
             _RailIconAction(

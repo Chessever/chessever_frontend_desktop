@@ -12,6 +12,7 @@ enum _BoardContextAction {
   copyPgn,
   copyFen,
   saveGameToLibrary,
+  saveSourceDatabaseToCloud,
   savePgn,
   clearAnalysis,
   playFromHere,
@@ -31,6 +32,7 @@ Future<void> showBoardContextMenu(
   required VoidCallback onCopyFen,
   required VoidCallback onSavePgn,
   required VoidCallback onSaveGameToLibrary,
+  VoidCallback? onSaveSourceDatabaseToCloud,
   required VoidCallback onOpenBoardSettings,
   required VoidCallback onOpenPositionSetup,
   required bool canCopyOrSavePgn,
@@ -107,6 +109,12 @@ Future<void> showBoardContextMenu(
         shortcut: hintFor(BoardActionKey.saveGameToLibrary),
         enabled: canCopyOrSavePgn,
       ),
+      if (onSaveSourceDatabaseToCloud != null)
+        const DesktopContextMenuItem(
+          value: _BoardContextAction.saveSourceDatabaseToCloud,
+          icon: Icons.storage_rounded,
+          label: 'Save entire PGN to cloud…',
+        ),
       DesktopContextMenuItem(
         value: _BoardContextAction.savePgn,
         icon: Icons.save_alt_rounded,
@@ -162,6 +170,8 @@ Future<void> showBoardContextMenu(
       onCopyFen();
     case _BoardContextAction.saveGameToLibrary:
       onSaveGameToLibrary();
+    case _BoardContextAction.saveSourceDatabaseToCloud:
+      onSaveSourceDatabaseToCloud?.call();
     case _BoardContextAction.savePgn:
       onSavePgn();
     case _BoardContextAction.clearAnalysis:
