@@ -4,7 +4,8 @@ import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 
-import 'package:dartchess/dartchess.dart';
+import 'package:chessever/desktop/services/engine/pv_san_formatter.dart';
+import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -12,7 +13,8 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
-import 'package:chessever/desktop/services/desktop_subscription_stub.dart' show DesktopSubscriptionNotifier;
+import 'package:chessever/desktop/services/desktop_subscription_stub.dart'
+    show DesktopSubscriptionNotifier;
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/engine/game_report_request_coordinator.dart';
 import 'package:chessever/desktop/services/engine/game_report_book_lookup.dart';
@@ -188,11 +190,15 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         widget.reportCoordinator ??
         GameReportRequestCoordinator(
           accountId: () => Supabase.instance.client.auth.currentUser?.id,
-          isPremium: () => desktopPremiumAccess(ref.read(subscriptionProvider)) == DesktopAccess.allowed,
+          isPremium:
+              () =>
+                  desktopPremiumAccess(ref.read(subscriptionProvider)) ==
+                  DesktopAccess.allowed,
           accountEpoch: () => ref.read(desktopAccountIdentityProvider),
           entitlementKnown: () {
             final value = desktopPremiumAccess(ref.read(subscriptionProvider));
-            return value == DesktopAccess.allowed || value == DesktopAccess.premiumRequired;
+            return value == DesktopAccess.allowed ||
+                value == DesktopAccess.premiumRequired;
           },
         );
     _gameFingerprint = _fingerprint(widget.game);
@@ -242,13 +248,15 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       });
     }
     final report = reportState.report;
-    final reportChanged = !_requesting &&
+    final reportChanged =
+        !_requesting &&
         (_reportOwnerIsCurrent?.call() ?? true) &&
         !identical(report, _lastPublishedReport);
     if (reportChanged) {
       _lastPublishedReport = report;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !identical(_lastPublishedReport, report) ||
+        if (!mounted ||
+            !identical(_lastPublishedReport, report) ||
             !(_reportOwnerIsCurrent?.call() ?? true)) {
           return;
         }
@@ -271,7 +279,9 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     if (!widget.isForegroundTab || _requesting) return;
     final game = widget.game;
     final account = ref.read(desktopAccountIdentityProvider);
-    bool ownsRequest() => mounted && widget.isForegroundTab &&
+    bool ownsRequest() =>
+        mounted &&
+        widget.isForegroundTab &&
         identical(widget.game, game) &&
         ref.read(desktopAccountIdentityProvider) == account;
     _reportOwnerIsCurrent = ownsRequest;
@@ -297,9 +307,14 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           },
           requestUpgrade: () async {
             if (!ownsRequest()) return false;
-            return showDesktopPaywall(context, const DesktopAccessDecision(
-              DesktopAccess.quotaExceeded, DesktopAccessReason.quotaGameReportsPerUtcDay,
-            ), surface: 'lifetime_report_limit');
+            return showDesktopPaywall(
+              context,
+              const DesktopAccessDecision(
+                DesktopAccess.quotaExceeded,
+                DesktopAccessReason.quotaGameReportsPerUtcDay,
+              ),
+              surface: 'lifetime_report_limit',
+            );
           },
           refreshEntitlement: () async {
             await DesktopSubscriptionNotifier.current?.refreshFromBackend(
@@ -341,7 +356,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<DesktopAccountIdentity>(desktopAccountIdentityProvider, (before, after) {
+    ref.listen<DesktopAccountIdentity>(desktopAccountIdentityProvider, (
+      before,
+      after,
+    ) {
       if (before != null && before != after) _reportController.invalidate();
     });
     ref.watch(desktopAccountIdentityProvider);
@@ -351,8 +369,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         settings?.showEngineAnalysis ??
         const EngineSettings().showEngineAnalysis;
     final reportOn = widget.reportVisible;
-    final reportState = (_reportOwnerIsCurrent?.call() ?? true)
-        ? _reportController.state : const GameReportState();
+    final reportState =
+        (_reportOwnerIsCurrent?.call() ?? true)
+            ? _reportController.state
+            : const GameReportState();
     final liveAnalysisPausedForReport = reportOn && reportState.isRunning;
     final runLiveBoardAnalysis = shouldRunLiveBoardAnalysis(
       isForeground: widget.isForegroundTab,
@@ -1564,6 +1584,9 @@ class _PvLineState extends State<_PvLine> {
   String? _cachedFirstUci;
   String _cachedDisplayLine = '';
   List<_PvToken> _cachedTokens = const <_PvToken>[];
+  Timer? _formatTimer;
+  bool _formatInFlight = false;
+  int _formatGeneration = 0;
 
   static final RegExp _pvWhitespace = RegExp(r'\s+');
 
@@ -1592,11 +1615,62 @@ class _PvLineState extends State<_PvLine> {
     _cachedFen = widget.fen;
     _cachedMoves = moves;
     _cachedFirstUci = parts.isEmpty ? null : parts.first.trim();
+    _cachedTokens = const <_PvToken>[];
+    _cachedDisplayLine = moves;
+    _formatGeneration += 1;
+    if (parts.isNotEmpty) _scheduleFormat();
+  }
 
-    final tokens = _tokensFor(widget.fen, parts);
-    _cachedTokens = tokens;
-    _cachedDisplayLine =
-        tokens.isEmpty ? moves : tokens.map((t) => t.san).join(' ');
+  void _scheduleFormat() {
+    // Engine info can arrive many times per second. Keep one pending request
+    // per row and format the latest line, without blocking a Flutter frame.
+    _formatTimer ??= Timer(const Duration(milliseconds: 120), () {
+      _formatTimer = null;
+      if (_formatInFlight) return;
+      unawaited(_formatCurrentLine());
+    });
+  }
+
+  Future<void> _formatCurrentLine() async {
+    _formatInFlight = true;
+    final generation = _formatGeneration;
+    final fen = _cachedFen!;
+    final moves = _cachedMoves!;
+    try {
+      final labels = await compute(formatEnginePvSanLine, {
+        'fen': fen,
+        'moves': moves,
+      });
+      if (!mounted || generation != _formatGeneration) return;
+      final ucis = moves
+          .split(_pvWhitespace)
+          .where((move) => move.isNotEmpty)
+          .toList(growable: false);
+      final tokens = <_PvToken>[];
+      for (var i = 0; i < labels.length && i < ucis.length; i++) {
+        tokens.add(
+          _PvToken(
+            san: labels[i],
+            uci: ucis[i],
+            ucisUpTo: List<String>.unmodifiable(ucis.take(i + 1)),
+          ),
+        );
+      }
+      setState(() {
+        _cachedTokens = tokens;
+        _cachedDisplayLine =
+            tokens.isEmpty ? moves : tokens.map((token) => token.san).join(' ');
+      });
+    } catch (_) {
+      // Leave the raw UCI line visible if worker creation or parsing fails.
+    } finally {
+      _formatInFlight = false;
+      if (mounted &&
+          generation != _formatGeneration &&
+          _cachedFirstUci != null) {
+        _scheduleFormat();
+      }
+    }
   }
 
   /// First UCI move of the line. The bar's `pv.moves` is a space-
@@ -1609,70 +1683,30 @@ class _PvLineState extends State<_PvLine> {
     return _cachedFirstUci;
   }
 
-  /// Render the PV line as numbered SAN ("8.dxc3 Bc5 9.Qe2+ Qe7 10.O-O …")
-  /// — readable, copy-friendly, and matches how desktop database and web analysis boards print
-  /// engine lines. Move numbers are derived from the queried FEN's full-
-  /// move + side-to-move fields (same logic as the position-games table's
-  /// Notation column). Falls back to the raw UCI string when the position
-  /// can't be parsed (e.g. a stale snapshot mid-position-update).
-  /// Walks the UCI line on top of [fen] and emits one [_PvToken] per
-  /// move with the formatted SAN label, the move's UCI, and the
-  /// cumulative UCI list up to (and including) that token. The hover
-  /// preview reads `ucisUpTo` to render the position after the hovered
-  /// move; the visible label uses `san`.
-  List<_PvToken> _tokensFor(String fen, List<String> uciMoves) {
-    try {
-      final position = Chess.fromSetup(Setup.parseFen(fen));
-      final parts = fen.trim().split(_pvWhitespace);
-      final initialFullMove =
-          parts.length >= 6 ? int.tryParse(parts[5]) ?? 1 : 1;
-      final whiteFirst = parts.length >= 2 ? parts[1] == 'w' : true;
-
-      final out = <_PvToken>[];
-      Position cursor = position;
-      var fullMove = initialFullMove;
-      var whiteToMove = whiteFirst;
-      final ucisSoFar = <String>[];
-      for (final raw in uciMoves) {
-        final uci = raw.trim();
-        if (uci.isEmpty) continue;
-        final move = Move.parse(uci);
-        if (move == null) break;
-        if (!cursor.isLegal(move)) break;
-        final san = cursor.makeSan(move).$2;
-        final String label;
-        if (whiteToMove) {
-          label = '$fullMove.$san';
-        } else if (out.isEmpty) {
-          label = '$fullMove…$san';
-        } else {
-          label = san;
-        }
-        ucisSoFar.add(uci);
-        out.add(
-          _PvToken(
-            san: label,
-            uci: uci,
-            ucisUpTo: List<String>.unmodifiable(ucisSoFar),
-          ),
-        );
-        cursor = cursor.playUnchecked(move);
-        if (!whiteToMove) fullMove += 1;
-        whiteToMove = !whiteToMove;
-      }
-      return out;
-    } catch (_) {
-      return uciMoves
-          .map((u) => _PvToken(san: u, uci: u, ucisUpTo: const <String>[]))
-          .toList(growable: false);
-    }
-  }
-
-  String _sanLineString() {
+  Future<String> _sanLineString() async {
     if (_cachedFen != widget.fen || _cachedMoves != widget.pv.moves) {
       _refreshCachedLine();
     }
+    if (_cachedTokens.isEmpty && _cachedFirstUci != null) {
+      final fen = _cachedFen!;
+      final moves = _cachedMoves!;
+      try {
+        final labels = await compute(formatEnginePvSanLine, {
+          'fen': fen,
+          'moves': moves,
+        });
+        return labels.isEmpty ? moves : labels.join(' ');
+      } catch (_) {
+        return moves;
+      }
+    }
     return _cachedDisplayLine;
+  }
+
+  @override
+  void dispose() {
+    _formatTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _showContextMenu(Offset globalPos) async {
@@ -1721,7 +1755,7 @@ class _PvLineState extends State<_PvLine> {
       case _PvAction.play:
         if (firstUci != null) widget.onPlayUci?.call(firstUci);
       case _PvAction.copySan:
-        await Clipboard.setData(ClipboardData(text: _sanLineString()));
+        await Clipboard.setData(ClipboardData(text: await _sanLineString()));
       case _PvAction.copyFirst:
         if (firstUci != null) {
           await Clipboard.setData(ClipboardData(text: firstUci));
