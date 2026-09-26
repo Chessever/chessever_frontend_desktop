@@ -497,6 +497,11 @@ class OpeningExplorerPane extends HookConsumerWidget {
                         child: DesktopOpeningExplorer(
                           onMove: playUci,
                           onShowGames: (uci) => pinnedGamesUci.value = uci,
+                          // The games rail lists the board position's games:
+                          // a move row leads to the next position's, the
+                          // list icon pins the row's move.
+                          warmPositionGames: !exactFenSearch.value,
+                          warmPinnedGames: !exactFenSearch.value,
                         ),
                       ),
                     ),

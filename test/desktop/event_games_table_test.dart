@@ -2379,6 +2379,98 @@ void main() {
     expect(args.databaseGamesPagination!.hasMore, isFalse);
   });
 
+  testWidgets('database games rail checks a saved page 0 before stacking the '
+      'next page on it', (tester) async {
+    const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    final repository =
+        _FakeGamebaseRepository()
+          ..pages[0] = GamebaseSearchQueryResponse(
+            status: 'success',
+            data: [
+              for (var i = 0; i < 24; i++)
+                {
+                  'id': 'fresh-$i',
+                  'white': 'Fresh White $i',
+                  'black': 'Fresh Black $i',
+                  'result': '1-0',
+                  'date': '2026-09-01',
+                },
+            ],
+            metadata: const GamebasePaginationMetadata(
+              pageNumber: 0,
+              pageSize: 24,
+              totalCount: 25,
+              hasMoreValue: true,
+            ),
+          );
+    final savedGames = [
+      for (var i = 0; i < 24; i++)
+        _summary(
+          id: 'saved-$i',
+          roundLabel: '2025',
+          whitePlayer: 'Saved White $i',
+          blackPlayer: 'Saved Black $i',
+        ),
+    ];
+
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          pgn: '',
+          label: 'Database game',
+          whiteName: 'White',
+          blackName: 'Black',
+          initialFen: fen,
+          databaseTitle: 'Start position games',
+          databaseGames: savedGames,
+          databaseGamesPagination: BoardTabDatabaseGamesPagination(
+            query: const GamebasePositionGamesQuery(
+              fen: fen,
+              pageNumber: 0,
+              pageSize: 24,
+              notationPlies: 12,
+            ),
+            nextPageNumber: 1,
+            hasMore: true,
+            exactFenSearch: false,
+            totalCount: 25,
+            // Opened from a copy saved days ago, still being checked.
+            firstPageAskedAt: DateTime.now().subtract(const Duration(days: 3)),
+            firstPageIsSavedCopy: true,
+          ),
+          gameListSelectedId: 'saved-0',
+        ),
+        overrides: [gamebaseRepositoryProvider.overrideWithValue(repository)],
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump();
+    expect(repository.requestedPages, isEmpty);
+
+    await tester.drag(find.byType(ListView), const Offset(0, -1200));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(EventGamesTable)),
+    );
+    final args = container.read(boardTabGameArgsByTabIdProvider).values.single;
+
+    // Page 0 first, then the next page stacked on that answer.
+    expect(repository.requestedPages, [0, 1]);
+    expect(args.databaseGames.map((game) => game.id), [
+      for (var i = 0; i < 24; i++) 'fresh-$i',
+      'gamebase-2',
+    ]);
+    final pagination = args.databaseGamesPagination!;
+    expect(pagination.firstPageIsSavedCopy, isFalse);
+    expect(pagination.nextPageNumber, 2);
+    expect(pagination.hasMore, isFalse);
+  });
+
   testWidgets('Enter opens the highlighted source game from the rail', (
     tester,
   ) async {
@@ -3416,6 +3508,10 @@ class _FakeGamebaseRepository extends GamebaseRepository {
 
   final List<int> requestedPages = <int>[];
 
+  /// Answers by page number, in place of the single default row.
+  final Map<int, GamebaseSearchQueryResponse> pages =
+      <int, GamebaseSearchQueryResponse>{};
+
   @override
   Future<GamebaseSearchQueryResponse> getPositionGames({
     required String fen,
@@ -3437,6 +3533,8 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     int notationPlies = 0,
   }) async {
     requestedPages.add(pageNumber);
+    final page = pages[pageNumber];
+    if (page != null) return page;
     return GamebaseSearchQueryResponse(
       status: 'success',
       data: const [

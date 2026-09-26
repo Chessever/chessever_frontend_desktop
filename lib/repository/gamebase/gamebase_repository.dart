@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:io' show HttpClient;
 
 import 'package:chessever/repository/gamebase/miniatures/miniature_players.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -693,6 +695,95 @@ Map<String, dynamic> buildPositionGamesQueryParameters({
     if (sortDirection != null) 'sortDirection': sortDirection.name,
     if (notationPlies > 0) 'notationPlies': notationPlies,
   };
+}
+
+/// GET `/api/game-position/fen/games` query parameters after FEN normalize.
+@visibleForTesting
+Map<String, dynamic> buildFenPositionGamesQueryParameters({
+  required String fen,
+  String? uci,
+  TimeControl? timeControl,
+  String? playerId,
+  String? color,
+  String? result,
+  int? minRating,
+  int? maxRating,
+  int? yearFrom,
+  int? yearTo,
+  GamebaseSortField? sortBy,
+  GamebaseSortDirection? sortDirection,
+  bool? isOnline,
+  int pageNumber = 0,
+  int pageSize = 20,
+  int notationPlies = 0,
+}) {
+  return <String, dynamic>{
+    'fen': fen,
+    'pageNumber': pageNumber,
+    'pageSize': pageSize,
+    if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
+    ...buildGamebaseExplorerFilterFields(
+      timeControl: timeControl,
+      playerId: playerId,
+      minRating: minRating,
+      maxRating: maxRating,
+      color: color,
+      result: result,
+      yearFrom: yearFrom,
+      yearTo: yearTo,
+      isOnline: isOnline,
+      trimPlayerId: true,
+    ),
+    if (sortBy != null) 'sortBy': sortBy.name,
+    if (sortDirection != null) 'sortDirection': sortDirection.name,
+    if (notationPlies > 0) 'notationPlies': notationPlies,
+  };
+}
+
+/// One HTTP request exactly as a [GamebaseRepository] method sends it: the
+/// method, the full URL (base URL included) and the body or query map.
+///
+/// Headers are deliberately not part of it: they carry the signed-in user's
+/// bearer token, which must never become part of a cache key.
+@immutable
+class GamebaseWireRequest {
+  const GamebaseWireRequest({
+    required this.method,
+    required this.url,
+    required this.payload,
+  });
+
+  /// `GET` or `POST`.
+  final String method;
+  final String url;
+
+  /// The POST body, or the GET query parameters.
+  final Map<String, dynamic> payload;
+
+  /// A stable text form of the whole request, with map keys sorted at every
+  /// level, so two requests that would put the same bytes on the wire always
+  /// produce the same identity whatever order their fields were built in.
+  String get identity => jsonEncode(<String, Object?>{
+    'method': method,
+    'url': url,
+    'payload': _canonicalJson(payload),
+  });
+
+  static Object? _canonicalJson(Object? value) {
+    if (value is Map) {
+      final keys = value.keys.map((key) => key.toString()).toList()..sort();
+      return <String, Object?>{
+        for (final key in keys) key: _canonicalJson(value[key]),
+      };
+    }
+    if (value is Iterable) {
+      return value.map(_canonicalJson).toList(growable: false);
+    }
+    return value;
+  }
+
+  @override
+  String toString() => 'GamebaseWireRequest($method $url $payload)';
 }
 
 class GamebaseRepository {
@@ -2072,6 +2163,125 @@ class GamebaseRepository {
     }
   }
 
+  /// The request [getPositionGames] puts on the wire for these arguments:
+  /// a POST of the body to `/games/query` when the move line survives
+  /// sanitization, otherwise a GET of the query parameters to `/games`.
+  ///
+  /// Anything that caches position-games pages keys them by this, so a page
+  /// is only ever reused for a request that is byte-for-byte the same.
+  GamebaseWireRequest positionGamesRequest({
+    required String fen,
+    List<String> moves = const [],
+    String? uci,
+    TimeControl? timeControl,
+    String? playerId,
+    String? color,
+    String? result,
+    int? minRating,
+    int? maxRating,
+    int? yearFrom,
+    int? yearTo,
+    GamebaseSortField? sortBy,
+    GamebaseSortDirection? sortDirection,
+    bool? isOnline,
+    int pageNumber = 0,
+    int pageSize = 20,
+    int notationPlies = 0,
+  }) {
+    final normalizedFen = _normalizeFenForLookup(fen);
+    final normalizedMoves = _sanitizeMovesForFen(normalizedFen, moves);
+    if (normalizedMoves.isNotEmpty) {
+      return GamebaseWireRequest(
+        method: 'POST',
+        url: '$_baseUrl/api/game-position/games/query',
+        payload: buildPositionGamesQueryBody(
+          fen: normalizedFen,
+          moves: normalizedMoves,
+          uci: uci,
+          timeControl: timeControl,
+          playerId: playerId,
+          color: color,
+          result: result,
+          minRating: minRating,
+          maxRating: maxRating,
+          yearFrom: yearFrom,
+          yearTo: yearTo,
+          sortBy: sortBy,
+          sortDirection: sortDirection,
+          isOnline: isOnline,
+          pageNumber: pageNumber,
+          pageSize: pageSize,
+          notationPlies: notationPlies,
+        ),
+      );
+    }
+    return GamebaseWireRequest(
+      method: 'GET',
+      url: '$_baseUrl/api/game-position/games',
+      payload: buildPositionGamesQueryParameters(
+        fen: normalizedFen,
+        uci: uci,
+        timeControl: timeControl,
+        playerId: playerId,
+        color: color,
+        result: result,
+        minRating: minRating,
+        maxRating: maxRating,
+        yearFrom: yearFrom,
+        yearTo: yearTo,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        isOnline: isOnline,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+        notationPlies: notationPlies,
+      ),
+    );
+  }
+
+  /// The request [getFenPositionGames] puts on the wire for these arguments.
+  GamebaseWireRequest fenPositionGamesRequest({
+    required String fen,
+    String? uci,
+    TimeControl? timeControl,
+    String? playerId,
+    String? color,
+    String? result,
+    int? minRating,
+    int? maxRating,
+    int? yearFrom,
+    int? yearTo,
+    GamebaseSortField? sortBy,
+    GamebaseSortDirection? sortDirection,
+    bool? isOnline,
+    int pageNumber = 0,
+    int pageSize = 20,
+    int notationPlies = 0,
+  }) {
+    return GamebaseWireRequest(
+      method: 'GET',
+      url: '$_baseUrl/api/game-position/fen/games',
+      payload: buildFenPositionGamesQueryParameters(
+        fen: _normalizeFenForLookup(fen),
+        uci: uci,
+        timeControl: timeControl,
+        playerId: playerId,
+        color: color,
+        result: result,
+        minRating: minRating,
+        maxRating: maxRating,
+        yearFrom: yearFrom,
+        yearTo: yearTo,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        isOnline: isOnline,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+        notationPlies: notationPlies,
+      ),
+    );
+  }
+
   /// List example games for a given position (and optionally a specific move from that position).
   ///
   /// Pagination is 0-indexed per the API spec for this endpoint.
@@ -2095,62 +2305,45 @@ class GamebaseRepository {
     int notationPlies = 0,
   }) async {
     try {
-      final normalizedFen = _normalizeFenForLookup(fen);
-      final normalizedMoves = _sanitizeMovesForFen(normalizedFen, moves);
+      final request = positionGamesRequest(
+        fen: fen,
+        moves: moves,
+        uci: uci,
+        timeControl: timeControl,
+        playerId: playerId,
+        color: color,
+        result: result,
+        minRating: minRating,
+        maxRating: maxRating,
+        yearFrom: yearFrom,
+        yearTo: yearTo,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        isOnline: isOnline,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+        notationPlies: notationPlies,
+      );
 
-      if (kDebugMode &&
-          moves.isNotEmpty &&
-          normalizedMoves.length != moves.length) {
-        debugPrint(
-          '[GamebaseRepository] Dropping mismatched move path for games query',
-        );
+      if (kDebugMode && moves.isNotEmpty) {
+        final sentMoves = (request.payload['moves'] as List?) ?? const [];
+        if (sentMoves.length != moves.length) {
+          debugPrint(
+            '[GamebaseRepository] Dropping mismatched move path for games query',
+          );
+        }
       }
 
       final response =
-          normalizedMoves.isNotEmpty
+          request.method == 'POST'
               ? await _dio.post(
-                '$_baseUrl/api/game-position/games/query',
-                data: buildPositionGamesQueryBody(
-                  fen: normalizedFen,
-                  moves: normalizedMoves,
-                  uci: uci,
-                  timeControl: timeControl,
-                  playerId: playerId,
-                  color: color,
-                  result: result,
-                  minRating: minRating,
-                  maxRating: maxRating,
-                  yearFrom: yearFrom,
-                  yearTo: yearTo,
-                  sortBy: sortBy,
-                  sortDirection: sortDirection,
-                  isOnline: isOnline,
-                  pageNumber: pageNumber,
-                  pageSize: pageSize,
-                  notationPlies: notationPlies,
-                ),
+                request.url,
+                data: request.payload,
                 options: _requestOptions(),
               )
               : await _dio.get(
-                '$_baseUrl/api/game-position/games',
-                queryParameters: buildPositionGamesQueryParameters(
-                  fen: normalizedFen,
-                  uci: uci,
-                  timeControl: timeControl,
-                  playerId: playerId,
-                  color: color,
-                  result: result,
-                  minRating: minRating,
-                  maxRating: maxRating,
-                  yearFrom: yearFrom,
-                  yearTo: yearTo,
-                  sortBy: sortBy,
-                  sortDirection: sortDirection,
-                  isOnline: isOnline,
-                  pageNumber: pageNumber,
-                  pageSize: pageSize,
-                  notationPlies: notationPlies,
-                ),
+                request.url,
+                queryParameters: request.payload,
                 options: _requestOptions(),
               );
 
@@ -2192,29 +2385,27 @@ class GamebaseRepository {
     int notationPlies = 0,
   }) async {
     try {
-      final normalizedFen = _normalizeFenForLookup(fen);
+      final request = fenPositionGamesRequest(
+        fen: fen,
+        uci: uci,
+        timeControl: timeControl,
+        playerId: playerId,
+        color: color,
+        result: result,
+        minRating: minRating,
+        maxRating: maxRating,
+        yearFrom: yearFrom,
+        yearTo: yearTo,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        isOnline: isOnline,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+        notationPlies: notationPlies,
+      );
       final response = await _dio.get(
-        '$_baseUrl/api/game-position/fen/games',
-        queryParameters: {
-          'fen': normalizedFen,
-          'pageNumber': pageNumber,
-          'pageSize': pageSize,
-          if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
-          if (playerId != null && playerId.trim().isNotEmpty)
-            'playerId': playerId.trim(),
-          if (timeControl != null)
-            'timeControl': timeControl.name.toUpperCase(),
-          if (minRating != null) 'minRating': minRating,
-          if (maxRating != null) 'maxRating': maxRating,
-          if (color != null) 'color': color,
-          if (result != null) 'result': result,
-          if (yearFrom != null) 'yearFrom': yearFrom,
-          if (yearTo != null) 'yearTo': yearTo,
-          if (isOnline != null) 'isOnline': isOnline,
-          if (sortBy != null) 'sortBy': sortBy.name,
-          if (sortDirection != null) 'sortDirection': sortDirection.name,
-          if (notationPlies > 0) 'notationPlies': notationPlies,
-        },
+        request.url,
+        queryParameters: request.payload,
         options: _requestOptions(),
       );
 
@@ -2256,6 +2447,15 @@ final gamebaseRepositoryProvider = Provider<GamebaseRepository>((ref) {
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 30),
     ),
+  );
+  // Dio's own adapter drops an idle connection after 3 s, so a reader who
+  // pauses between positions pays a fresh TCP + TLS handshake (plus the
+  // proxy hop) on the next explorer request. A minute of idle keep-alive
+  // covers ordinary reading pauses; the socket still closes the moment the
+  // server closes its end.
+  dio.httpClientAdapter = IOHttpClientAdapter(
+    createHttpClient:
+        () => HttpClient()..idleTimeout = const Duration(seconds: 60),
   );
   return GamebaseRepository(dio);
 });

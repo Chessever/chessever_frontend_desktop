@@ -457,7 +457,7 @@ void main() {
 
     setHarnessState!(() => active = true);
     await tester.pump();
-    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(kDesktopPositionGamesNetworkDwell);
     await tester.pumpAndSettle();
 
     expect(repository.positionGameCalls, hasLength(1));
@@ -473,7 +473,8 @@ void main() {
   });
 
   testWidgets(
-    'keeps previous rows visible while refreshing the next position',
+    'keeps previous rows visible, marked as not current, until the next '
+    'position answers',
     (tester) async {
       final repository = _DeferredGamebaseRepository();
       var fen = _initialFen;
@@ -522,11 +523,13 @@ void main() {
       setHarnessState!(() => fen = afterE4);
       await tester.pump();
 
+      // The start position's rows stay readable, under the progress line:
+      // they are not this position's answer.
       expect(repository.requests, hasLength(1));
       expect(find.text('Carlsen'), findsOneWidget);
-      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
 
-      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(kDesktopPositionGamesNetworkDwell);
 
       expect(repository.requests, hasLength(2));
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
@@ -593,15 +596,20 @@ void main() {
     final afterE5 = afterE4.play(NormalMove.fromUci('e7e5'));
     final afterNf3 = afterE5.play(NormalMove.fromUci('g1f3')).fen;
 
+    // Stepping through a line faster than the dwell asks for nothing on the
+    // way; the position the reader stops on is asked for once.
+    const step = Duration(milliseconds: 300);
     setHarnessState!(() => fen = afterE4.fen);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump(step);
     setHarnessState!(() => fen = afterE5.fen);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump(step);
     setHarnessState!(() => fen = afterNf3);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 1999));
+    await tester.pump(
+      kDesktopPositionGamesNetworkDwell - const Duration(milliseconds: 1),
+    );
 
     expect(repository.requests, hasLength(1));
 
