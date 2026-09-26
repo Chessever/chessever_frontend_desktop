@@ -43,6 +43,8 @@ import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_database_save_source.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
     hide mergeGameReportAnnotationsForGif;
@@ -3133,6 +3135,41 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     Future<void> saveGameToLibraryAction() =>
         runBoardSave(saveGameToLibraryActionImpl);
+    Future<void> saveSourceDatabaseToCloudImpl() async {
+      final path =
+          attachedLibrarySaveOrigin?.sourcePath ??
+          boardArgs?.librarySaveOrigin?.sourcePath;
+      if (path == null || !path.toLowerCase().endsWith('.pgn')) return;
+      showToast('Reading all games in the PGN...');
+      LocalDatabaseSaveEnumeration? source;
+      try {
+        source = await openLocalDatabaseSaveEnumerationFromPgn(path: path);
+        if (!context.mounted) return;
+        if (source.totalCount == 0) {
+          showToast('This PGN has no games to save.', error: true);
+          return;
+        }
+        final outcome = await showLibrarySaveToFolderDialog(
+          context: context,
+          ref: ref,
+          gameSource: source,
+          sourceLabel: io.File(path).uri.pathSegments.last,
+          destinationMode: LibrarySaveDestinationMode.cloudOnly,
+          newDatabaseName: localChessDatabaseStemForPath(path),
+        );
+        if (context.mounted && outcome != null && outcome.didSave) {
+          showToast(outcome.toToastMessage());
+        }
+      } catch (error) {
+        if (context.mounted) {
+          showToast('Could not save the whole PGN: $error', error: true);
+        }
+      } finally {
+        source?.release();
+      }
+    }
+    Future<void> saveSourceDatabaseToCloud() =>
+        runBoardSave(saveSourceDatabaseToCloudImpl);
     Future<void> savePgnAction() => runBoardSave(savePgnActionImpl);
 
     void setMoveComment(ChessMovePointer target, String? comment) {
@@ -4884,6 +4921,13 @@ class _BoardPaneContent extends HookConsumerWidget {
               headers: pgnHeaders.value,
               eventInfoTrigger: eventInfoTrigger.value,
               onSaveGame: () => unawaited(saveGameToLibraryAction()),
+              onSaveDatabase:
+                  (attachedLibrarySaveOrigin?.sourcePath ??
+                          boardArgs?.librarySaveOrigin?.sourcePath)
+                      ?.toLowerCase()
+                      .endsWith('.pgn') == true
+                  ? () => unawaited(saveSourceDatabaseToCloud())
+                  : null,
               canSaveGame: chessGame.value.mainline.isNotEmpty,
               saveShortcutLabel:
                   shortcutMap
@@ -7607,6 +7651,7 @@ class _RightRailBoardActions extends StatelessWidget {
     required this.eventInfoTrigger,
     required this.onPlayFromHere,
     required this.onSaveGame,
+    this.onSaveDatabase,
     required this.canSaveGame,
     required this.saveShortcutLabel,
     this.onPlayAgain,
@@ -7616,6 +7661,7 @@ class _RightRailBoardActions extends StatelessWidget {
   final int eventInfoTrigger;
   final VoidCallback onPlayFromHere;
   final VoidCallback onSaveGame;
+  final VoidCallback? onSaveDatabase;
   final bool canSaveGame;
   final String? saveShortcutLabel;
   final VoidCallback? onPlayAgain;
@@ -7636,6 +7682,14 @@ class _RightRailBoardActions extends StatelessWidget {
             icon: FIcons.bookmarkPlus,
             onPress: canSaveGame ? onSaveGame : null,
           ),
+          if (onSaveDatabase != null) ...[
+            const SizedBox(width: 4),
+            _RailIconAction(
+              tooltip: 'Save all games from this PGN to cloud',
+              icon: Icons.storage_rounded,
+              onPress: onSaveDatabase,
+            ),
+          ],
           const SizedBox(width: 4),
           if (onPlayAgain != null) ...[
             _RailIconAction(

@@ -342,9 +342,8 @@ class LocalChessFilesView extends HookConsumerWidget {
         Object.hashAll(playerAliases),
       ],
     );
-    // One paged query backs both the table's page loader and the
-    // whole-database cloud save, so "Save to cloud" enumerates exactly the rows
-    // the user is looking at — all of them, not the loaded window.
+    // The table keeps its search and filters. Cloud save builds a separate
+    // unfiltered page loader so a one-row view cannot upload just one game.
     final databasePageLoad = useMemoized<LocalDatabasePageLoad?>(() {
       final database = selectedDatabase;
       if (database == null ||
@@ -441,16 +440,32 @@ class LocalChessFilesView extends HookConsumerWidget {
       onSelectPath(path);
     }
 
-    /// Builds the whole-database save source, or explains why it cannot.
+    /// Builds an unfiltered whole-database save source, or explains why it cannot.
     ///
     /// Never returns a source that only covers a loaded page: an unfinished
     /// index is reported as such, and a session-only preview is replaced by an
     /// enumeration read straight from the source PGN.
     Future<LibrarySaveGameSource?> openDatabaseSaveSource(String path) async {
-      // Preferred: the exact paged query the table reads, walked through every
-      // page instead of the loaded window.
-      final loadPage = databasePageLoad;
-      if (loadPage != null) {
+      // The table query may contain a search or player filter. Save to cloud
+      // promises the whole database, so page the source without those filters.
+      if (databasePageLoad != null && selectedDatabase != null) {
+        final descriptor = selectedDatabase.rawPgnCatalog;
+        final LocalDatabasePageLoad loadPage =
+            descriptor != null
+                ? (page) => localRawPgnCatalogPage(
+                  LocalRawPgnCatalogPageQuery(
+                    descriptor: descriptor,
+                    pageNumber: page,
+                    pageSize: _kLocalDatabaseGameQueryPageSize,
+                  ),
+                )
+                : (page) => ref
+                    .read(localChessDatabaseRepositoryProvider)
+                    .localDatabaseGamesPage(
+                      databasePath: path,
+                      pageNumber: page,
+                      pageSize: _kLocalDatabaseGameQueryPageSize,
+                    );
         // Read page 0 before handing the source over: the save's total must be
         // the query's own answer, never what the table happens to have loaded
         // (clicking Save to cloud before the first page lands must not shrink
@@ -513,12 +528,6 @@ class LocalChessFilesView extends HookConsumerWidget {
           return await openLocalDatabaseSaveEnumerationFromPgn(
             path: path,
             sourceLabel: databaseTitle,
-            search: query.value,
-            sortBy: _localRepositorySortField(sort.value.key),
-            sortDirection: _localRepositorySortDirection(sort.value.dir),
-            filter: gameFilter.value,
-            playerFideId: playerFideId,
-            playerAliases: playerAliases,
             pageSize: _kLocalDatabaseGameQueryPageSize,
           );
         } catch (error) {
@@ -540,12 +549,8 @@ class LocalChessFilesView extends HookConsumerWidget {
       return null;
     }
 
-    /// Saves the WHOLE local database to the cloud — every page of the current
-    /// query, not the window that happens to be loaded.
-    ///
-    /// With an active search or filter the save covers everything that filter
-    /// matches across all pages. The dialog pulls one bounded batch at a time,
-    /// so even a 78 000-game database never has to be resident in memory.
+    /// Saves every game in the local database, regardless of table filters.
+    /// The dialog pulls one bounded batch at a time.
     Future<void> saveVisible() async {
       final database = selectedDatabase;
       final path = database?.path;
