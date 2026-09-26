@@ -1061,7 +1061,7 @@ class _SegmentBar extends ConsumerWidget {
         onNextGame != null;
     return Container(
       height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         color: kBlack2Color,
         border: Border(top: BorderSide(color: kDividerColor)),

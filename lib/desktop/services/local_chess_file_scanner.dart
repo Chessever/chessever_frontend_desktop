@@ -111,6 +111,23 @@ String localChessDatabaseDisplayNameForPath(String path) {
   return '${_polishLocalDatabaseStem(stem)}$extension';
 }
 
+/// Cloud database name for a local PGN database: the actual file name with
+/// the trailing `.pgn` removed (`sadler1.pgn` -> `sadler1`). The local display
+/// label may change capitalization, but saving must keep the user's name.
+///
+/// Saving a local database to the cloud creates a cloud database under this
+/// name, so it must be derived from the file, never from a tab label.
+String localChessDatabaseStemForPath(String path) =>
+    localChessDatabaseStemForLabel(_basename(path));
+
+/// Same derivation for a caller that only holds the displayed label.
+String localChessDatabaseStemForLabel(String label) {
+  final trimmed = label.trim();
+  final dot = trimmed.lastIndexOf('.');
+  if (dot <= 0) return trimmed;
+  return trimmed.substring(0, dot).trim();
+}
+
 String localChessDatabaseDisplayNameForPaths(List<String> paths) {
   final cleaned = paths
       .map((path) => path.trim())
@@ -4356,7 +4373,8 @@ String _displayExtensionForBasename(String base) {
 bool _shouldPolishLocalDatabaseStem(String stem) {
   if (stem.isEmpty) return false;
   if (!RegExp(r'[a-z]').hasMatch(stem)) return false;
-  return RegExp(r'[_\-\s]|\d').hasMatch(stem);
+  // A numeric suffix is part of a file's name, not a word separator.
+  return RegExp(r'[_\-\s]').hasMatch(stem);
 }
 
 String _polishLocalDatabaseStem(String stem) {

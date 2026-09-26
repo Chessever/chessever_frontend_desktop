@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:chessever/repository/library/cloud_pgn_date.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
 import 'package:chessever/repository/library/models/shared_book_preview.dart';
@@ -586,7 +587,9 @@ class LibraryRepository extends BaseRepository {
                 .update({
                   'title': analysis.title,
                   'folder_id': analysis.folderId,
-                  'chess_game': analysis.chessGame.toJson(),
+                  // Same cloud-safety rule as the insert payload: an
+                  // impossible calendar date must never reach the server.
+                  'chess_game': cloudSafeChessGameJson(analysis.chessGame),
                   'analysis_state': analysis.analysisState,
                   'variation_comments': analysis.variationComments,
                   'move_nags': analysis.moveNags,
