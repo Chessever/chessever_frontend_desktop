@@ -14,6 +14,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
 import 'package:chessever/desktop/services/local_database_save_source.dart';
@@ -356,33 +357,51 @@ class LocalChessFilesView extends HookConsumerWidget {
       final filter = gameFilter.value;
       final descriptor = database.rawPgnCatalog;
       if (descriptor != null) {
-        return (int page) => localRawPgnCatalogPage(
-          LocalRawPgnCatalogPageQuery(
-            descriptor: descriptor,
-            search: search,
-            sortBy: _localRepositorySortField(querySort.key),
-            sortDirection: _localRepositorySortDirection(querySort.dir),
-            filter: filter,
-            playerFideId: playerFideId,
-            playerAliases: playerAliases,
-            pageNumber: page,
-            pageSize: _kLocalDatabaseGameQueryPageSize,
-          ),
-        );
+        return (int page) async {
+          final clock = Stopwatch()..start();
+          final result = await localRawPgnCatalogPage(
+            LocalRawPgnCatalogPageQuery(
+              descriptor: descriptor,
+              search: search,
+              sortBy: _localRepositorySortField(querySort.key),
+              sortDirection: _localRepositorySortDirection(querySort.dir),
+              filter: filter,
+              playerFideId: playerFideId,
+              playerAliases: playerAliases,
+              pageNumber: page,
+              pageSize: _kLocalDatabaseGameQueryPageSize,
+            ),
+          );
+          LocalPgnPerformanceLog.event(
+            'table_page',
+            'route=catalog page=$page elapsedMs=${clock.elapsedMilliseconds} '
+                'rows=${result?.games.length ?? 0}',
+          );
+          return result;
+        };
       }
       if (!hasSearchIndex) return null;
       final repository = ref.read(localChessDatabaseRepositoryProvider);
-      return (int page) => repository.localDatabaseGamesPage(
-        databasePath: database.path,
-        search: search,
-        sortBy: _localRepositorySortField(querySort.key),
-        sortDirection: _localRepositorySortDirection(querySort.dir),
-        filter: filter,
-        playerFideId: playerFideId,
-        playerAliases: playerAliases,
-        pageNumber: page,
-        pageSize: _kLocalDatabaseGameQueryPageSize,
-      );
+      return (int page) async {
+        final clock = Stopwatch()..start();
+        final result = await repository.localDatabaseGamesPage(
+          databasePath: database.path,
+          search: search,
+          sortBy: _localRepositorySortField(querySort.key),
+          sortDirection: _localRepositorySortDirection(querySort.dir),
+          filter: filter,
+          playerFideId: playerFideId,
+          playerAliases: playerAliases,
+          pageNumber: page,
+          pageSize: _kLocalDatabaseGameQueryPageSize,
+        );
+        LocalPgnPerformanceLog.event(
+          'table_page',
+          'route=index page=$page elapsedMs=${clock.elapsedMilliseconds} '
+              'rows=${result?.games.length ?? 0}',
+        );
+        return result;
+      };
     }, [databaseQueryKey]);
     final pageLoader = useMemoized(
       () =>
@@ -3535,6 +3554,13 @@ void _openLocalGame(
   required LocalBoardGamesSource? boardSource,
   Future<void> Function()? onRefresh,
 }) {
+  final clock = Stopwatch()..start();
+  LocalPgnPerformanceLog.watchFrames('game_open');
+  LocalPgnPerformanceLog.event(
+    'game_open_start',
+    'index=${localGame.indexInFile} inlinePgn=${localGame.hasInlineRawPgn} '
+        'contextRows=${databaseGames.length}',
+  );
   if (boardSource == null) {
     showDesktopToast(
       context,
@@ -3558,6 +3584,10 @@ void _openLocalGame(
       boardSource: boardSource,
     );
   } on Object catch (error) {
+    LocalPgnPerformanceLog.event(
+      'game_open_failed',
+      'elapsedMs=${clock.elapsedMilliseconds} errorType=${error.runtimeType}',
+    );
     // Never a silent no-op: name the record, state the reason, offer the
     // repair. Wording comes from the shared local-PGN failure vocabulary.
     showDesktopToast(
@@ -3574,7 +3604,15 @@ void _openLocalGame(
     );
     return;
   }
-  openBoardGameTab(ref, args, reuseExisting: false, focus: focus);
+  LocalPgnPerformanceLog.event(
+    'game_args_ready',
+    'elapsedMs=${clock.elapsedMilliseconds} pgnChars=${args.pgn.length}',
+  );
+  final tabId = openBoardGameTab(ref, args, reuseExisting: false, focus: focus);
+  LocalPgnPerformanceLog.event(
+    'game_tab_opened',
+    'elapsedMs=${clock.elapsedMilliseconds} opened=${tabId.isNotEmpty}',
+  );
 }
 
 PlayerOpeningTreeIndex _localOpeningTreeHandle(PlayerOpeningTreeIndex index) {
@@ -3615,7 +3653,20 @@ BoardTabGameArgs _boardArgsForLocalGame(
     return value > 0 ? value : null;
   }
 
+  final readClock = Stopwatch()..start();
   final pgn = localGame.rawPgn;
+  LocalPgnPerformanceLog.event(
+    'record_read',
+    'index=${localGame.indexInFile} elapsedMs=${readClock.elapsedMilliseconds} '
+        'pgnChars=${pgn.length}',
+  );
+  final identityClock = Stopwatch()..start();
+  final fingerprint = localChessPgnFingerprint(pgn);
+  final revision = localPgnRecordRevision(pgn);
+  LocalPgnPerformanceLog.event(
+    'record_identity',
+    'index=${localGame.indexInFile} elapsedMs=${identityClock.elapsedMilliseconds}',
+  );
   return BoardTabGameArgs(
     pgn: pgn,
     label: localGame.title,
@@ -3643,8 +3694,8 @@ BoardTabGameArgs _boardArgsForLocalGame(
       sourcePath: localGame.sourcePath,
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
-      sourcePgnFingerprint: localChessPgnFingerprint(pgn),
-      sourceRecordRevision: localPgnRecordRevision(pgn),
+      sourcePgnFingerprint: fingerprint,
+      sourceRecordRevision: revision,
       title: localGame.title,
     ),
   );
@@ -3677,7 +3728,23 @@ List<LocalChessGame> _localBoardContextGames(
 List<TournamentGameSummary> _summariesFromLocalGames(
   List<LocalChessGame> games,
 ) {
-  return [for (final game in games) _summaryFromLocalGame(game)];
+  final clock = Stopwatch()..start();
+  final summaries = <TournamentGameSummary>[];
+  for (final game in games) {
+    final rowClock = Stopwatch()..start();
+    summaries.add(_summaryFromLocalGame(game));
+    if (rowClock.elapsedMilliseconds >= 16) {
+      LocalPgnPerformanceLog.event(
+        'context_row',
+        'index=${game.indexInFile} elapsedMs=${rowClock.elapsedMilliseconds}',
+      );
+    }
+  }
+  LocalPgnPerformanceLog.event(
+    'context_rows',
+    'rows=${games.length} elapsedMs=${clock.elapsedMilliseconds}',
+  );
+  return summaries;
 }
 
 TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {

@@ -12,6 +12,7 @@ import 'package:chessever/desktop/services/local_pgn_rename.dart';
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -257,6 +258,13 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     LocalLibraryEntryMetadata? registryMetadata,
     bool forceRefresh = false,
   }) async {
+    final openClock = Stopwatch()..start();
+    LocalPgnPerformanceLog.event(
+      'open_start',
+      'paths=${paths.length} extension=${paths.isEmpty ? '' : p.extension(paths.first)} '
+          'forceRefresh=$forceRefresh',
+    );
+    LocalPgnPerformanceLog.watchFrames('library_open');
     final token = Object();
     _scanToken = token;
     _invalidateTreeBuilds();
@@ -298,6 +306,10 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         error: null,
         warning: null,
       );
+      LocalPgnPerformanceLog.event(
+        'open_complete',
+        'route=session elapsedMs=${openClock.elapsedMilliseconds}',
+      );
       return true;
     }
     // Do NOT enter the scanning state up front. A source that was already
@@ -307,6 +319,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     // flips `isScanning` on below.
     state = state.copyWith(error: null, warning: null);
     try {
+      final cacheClock = Stopwatch()..start();
       final cached =
           forceRefresh
               ? null
@@ -322,6 +335,10 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
                   );
                 },
               );
+      LocalPgnPerformanceLog.event(
+        'cache_lookup',
+        'elapsedMs=${cacheClock.elapsedMilliseconds} hit=${cached != null}',
+      );
       if (_scanToken != token) return false;
 
       LocalChessSource? source = cached;
@@ -330,10 +347,17 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         final repository = localDatabaseRepository;
         final immediatePgnPath = await _immediatePgnCatalogPath(paths);
         if (repository != null && immediatePgnPath != null) {
+          final catalogClock = Stopwatch()..start();
           final preview = await _scanPgnCatalog(
             immediatePgnPath,
             sourceLabel: sourceLabel,
             maxGames: _immediatePgnCatalogGameLimit,
+          );
+          final scannedFile = preview.nodeForPath(immediatePgnPath);
+          LocalPgnPerformanceLog.event(
+            'catalog_scan',
+            'elapsedMs=${catalogClock.elapsedMilliseconds} '
+                'games=${scannedFile is LocalChessFileNode ? scannedFile.gameCount : 0}',
           );
           if (_scanToken != token) return false;
           final previewOutcome = _localChessSourceOpenOutcome(paths, preview);
@@ -373,10 +397,20 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
             warning: previewOutcome.warning,
             sessionSources: _sessionSourcesWith(openedSource),
           );
+          LocalPgnPerformanceLog.event(
+            'source_publish',
+            'route=catalog elapsedMs=${openClock.elapsedMilliseconds}',
+          );
+          final registryClock = Stopwatch()..start();
           await _registerAllBestEffort(
             paths,
             source: openedSource,
             registryMetadata: registryMetadata,
+          );
+          LocalPgnPerformanceLog.event(
+            'open_complete',
+            'route=catalog elapsedMs=${openClock.elapsedMilliseconds} '
+                'registryMs=${registryClock.elapsedMilliseconds}',
           );
           return true;
         }
@@ -430,6 +464,15 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         warning: outcome.warning,
         sessionSources: _sessionSourcesWith(source),
       );
+      LocalPgnPerformanceLog.event(
+        'source_publish',
+        'route=${cached != null
+                ? 'cache'
+                : imported != null
+                ? 'import'
+                : 'scan'} '
+            'elapsedMs=${openClock.elapsedMilliseconds}',
+      );
       await _registerAllBestEffort(
         paths,
         source: source,
@@ -438,8 +481,21 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       if (cached == null && imported == null) {
         await _persistSourceBestEffort(source);
       }
+      LocalPgnPerformanceLog.event(
+        'open_complete',
+        'route=${cached != null
+                ? 'cache'
+                : imported != null
+                ? 'import'
+                : 'scan'} '
+            'elapsedMs=${openClock.elapsedMilliseconds}',
+      );
       return true;
     } catch (e) {
+      LocalPgnPerformanceLog.event(
+        'open_failed',
+        'elapsedMs=${openClock.elapsedMilliseconds} errorType=${e.runtimeType}',
+      );
       if (_scanToken != token) return false;
       state = state.copyWith(
         isScanning: false,

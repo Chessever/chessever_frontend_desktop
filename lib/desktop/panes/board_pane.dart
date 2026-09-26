@@ -44,6 +44,7 @@ import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
 import 'package:chessever/desktop/services/local_database_save_source.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
@@ -1207,10 +1208,30 @@ class _BoardPaneContent extends HookConsumerWidget {
           canonicalLocalStateAlreadyClean) {
         return;
       }
+      final logLocalOpen =
+          kDebugMode &&
+          boardArgs?.librarySaveOrigin?.kind ==
+              BoardTabLibrarySaveOriginKind.localPgnFile;
+      final applyClock = logLocalOpen ? (Stopwatch()..start()) : null;
+      final parseClock = logLocalOpen ? (Stopwatch()..start()) : null;
       final ChessGame parsed;
       try {
         parsed = ChessGame.fromPgn('', trimmed);
+        if (logLocalOpen) {
+          LocalPgnPerformanceLog.event(
+            'board_parse',
+            'elapsedMs=${parseClock!.elapsedMilliseconds} '
+            'pgnChars=${trimmed.length} mainline=${parsed.mainline.length}',
+          );
+        }
       } catch (e) {
+        if (logLocalOpen) {
+          LocalPgnPerformanceLog.event(
+            'board_parse_failed',
+            'elapsedMs=${parseClock!.elapsedMilliseconds} '
+            'errorType=${e.runtimeType}',
+          );
+        }
         // Silent failure swallows the empty-notation bug if a malformed
         // PGN ever lands here (e.g. truncated row, corrupted stream
         // payload). Surface it in debug builds so we can spot which
@@ -1439,6 +1460,13 @@ class _BoardPaneContent extends HookConsumerWidget {
         hasUnseenMoves.value = true;
       } else if (landedOnTip) {
         hasUnseenMoves.value = false;
+      }
+      if (logLocalOpen) {
+        LocalPgnPerformanceLog.event(
+          'board_apply_complete',
+          'elapsedMs=${applyClock!.elapsedMilliseconds} '
+          'mainline=${game.mainline.length}',
+        );
       }
     }
 
