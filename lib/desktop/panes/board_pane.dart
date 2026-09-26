@@ -84,6 +84,7 @@ import 'package:chessever/desktop/widgets/board_actions_popover.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_panel.dart';
 import 'package:chessever/desktop/services/play/play_from_here.dart';
 import 'package:chessever/desktop/widgets/board_context_menu.dart';
+import 'package:chessever/desktop/widgets/board_save_scope_dialog.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
@@ -3161,10 +3162,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
     }
 
-    Future<void> saveGameToLibraryAction() =>
-        runBoardSave(saveGameToLibraryActionImpl);
-    Future<void> saveSourceDatabaseToCloudImpl() async {
+    Future<void> saveSourceDatabaseToCloudImpl({String? sourcePath}) async {
       final path =
+          sourcePath ??
           attachedLibrarySaveOrigin?.sourcePath ??
           boardArgs?.librarySaveOrigin?.sourcePath;
       if (path == null || !path.toLowerCase().endsWith('.pgn')) return;
@@ -3196,6 +3196,27 @@ class _BoardPaneContent extends HookConsumerWidget {
         source?.release();
       }
     }
+    Future<void> saveGameToLibraryAction() => runBoardSave(() async {
+      final sourceOrigin = boardArgs?.librarySaveOrigin;
+      final sourcePath = sourceOrigin?.kind ==
+              BoardTabLibrarySaveOriginKind.localPgnFile
+          ? sourceOrigin?.sourcePath
+          : null;
+      if (sourcePath != null && sourcePath.toLowerCase().endsWith('.pgn')) {
+        final saveCompletion = captureBoardSaveCompletion();
+        final scope = await showBoardSaveScopeDialog(context);
+        if (!context.mounted ||
+            !saveCompletion.ownsActivation() ||
+            scope == null) {
+          return;
+        }
+        if (scope == BoardSaveScope.wholePgnFile) {
+          await saveSourceDatabaseToCloudImpl(sourcePath: sourcePath);
+          return;
+        }
+      }
+      await saveGameToLibraryActionImpl();
+    });
     Future<void> saveSourceDatabaseToCloud() =>
         runBoardSave(saveSourceDatabaseToCloudImpl);
     Future<void> savePgnAction() => runBoardSave(savePgnActionImpl);
