@@ -149,8 +149,8 @@ class _CbhConvertDialogState extends State<CbhConvertDialog> {
                 if (_detailsExpanded) ...[
                   const SizedBox(height: 8),
                   const Text(
-                    'Classic CBH with companion files. Names use Windows-1252; comments use UTF-8 when valid, otherwise Windows-1252.\n\n'
-                    'Some ChessBase fields are retained as raw metadata, not displayed. Media is not included. Invalid or unverified records stop conversion; no records are skipped.\n\n'
+                    'Classic CBH with all seven companion files. The current Dart decoder accepts ordinary games from the standard starting position. Databases containing annotations, variations, guiding text, custom positions, or Chess960 are refused in full.\n\n'
+                    'No records are skipped. Unsupported text bytes and invalid moves stop conversion; the original files stay unchanged.\n\n'
                     'Copies go to Converted Databases. Edited copies are never overwritten.',
                     style: TextStyle(fontSize: 12, color: Color(0xFFA1A1AA)),
                   ),
