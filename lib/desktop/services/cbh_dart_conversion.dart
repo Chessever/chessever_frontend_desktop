@@ -11,8 +11,8 @@ import 'cbh_index_reader.dart';
 import 'cbh_metadata_reader.dart';
 import 'cbh_move_decoder.dart';
 
-/// Converts the currently verified subset of classic CBH directly in Dart.
-/// No output is published when any record uses an unsupported construct.
+/// Converts classic CBH directly in Dart. Annotation frames are kept byte for
+/// byte in PGN headers, including fields with no PGN rendering.
 final class CbhDartConversion {
   CbhDartConversion({
     required this.destination,
@@ -23,6 +23,7 @@ final class CbhDartConversion {
   final Directory destination;
   final bool Function()? isCancelled;
   final void Function(int done, int total)? onProgress;
+  int preservedAnnotationRecords = 0;
 
   Future<File> convert(String sourcePath) async {
     _checkCancellation();
@@ -34,6 +35,7 @@ final class CbhDartConversion {
     final frames = CbhFrameReader(files);
     final metadata = CbhMetadataReader(files);
     final gameText = StringBuffer();
+    preservedAnnotationRecords = 0;
     for (final record in files.records) {
       _checkCancellation();
       if (record.guidingText) {
@@ -41,18 +43,24 @@ final class CbhDartConversion {
           'Record ${record.ordinal + 1}: guiding text is not decoded yet.',
         );
       }
-      if (record.annotationOffset != 0) {
-        throw CbhFormatException(
-          'Record ${record.ordinal + 1}: annotations are not decoded yet.',
-        );
-      }
       final frame = await frames.game(record);
+      final annotations = await frames.annotations(record);
+      if (annotations.raw.isNotEmpty) preservedAnnotationRecords++;
       final info = await metadata.read(record);
-      final san = CbhMoveDecoder().decode(frame);
-      final pgn = _pgn(record, info, san);
+      final decoder = CbhMoveDecoder();
+      final san = decoder.decode(frame);
+      decoder.applyAnnotations(annotations);
+      final pgn = _pgn(
+        record,
+        info,
+        decoder.movetext,
+        decoder.startFen,
+        annotations.raw,
+      );
       try {
         final parsed = ChessGame.fromPgn('cbh-${record.ordinal}', pgn);
-        if (parsed.mainline.length != san.length) {
+        if (parsed.mainline.length != san.length ||
+            _parsedMoveCount(parsed.mainline) != decoder.decodedMoveCount) {
           throw const FormatException('PGN move count changed.');
         }
       } on Object {
@@ -111,7 +119,9 @@ final class CbhDartConversion {
   static String _pgn(
     CbhIndexRecord record,
     CbhGameMetadata metadata,
-    List<String> san,
+    String movetext,
+    String? startFen,
+    List<int> annotationFrame,
   ) {
     final result = switch (record.resultCode) {
       0 || 4 => '0-1',
@@ -138,6 +148,13 @@ final class CbhDartConversion {
       'ChessBaseEventRecord': base64Encode(metadata.eventRecord),
       'ChessBaseAnnotatorRecord': base64Encode(metadata.annotatorRecord),
       'ChessBaseSourceRecord': base64Encode(metadata.sourceRecord),
+      if (startFen != null) 'SetUp': '1',
+      if (startFen != null) 'FEN': startFen,
+      if (annotationFrame.isNotEmpty)
+        'ChessBaseAnnotationFrame': base64Encode(annotationFrame),
+      if (annotationFrame.isNotEmpty)
+        'ChessBasePreservation':
+            'v1; original annotation frame retained; unrendered fields remain in source address order',
       if (metadata.eventDate.year != 0 ||
           metadata.eventDate.month != 0 ||
           metadata.eventDate.day != 0)
@@ -182,11 +199,7 @@ final class CbhDartConversion {
       text.writeln('[${entry.key} "${_escape(entry.value)}"]');
     }
     text.writeln();
-    for (var i = 0; i < san.length; i++) {
-      if (i.isEven) text.write('${i ~/ 2 + 1}. ');
-      text.write(san[i]);
-      text.write(' ');
-    }
+    if (movetext.isNotEmpty) text.write('$movetext ');
     text.write(result);
     return text.toString();
   }
@@ -198,4 +211,17 @@ final class CbhDartConversion {
 
   static String _escape(String value) =>
       value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+
+  static int _parsedMoveCount(ChessLine line) {
+    var count = 0;
+    final pending = <ChessLine>[line];
+    while (pending.isNotEmpty) {
+      final current = pending.removeLast();
+      count += current.length;
+      for (final move in current) {
+        pending.addAll(move.variations ?? const <ChessLine>[]);
+      }
+    }
+    return count;
+  }
 }

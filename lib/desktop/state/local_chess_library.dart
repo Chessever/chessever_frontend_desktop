@@ -237,6 +237,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       allowedExtensions: [
         ...localChessPickerExtensions,
         if (CbhConversionService.isAvailable) 'cbh',
+        if (CbhConversionService.isAvailable) 'cbv',
       ],
       allowMultiple: true,
       withData: false,
@@ -268,7 +269,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     final token = Object();
     _scanToken = token;
     _invalidateTreeBuilds();
-    if (paths.any((path) => p.extension(path).toLowerCase() == '.cbh')) {
+    if (paths.any((path) => const {'.cbh', '.cbv'}.contains(p.extension(path).toLowerCase()))) {
       // This request supersedes any older scan, including its progress UI.
       state = state.copyWith(isScanning: false, scanProgress: null, error: null);
       try {
@@ -276,7 +277,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         // Conversion is explicit, and an edited converted copy is never replaced.
         final resolved = <String>[];
         for (final path in paths) {
-          final converted = p.extension(path).toLowerCase() == '.cbh'
+          final converted = const {'.cbh', '.cbv'}.contains(p.extension(path).toLowerCase())
               ? await CbhConversionGateway.convert(path)
               : path;
           if (_scanToken != token || converted == null) return false;

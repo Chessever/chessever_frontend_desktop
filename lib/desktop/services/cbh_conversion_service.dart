@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'cbh_dart_conversion.dart';
+import 'cbv_archive_reader.dart';
 
 /// The application installs a navigator-backed consent handler. Non-UI callers
 /// cannot silently convert a source or register the original binary database.
@@ -102,6 +103,7 @@ class CbhConversionService {
     _preservationSummary = null;
     existingCopyPath = null;
     Directory? control;
+    Directory? extracted;
     try {
       if (executable == null) {
         const configured = String.fromEnvironment('CHESSEVER_DATA_DIR');
@@ -116,13 +118,27 @@ class CbhConversionService {
               ),
             );
         try {
-          final copy = await CbhDartConversion(
+          var indexPath = source;
+          if (p.extension(source).toLowerCase() == '.cbv') {
+            extracted = await Directory.systemTemp.createTemp('chessever_cbv_');
+            indexPath = await CbvArchiveReader.extractDatabase(
+              File(source),
+              extracted,
+            );
+          }
+          final conversion = CbhDartConversion(
             destination: root,
             isCancelled: () => _cancelled,
             onProgress:
                 (done, total) =>
                     onProgress?.call('Converting $done of $total records…'),
-          ).convert(source);
+          );
+          final copy = await conversion.convert(indexPath);
+          if (conversion.preservedAnnotationRecords != 0) {
+            final count = conversion.preservedAnnotationRecords;
+            _preservationSummary =
+                '$count ${count == 1 ? 'record has' : 'records have'} ChessBase annotations retained exactly in PGN headers. Some annotation types are not displayed.';
+          }
           if (_cancelled) {
             await copy.delete();
             return null;
@@ -227,6 +243,9 @@ class CbhConversionService {
       }
       return existingCopyPath == null ? result.path : null;
     } finally {
+      if (extracted != null && await extracted.exists()) {
+        await extracted.delete(recursive: true);
+      }
       _process = null;
       _cancelFile = null;
       _running = false;

@@ -1,27 +1,57 @@
+import 'dart:convert';
+
 import 'package:dartchess/dartchess.dart';
 
 import 'cbh_frame_reader.dart';
 import 'cbh_index_reader.dart';
 import 'cbh_move_tables.dart';
 
-/// Decodes ordinary classic-CBH move streams with an independent Dart board.
-/// Unsupported positions and opcodes fail the entire record.
+/// Decodes classic-CBH move trees with an independent Dart board.
+/// Unsupported opcodes fail the entire record.
 final class CbhMoveDecoder {
   CbhMoveDecoder();
 
   Position _position = Chess.initial;
   final _pieces = <(Side, Role), List<int?>>{};
   final _san = <String>[];
+  final _byAddress = <int, _CbhMoveNode>{};
+  late _CbhMoveNode _root;
+  late _CbhMoveNode _current;
+  String? _startFen;
+
+  String? get startFen => _startFen;
+
+  String get movetext => _renderLine(_root, _startPly);
+  int get decodedMoveCount {
+    var count = 0;
+    final pending = <_CbhMoveNode>[_root];
+    while (pending.isNotEmpty) {
+      final node = pending.removeLast();
+      count += node.children.length;
+      pending.addAll(node.children);
+    }
+    return count;
+  }
+
+  int _startPly = 0;
 
   List<String> decode(CbhGameFrame frame) {
-    if (frame.chess960 || frame.startingPosition != null) {
-      throw const CbhFormatException(
-        'Custom starting positions and Chess960 are not decoded yet.',
-      );
+    if (frame.chess960) {
+      throw const CbhFormatException('Chess960 positions are not decoded yet.');
     }
     _position = Chess.initial;
     _san.clear();
-    _resetPieces();
+    _byAddress.clear();
+    _root = _CbhMoveNode('');
+    _current = _root;
+    _startFen = null;
+    _startPly = 0;
+    if (frame.startingPosition case final bytes?) {
+      _setupPosition(bytes);
+    } else {
+      _resetPieces();
+    }
+    final stack = <(Position, Map<(Side, Role), List<int?>>, _CbhMoveNode)>[];
     var moveNumber = 0;
     final bytes = frame.moveBytes;
     for (var cursor = 0; cursor < bytes.length; cursor++) {
@@ -29,12 +59,45 @@ final class CbhMoveDecoder {
       if (code >= 0xec && code <= 0xfd) {
         throw CbhFormatException('Unsupported CBH move opcode $code.');
       }
-      if (code == 0xfe || code == 0xff) {
-        throw const CbhFormatException('CBH variations are not decoded yet.');
+      if (code == 0xfe) {
+        if (stack.length >= 128) {
+          throw const CbhFormatException('CBH variation depth exceeds 128.');
+        }
+        stack.add((_position, _copyPieces(), _current));
+        continue;
+      }
+      if (code == 0xff) {
+        if (stack.isEmpty) {
+          // Some root games finish with a pop marker.
+          if (cursor != bytes.length - 1) {
+            throw const CbhFormatException('Unexpected CBH root pop.');
+          }
+          continue;
+        }
+        final (position, pieces, node) = stack.removeLast();
+        _position = position;
+        _pieces
+          ..clear()
+          ..addAll(pieces);
+        _current = node;
+        continue;
       }
       if (code == 0) {
-        throw const CbhFormatException('CBH null moves are not decoded yet.');
+        _position = _position.copyWith(
+          turn: _position.turn == Side.white ? Side.black : Side.white,
+          epSquare: null,
+          halfmoves: _position.halfmoves + 1,
+          fullmoves:
+              _position.fullmoves + (_position.turn == Side.black ? 1 : 0),
+        );
+        final child = _CbhMoveNode('--');
+        _current.children.add(child);
+        _current = child;
+        _byAddress[moveNumber] = child;
+        moveNumber++;
+        continue;
       }
+      _address = moveNumber;
       if (code == 0xeb) {
         if (bytes.length - cursor < 3) {
           throw const CbhFormatException('Truncated CBH multibyte move.');
@@ -88,7 +151,260 @@ final class CbhMoveDecoder {
       }
       moveNumber++;
     }
+    if (stack.isNotEmpty) {
+      throw const CbhFormatException('Unclosed CBH variation.');
+    }
+    var node = _root;
+    while (node.children.isNotEmpty) {
+      node = node.children.first;
+      _san.add(node.san);
+    }
     return List.unmodifiable(_san);
+  }
+
+  int _address = 0;
+
+  /// Renders ordinary text comments while the complete source frame remains
+  /// available for annotations PGN cannot express.
+  void applyAnnotations(CbhAnnotationFrame frame) {
+    for (final entry in frame.entries) {
+      if (entry.type != 0x02 && entry.type != 0x82) continue;
+      if (entry.payload.length < 2) {
+        throw const CbhFormatException('Truncated CBH text annotation.');
+      }
+      final node =
+          entry.moveAddress == 0xffffff ? _root : _byAddress[entry.moveAddress];
+      if (node == null) continue; // Exact source frame remains archived.
+      final bytes = entry.payload.sublist(2);
+      final terminator = bytes.indexOf(0);
+      final content = terminator < 0 ? bytes : bytes.sublist(0, terminator);
+      if (content.isEmpty) continue;
+      final rendered =
+          _commentText(content)
+              .replaceAll('{', '&#123;')
+              .replaceAll('}', '&#125;')
+              .replaceAll(RegExp(r'[\r\n\t]+'), ' ')
+              .trim();
+      if (rendered.isEmpty) continue;
+      if (node == _root || entry.type == 0x82) {
+        node.before.add(rendered);
+      } else {
+        node.after.add(rendered);
+      }
+    }
+  }
+
+  static String _commentText(List<int> bytes) {
+    try {
+      return utf8.decode(bytes, allowMalformed: false);
+    } on FormatException {
+      const cp1252 = <int, int>{
+        0x80: 0x20ac,
+        0x82: 0x201a,
+        0x83: 0x0192,
+        0x84: 0x201e,
+        0x85: 0x2026,
+        0x86: 0x2020,
+        0x87: 0x2021,
+        0x88: 0x02c6,
+        0x89: 0x2030,
+        0x8a: 0x0160,
+        0x8b: 0x2039,
+        0x8c: 0x0152,
+        0x8e: 0x017d,
+        0x91: 0x2018,
+        0x92: 0x2019,
+        0x93: 0x201c,
+        0x94: 0x201d,
+        0x95: 0x2022,
+        0x96: 0x2013,
+        0x97: 0x2014,
+        0x98: 0x02dc,
+        0x99: 0x2122,
+        0x9a: 0x0161,
+        0x9b: 0x203a,
+        0x9c: 0x0153,
+        0x9e: 0x017e,
+        0x9f: 0x0178,
+      };
+      return String.fromCharCodes([
+        for (final byte in bytes)
+          if (byte >= 0x80 && byte <= 0x9f && !cp1252.containsKey(byte))
+            0xfffd
+          else
+            cp1252[byte] ?? byte,
+      ]);
+    }
+  }
+
+  String _renderLine(_CbhMoveNode parent, int ply) {
+    final output = StringBuffer();
+    for (final comment in parent.before) {
+      output.write('{$comment} ');
+    }
+    var first = true;
+    var current = parent;
+    var currentPly = ply;
+    while (current.children.isNotEmpty) {
+      final main = current.children.first;
+      if (!first) output.write(' ');
+      output.write(_renderMove(main, currentPly, first: first));
+      for (final alternate in current.children.skip(1)) {
+        output.write(' (');
+        output.write(_renderBranch(alternate, currentPly));
+        output.write(')');
+      }
+      current = main;
+      currentPly++;
+      first = false;
+    }
+    return output.toString();
+  }
+
+  String _renderBranch(_CbhMoveNode first, int ply) {
+    final output = StringBuffer(_renderMove(first, ply, first: true));
+    var current = first;
+    var currentPly = ply + 1;
+    while (current.children.isNotEmpty) {
+      final main = current.children.first;
+      output.write(' ${_renderMove(main, currentPly, first: false)}');
+      for (final alternate in current.children.skip(1)) {
+        output.write(' (${_renderBranch(alternate, currentPly)})');
+      }
+      current = main;
+      currentPly++;
+    }
+    return output.toString();
+  }
+
+  static String _numbered(String san, int ply, {required bool first}) {
+    if (ply.isEven) return '${ply ~/ 2 + 1}. $san';
+    if (first) return '${ply ~/ 2 + 1}... $san';
+    return san;
+  }
+
+  static String _renderMove(_CbhMoveNode node, int ply, {required bool first}) {
+    final output = StringBuffer();
+    for (final comment in node.before) {
+      output.write('{$comment} ');
+    }
+    output.write(_numbered(node.san, ply, first: first));
+    for (final comment in node.after) {
+      output.write(' {$comment}');
+    }
+    return output.toString();
+  }
+
+  Map<(Side, Role), List<int?>> _copyPieces() => {
+    for (final entry in _pieces.entries) entry.key: List<int?>.of(entry.value),
+  };
+
+  void _setupPosition(List<int> bytes) {
+    if (bytes.length != 28) {
+      throw const CbhFormatException('Invalid CBH starting position.');
+    }
+    var bit = 0;
+    int read(int width) {
+      var value = 0;
+      for (var i = 0; i < width; i++) {
+        value = (value << 1) | ((bytes[bit ~/ 8] >> (7 - bit % 8)) & 1);
+        bit++;
+      }
+      return value;
+    }
+
+    bit = 11;
+    final turn = read(1) == 0 ? Side.white : Side.black;
+    final epFile = read(4);
+    bit += 4;
+    final blackShort = read(1) != 0;
+    final blackLong = read(1) != 0;
+    final whiteShort = read(1) != 0;
+    final whiteLong = read(1) != 0;
+    final fullmove = (read(8) - 1).clamp(1, 255);
+    const roles = <Role?>[
+      null,
+      Role.king,
+      Role.queen,
+      Role.knight,
+      Role.bishop,
+      Role.rook,
+      Role.pawn,
+      null,
+      null,
+      Role.king,
+      Role.queen,
+      Role.knight,
+      Role.bishop,
+      Role.rook,
+      Role.pawn,
+      null,
+    ];
+    _pieces.clear();
+    for (final side in Side.values) {
+      for (final role in Role.values) {
+        _pieces[(side, role)] = <int?>[];
+      }
+    }
+    final board = List<String>.filled(64, '');
+    for (var i = 0; i < 64; i++) {
+      if (read(1) == 0) continue;
+      final code = read(4);
+      final role = roles[code];
+      if (role == null) {
+        throw const CbhFormatException('Invalid CBH starting piece.');
+      }
+      final side = code < 8 ? Side.white : Side.black;
+      final square = _mapSquare(i);
+      final symbol = switch (role) {
+        Role.king => 'k',
+        Role.queen => 'q',
+        Role.rook => 'r',
+        Role.bishop => 'b',
+        Role.knight => 'n',
+        Role.pawn => 'p',
+      };
+      board[square] = side == Side.white ? symbol.toUpperCase() : symbol;
+      _pieces[(side, role)]!.add(square);
+    }
+    final ranks = <String>[];
+    for (var rank = 7; rank >= 0; rank--) {
+      final out = StringBuffer();
+      var empty = 0;
+      for (var file = 0; file < 8; file++) {
+        final piece = board[rank * 8 + file];
+        if (piece.isEmpty) {
+          empty++;
+        } else {
+          if (empty != 0) out.write(empty);
+          empty = 0;
+          out.write(piece);
+        }
+      }
+      if (empty != 0) out.write(empty);
+      ranks.add(out.toString());
+    }
+    final castles =
+        [
+          if (whiteShort) 'K',
+          if (whiteLong) 'Q',
+          if (blackShort) 'k',
+          if (blackLong) 'q',
+        ].join();
+    final ep =
+        epFile == 0
+            ? '-'
+            : '${String.fromCharCode(96 + epFile)}${turn == Side.white ? 6 : 3}';
+    final fen =
+        '${ranks.join('/')} ${turn == Side.white ? 'w' : 'b'} '
+        '${castles.isEmpty ? '-' : castles} $ep 0 $fullmove';
+    try {
+      _position = Position.setupPosition(Rule.chess, Setup.parseFen(fen));
+    } on Object {
+      throw const CbhFormatException('Invalid CBH starting position.');
+    }
+    _startFen = fen;
+    _startPly = (fullmove - 1) * 2 + (turn == Side.black ? 1 : 0);
   }
 
   void _resetPieces() {
@@ -174,7 +490,10 @@ final class CbhMoveDecoder {
       rooks[rookSlot] = rookTo;
     }
     _position = after;
-    _san.add(san);
+    final child = _CbhMoveNode(san);
+    _current.children.add(child);
+    _current = child;
+    _byAddress[_address] = child;
   }
 
   static int _mapSquare(int square) => ((square & 7) << 3) | (square >> 3);
@@ -279,4 +598,12 @@ final class CbhMoveDecoder {
     15,
   ];
   static const _knightOffsets = [10, 17, 15, 6, -10, -17, -15, -6];
+}
+
+final class _CbhMoveNode {
+  _CbhMoveNode(this.san);
+  final String san;
+  final List<_CbhMoveNode> children = [];
+  final List<String> before = [];
+  final List<String> after = [];
 }
