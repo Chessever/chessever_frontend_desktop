@@ -5,6 +5,9 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'cbh_dart_conversion.dart';
+import 'cbv_archive_reader.dart';
+
 /// The application installs a navigator-backed consent handler. Non-UI callers
 /// cannot silently convert a source or register the original binary database.
 class CbhConversionGateway {
@@ -56,9 +59,8 @@ class CbhConversionService {
   /// How long the helper gets to notice the cancel file before it is killed.
   static const cancelGrace = Duration(seconds: 5);
 
-  /// The helper is packaged only by the isolated Windows development build.
-  /// Release builds hide the `.cbh` picker option rather than offer a
-  /// conversion that can only fail.
+  /// Explicit helper overrides remain available for legacy integration tests.
+  /// Normal desktop imports use the independent Dart decoder.
   static String defaultHelperPath() => p.join(
     p.dirname(Platform.resolvedExecutable),
     'cbh_converter',
@@ -66,7 +68,7 @@ class CbhConversionService {
   );
 
   static bool get isAvailable =>
-      Platform.isWindows && File(defaultHelperPath()).existsSync();
+      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
   Future<void> cancel() async {
     _cancelled = true;
@@ -101,11 +103,51 @@ class CbhConversionService {
     _preservationSummary = null;
     existingCopyPath = null;
     Directory? control;
+    Directory? extracted;
     try {
-      if (!Platform.isWindows && executable == null) {
-        throw const CbhConversionException(
-          'Opening ChessBase (.cbh) databases is not available in this version. Export the database as PGN from ChessBase, then open the PGN.',
-        );
+      if (executable == null) {
+        const configured = String.fromEnvironment('CHESSEVER_DATA_DIR');
+        final root =
+            destination ??
+            Directory(
+              p.join(
+                configured.isNotEmpty
+                    ? configured
+                    : (await getApplicationSupportDirectory()).path,
+                'Converted Databases',
+              ),
+            );
+        try {
+          var indexPath = source;
+          if (p.extension(source).toLowerCase() == '.cbv') {
+            extracted = await Directory.systemTemp.createTemp('chessever_cbv_');
+            indexPath = await CbvArchiveReader.extractDatabase(
+              File(source),
+              extracted,
+            );
+          }
+          final conversion = CbhDartConversion(
+            destination: root,
+            isCancelled: () => _cancelled,
+            onProgress:
+                (done, total) =>
+                    onProgress?.call('Converting $done of $total records…'),
+          );
+          final copy = await conversion.convert(indexPath);
+          if (conversion.preservedAnnotationRecords != 0) {
+            final count = conversion.preservedAnnotationRecords;
+            _preservationSummary =
+                '$count ${count == 1 ? 'record has' : 'records have'} ChessBase annotations retained exactly in PGN headers. Some annotation types are not displayed.';
+          }
+          if (_cancelled) {
+            await copy.delete();
+            return null;
+          }
+          return copy.path;
+        } on Object {
+          if (_cancelled) return null;
+          rethrow;
+        }
       }
       final helper = executable ?? defaultHelperPath();
       if (!await File(helper).exists()) {
@@ -201,6 +243,9 @@ class CbhConversionService {
       }
       return existingCopyPath == null ? result.path : null;
     } finally {
+      if (extracted != null && await extracted.exists()) {
+        await extracted.delete(recursive: true);
+      }
       _process = null;
       _cancelFile = null;
       _running = false;

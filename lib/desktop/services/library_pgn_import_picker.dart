@@ -10,7 +10,10 @@ Future<List<String>?> pickLibraryPgnDatabasePaths() async {
   final result = await FilePicker.platform.pickFiles(
     dialogTitle: 'Import PGN',
     type: FileType.custom,
-    allowedExtensions: ['pgn', if (CbhConversionService.isAvailable) 'cbh'],
+    allowedExtensions: [
+      'pgn',
+      if (CbhConversionService.isAvailable) ...['cbh', 'cbv'],
+    ],
     allowMultiple: true,
     withData: false,
     lockParentWindow: true,

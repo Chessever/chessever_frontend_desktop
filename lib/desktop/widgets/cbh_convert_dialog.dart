@@ -149,8 +149,8 @@ class _CbhConvertDialogState extends State<CbhConvertDialog> {
                 if (_detailsExpanded) ...[
                   const SizedBox(height: 8),
                   const Text(
-                    'Classic CBH with companion files. Names use Windows-1252; comments use UTF-8 when valid, otherwise Windows-1252.\n\n'
-                    'Some ChessBase fields are retained as raw metadata, not displayed. Media is not included. Invalid or unverified records stop conversion; no records are skipped.\n\n'
+                    'Classic CBH requires its seven companion files. Unencrypted CBV archives can be opened directly. Variations, custom starting positions, and null moves are decoded. Original annotation frames are kept exactly in PGN headers; some ChessBase annotation types are not displayed.\n\n'
+                    'No records are skipped. Guiding text, Chess960, and invalid moves stop conversion; the original files stay unchanged. Text bytes that cannot be displayed remain in the archived annotation frame.\n\n'
                     'Copies go to Converted Databases. Edited copies are never overwritten.',
                     style: TextStyle(fontSize: 12, color: Color(0xFFA1A1AA)),
                   ),
