@@ -1139,12 +1139,26 @@ class _LadderNagPalette extends StatelessWidget {
       _PaletteNag(17, _LadderNagKind.evaluation, '∓'),
       _PaletteNag(19, _LadderNagKind.evaluation, '-+'),
       _PaletteNag(44, _LadderNagKind.evaluation, '=/∞'),
-      _PaletteNag(40, _LadderNagKind.idea, '↑'),
+      _PaletteNag(32, _LadderNagKind.idea, '↑'),
       _PaletteNag(36, _LadderNagKind.idea, '→'),
       _PaletteNag(132, _LadderNagKind.idea, '⇆'),
     ],
     [
-      _PaletteNag(32, _LadderNagKind.idea, '⟳'),
+      _PaletteNag.classification(
+        242,
+        LichessMoveAnnotationType.bestMove,
+        'Best move',
+      ),
+      _PaletteNag.classification(
+        247,
+        LichessMoveAnnotationType.bookMove,
+        'Book move',
+      ),
+      _PaletteNag.classification(
+        243,
+        LichessMoveAnnotationType.missedWin,
+        'Missed move',
+      ),
       _PaletteNag(7, _LadderNagKind.quality, '□'),
       _PaletteNag(146, _LadderNagKind.idea, 'N'),
       _PaletteNag(140, _LadderNagKind.idea, '∆'),
@@ -1184,6 +1198,7 @@ class _LadderNagPalette extends StatelessWidget {
                   for (final item in row)
                     _LadderNagPaletteCell(
                       item: item,
+                      compact: row.length > 6,
                       active: activeNags.contains(item.nag),
                       enabled: _enabled(item),
                       onSelect: onSelect,
@@ -1199,16 +1214,28 @@ class _LadderNagPalette extends StatelessWidget {
 }
 
 class _PaletteNag {
-  const _PaletteNag(this.nag, this.kind, this.symbol);
+  const _PaletteNag(this.nag, this.kind, this.symbol)
+    : classificationType = null,
+      tooltip = null;
+
+  const _PaletteNag.classification(
+    this.nag,
+    this.classificationType,
+    this.tooltip,
+  ) : kind = _LadderNagKind.quality,
+      symbol = '';
 
   final int nag;
   final _LadderNagKind kind;
   final String symbol;
+  final LichessMoveAnnotationType? classificationType;
+  final String? tooltip;
 }
 
 class _LadderNagPaletteCell extends StatefulWidget {
   const _LadderNagPaletteCell({
     required this.item,
+    required this.compact,
     required this.active,
     required this.enabled,
     required this.onSelect,
@@ -1216,6 +1243,7 @@ class _LadderNagPaletteCell extends StatefulWidget {
   });
 
   final _PaletteNag item;
+  final bool compact;
   final bool active;
   final bool enabled;
   final ValueChanged<Object> onSelect;
@@ -1241,7 +1269,9 @@ class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell>
   @override
   Widget build(BuildContext context) {
     final display = getNagDisplay(widget.item.nag);
-    final enabled = widget.enabled && display != null;
+    final classificationType = widget.item.classificationType;
+    final enabled =
+        widget.enabled && (display != null || classificationType != null);
     final active = widget.active;
     final foreground =
         !enabled
@@ -1250,7 +1280,7 @@ class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell>
             ? kWhiteColor
             : _hovered
             ? kWhiteColor
-            : display.color;
+            : (display?.color ?? kWhiteColor);
     final background =
         active
             ? kWhiteColor.withValues(alpha: 0.14)
@@ -1260,35 +1290,49 @@ class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell>
     final border =
         active ? kWhiteColor.withValues(alpha: 0.22) : Colors.transparent;
     final cell = AnimatedContainer(
+      key: ValueKey('notation-nag-${widget.item.nag}'),
       duration: const Duration(milliseconds: 110),
       curve: Curves.easeOutCubic,
-      width: 34,
+      width: widget.compact ? 24 : 34,
       height: 26,
-      margin: const EdgeInsets.symmetric(horizontal: 1),
+      margin: EdgeInsets.symmetric(horizontal: widget.compact ? 0 : 1),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: border),
       ),
-      child: Text(
-        widget.item.symbol,
-        maxLines: 1,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: foreground,
-          fontSize: widget.item.symbol.length > 1 ? 13 : 15,
-          fontWeight: FontWeight.w800,
-          height: 1,
-          letterSpacing: -0.2,
-        ),
-      ),
+      child:
+          classificationType == null
+              ? Text(
+                widget.item.symbol,
+                maxLines: 1,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: foreground,
+                  fontSize:
+                      widget.compact
+                          ? (widget.item.symbol.length > 1 ? 11.5 : 13)
+                          : (widget.item.symbol.length > 1 ? 13 : 15),
+                  fontWeight: FontWeight.w800,
+                  height: 1,
+                  letterSpacing: -0.2,
+                ),
+              )
+              : Padding(
+                padding: const EdgeInsets.all(2),
+                child: SvgPicture.asset(
+                  moveAnnotationIconAsset(classificationType),
+                  fit: BoxFit.contain,
+                ),
+              ),
     );
 
     final tooltip =
-        display == null
+        widget.item.tooltip ??
+        (display == null
             ? widget.item.symbol
-            : _nagMenuLabel(widget.item.nag, display);
+            : _nagMenuLabel(widget.item.nag, display));
     final wrapped = DesktopTooltip(message: tooltip, child: cell);
     if (!enabled) return wrapped;
 
@@ -2778,7 +2822,7 @@ class _InlineMove extends StatelessWidget {
           commentText: _firstPgnComment(move.comments),
           userHasQualityNag: userHasQualityNag,
           hasStoredQualityNag: (move.nags ?? const <int>[]).any(
-            (nag) => nag >= 1 && nag <= 7,
+            _isMoveQualityNag,
           ),
           clockText: _formatClockChip(move.clockTime),
           clockSeconds: _clockSeconds(move.clockTime),
@@ -3291,7 +3335,7 @@ class _PairRow extends StatelessWidget {
                         commentText: _firstPgnComment(whiteMove!.comments),
                         userHasQualityNag: whiteUserHasQuality,
                         hasStoredQualityNag: (whiteMove!.nags ?? const <int>[])
-                            .any((nag) => nag >= 1 && nag <= 7),
+                            .any(_isMoveQualityNag),
                         clockText: _formatClockChip(whiteMove!.clockTime),
                         clockSeconds: _clockSeconds(whiteMove!.clockTime),
                         onSetUserQualityNag:
@@ -3355,7 +3399,7 @@ class _PairRow extends StatelessWidget {
                         commentText: _firstPgnComment(blackMove!.comments),
                         userHasQualityNag: blackUserHasQuality,
                         hasStoredQualityNag: (blackMove!.nags ?? const <int>[])
-                            .any((nag) => nag >= 1 && nag <= 7),
+                            .any(_isMoveQualityNag),
                         clockText: _formatClockChip(blackMove!.clockTime),
                         clockSeconds: _clockSeconds(blackMove!.clockTime),
                         onSetUserQualityNag:
@@ -3724,6 +3768,7 @@ class _LadderChipState extends State<_LadderChip>
     final seen = <int>{};
     for (final code in widget.nags) {
       if (!seen.add(code)) continue;
+      if (isChesseverClassificationNag(code)) continue;
       final d = getNagDisplay(code);
       if (d != null) out.add(d);
     }
@@ -3747,6 +3792,10 @@ class _LadderChipState extends State<_LadderChip>
             ?._annotationsHidden ??
         false;
     final nags = annotationsHidden ? const <NagDisplay>[] : _resolvedNags();
+    final classificationType =
+        annotationsHidden
+            ? null
+            : annotationTypeFromClassificationNags(widget.nags);
     final firstQualityNag = nags.cast<NagDisplay?>().firstWhere(
       (d) => d?.isQuality == true,
       orElse: () => null,
@@ -3831,7 +3880,16 @@ class _LadderChipState extends State<_LadderChip>
     final clockText = widget.clockText;
     final children = <Widget>[
       if (widget.compact) sanText else Flexible(child: sanText),
-      if (!annotationsHidden &&
+      if (classificationType != null) ...[
+        const SizedBox(width: 4),
+        _NotationClassificationIcon(
+          annotation: LichessMoveAnnotation(
+            type: classificationType,
+            comment: '',
+            useClassificationIcon: true,
+          ),
+        ),
+      ] else if (!annotationsHidden &&
           !widget.userHasQualityNag &&
           widget.annotation?.useClassificationIcon == true) ...[
         const SizedBox(width: 4),
@@ -4493,10 +4551,10 @@ List<int> _mergedMainlineNagsFor({
 }) {
   final lichess = lichessAnnotations[ply];
   final user = userNags[ply] ?? const <int>[];
-  final userHasQuality = user.any((n) => n >= 1 && n <= 7);
+  final userHasQuality = user.any(_isMoveQualityNag);
   final baseHasUserQualityOverride =
       baseNags.contains(kChesseverUserQualityOverrideNag) &&
-      baseNags.any((n) => n >= 1 && n <= 7);
+      baseNags.any(_isMoveQualityNag);
   final reportOwnsMoveQuality =
       !userHasQuality &&
       !baseHasUserQualityOverride &&
@@ -4519,7 +4577,8 @@ List<int> _mergedMainlineNagsFor({
     baseNags.where(
       (nag) =>
           nag != kChesseverUserQualityOverrideNag &&
-          (!(reportOwnsMoveQuality || userHasQuality) || nag < 1 || nag > 7),
+          (!(reportOwnsMoveQuality || userHasQuality) ||
+              !_isMoveQualityNag(nag)),
     ),
   );
   if (lichessNag != null && !userHasQuality) {
@@ -4533,10 +4592,13 @@ bool _hasUserQualityOverride({
   required Iterable<int> baseNags,
   required Iterable<int> userNags,
 }) {
-  if (userNags.any((n) => n >= 1 && n <= 7)) return true;
+  if (userNags.any(_isMoveQualityNag)) return true;
   return baseNags.contains(kChesseverUserQualityOverrideNag) &&
-      baseNags.any((n) => n >= 1 && n <= 7);
+      baseNags.any(_isMoveQualityNag);
 }
+
+bool _isMoveQualityNag(int nag) =>
+    (nag >= 1 && nag <= 7) || isChesseverClassificationNag(nag);
 
 int? _nagForLichessAnnotation(LichessMoveAnnotationType type) => switch (type) {
   LichessMoveAnnotationType.brilliant => 3,

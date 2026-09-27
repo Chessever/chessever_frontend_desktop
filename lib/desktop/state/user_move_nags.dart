@@ -1,5 +1,6 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 
 /// Per-tab + per-mainline-half-move user-applied NAG codes.
@@ -56,17 +57,14 @@ class UserMoveNagsNotifier
   /// observation each have one active user slot. Tapping the same glyph clears
   /// it; tapping another glyph in the same category replaces the old one.
   void toggleNag(String tabId, int ply, int nag) {
-    final tapped = getNagDisplay(nag);
-    if (tapped == null) return;
+    final tappedCategory = _nagCategory(nag);
+    if (tappedCategory == null) return;
 
     final existing = List<int>.from(state[tabId]?[ply] ?? const <int>[]);
     if (existing.contains(nag)) {
       existing.remove(nag);
     } else {
-      existing.removeWhere((other) {
-        final display = getNagDisplay(other);
-        return display != null && display.category == tapped.category;
-      });
+      existing.removeWhere((other) => _nagCategory(other) == tappedCategory);
       existing.add(nag);
     }
     setNags(tabId, ply, existing);
@@ -106,4 +104,10 @@ class UserMoveNagsNotifier
 /// `NagCategory.quality` set so the right-click menu only ever
 /// overwrites a quality glyph, never an evaluation (`±`/`=`/`∞`/...) or
 /// observation (`⟳`/`→`/`N`) NAG that came from the PGN.
-bool _isQualityNag(int nag) => nag >= 1 && nag <= 7;
+bool _isQualityNag(int nag) =>
+    (nag >= 1 && nag <= 7) || isChesseverClassificationNag(nag);
+
+NagCategory? _nagCategory(int nag) {
+  if (isChesseverClassificationNag(nag)) return NagCategory.quality;
+  return getNagDisplay(nag)?.category;
+}

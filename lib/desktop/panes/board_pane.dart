@@ -5515,7 +5515,8 @@ ChessLine _stripCommentsAndNags(ChessLine line) {
 /// `?!`, `□`). Mirrors `UserMoveNagsNotifier._isQualityNag`'s range so the
 /// board-pane merge logic doesn't accidentally suppress a PGN `±` (eval)
 /// or `⟳` (observation) NAG just because the user added a quality glyph.
-bool _isQualityNag(int nag) => nag >= 1 && nag <= 7;
+bool _isQualityNag(int nag) =>
+    (nag >= 1 && nag <= 7) || isChesseverClassificationNag(nag);
 
 /// Classic-glyph export merge (mobile-identical). Re-exported for existing
 /// call sites and tests; implementation lives in [chessever_annotation.dart].
@@ -5645,7 +5646,12 @@ resolveBoardMoveAssessment({
     ),
   ];
   if (mergedNags.isNotEmpty) {
-    final primary = primaryBoardNag(mergedNags) ?? mergedNags.first;
+    final classificationNag = mergedNags.cast<int?>().firstWhere(
+      (nag) => nag != null && isChesseverClassificationNag(nag),
+      orElse: () => null,
+    );
+    final primary =
+        classificationNag ?? primaryBoardNag(mergedNags) ?? mergedNags.first;
     final mapped = _mapNagToAnnotationType(primary);
     if (mapped != null) {
       return (
@@ -10795,7 +10801,8 @@ Square? _normaliseLastMoveSquare(Move? move) {
 /// SVG badge whether the glyph came from PGN-baked `$1`–`$6` or from a
 /// Lichess / ChessEver analysis classification.
 LichessMoveAnnotationType? _mapNagToAnnotationType(int nag) {
-  return annotationTypeFromQualityNags(<int>[nag]);
+  return annotationTypeFromClassificationNags(<int>[nag]) ??
+      annotationTypeFromQualityNags(<int>[nag]);
 }
 
 LichessMoveAnnotationType _annotationTypeForReportClassification(

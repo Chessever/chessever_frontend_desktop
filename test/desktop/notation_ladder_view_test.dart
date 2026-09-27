@@ -1,5 +1,6 @@
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:chessever/desktop/panes/board_pane.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -176,6 +177,108 @@ void main() {
     },
   );
 
+  testWidgets(
+    'classification icons use the bottom row and initiative uses the up arrow',
+    (tester) async {
+      ChessMovePointer? toggledPointer;
+      int? toggledNag;
+      await tester.pumpWidget(
+        _host(
+          game: _sampleGame(),
+          activePointer: const [0, 0, 0],
+          onJump: (_) {},
+          onToggleMoveNag: (pointer, nag) {
+            toggledPointer = List<int>.from(pointer);
+            toggledNag = nag;
+          },
+          width: 760,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final sidelineMove = find.text('c5', findRichText: true);
+      await tester.tapAt(
+        tester.getCenter(sidelineMove),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+
+      final brilliant = find.text('!!');
+      final good = find.text('!');
+      final interesting = find.text('!?');
+      final dubious = find.text('?!');
+      final mistake = find.text('?');
+      final blunder = find.text('??');
+      final initiative = find.byKey(const ValueKey('notation-nag-32'));
+      final best = find.byKey(const ValueKey('notation-nag-242'));
+      final book = find.byKey(const ValueKey('notation-nag-247'));
+      final missed = find.byKey(const ValueKey('notation-nag-243'));
+
+      for (final finder in <Finder>[
+        brilliant,
+        good,
+        interesting,
+        dubious,
+        mistake,
+        blunder,
+        initiative,
+        best,
+        book,
+        missed,
+      ]) {
+        expect(finder, findsOneWidget);
+      }
+      expect(
+        find.descendant(of: initiative, matching: find.text('↑')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('notation-nag-40')), findsNothing);
+      expect(find.text('⟳'), findsNothing);
+
+      final qualityCenters = <Finder>[
+        brilliant,
+        good,
+        interesting,
+        dubious,
+        mistake,
+        blunder,
+      ].map((finder) => tester.getCenter(finder)).toList(growable: false);
+      expect(qualityCenters.map((center) => center.dy).toSet(), hasLength(1));
+      for (var index = 1; index < qualityCenters.length; index++) {
+        expect(
+          qualityCenters[index].dx,
+          greaterThan(qualityCenters[index - 1].dx),
+        );
+      }
+
+      final bottomCenters = <Finder>[
+        best,
+        book,
+        missed,
+        find.text('□'),
+        find.text('N'),
+        find.text('∆'),
+        find.text('⏱'),
+      ].map((finder) => tester.getCenter(finder)).toList(growable: false);
+      expect(bottomCenters.map((center) => center.dy).toSet(), hasLength(1));
+      for (var index = 1; index < bottomCenters.length; index++) {
+        expect(
+          bottomCenters[index].dx,
+          greaterThan(bottomCenters[index - 1].dx),
+        );
+      }
+      expect(
+        bottomCenters.first.dy,
+        greaterThan(tester.getCenter(initiative).dy),
+      );
+
+      await tester.tap(best);
+      await tester.pumpAndSettle();
+      expect(toggledPointer, const [0, 0, 0]);
+      expect(toggledNag, 242);
+    },
+  );
+
   testWidgets('main notation moves do not install hover preview boards', (
     tester,
   ) async {
@@ -190,6 +293,58 @@ void main() {
     await tester.pump();
 
     expect(find.byType(MoveHoverPreview), findsNothing);
+  });
+
+  testWidgets('saved Book move NAG renders an SVG next to notation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGameWithMainlineNags(<int>[247]),
+        activePointer: const <int>[2],
+        onJump: (_) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(SvgPicture), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is DesktopTooltip && widget.message == 'Book move',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('manual Best NAG overrides report icon but keeps evaluation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGameWithMainlineNags(<int>[16]),
+        activePointer: const <int>[2],
+        onJump: (_) {},
+        userNags: const <int, List<int>>{
+          2: <int>[242],
+        },
+        lichessAnnotations: const <int, LichessMoveAnnotation>{
+          2: LichessMoveAnnotation(
+            type: LichessMoveAnnotationType.blunder,
+            comment: '',
+            useClassificationIcon: true,
+            reportOwnsMoveQuality: true,
+          ),
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(SvgPicture), findsOneWidget);
+    expect(find.text('±'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is DesktopTooltip && widget.message == 'Best move',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('user quality assessment replaces the generated report icon', (
