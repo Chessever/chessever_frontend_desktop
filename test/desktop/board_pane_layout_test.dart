@@ -279,6 +279,30 @@ void main() {
     );
   });
 
+  test('explorer line previews hide stale move decorations', () {
+    expect(
+      shouldShowBoardMoveDecorations(
+        hasMovePreview: false,
+        hasLinePreview: true,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldShowBoardMoveDecorations(
+        hasMovePreview: true,
+        hasLinePreview: false,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldShowBoardMoveDecorations(
+        hasMovePreview: false,
+        hasLinePreview: false,
+      ),
+      isTrue,
+    );
+  });
+
   test('generated report assessment preserves incoming Lichess commentary', () {
     final merged = mergeReportMoveAnnotations(
       lichessAnnotations: const <int, LichessMoveAnnotation>{
