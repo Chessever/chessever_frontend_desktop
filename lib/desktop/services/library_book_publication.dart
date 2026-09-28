@@ -105,6 +105,7 @@ class LibraryBookPublication {
 }
 
 abstract class LibraryBookPublisher {
+  bool get isConfigured;
   Future<LibraryBookPublication> load(LibraryFolder folder);
   Future<LibraryBookPublication> save(
     LibraryFolder folder,
@@ -113,6 +114,7 @@ abstract class LibraryBookPublisher {
     bool refreshGames = false,
   });
   Future<LibraryBookPublication> unpublish(LibraryFolder folder);
+  Future<void> unpublishTree(LibraryFolder folder);
 }
 
 class LibraryBookPublicationException implements Exception {
@@ -129,7 +131,7 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
     required String? Function() accessToken,
     String? anonKey,
   }) : _dio = dio,
-       _baseUrl = baseUrl?.replaceFirst(RegExp(r'/+$'), ''),
+       _baseUrl = baseUrl?.trim().replaceFirst(RegExp(r'/+$'), ''),
        _accessToken = accessToken,
        _anonKey = anonKey;
 
@@ -137,6 +139,9 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
   final String? _baseUrl;
   final String? Function() _accessToken;
   final String? _anonKey;
+
+  @override
+  bool get isConfigured => _baseUrl != null && _baseUrl.isNotEmpty;
 
   @override
   Future<LibraryBookPublication> load(LibraryFolder folder) =>
@@ -162,10 +167,16 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
   Future<LibraryBookPublication> unpublish(LibraryFolder folder) =>
       _request(folder, 'DELETE');
 
+  @override
+  Future<void> unpublishTree(LibraryFolder folder) async {
+    await _request(folder, 'DELETE', query: {'includeDescendants': true});
+  }
+
   Future<LibraryBookPublication> _request(
     LibraryFolder folder,
     String method, {
     Map<String, dynamic>? body,
+    Map<String, dynamic>? query,
   }) async {
     if (!libraryFolderCanPublish(folder)) {
       throw const LibraryBookPublicationException(
@@ -186,6 +197,7 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
       final response = await _dio.request<Map<String, dynamic>>(
         '$base/api/library/folders/${Uri.encodeComponent(folder.id)}/book',
         data: body,
+        queryParameters: query,
         options: Options(
           method: method,
           headers: {
@@ -218,6 +230,17 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
       throw LibraryBookPublicationException(message);
     }
   }
+}
+
+/// Withdraw every public book in the source subtree before removing its owner
+/// mapping. A failed withdrawal leaves the private folder recoverable.
+Future<void> deleteLibraryFolderWithPublications({
+  required LibraryFolder folder,
+  required LibraryBookPublisher publisher,
+  required Future<void> Function(String folderId) deleteFolder,
+}) async {
+  if (publisher.isConfigured) await publisher.unpublishTree(folder);
+  await deleteFolder(folder.id);
 }
 
 final libraryBookPublisherProvider = Provider<LibraryBookPublisher>((ref) {

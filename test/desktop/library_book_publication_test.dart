@@ -138,6 +138,69 @@ void main() {
     },
   );
 
+  test('folder deletion withdraws the entire subtree first', () async {
+    final adapter = _Adapter();
+    final dio = Dio()..httpClientAdapter = adapter;
+    final publisher = GamebaseLibraryBookPublisher(
+      dio: dio,
+      baseUrl: 'https://example.test',
+      accessToken: () => 'session',
+    );
+    var deleted = false;
+    await deleteLibraryFolderWithPublications(
+      folder: _folder(),
+      publisher: publisher,
+      deleteFolder: (_) async {
+        expect(adapter.requests.single.method, 'DELETE');
+        expect(
+          adapter.requests.single.queryParameters['includeDescendants'],
+          true,
+        );
+        deleted = true;
+      },
+    );
+    expect(deleted, isTrue);
+    dio.close();
+  });
+
+  test(
+    'failed subtree withdrawal blocks deletion; unconfigured retains legacy deletion',
+    () async {
+      final adapter = _Adapter()..responseStatus = 503;
+      final dio = Dio()..httpClientAdapter = adapter;
+      var deletions = 0;
+      await expectLater(
+        deleteLibraryFolderWithPublications(
+          folder: _folder(),
+          publisher: GamebaseLibraryBookPublisher(
+            dio: dio,
+            baseUrl: 'https://example.test',
+            accessToken: () => 'session',
+          ),
+          deleteFolder: (_) async {
+            deletions++;
+          },
+        ),
+        throwsA(isA<LibraryBookPublicationException>()),
+      );
+      expect(deletions, 0);
+      await deleteLibraryFolderWithPublications(
+        folder: _folder(),
+        publisher: GamebaseLibraryBookPublisher(
+          dio: dio,
+          baseUrl: null,
+          accessToken: () => null,
+        ),
+        deleteFolder: (_) async {
+          deletions++;
+        },
+      );
+      expect(deletions, 1);
+      expect(adapter.requests, hasLength(1));
+      dio.close();
+    },
+  );
+
   test(
     'missing configuration or sign-in fails without a network request',
     () async {

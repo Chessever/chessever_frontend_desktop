@@ -9318,7 +9318,11 @@ Future<void> _onDelete({
   );
   if (!confirmed) return;
   try {
-    await ref.read(libraryRepositoryProvider).deleteFolder(folder.id);
+    await deleteLibraryFolderWithPublications(
+      folder: folder,
+      publisher: ref.read(libraryBookPublisherProvider),
+      deleteFolder: ref.read(libraryRepositoryProvider).deleteFolder,
+    );
     ref.invalidate(libraryFoldersStreamProvider);
     ref.invalidate(subscribedBooksProvider);
     if (!context.mounted) return;
@@ -9326,7 +9330,13 @@ Future<void> _onDelete({
   } catch (e, st) {
     ErrorReporter.report(e, stackTrace: st, tag: 'library.delete_folder');
     if (!context.mounted) return;
-    _toast(context, 'Failed to delete folder. Please try again.', error: true);
+    _toast(
+      context,
+      e is LibraryBookPublicationException
+          ? 'Folder kept. ${e.message}'
+          : 'Failed to delete folder. Please try again.',
+      error: true,
+    );
   }
 }
 

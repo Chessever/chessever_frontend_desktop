@@ -21,6 +21,10 @@ PGN. Larger sources must be split into smaller folders.
 
 Subscribed books, Likes, and permanent system library items cannot be published.
 The server additionally verifies authenticated ownership on every operation.
+When publishing is configured, cloud deletion first withdraws all public books
+in the folder subtree with `DELETE ?includeDescendants=true`. If that request
+fails, the source folder is kept so the author can retry without orphaning a
+public book. With publishing unconfigured, ordinary folder deletion is unchanged.
 
 ## Environment and API dependency
 

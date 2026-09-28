@@ -7,6 +7,12 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 class _Publisher implements LibraryBookPublisher {
+  @override
+  bool get isConfigured => true;
+
+  @override
+  Future<void> unpublishTree(LibraryFolder folder) async {}
+
   LibraryBookPublication publication = const LibraryBookPublication(
     status: 'unpublished',
     metadata: LibraryBookMetadata(title: 'My study'),
