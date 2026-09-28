@@ -55,6 +55,7 @@ Future<List<String>> _menuLabels(
   final labels = <String>[
     for (final label in [
       'Share database...',
+      'Publish / edit book...',
       'Export as PGN...',
       'Remove from my library',
       'Rename...',
@@ -92,18 +93,24 @@ void main() {
   });
 
   test('canonical link shape', () {
-    expect(sharedBookUrl('aB3dE5fG7h'), 'https://chessever.com/books/aB3dE5fG7h');
+    expect(
+      sharedBookUrl('aB3dE5fG7h'),
+      'https://chessever.com/books/aB3dE5fG7h',
+    );
   });
 
   group('addSharedBookToLibrary', () {
-    test('a duplicate subscription means it is already in the library', () async {
-      final outcome = await addSharedBookToLibrary(
-        folderId: 'db-1',
-        findOwnedFolder: (_) async => null,
-        subscribe: (_) async => throw GenericApiException('Duplicate entry'),
-      );
-      expect(outcome, SharedBookAddOutcome.alreadyInLibrary);
-    });
+    test(
+      'a duplicate subscription means it is already in the library',
+      () async {
+        final outcome = await addSharedBookToLibrary(
+          folderId: 'db-1',
+          findOwnedFolder: (_) async => null,
+          subscribe: (_) async => throw GenericApiException('Duplicate entry'),
+        );
+        expect(outcome, SharedBookAddOutcome.alreadyInLibrary);
+      },
+    );
 
     test('a new subscription is added', () async {
       final subscribed = <String>[];
@@ -140,6 +147,18 @@ void main() {
   });
 
   group('folder menu', () {
+    testWidgets('nested owned folders can publish without link sharing', (
+      tester,
+    ) async {
+      final labels = await _menuLabels(
+        tester,
+        _folder(parentId: 'parent'),
+        canShare: false,
+      );
+      expect(labels, contains('Publish / edit book...'));
+      expect(labels, isNot(contains('Share database...')));
+    });
+
     testWidgets('a subscribed book can be exported and removed but not '
         'shared or edited', (tester) async {
       final labels = await _menuLabels(
@@ -153,6 +172,7 @@ void main() {
     testWidgets('an owned root database offers sharing', (tester) async {
       final labels = await _menuLabels(tester, _folder(), canShare: true);
       expect(labels, contains('Share database...'));
+      expect(labels, contains('Publish / edit book...'));
       expect(labels, contains('Export as PGN...'));
       expect(labels, isNot(contains('Remove from my library')));
     });

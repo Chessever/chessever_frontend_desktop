@@ -49,6 +49,12 @@ class DesktopEnv {
       'BILLING_API_BASE',
       defaultValue: '',
     ),
+    // Publication is opt-in per environment and never reuses a default
+    // catalog endpoint. Configure the authenticated test proxy explicitly.
+    'LIBRARY_BOOK_PUBLISHING_BASE': String.fromEnvironment(
+      'LIBRARY_BOOK_PUBLISHING_BASE',
+      defaultValue: '',
+    ),
     'GAMEBASE_PROXY_BASE': String.fromEnvironment(
       'GAMEBASE_PROXY_BASE',
       defaultValue: '',

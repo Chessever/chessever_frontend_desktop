@@ -1,4 +1,7 @@
 import 'package:chessever/desktop/services/shared_books.dart';
+import 'package:chessever/desktop/services/library_book_publication.dart';
+import 'package:chessever/desktop/services/desktop_env.dart';
+import 'package:chessever/desktop/widgets/library/library_book_dialog.dart';
 import 'package:chessever/desktop/widgets/library/shared_book_dialogs.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
@@ -1599,6 +1602,7 @@ enum _CloudDatabaseBoardAction {
   preview,
   open,
   share,
+  publishBook,
   pin,
   unpin,
   remove,
@@ -2950,6 +2954,12 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             icon: Icons.open_in_new_rounded,
             label: 'Open full database',
           ),
+          if (libraryFolderCanPublish(folder))
+            const DesktopContextMenuItem(
+              value: _CloudDatabaseBoardAction.publishBook,
+              icon: Icons.publish_rounded,
+              label: 'Publish / edit book...',
+            ),
           if (canShare)
             const DesktopContextMenuItem(
               value: _CloudDatabaseBoardAction.share,
@@ -2992,6 +3002,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           onSelectFolder(folder);
         case _CloudDatabaseBoardAction.open:
           onOpenDatabase(folder);
+        case _CloudDatabaseBoardAction.publishBook:
+          await showLibraryBookDialog(context, folder: folder);
         case _CloudDatabaseBoardAction.share:
           await showShareDatabaseDialog(context, folder: folder);
         case _CloudDatabaseBoardAction.unsubscribe:
@@ -6870,6 +6882,16 @@ class _FolderHeader extends StatelessWidget {
           ),
           if (showOverflow &&
               onAction != null &&
+              libraryFolderCanPublish(folder)) ...[
+            const SizedBox(width: 4),
+            DesktopDialogIconButton(
+              icon: Icons.publish_rounded,
+              tooltip: 'Publish / edit book',
+              onPress: () => onAction!(LibraryFolderAction.publishBook),
+            ),
+          ],
+          if (showOverflow &&
+              onAction != null &&
               !folder.isSubscribed &&
               !folder.isPermanentLibraryFolder) ...[
             const SizedBox(width: 4),
@@ -9228,6 +9250,8 @@ Future<void> _onFolderAction({
       );
     case LibraryFolderAction.delete:
       await _onDelete(context: context, ref: ref, folder: folder);
+    case LibraryFolderAction.publishBook:
+      await showLibraryBookDialog(context, folder: folder);
     case LibraryFolderAction.share:
       await showShareDatabaseDialog(context, folder: folder);
     case LibraryFolderAction.unsubscribe:
@@ -9295,7 +9319,12 @@ Future<void> _onDelete({
   );
   if (!confirmed) return;
   try {
-    await ref.read(libraryRepositoryProvider).deleteFolder(folder.id);
+    await deleteLibraryFolderWithPublications(
+      supabaseUrl: DesktopEnv.maybeGet('SUPABASE_URL'),
+      folder: folder,
+      publisher: ref.read(libraryBookPublisherProvider),
+      deleteFolder: ref.read(libraryRepositoryProvider).deleteFolder,
+    );
     ref.invalidate(libraryFoldersStreamProvider);
     ref.invalidate(subscribedBooksProvider);
     if (!context.mounted) return;
@@ -9303,7 +9332,13 @@ Future<void> _onDelete({
   } catch (e, st) {
     ErrorReporter.report(e, stackTrace: st, tag: 'library.delete_folder');
     if (!context.mounted) return;
-    _toast(context, 'Failed to delete folder. Please try again.', error: true);
+    _toast(
+      context,
+      e is LibraryBookPublicationException
+          ? 'Folder kept. ${e.message}'
+          : 'Failed to delete folder. Please try again.',
+      error: true,
+    );
   }
 }
 
@@ -11699,6 +11734,11 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final publicationFolder = ref
+        .watch(libraryFoldersStreamProvider)
+        .asData
+        ?.value
+        .firstWhereOrNull((folder) => folder.id == args.folderId);
     final searchController = useTextEditingController();
     final query = useState<String>('');
     final sort = useState(const _SortConfig(_SortKey.saved, _SortDir.desc));
@@ -12006,6 +12046,19 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
               title: args.title,
               subtitle: '${all.length} ${all.length == 1 ? 'game' : 'games'}',
               badge: args.isSubscribed ? 'Subscribed database' : 'My database',
+              trailing:
+                  !args.isSubscribed &&
+                          publicationFolder != null &&
+                          libraryFolderCanPublish(publicationFolder)
+                      ? DesktopDialogIconButton(
+                        icon: Icons.publish_rounded,
+                        tooltip: 'Publish / edit book',
+                        onPress: () => showLibraryBookDialog(
+                          context,
+                          folder: publicationFolder,
+                        ),
+                      )
+                      : null,
             ),
             const FDivider(),
             _DatabaseWorkspaceToolbar(
@@ -12414,11 +12467,13 @@ class _DatabaseWorkspaceHeader extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.badge,
+    this.trailing,
   });
 
   final String title;
   final String subtitle;
   final String badge;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -12490,6 +12545,10 @@ class _DatabaseWorkspaceHeader extends StatelessWidget {
               ],
             ),
           ),
+          if (trailing != null) ...[
+            const SizedBox(width: 12),
+            trailing!,
+          ],
         ],
       ),
     );

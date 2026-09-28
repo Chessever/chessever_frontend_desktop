@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 
 /// Logical actions a cloud folder/database can dispatch from its right-click
@@ -18,6 +19,9 @@ enum LibraryFolderAction {
 
   /// Publish, copy or revoke the public link of a root database.
   share,
+
+  /// Publish the folder as a catalog book or edit its publication details.
+  publishBook,
 
   /// Remove a subscribed shared book from the user's library.
   unsubscribe,
@@ -178,6 +182,12 @@ Future<void> _showFolderMenu({
         ),
         const DesktopContextMenuDivider(),
       ],
+      if (libraryFolderCanPublish(folder))
+        const DesktopContextMenuItem(
+          value: LibraryFolderAction.publishBook,
+          icon: Icons.publish_rounded,
+          label: 'Publish / edit book...',
+        ),
       if (canShare && !isSubscribed) ...[
         const DesktopContextMenuItem(
           value: LibraryFolderAction.share,
