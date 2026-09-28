@@ -7,6 +7,8 @@ import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart'
     show kTwicBookId;
 
+const _testSupabaseHost = 'odmekzlfunfocvedqusl.supabase.co';
+
 /// Link sharing and catalog publication are independent. A share token alone
 /// never makes a folder a public book.
 bool libraryFolderCanPublish(LibraryFolder folder) =>
@@ -149,11 +151,10 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
   bool get isConfigured => _baseUrl != null && _baseUrl.isNotEmpty;
 
   bool get _hasSafeTestConfiguration {
-    const testHost = 'odmekzlfunfocvedqusl.supabase.co';
     final auth = Uri.tryParse(_supabaseUrl?.trim() ?? '');
     if (auth == null ||
         auth.scheme != 'https' ||
-        auth.host != testHost ||
+        auth.host != _testSupabaseHost ||
         auth.port != 443 ||
         (auth.path.isNotEmpty && auth.path != '/') ||
         auth.userInfo.isNotEmpty ||
@@ -179,7 +180,7 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
         !host.endsWith('.chessever.com') &&
         !host.contains('oelbsuggrzyqwzmvidju') &&
         (!(host == 'supabase.co' || host.endsWith('.supabase.co')) ||
-            host == testHost);
+            host == _testSupabaseHost);
   }
 
   @override
@@ -293,9 +294,16 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
 Future<void> deleteLibraryFolderWithPublications({
   required LibraryFolder folder,
   required LibraryBookPublisher publisher,
+  required String? supabaseUrl,
   required Future<void> Function(String folderId) deleteFolder,
 }) async {
-  if (publisher.isConfigured) await publisher.unpublishTree(folder);
+  // Another client may already have published this source. Test accounts must
+  // withdraw even when this installation has no publishing endpoint configured.
+  final testAccount =
+      Uri.tryParse(supabaseUrl?.trim() ?? '')?.host == _testSupabaseHost;
+  if (publisher.isConfigured || testAccount) {
+    await publisher.unpublishTree(folder);
+  }
   await deleteFolder(folder.id);
 }
 

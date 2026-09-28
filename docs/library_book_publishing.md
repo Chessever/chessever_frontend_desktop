@@ -21,15 +21,17 @@ PGN. Larger sources must be split into smaller folders.
 
 Subscribed books, Likes, and permanent system library items cannot be published.
 The server additionally verifies authenticated ownership on every operation.
-When publishing is configured, cloud deletion first withdraws all public books
+For test accounts, cloud deletion first withdraws all public books
 in the folder subtree with `DELETE ?includeDescendants=true`. If that request
 fails, the source folder is kept so the author can retry without orphaning a
 public book. Starting this withdrawal also permanently fences the subtree from
 further publication, including concurrent saves. If either withdrawal or source
 deletion fails, retry **Delete** to finish; saving/publishing will not cancel the
-pending deletion. With publishing unconfigured, ordinary folder deletion is
-unchanged. Invalid-but-present configuration blocks deletion rather than
-skipping withdrawal.
+pending deletion. A test account with missing publishing configuration cannot
+delete its source folder: another client may already have published it. Ordinary
+folder deletion stays unchanged only outside this test rollout when publishing
+is unconfigured. Invalid-but-present configuration also blocks deletion rather
+than skipping withdrawal.
 
 ## Environment and API dependency
 

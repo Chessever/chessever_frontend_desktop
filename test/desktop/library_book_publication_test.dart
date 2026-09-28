@@ -97,6 +97,7 @@ void main() {
         var deleted = false;
         await expectLater(
           deleteLibraryFolderWithPublications(
+            supabaseUrl: _testAuthUrl,
             folder: _folder(),
             publisher: publisher,
             deleteFolder: (_) async => deleted = true,
@@ -256,6 +257,7 @@ void main() {
     );
     var deleted = false;
     await deleteLibraryFolderWithPublications(
+      supabaseUrl: _testAuthUrl,
       folder: _folder(),
       publisher: publisher,
       deleteFolder: (_) async {
@@ -272,13 +274,48 @@ void main() {
   });
 
   test(
-    'failed subtree withdrawal blocks deletion; unconfigured retains legacy deletion',
+    'test account cannot delete without a configured publishing endpoint',
+    () async {
+      final adapter = _Adapter();
+      final dio = Dio()..httpClientAdapter = adapter;
+      final publisher = GamebaseLibraryBookPublisher(
+        dio: dio,
+        supabaseUrl: _testAuthUrl,
+        baseUrl: null,
+        accessToken: () => 'session',
+      );
+      var deleted = false;
+      expect(publisher.isConfigured, isFalse);
+      await expectLater(
+        deleteLibraryFolderWithPublications(
+          folder: _folder(),
+          publisher: publisher,
+          supabaseUrl: _testAuthUrl,
+          deleteFolder: (_) async => deleted = true,
+        ),
+        throwsA(
+          isA<LibraryBookPublicationException>().having(
+            (error) => error.message,
+            'message',
+            contains('not configured'),
+          ),
+        ),
+      );
+      expect(deleted, isFalse);
+      expect(adapter.requests, isEmpty);
+      dio.close();
+    },
+  );
+
+  test(
+    'withdrawal errors block deletion; only other environments keep legacy deletion',
     () async {
       final adapter = _Adapter()..responseStatus = 503;
       final dio = Dio()..httpClientAdapter = adapter;
       var deletions = 0;
       await expectLater(
         deleteLibraryFolderWithPublications(
+          supabaseUrl: _testAuthUrl,
           folder: _folder(),
           publisher: GamebaseLibraryBookPublisher(
             dio: dio,
@@ -294,6 +331,7 @@ void main() {
       );
       expect(deletions, 0);
       await deleteLibraryFolderWithPublications(
+        supabaseUrl: null,
         folder: _folder(),
         publisher: GamebaseLibraryBookPublisher(
           dio: dio,

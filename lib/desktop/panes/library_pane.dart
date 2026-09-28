@@ -1,5 +1,6 @@
 import 'package:chessever/desktop/services/shared_books.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
+import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/widgets/library/library_book_dialog.dart';
 import 'package:chessever/desktop/widgets/library/shared_book_dialogs.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
@@ -9319,6 +9320,7 @@ Future<void> _onDelete({
   if (!confirmed) return;
   try {
     await deleteLibraryFolderWithPublications(
+      supabaseUrl: DesktopEnv.maybeGet('SUPABASE_URL'),
       folder: folder,
       publisher: ref.read(libraryBookPublisherProvider),
       deleteFolder: ref.read(libraryRepositoryProvider).deleteFolder,
