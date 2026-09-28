@@ -6,6 +6,8 @@ import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _testAuthUrl = 'https://odmekzlfunfocvedqusl.supabase.co';
+
 LibraryFolder _folder({
   bool subscribed = false,
   bool liked = false,
@@ -28,6 +30,7 @@ class _Adapter implements HttpClientAdapter {
   final requests = <RequestOptions>[];
   int responseStatus = 200;
   String status = 'draft';
+  String? errorCode;
   @override
   Future<ResponseBody> fetch(
     RequestOptions options,
@@ -38,6 +41,7 @@ class _Adapter implements HttpClientAdapter {
     return ResponseBody.fromString(
       jsonEncode({
         'status': 'success',
+        if (errorCode != null) 'error': {'code': errorCode},
         'data': {
           'folderId': 'folder-id',
           'status': status,
@@ -60,6 +64,105 @@ class _Adapter implements HttpClientAdapter {
 }
 
 void main() {
+  test(
+    'unsafe endpoint or account environment never receives a token',
+    () async {
+      final adapter = _Adapter();
+      final dio = Dio()..httpClientAdapter = adapter;
+      for (final (base, auth) in [
+        ('https://service.chessever.com', _testAuthUrl),
+        ('https://chessever.com/proxy', _testAuthUrl),
+        ('https://service.chessever.com./proxy', _testAuthUrl),
+        ('https://oelbsuggrzyqwzmvidju.supabase.co/functions/v1', _testAuthUrl),
+        ('https://unknown.supabase.co/functions/v1', _testAuthUrl),
+        ('https://user:password@example.test', _testAuthUrl),
+        ('https://example.test?token=secret', _testAuthUrl),
+        ('https://example.test#fragment', _testAuthUrl),
+        ('http://example.test', _testAuthUrl),
+        ('https://example.test', 'https://oelbsuggrzyqwzmvidju.supabase.co'),
+        ('http://localhost:3000', 'https://unknown.supabase.co'),
+        ('https://example.test', '$_testAuthUrl?project=another'),
+        ('https://example.test', null),
+      ]) {
+        var tokenRead = false;
+        final publisher = GamebaseLibraryBookPublisher(
+          dio: dio,
+          baseUrl: base,
+          supabaseUrl: auth,
+          accessToken: () {
+            tokenRead = true;
+            return 'session';
+          },
+        );
+        var deleted = false;
+        await expectLater(
+          deleteLibraryFolderWithPublications(
+            folder: _folder(),
+            publisher: publisher,
+            deleteFolder: (_) async => deleted = true,
+          ),
+          throwsA(isA<LibraryBookPublicationException>()),
+          reason: '$base / $auth',
+        );
+        expect(tokenRead, isFalse);
+        expect(deleted, isFalse);
+      }
+      expect(adapter.requests, isEmpty);
+      dio.close();
+    },
+  );
+
+  test(
+    'explicit test proxy and local development use test auth only',
+    () async {
+      final adapter = _Adapter();
+      final dio = Dio()..httpClientAdapter = adapter;
+      for (final base in [
+        '$_testAuthUrl/functions/v1/gamebase-proxy',
+        'https://example.test/proxy',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://[::1]:3000',
+      ]) {
+        final publisher = GamebaseLibraryBookPublisher(
+          dio: dio,
+          baseUrl: base,
+          supabaseUrl: _testAuthUrl,
+          accessToken: () => 'test-session',
+        );
+        await publisher.load(_folder());
+        expect(adapter.requests.last.followRedirects, isFalse);
+      }
+      expect(adapter.requests, hasLength(5));
+      dio.close();
+    },
+  );
+
+  test('pending deletion directs the author to retry deleting', () async {
+    final adapter =
+        _Adapter()
+          ..responseStatus = 409
+          ..errorCode = 'publication_deleting';
+    final dio = Dio()..httpClientAdapter = adapter;
+    final publisher = GamebaseLibraryBookPublisher(
+      dio: dio,
+      baseUrl: 'https://example.test',
+      supabaseUrl: _testAuthUrl,
+      accessToken: () => 'session',
+    );
+    await expectLater(
+      publisher.save(_folder(), const LibraryBookMetadata(title: 'Study')),
+      throwsA(
+        isA<LibraryBookPublicationException>().having(
+          (error) => error.message,
+          'message',
+          contains('Retry deleting'),
+        ),
+      ),
+    );
+    dio.close();
+  });
+
   test(
     'publication includes nested folders but excludes subscriptions and Likes',
     () {
@@ -91,6 +194,7 @@ void main() {
       final dio = Dio()..httpClientAdapter = adapter;
       final publisher = GamebaseLibraryBookPublisher(
         dio: dio,
+        supabaseUrl: _testAuthUrl,
         baseUrl: 'https://example.test/proxy/',
         accessToken: () => 'user-session',
       );
@@ -104,6 +208,8 @@ void main() {
         'https://example.test/proxy/api/library/folders/folder-id/book',
       );
       expect(request.method, 'PUT');
+      expect(request.followRedirects, isFalse);
+      expect(request.maxRedirects, 0);
       expect(request.headers['Authorization'], 'Bearer user-session');
       expect(request.headers.containsKey('X-API-Key'), isFalse);
       expect(request.data['title'], 'Sicilian studies');
@@ -121,6 +227,7 @@ void main() {
       final dio = Dio()..httpClientAdapter = adapter;
       final publisher = GamebaseLibraryBookPublisher(
         dio: dio,
+        supabaseUrl: _testAuthUrl,
         baseUrl: 'https://example.test',
         accessToken: () => 'session',
       );
@@ -143,6 +250,7 @@ void main() {
     final dio = Dio()..httpClientAdapter = adapter;
     final publisher = GamebaseLibraryBookPublisher(
       dio: dio,
+      supabaseUrl: _testAuthUrl,
       baseUrl: 'https://example.test',
       accessToken: () => 'session',
     );
@@ -174,6 +282,7 @@ void main() {
           folder: _folder(),
           publisher: GamebaseLibraryBookPublisher(
             dio: dio,
+            supabaseUrl: _testAuthUrl,
             baseUrl: 'https://example.test',
             accessToken: () => 'session',
           ),
@@ -188,6 +297,7 @@ void main() {
         folder: _folder(),
         publisher: GamebaseLibraryBookPublisher(
           dio: dio,
+          supabaseUrl: _testAuthUrl,
           baseUrl: null,
           accessToken: () => null,
         ),
@@ -209,11 +319,13 @@ void main() {
       for (final publisher in [
         GamebaseLibraryBookPublisher(
           dio: dio,
+          supabaseUrl: _testAuthUrl,
           baseUrl: null,
           accessToken: () => 'session',
         ),
         GamebaseLibraryBookPublisher(
           dio: dio,
+          supabaseUrl: _testAuthUrl,
           baseUrl: 'https://example.test',
           accessToken: () => null,
         ),
@@ -235,6 +347,7 @@ void main() {
       final dio = Dio()..httpClientAdapter = adapter;
       final publisher = GamebaseLibraryBookPublisher(
         dio: dio,
+        supabaseUrl: _testAuthUrl,
         baseUrl: 'https://example.test',
         accessToken: () => 'session',
       );

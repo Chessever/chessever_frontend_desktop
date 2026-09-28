@@ -128,20 +128,59 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
   GamebaseLibraryBookPublisher({
     required Dio dio,
     required String? baseUrl,
+    required String? supabaseUrl,
     required String? Function() accessToken,
     String? anonKey,
   }) : _dio = dio,
        _baseUrl = baseUrl?.trim().replaceFirst(RegExp(r'/+$'), ''),
+       _supabaseUrl = supabaseUrl,
        _accessToken = accessToken,
        _anonKey = anonKey;
 
   final Dio _dio;
   final String? _baseUrl;
+  final String? _supabaseUrl;
   final String? Function() _accessToken;
   final String? _anonKey;
 
   @override
+  // Keep invalid-but-present configuration enabled for deletion checks: an
+  // unsafe endpoint must block withdrawal, never silently skip it.
   bool get isConfigured => _baseUrl != null && _baseUrl.isNotEmpty;
+
+  bool get _hasSafeTestConfiguration {
+    const testHost = 'odmekzlfunfocvedqusl.supabase.co';
+    final auth = Uri.tryParse(_supabaseUrl?.trim() ?? '');
+    if (auth == null ||
+        auth.scheme != 'https' ||
+        auth.host != testHost ||
+        auth.port != 443 ||
+        (auth.path.isNotEmpty && auth.path != '/') ||
+        auth.userInfo.isNotEmpty ||
+        auth.hasQuery ||
+        auth.hasFragment) {
+      return false;
+    }
+    final endpoint = Uri.tryParse(_baseUrl ?? '');
+    if (endpoint == null ||
+        endpoint.host.isEmpty ||
+        endpoint.userInfo.isNotEmpty ||
+        endpoint.hasQuery ||
+        endpoint.hasFragment) {
+      return false;
+    }
+    final host = endpoint.host.toLowerCase().replaceFirst(RegExp(r'\.+$'), '');
+    final loopback = const {'localhost', '127.0.0.1', '::1'}.contains(host);
+    if (endpoint.scheme != 'https' &&
+        !(endpoint.scheme == 'http' && loopback)) {
+      return false;
+    }
+    return host != 'chessever.com' &&
+        !host.endsWith('.chessever.com') &&
+        !host.contains('oelbsuggrzyqwzmvidju') &&
+        (!(host == 'supabase.co' || host.endsWith('.supabase.co')) ||
+            host == testHost);
+  }
 
   @override
   Future<LibraryBookPublication> load(LibraryFolder folder) =>
@@ -189,6 +228,11 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
         'Book publishing is not configured for this app.',
       );
     }
+    if (!_hasSafeTestConfiguration) {
+      throw const LibraryBookPublicationException(
+        'Book publishing requires the test account environment and a safe test proxy URL.',
+      );
+    }
     final token = _accessToken();
     if (token == null || token.isEmpty) {
       throw const LibraryBookPublicationException('Sign in to publish a book.');
@@ -200,6 +244,8 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
         queryParameters: query,
         options: Options(
           method: method,
+          followRedirects: false,
+          maxRedirects: 0,
           headers: {
             'Authorization': 'Bearer $token',
             if (_anonKey != null && _anonKey.isNotEmpty) 'apikey': _anonKey,
@@ -214,12 +260,22 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
         fallbackTitle: folder.name,
       );
     } on DioException catch (error) {
+      final payload = error.response?.data;
+      final details = payload is Map ? payload['error'] : null;
+      if (details is Map && details['code'] == 'publication_deleting') {
+        throw const LibraryBookPublicationException(
+          'This folder has a pending deletion. Retry deleting it to finish.',
+        );
+      }
       final message = switch (error.response?.statusCode) {
         401 => 'Your session expired. Sign in again to continue.',
         403 => 'You do not have permission to publish this folder.',
         404 ||
         503 => 'Book publishing is not available in this environment yet.',
-        409 => 'This book is already being processed. Wait a moment and retry.',
+        409 =>
+          query?['includeDescendants'] == true
+              ? 'A book in this folder is being saved. Wait, then retry deleting the folder.'
+              : 'This book is already being processed. Wait a moment and retry.',
         413 =>
           'Publish at most 1,000 games and 10 MB at a time. Move a smaller set into a folder.',
         400 || 422 =>
@@ -254,6 +310,7 @@ final libraryBookPublisherProvider = Provider<LibraryBookPublisher>((ref) {
   return GamebaseLibraryBookPublisher(
     dio: dio,
     baseUrl: DesktopEnv.maybeGet('LIBRARY_BOOK_PUBLISHING_BASE'),
+    supabaseUrl: DesktopEnv.maybeGet('SUPABASE_URL'),
     accessToken:
         () => Supabase.instance.client.auth.currentSession?.accessToken,
     anonKey: DesktopEnv.maybeGet('SUPABASE_ANON_KEY'),

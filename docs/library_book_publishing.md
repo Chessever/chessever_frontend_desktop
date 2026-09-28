@@ -24,7 +24,12 @@ The server additionally verifies authenticated ownership on every operation.
 When publishing is configured, cloud deletion first withdraws all public books
 in the folder subtree with `DELETE ?includeDescendants=true`. If that request
 fails, the source folder is kept so the author can retry without orphaning a
-public book. With publishing unconfigured, ordinary folder deletion is unchanged.
+public book. Starting this withdrawal also permanently fences the subtree from
+further publication, including concurrent saves. If either withdrawal or source
+deletion fails, retry **Delete** to finish; saving/publishing will not cancel the
+pending deletion. With publishing unconfigured, ordinary folder deletion is
+unchanged. Invalid-but-present configuration blocks deletion rather than
+skipping withdrawal.
 
 ## Environment and API dependency
 
@@ -32,7 +37,14 @@ Publishing is disabled unless `LIBRARY_BOOK_PUBLISHING_BASE` is explicitly set.
 For this work, configure only the verified **test** authenticated proxy. This
 setting has no fallback to the existing catalog endpoint. No upstream API key
 belongs in this app or this setting; the proxy must add its server-side key and
-forward the signed-in user's bearer token.
+forward the signed-in user's bearer token. The active `SUPABASE_URL` must be
+`https://odmekzlfunfocvedqusl.supabase.co`. The explicit proxy must use HTTPS
+(HTTP is allowed only for localhost, 127.0.0.1, or ::1 development endpoints),
+with no embedded credentials, query, or fragment. Known production ChessEver
+hosts and other Supabase projects are refused. Redirects are never followed, so
+a proxy cannot redirect the session token to another service. An independently
+hosted test proxy is allowed only when explicitly configured and paired with
+the test account environment.
 
 The companion Gamebase change must be installed in the test environment before
 this feature can be used. This PR does not deploy or configure any service.
@@ -53,7 +65,8 @@ are sent as null so clearing a field is preserved. DELETE unpublishes.
 
 Requests use the current signed-in session and the configured public Supabase
 anon key for the proxy gateway. Configuration/sign-in errors make no network
-request. Concurrent publication (409) remains retryable. Failed requests keep
+request. Concurrent publication (409) remains retryable. A deletion fence
+(`publication_deleting`) instructs the author to retry deleting instead. Failed requests keep
 the user's form input and never show a success state.
 
 ## Device checks for the reviewer
