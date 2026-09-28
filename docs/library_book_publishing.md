@@ -11,8 +11,8 @@ image URL. A publication snapshot can contain up to 1,000 games and 10 MB of
 PGN. Larger sources must be split into smaller folders.
 
 - **Save draft** saves private metadata without publishing.
-- **Publish book** explicitly creates a public catalog entry and its initial
-  game snapshot.
+- **Publish book** explicitly creates a public catalog entry with the current
+  game snapshot, including when republishing a previously withdrawn book.
 - **Save details** updates the metadata of an existing public book.
 - **Update games** replaces the public snapshot with the latest recursive
   contents of the source folder. Ordinary private edits are not auto-published.
@@ -46,7 +46,17 @@ with no embedded credentials, query, or fragment. Known production ChessEver
 hosts and other Supabase projects are refused. Redirects are never followed, so
 a proxy cannot redirect the session token to another service. An independently
 hosted test proxy is allowed only when explicitly configured and paired with
-the test account environment.
+the test account environment. The companion web adapter uses this base:
+
+```text
+LIBRARY_BOOK_PUBLISHING_BASE=https://<verified-test-web-host>/library-publication-test
+```
+
+The client appends `/api/library/folders/{folderId}/book`. For local adapter
+development the base can be `http://localhost:3000/library-publication-test`,
+still using the verified test account environment. The adapter is separately
+disabled by default and requires its explicit `PUBLICATION_TEST_*` server
+configuration; the existing public web proxy does not support these writes.
 
 The companion Gamebase change must be installed in the test environment before
 this feature can be used. This PR does not deploy or configure any service.
@@ -62,7 +72,9 @@ A response contains `{status: "success", data: {folderId, status, book}}`.
 Publication status is `unpublished`, `draft`, `published`, or `archived`; `book`
 is null before metadata exists. PUT sends the editable metadata. Omitting
 `publish` saves only details, `publish: true` explicitly publishes, and
-`refreshGames: true` explicitly replaces the snapshot. Optional empty fields
+`refreshGames: true` explicitly replaces the snapshot. The Publish book action
+sends both flags so republishing captures current source contents; Update games
+sends only `refreshGames`. Optional empty fields
 are sent as null so clearing a field is preserved. DELETE unpublishes.
 
 Requests use the current signed-in session and the configured public Supabase

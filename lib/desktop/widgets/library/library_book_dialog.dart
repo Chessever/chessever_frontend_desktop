@@ -130,10 +130,10 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             refreshGames: refreshGames,
           ),
       success:
-          refreshGames
-              ? 'Published games updated from this folder.'
-              : publish
+          publish
               ? 'Your book is public in Collections.'
+              : refreshGames
+              ? 'Published games updated from this folder.'
               : _publication?.isPublished == true
               ? 'Public book details saved.'
               : 'Draft saved. This book is private.',
@@ -436,8 +436,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                                     _busy
                                         ? null
                                         : () => _save(
-                                          publish: true,
-                                          refreshGames: published,
+                                          publish: !published,
+                                          refreshGames: true,
                                         ),
                               ),
                             ],

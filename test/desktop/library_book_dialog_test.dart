@@ -43,7 +43,7 @@ class _Publisher implements LibraryBookPublisher {
       );
     }
     return publication = LibraryBookPublication(
-      status: publish ? 'published' : 'draft',
+      status: publish || publication.isPublished ? 'published' : 'draft',
       metadata: metadata,
       gameCount: 5,
     );
@@ -53,7 +53,7 @@ class _Publisher implements LibraryBookPublisher {
   Future<LibraryBookPublication> unpublish(LibraryFolder folder) async {
     unpublishCalls++;
     return publication = LibraryBookPublication(
-      status: 'archived',
+      status: 'draft',
       metadata: publication.metadata,
     );
   }
@@ -104,6 +104,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pumpAndSettle();
       expect(publisher.saves.single.publish, isFalse);
+      expect(publisher.saves.single.refreshGames, isFalse);
       expect(find.text('Draft saved. This book is private.'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
@@ -122,6 +123,7 @@ void main() {
       expect(find.text('Offline. Retry when connected.'), findsOneWidget);
       expect(find.text('New book title'), findsOneWidget);
       expect(publisher.saves.single.publish, isTrue);
+      expect(publisher.saves.single.refreshGames, isTrue);
       publisher.fail = false;
       await tester.tap(find.text('Publish book'));
       await tester.pump(const Duration(milliseconds: 300));
@@ -133,7 +135,7 @@ void main() {
   );
 
   testWidgets(
-    'unpublish requires explicit confirmation and retains metadata',
+    'unpublish confirms and republish refreshes the saved source snapshot',
     semanticsEnabled: false,
     (tester) async {
       final publisher =
@@ -154,6 +156,42 @@ void main() {
       expect(publisher.unpublishCalls, 1);
       expect(find.text('My book'), findsOneWidget);
       expect(find.text('Publish book'), findsOneWidget);
+      await tester.tap(find.text('Publish book'));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(publisher.saves.single.publish, isTrue);
+      expect(publisher.saves.single.refreshGames, isTrue);
+      expect(publisher.saves.single.metadata.title, 'My book');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'published details save metadata and Update games only refreshes content',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..publication = const LibraryBookPublication(
+              status: 'published',
+              metadata: LibraryBookMetadata(title: 'My book'),
+              gameCount: 5,
+            );
+      await _pump(tester, publisher);
+      await tester.tap(find.text('Save details'));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(publisher.saves.single.publish, isFalse);
+      expect(publisher.saves.single.refreshGames, isFalse);
+      await tester.tap(find.text('Update games'));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(publisher.saves.last.publish, isFalse);
+      expect(publisher.saves.last.refreshGames, isTrue);
+      expect(
+        find.text('Published games updated from this folder.'),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     },
   );
