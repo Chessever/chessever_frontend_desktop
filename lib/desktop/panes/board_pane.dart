@@ -5286,6 +5286,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                       lineUcis: lineUcis,
                       previewLineStep: explorerPreviewLineStep.value,
                       previewLineAutoplay: explorerPreviewLineAutoplay.value,
+                      positionAutoplaying: autoReplay.value,
                       onPlayUciMove:
                           (uci) => playUci(uci, requestPaneFocus: false),
                       onPlayEngineMove: playTopEngineMoveAction,

@@ -569,6 +569,8 @@ class BoardTabDatabaseGamesPagination {
     required this.exactFenSearch,
     this.resolvedApi,
     this.totalCount,
+    this.firstPageAskedAt,
+    this.firstPageIsSavedCopy = false,
   });
 
   final GamebasePositionGamesQuery query;
@@ -578,6 +580,19 @@ class BoardTabDatabaseGamesPagination {
   final BoardTabPositionGamesApi? resolvedApi;
   final int? totalCount;
 
+  /// When the page 0 these games were listed from was asked for. A later
+  /// page asked for before that moment (held from an earlier visit) is asked
+  /// for again rather than appended, so its offsets line up. Null for local
+  /// sources.
+  final DateTime? firstPageAskedAt;
+
+  /// The page 0 these games were listed from was a saved copy still being
+  /// checked against the server when the tab opened. Before any later page
+  /// is stacked on it, page 0 is asked for again and its answer listed
+  /// instead: a later page asked for now would sit on offsets that may have
+  /// moved since the copy was saved.
+  final bool firstPageIsSavedCopy;
+
   BoardTabDatabaseGamesPagination copyWith({
     GamebasePositionGamesQuery? query,
     int? nextPageNumber,
@@ -585,6 +600,8 @@ class BoardTabDatabaseGamesPagination {
     bool? exactFenSearch,
     BoardTabPositionGamesApi? resolvedApi,
     int? totalCount,
+    DateTime? firstPageAskedAt,
+    bool? firstPageIsSavedCopy,
   }) {
     return BoardTabDatabaseGamesPagination(
       query: query ?? this.query,
@@ -593,6 +610,8 @@ class BoardTabDatabaseGamesPagination {
       exactFenSearch: exactFenSearch ?? this.exactFenSearch,
       resolvedApi: resolvedApi ?? this.resolvedApi,
       totalCount: totalCount ?? this.totalCount,
+      firstPageAskedAt: firstPageAskedAt ?? this.firstPageAskedAt,
+      firstPageIsSavedCopy: firstPageIsSavedCopy ?? this.firstPageIsSavedCopy,
     );
   }
 }

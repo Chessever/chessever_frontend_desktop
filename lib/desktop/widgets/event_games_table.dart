@@ -54,6 +54,7 @@ import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.d
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_combined_games_provider.dart';
 import 'package:chessever/screens/favorites/player_games/provider/favorites_combined_games_provider.dart';
+import 'package:chessever/screens/gamebase/providers/explorer_games_cache.dart';
 import 'package:chessever/screens/library/providers/gamebase_database_games_provider.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
     show buildPgnFromGamebaseData, pgnHasMoves;
@@ -1139,15 +1140,33 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     });
 
     try {
+      var current = pagination;
+      if (current.firstPageIsSavedCopy) {
+        final checked = await _checkSavedDatabaseFirstPage(
+          activeTabId,
+          current,
+        );
+        if (!mounted) return;
+        if (checked == null || !checked.hasMore) {
+          setState(() {
+            if (_loadingDatabaseTabId == activeTabId) {
+              _loadingDatabaseTabId = null;
+            }
+          });
+          return;
+        }
+        current = checked;
+      }
       final pageQuery = gamebasePositionGamesQueryWithPage(
-        pagination.query,
-        pagination.nextPageNumber,
+        current.query,
+        current.nextPageNumber,
       );
       final page = await fetchDesktopPositionGamesPage(
         ref,
         pageQuery,
-        exactFenSearch: pagination.exactFenSearch,
-        resolvedApi: pagination.resolvedApi,
+        exactFenSearch: current.exactFenSearch,
+        resolvedApi: current.resolvedApi,
+        notOlderThan: current.firstPageAskedAt,
       );
       if (!mounted) return;
 
@@ -1213,6 +1232,64 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         _databaseLoadError = e.toString().replaceFirst('Exception: ', '');
       });
     }
+  }
+
+  /// The tab opened on a saved page 0 still being checked
+  /// ([BoardTabDatabaseGamesPagination.firstPageIsSavedCopy]): asks for page 0
+  /// again, the way the games table checks it, and lists that answer in
+  /// place of the copy, so the next page is stacked on offsets that match.
+  /// Returns the pagination now in the tab, or null when the tab is gone.
+  Future<BoardTabDatabaseGamesPagination?> _checkSavedDatabaseFirstPage(
+    String activeTabId,
+    BoardTabDatabaseGamesPagination pagination,
+  ) async {
+    final firstQuery = gamebasePositionGamesQueryWithPage(pagination.query, 0);
+    final first = await fetchDesktopPositionGamesPage(
+      ref,
+      firstQuery,
+      exactFenSearch: pagination.exactFenSearch,
+    );
+    if (!mounted) return null;
+    final latestArgs = ref.read(boardTabGameArgsByTabIdProvider)[activeTabId];
+    final latestPagination = latestArgs?.databaseGamesPagination;
+    if (latestArgs == null || latestPagination == null) return null;
+    final fallbackFen =
+        (latestArgs.initialFen ?? latestArgs.fenSeed ?? firstQuery.fen).trim();
+    final games = <TournamentGameSummary>[];
+    final ids = <String>{};
+    for (final row in first.response.data) {
+      final summary = gamebasePositionGameSummaryFromRow(
+        row,
+        fallbackFen: fallbackFen,
+      );
+      if (summary.id.trim().isEmpty || !ids.add(summary.id.trim())) continue;
+      games.add(summary);
+    }
+    final checked = latestPagination.copyWith(
+      nextPageNumber: 1,
+      hasMore: first.response.metadata.hasMore && games.isNotEmpty,
+      resolvedApi: first.resolvedApi,
+      totalCount:
+          first.response.metadata.totalCount ?? latestPagination.totalCount,
+      firstPageAskedAt: ref
+          .read(explorerGamesCacheProvider)
+          .fetchedAtOf(first.response),
+      firstPageIsSavedCopy: false,
+    );
+    ref.read(boardTabGameArgsByTabIdProvider.notifier).update((argsByTab) {
+      final latest = argsByTab[activeTabId];
+      if (latest == null) return argsByTab;
+      return <String, BoardTabGameArgs>{
+        ...argsByTab,
+        activeTabId: latest.copyWith(
+          // An empty answer leaves the games already listed (the open game
+          // among them) rather than blanking the rail; nothing is stacked.
+          databaseGames: games.isEmpty ? latest.databaseGames : games,
+          databaseGamesPagination: checked,
+        ),
+      };
+    });
+    return checked;
   }
 
   Future<void> _maybeLoadMoreContinuedGames({bool force = false}) async {

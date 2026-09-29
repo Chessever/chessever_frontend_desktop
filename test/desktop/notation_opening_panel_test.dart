@@ -176,6 +176,30 @@ void main() {
     expect(argsByTab.values.single.gameId, 'gamebase-0');
   });
 
+  testWidgets('Explorer warms no games and its table waits while the board '
+      'auto-replays', (tester) async {
+    for (final replaying in [false, true]) {
+      await tester.pumpWidget(
+        _harness(
+          repository: _FakeExplorerRepository(),
+          positionAutoplaying: replaying,
+        ),
+      );
+      await _openExplorerTab(tester);
+
+      final moves = tester.widget<DesktopOpeningExplorer>(
+        find.byType(DesktopOpeningExplorer),
+      );
+      final games = tester.widget<DesktopPositionGamesTable>(
+        find.byType(DesktopPositionGamesTable),
+      );
+      expect(moves.warmPositionGames, !replaying);
+      expect(games.positionAutoplaying, replaying);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    }
+  });
+
   testWidgets('local Explorer source button switches to global', (
     tester,
   ) async {
@@ -2163,6 +2187,7 @@ Widget _harness({
   String? nextGameShortcutLabel,
   int previewLineStep = 0,
   bool previewLineAutoplay = false,
+  bool positionAutoplaying = false,
   double width = 760,
   double height = 360,
   PlayerOpeningTreeIndex? localOpeningTreeIndex,
@@ -2200,6 +2225,7 @@ Widget _harness({
             onPreviewUciLine: onPreviewUciLine,
             previewLineStep: previewLineStep,
             previewLineAutoplay: previewLineAutoplay,
+            positionAutoplaying: positionAutoplaying,
             onNotationVertical: onNotationVertical,
             onNotationStep: onNotationStep,
             canGoBack: canGoBack,

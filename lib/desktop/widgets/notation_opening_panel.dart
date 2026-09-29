@@ -96,6 +96,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.onPlayUciLine,
     this.previewLineStep = 0,
     this.previewLineAutoplay = false,
+    this.positionAutoplaying = false,
     this.onPreviewUciMove,
     this.onPreviewUciLine,
     this.onClearPreviewUciMove,
@@ -230,6 +231,12 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
 
   /// True while the board is advancing a game-continuation preview by timer.
   final bool previewLineAutoplay;
+
+  /// True while the board auto-replays its line, moving the position itself
+  /// on a timer. The Explorer then warms no games ahead of a click and its
+  /// games table waits out the replay before asking the server (see
+  /// [DesktopPositionGamesTable.positionAutoplaying]).
+  final bool positionAutoplaying;
 
   /// Called when the user activates a move row in the Explorer move table.
   /// The string is raw UCI ("e2e4", "e7e8q"); the caller applies it to the
@@ -604,6 +611,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 lineUcis: widget.lineUcis,
                 previewLineStep: widget.previewLineStep,
                 previewLineAutoplay: widget.previewLineAutoplay,
+                positionAutoplaying: widget.positionAutoplaying,
                 onPlayUciMove: _playUciMoveAndKeepActivePage,
                 onPlayUciLine:
                     widget.onPlayUciLine == null
@@ -1330,6 +1338,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
     required this.lineUcis,
     required this.previewLineStep,
     required this.previewLineAutoplay,
+    required this.positionAutoplaying,
     required this.onPlayUciMove,
     required this.onPlayUciLine,
     required this.onPreviewUciMove,
@@ -1357,6 +1366,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
   final int activeSection;
   final int previewLineStep;
   final bool previewLineAutoplay;
+  final bool positionAutoplaying;
   final void Function(String uci) onPlayUciMove;
   final ValueChanged<ExplorerContinuationInsertion>? onPlayUciLine;
   final void Function(String uci)? onPreviewUciMove;
@@ -2254,6 +2264,16 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       usePlayerOpeningTree:
           widget.explorerScope != null && effectiveLocalTree == null,
       localOpeningTreeIndex: effectiveLocalTree,
+      // Clicking a move plays it and the games table below lists the next
+      // position's games; warm those while the reader looks at the moves.
+      // Not while the board replays the line: it, not a click, picks the
+      // next position.
+      warmPositionGames:
+          gamesPanelActive &&
+          !widget.positionAutoplaying &&
+          !widget.exactFenSearch &&
+          widget.explorerScope == null &&
+          effectiveLocalTree == null,
     );
     final gamesPanel = DesktopPositionGamesTable(
       fen: widget.currentFen,
@@ -2265,6 +2285,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       playerOpeningTreePlayerId: widget.explorerScope?.player.id,
       localOpeningTreeIndex: effectiveLocalTree,
       localOpeningTreeTitle: widget.localOpeningTreeTitle,
+      positionAutoplaying: widget.positionAutoplaying,
       controller: _gamesController,
       referenceLayout: true,
       activeContinuationStep: activeContinuationStep,
