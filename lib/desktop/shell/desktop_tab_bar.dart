@@ -32,6 +32,7 @@ import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart';
 import 'package:chessever/screens/chessboard/widgets/evaluation_bar_widget.dart';
+import 'package:chessever/desktop/widgets/desktop_eval_midpoint.dart';
 import 'package:chessever/screens/chessboard/widgets/player_first_row_detail_widget.dart'
     show PlayerView;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart'
@@ -1228,13 +1229,15 @@ class _RegularTabChipContent extends StatelessWidget {
                 child: SizedBox(
                   width: 5,
                   height: 22,
-                  child: EvaluationBarWidgetForGames(
-                    width: 5,
-                    height: 22,
-                    fen: boardFen!,
-                    playerView: PlayerView.gridView,
-                    allowStockfishFallback: false,
-                    showText: false,
+                  child: DesktopEvalMidpoint(
+                    child: EvaluationBarWidgetForGames(
+                      width: 5,
+                      height: 22,
+                      fen: boardFen!,
+                      playerView: PlayerView.gridView,
+                      allowStockfishFallback: false,
+                      showText: false,
+                    ),
                   ),
                 ),
               ),
@@ -1342,17 +1345,20 @@ class _HorizontalSplit extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final w = whiteRatio.clamp(0.04, 0.96);
-    return Row(
-      children: [
-        Expanded(
-          flex: (w * 1000).round(),
-          child: const ColoredBox(color: kWhiteColor),
-        ),
-        Expanded(
-          flex: ((1.0 - w) * 1000).round(),
-          child: const ColoredBox(color: _trackColor),
-        ),
-      ],
+    return DesktopEvalMidpoint(
+      axis: Axis.horizontal,
+      child: Row(
+        children: [
+          Expanded(
+            flex: (w * 1000).round(),
+            child: const ColoredBox(color: kWhiteColor),
+          ),
+          Expanded(
+            flex: ((1.0 - w) * 1000).round(),
+            child: const ColoredBox(color: _trackColor),
+          ),
+        ],
+      ),
     );
   }
 }
