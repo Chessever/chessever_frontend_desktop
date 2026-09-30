@@ -60,12 +60,9 @@ void main() {
   test('toolbar retains camera and language selectors, not external icons', () {
     final source =
         File(
-          'lib/desktop/widgets/broadcast_video_panel.dart',
+          'lib/desktop/widgets/broadcast_video_toolbar.dart',
         ).readAsStringSync();
-    final toolbar = source.substring(
-      source.indexOf('class _BroadcastVideoToolbar'),
-      source.indexOf('class _LanguageGroupButton'),
-    );
+    final toolbar = source;
     expect(toolbar, isNot(contains('Icons.open_in_new_rounded')));
     expect(toolbar, isNot(contains('Icons.grid_view_rounded')));
     expect(toolbar, contains('Icons.videocam_rounded'));
@@ -73,12 +70,12 @@ void main() {
       toolbar,
       matches(
         RegExp(
-          r'icon: visible\s*\? Icons\.videocam_off_rounded\s*: Icons\.videocam_rounded',
+          r'icon:\s*visible\s*\? Icons\.videocam_off_rounded\s*: Icons\.videocam_rounded',
         ),
       ),
     );
     expect(toolbar, contains("tooltip: visible ? 'Hide video' : 'Show video'"));
     expect(toolbar, contains('_LanguageGroupButton('));
-    expect(toolbar, contains('_OverflowLanguageButton('));
+    expect(toolbar, contains('_PinMenuButton('));
   });
 }

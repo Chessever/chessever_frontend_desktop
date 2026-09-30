@@ -152,6 +152,10 @@ class PgnByteLineScanner {
       _firstNonWhitespaceByte ??= byte;
     }
 
+    // Quoted tag values (dates, prose, FEN) are never movetext. They must
+    // neither advertise moves nor alter comment/variation state.
+    if (!_lineStartedInComment && _firstNonWhitespaceByte == 0x5B) return;
+
     if (byte == 0x7B) {
       _inComment = true;
       _lineMoveNumberCandidate = null;

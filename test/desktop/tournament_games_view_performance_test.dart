@@ -23,6 +23,29 @@ final _searchFocusGroupedStateProvider = StateProvider<GroupedGamesData>(
 );
 
 void main() {
+  test('only the current top round expands on first paint', () {
+    expect(
+      shouldInitiallyExpandTournamentRound(
+        roundId: 'current',
+        topRoundId: 'current',
+      ),
+      isTrue,
+    );
+    expect(
+      shouldInitiallyExpandTournamentRound(
+        roundId: 'historical',
+        topRoundId: 'current',
+      ),
+      isFalse,
+    );
+  });
+
+  test('large tournament rounds do not queue per-card Stockfish work', () {
+    expect(shouldAllowTournamentCardStockfishFallback(24), isTrue);
+    expect(shouldAllowTournamentCardStockfishFallback(25), isFalse);
+    expect(shouldAllowTournamentCardStockfishFallback(1000), isFalse);
+  });
+
   test('hidden retained tournament panes suspend only their safety poll', () {
     expect(
       shouldRunTournamentSafetyRefresh(
@@ -50,6 +73,87 @@ void main() {
       isTrue,
     );
   });
+
+  testWidgets(
+    'a reordered round moves mounted cards instead of remounting them',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _TrackingGameStreamRepository();
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      final games = List<GamesTourModel>.generate(12, _game, growable: false);
+
+      Widget harness(List<GamesTourModel> roundGames) {
+        return ProviderScope(
+          overrides: [
+            boardSettingsProviderNew.overrideWith(
+              _EvaluationBarOffNotifier.new,
+            ),
+            engineSettingsProviderNew.overrideWith(
+              _EngineSettingsOffNotifier.new,
+            ),
+            gameStreamRepositoryProvider.overrideWithValue(repository),
+          ],
+          child: MaterialApp(
+            home: Builder(
+              builder: (context) {
+                ResponsiveHelper.init(context);
+                return Scaffold(
+                  body: buildLazyTournamentGamesViewportForTesting(
+                    games: roundGames,
+                    scrollController: scrollController,
+                    layout: DesktopCardLayout.compact,
+                    cacheExtent: 2000,
+                    scopeId: 'reorder-identity',
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      }
+
+      Map<String, Element> mountedCards() {
+        final result = <String, Element>{};
+        for (final element in find.byType(LiveDesktopGameCard).evaluate()) {
+          final card = element.widget as LiveDesktopGameCard;
+          result[card.game.gameId] = element;
+        }
+        return result;
+      }
+
+      await tester.pumpWidget(harness(games));
+      await tester.pump();
+      final before = mountedCards();
+      expect(before.length, greaterThan(4));
+
+      // A refresh may publish the round in a new order. Every card changes
+      // index, so a delegate that cannot map a child back to its new index
+      // destroys and re-inflates every card (and its Realtime subscription).
+      final reordered = games.reversed.toList(growable: false);
+      await tester.pumpWidget(harness(reordered));
+      await tester.pump();
+
+      final after = mountedCards();
+      expect(after.length, before.length);
+      var preserved = 0;
+      for (final entry in after.entries) {
+        final previous = before[entry.key];
+        if (previous != null && identical(previous, entry.value)) preserved++;
+      }
+      expect(
+        preserved,
+        after.length,
+        reason:
+            'every mounted card must keep its element (and its subscription) '
+            'when the round is published in a new order',
+      );
+    },
+  );
 
   testWidgets(
     '1,000-game tournament mounts and streams only the viewport window',

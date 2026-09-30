@@ -11,15 +11,18 @@ import 'package:chessever/desktop/shell/desktop_pane.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
+import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/global_search_query.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/group_event/providers/supabase_combined_search_provider.dart';
+import 'package:chessever/screens/group_event/smart_event/smart_aggregate_event_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/search/enhanced_group_broadcast_local_storage.dart';
+import 'package:chessever/widgets/search/opening_search_suggestion.dart';
 import 'package:chessever/widgets/search/search_result_model.dart';
 
 /// reference-style global command palette. Opens with Cmd/Ctrl+K from
@@ -153,6 +156,15 @@ class CommandPalette extends HookConsumerWidget {
     for (final p in remoteResult.playerResults.take(10)) {
       flat.add(_PaletteRowData.player(p));
     }
+    // Openings are indexed locally (the bundled ECO catalog), so they answer
+    // on the live query without waiting for the remote debounce.
+    final openingResults = useMemoized(
+      () => searchOpeningSuggestions(query.value, limit: 6),
+      [query.value],
+    );
+    for (final opening in openingResults) {
+      flat.add(_PaletteRowData.opening(opening));
+    }
     for (final entry in filteredPanes) {
       flat.add(_PaletteRowData.entry(entry));
     }
@@ -184,6 +196,10 @@ class CommandPalette extends HookConsumerWidget {
           );
         case _RowKind.tournament:
           setActiveTournament(ref, row.tournament!.tournament);
+        case _RowKind.opening:
+          ref
+              .read(desktopSmartEventOpenerProvider)
+              .open(SmartEventRequest.forOpeningSelection(row.opening!.selection));
         case _RowKind.entry:
           final e = row.entry!;
           switch (e.kind) {
@@ -321,6 +337,7 @@ class CommandPalette extends HookConsumerWidget {
                   Flexible(
                     child: _buildBody(
                       remote: remoteResult,
+                      openings: openingResults,
                       panes: filteredPanes,
                       query: query.value,
                       isLoading: isRemoteLoading || isRemotePending,
@@ -345,6 +362,7 @@ class CommandPalette extends HookConsumerWidget {
 
   Widget _buildBody({
     required EnhancedSearchResult remote,
+    required List<OpeningSearchSuggestion> openings,
     required List<_PaletteEntry> panes,
     required String query,
     required bool isLoading,
@@ -366,7 +384,8 @@ class CommandPalette extends HookConsumerWidget {
     final hasPlayers = remote.playerResults.isNotEmpty;
     final hasTournaments = remote.tournamentResults.isNotEmpty;
     final hasPanes = panes.isNotEmpty;
-    final hasSearchResults = hasPlayers || hasTournaments;
+    final hasOpenings = openings.isNotEmpty;
+    final hasSearchResults = hasPlayers || hasTournaments || hasOpenings;
 
     final sections = <_PaletteSection>[];
     if (hasTournaments) {
@@ -414,6 +433,29 @@ class CommandPalette extends HookConsumerWidget {
                   onOpen:
                       () => onOpen(flat[_indexOf(flat, _RowKind.player, i)]),
                   query: query,
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+    if (hasOpenings) {
+      sections.add(
+        _PaletteSection(
+          label: 'Openings',
+          count: openings.length,
+          icon: Icons.menu_book_rounded,
+          children: [
+            for (var i = 0; i < openings.length; i++)
+              _keyedRow(
+                rowKeys,
+                _indexOf(flat, _RowKind.opening, i),
+                _OpeningRow(
+                  opening: openings[i],
+                  selected: highlighted == _indexOf(flat, _RowKind.opening, i),
+                  onSelect: () => onSelect(_indexOf(flat, _RowKind.opening, i)),
+                  onOpen:
+                      () => onOpen(flat[_indexOf(flat, _RowKind.opening, i)]),
                 ),
               ),
           ],
@@ -1047,6 +1089,90 @@ class _EmptyEntries extends StatelessWidget {
   }
 }
 
+class _OpeningRow extends StatelessWidget {
+  const _OpeningRow({
+    required this.opening,
+    required this.selected,
+    required this.onSelect,
+    required this.onOpen,
+  });
+
+  final OpeningSearchSuggestion opening;
+  final bool selected;
+  final VoidCallback onSelect;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClickCursor(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onSelect,
+        onDoubleTap: onOpen,
+        child: SingleMotionBuilder(
+          value: selected ? 1.01 : 1.0,
+          motion: DesktopMotion.hover,
+          builder:
+              (context, scale, child) => Transform.scale(
+                scale: scale,
+                filterQuality: FilterQuality.medium,
+                child: child,
+              ),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  opening.codeLabel,
+                  style: TextStyle(
+                    color: selected ? kPrimaryColor : kWhiteColor70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        opening.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected ? kWhiteColor : kWhiteColor70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        opening.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kLightGreyColor,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PaletteRow extends StatelessWidget {
   const _PaletteRow({
     required this.entry,
@@ -1196,25 +1322,34 @@ class _FooterHint extends StatelessWidget {
 
 enum _EntryKind { pane, action }
 
-enum _RowKind { player, tournament, entry }
+enum _RowKind { player, tournament, opening, entry }
 
 class _PaletteRowData {
   const _PaletteRowData.player(this.player)
     : kind = _RowKind.player,
       tournament = null,
+      opening = null,
       entry = null;
   const _PaletteRowData.tournament(this.tournament)
     : kind = _RowKind.tournament,
       player = null,
+      opening = null,
+      entry = null;
+  const _PaletteRowData.opening(this.opening)
+    : kind = _RowKind.opening,
+      player = null,
+      tournament = null,
       entry = null;
   const _PaletteRowData.entry(this.entry)
     : kind = _RowKind.entry,
       player = null,
-      tournament = null;
+      tournament = null,
+      opening = null;
 
   final _RowKind kind;
   final SearchResult? player;
   final SearchResult? tournament;
+  final OpeningSearchSuggestion? opening;
   final _PaletteEntry? entry;
 }
 
@@ -1345,6 +1480,9 @@ int? _bestCommandPaletteInitialHighlight(List<_PaletteRowData> rows) {
     final score = switch (rows[i].kind) {
       _RowKind.tournament => rows[i].tournament?.score ?? 0,
       _RowKind.player => rows[i].player?.score ?? 0,
+      // An exact ECO code or family typed into the palette is the strongest
+      // possible match; otherwise remote events and players lead.
+      _RowKind.opening => (rows[i].opening?.score ?? 0) >= 19800 ? 1000000 : -0.5,
       _RowKind.entry => -1,
     };
     if (score > bestScore) {

@@ -34,6 +34,16 @@ class DesktopTeamMatchGroup {
   List<GamesTourModel> get gameModels =>
       games.map((matchGame) => matchGame.game).toList(growable: false);
 
+  List<PlayerCard> get leftPlayers => [
+    for (final matchGame in games)
+      desktopTeamMatchSidePlayer(matchGame, isLeft: true),
+  ];
+
+  List<PlayerCard> get rightPlayers => [
+    for (final matchGame in games)
+      desktopTeamMatchSidePlayer(matchGame, isLeft: false),
+  ];
+
   DesktopTeamMatchScore get score {
     var left = 0.0;
     var right = 0.0;
@@ -96,6 +106,78 @@ List<DesktopTeamMatchGroup> buildDesktopTeamMatchGroups(
         games: List<DesktopTeamMatchGame>.unmodifiable(builders[key]!.games),
       ),
   ];
+}
+
+PlayerCard desktopTeamMatchSidePlayer(
+  DesktopTeamMatchGame matchGame, {
+  required bool isLeft,
+}) {
+  final sameOrder = matchGame.order == DesktopTeamGameOrder.sameOrder;
+  if (isLeft) {
+    return sameOrder ? matchGame.game.whitePlayer : matchGame.game.blackPlayer;
+  }
+  return sameOrder ? matchGame.game.blackPlayer : matchGame.game.whitePlayer;
+}
+
+/// Best flag token for a team row: the majority player country/federation,
+/// otherwise the team name so [FederationFlag] can resolve "Jamaica" etc.
+String? desktopTeamMatchFlagCode({
+  required String teamName,
+  required Iterable<PlayerCard> players,
+}) {
+  final counts = <String, int>{};
+  for (final player in players) {
+    final code = _playerFlagCode(player);
+    if (code == null) continue;
+    counts[code] = (counts[code] ?? 0) + 1;
+  }
+  if (counts.isNotEmpty) {
+    final ranked =
+        counts.entries.toList()..sort((left, right) {
+          final byCount = right.value.compareTo(left.value);
+          if (byCount != 0) return byCount;
+          return left.key.compareTo(right.key);
+        });
+    return ranked.first.key;
+  }
+
+  final trimmed = teamName.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
+String? _playerFlagCode(PlayerCard player) {
+  for (final value in [player.countryCode, player.federation]) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || trimmed == '?') continue;
+    return trimmed;
+  }
+  return null;
+}
+
+/// Horizontal inset that keeps a short team-match board row centered in the
+/// same tile-width grid the surrounding Games tab uses.
+double desktopCenteredSparseRowPadding({
+  required double availableWidth,
+  required int itemCount,
+  required int columns,
+  required double spacing,
+}) {
+  if (availableWidth <= 0 || itemCount <= 0 || columns <= 0) return 0;
+  if (itemCount >= columns) return 0;
+  final tileWidth = (availableWidth - spacing * (columns - 1)) / columns;
+  if (tileWidth <= 0) return 0;
+  final usedWidth = tileWidth * itemCount + spacing * (itemCount - 1);
+  final padding = (availableWidth - usedWidth) / 2;
+  return padding > 0 ? padding : 0;
+}
+
+int desktopCenteredSparseRowColumns({
+  required int itemCount,
+  required int columns,
+}) {
+  if (columns <= 0) return 1;
+  if (itemCount <= 0) return columns;
+  return itemCount < columns ? itemCount : columns;
 }
 
 String formatDesktopTeamMatchScore(double score) {

@@ -1551,7 +1551,6 @@ class _TestEngineSettingsNotifier extends EngineSettingsNotifierNew {
   Future<EngineSettings> build() async => const EngineSettings(
     showEngineGauge: false,
     showEngineAnalysis: false,
-    autoGameAnalysis: false,
   );
 }
 

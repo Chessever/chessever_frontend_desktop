@@ -1,5 +1,10 @@
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'dart:convert';
 import 'dart:io' as io;
 
@@ -12,6 +17,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
+import 'package:chessever/desktop/services/local_chess_database_open_guard.dart';
+import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 
@@ -303,10 +310,16 @@ class _DesktopPositionGamesTableState
   final Set<String> _loadingFullContinuations = <String>{};
   Timer? _localTreeRefreshDebounce;
   Timer? _resetFetchDebounce;
+  Timer? _errorRetryTimer;
+  int _errorRetryAttempts = 0;
   String? _lastPreviewedRowId;
   bool _lastPreviewAutoplay = true;
   int? _lastPreviewStep;
   bool _isInitialLoading = true;
+
+  /// The last fetch was refused by access. The table renders a locked
+  /// surface instead of an empty result or an error.
+  bool _queryLocked = false;
   bool _isLoadingMore = false;
   bool _hasMore = true;
   int _nextPageNumber = 0;
@@ -319,6 +332,7 @@ class _DesktopPositionGamesTableState
   GamebasePositionGamesQuery? _lastSuccessfulQuery;
   String? _lastSuccessfulSourceKey;
   String? _error;
+  bool _errorRetryable = false;
   String? _waitingForTreeMessage;
   bool _needsRefresh = false;
 
@@ -408,6 +422,7 @@ class _DesktopPositionGamesTableState
   void dispose() {
     _localTreeRefreshDebounce?.cancel();
     _resetFetchDebounce?.cancel();
+    _errorRetryTimer?.cancel();
     widget.controller?._detach(this);
     widget.externalScrollController?.removeListener(_onScroll);
     _scroll.removeListener(_onScroll);
@@ -455,6 +470,7 @@ class _DesktopPositionGamesTableState
       _resolvedApi = null;
       _lastSuccessfulQuery = null;
       _error = null;
+      _errorRetryable = false;
       _waitingForTreeMessage = null;
     });
     _pruneRowKeys(const <String>[]);
@@ -482,10 +498,75 @@ class _DesktopPositionGamesTableState
           ? const Duration(seconds: 2)
           : const Duration(milliseconds: 120);
 
+  /// The request listing games at this position makes. A local file's tree
+  /// is opening-tree exploration; the ChessEver database is explorer depth,
+  /// player scope and exact-position search.
+  DesktopAccessContext get _positionQueryContext {
+    final localTree = widget.localOpeningTreeIndex;
+    if (localTree != null && widget.playerOpeningTreePlayerId == null) {
+      return const DesktopAccessContext(
+        feature: DesktopFeature.openingTree,
+        action: DesktopAction.previewNavigate,
+        origin: DesktopDiscoveryOrigin.localFile,
+      );
+    }
+    return DesktopAccessContext(
+      feature: DesktopFeature.openingExplorer,
+      action: widget.exactFenSearch
+          ? DesktopAction.acquireSource
+          : DesktopAction.previewNavigate,
+      origin: DesktopDiscoveryOrigin.gamebase,
+      playedPlies: widget.moves.length,
+      playerScoped:
+          widget.playerOpeningTreePlayerId != null ||
+          ref.read(gamebaseExplorerProvider).filters.playerIds.isNotEmpty,
+    );
+  }
+
+  bool get _positionQueryAllowed =>
+      readDesktopAccess(ref.read, _positionQueryContext).isAllowed;
+
+  /// Rows from a ChessEver database position carry gamebase provenance.
+  DesktopAccessContext get _rowAccessContext =>
+      widget.localOpeningTreeIndex != null &&
+          widget.playerOpeningTreePlayerId == null
+      ? const DesktopAccessContext(
+          feature: DesktopFeature.localFiles,
+          action: DesktopAction.openContent,
+          origin: DesktopDiscoveryOrigin.localFile,
+        )
+      : const DesktopAccessContext(
+          feature: DesktopFeature.gamebase,
+          action: DesktopAction.openContent,
+          origin: DesktopDiscoveryOrigin.gamebase,
+        );
+
   Future<void> _fetchPage({
     required bool reset,
     bool preserveRows = false,
+    bool fromAutoRetry = false,
   }) async {
+    if (!fromAutoRetry) {
+      // A user-driven or event-driven fetch replaces any recovery in flight.
+      _cancelErrorAutoRetry();
+    }
+    if (!mounted) return;
+    // Denied => no request, no rows from a previous (free) position.
+    if (!_positionQueryAllowed) {
+      _requestToken += 1;
+      _cancelPendingResetFetch();
+      setState(() {
+        _rows.clear();
+        _isInitialLoading = false;
+        _isLoadingMore = false;
+        _hasMore = false;
+        _totalCount = null;
+        _error = null;
+        _queryLocked = true;
+      });
+      return;
+    }
+    if (_queryLocked) setState(() => _queryLocked = false);
     if (!widget.active) {
       _needsRefresh = true;
       return;
@@ -599,7 +680,10 @@ class _DesktopPositionGamesTableState
         _lastSuccessfulSourceKey = _sourceKey;
         _isInitialLoading = false;
         _isLoadingMore = false;
+        _error = null;
+        _errorRetryable = false;
       });
+      _errorRetryAttempts = 0;
       if (kDebugMode) {
         debugPrint(
           '[DesktopPositionGamesTable] fetch done '
@@ -617,18 +701,67 @@ class _DesktopPositionGamesTableState
       );
     } catch (e) {
       if (!mounted || requestToken != _requestToken) return;
+      // A localized database open failure is transient by nature (a tree store
+      // being published, another writer holding the file): show actionable
+      // wording, keep the last good rows on screen, and retry on a bounded
+      // backoff so the panel recovers in place instead of dead-ending and
+      // making the user leave and re-enter the tab.
+      final retryable = isRetryableLocalChessDatabaseFailure(e);
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = localChessDatabaseUserMessage(e);
+        _errorRetryable = retryable;
         _isInitialLoading = false;
         _isLoadingMore = false;
       });
+      if (retryable) _scheduleErrorAutoRetry();
       if (kDebugMode) {
         debugPrint(
           '[DesktopPositionGamesTable] fetch failed '
-          '${stopwatch.elapsedMilliseconds}ms reset=$reset error=$_error',
+          '${stopwatch.elapsedMilliseconds}ms reset=$reset '
+          'retryable=$retryable error=$_error cause=$e',
         );
       }
     }
+  }
+
+  /// Two bounded retries cover a tree-store publish that is still finishing;
+  /// after that the panel keeps the last good rows (or the error surface) and
+  /// waits for the user's Retry so a genuinely broken database cannot spin.
+  static const int _maxErrorAutoRetries = 2;
+  static const List<Duration> _errorAutoRetryDelays = <Duration>[
+    Duration(milliseconds: 400),
+    Duration(milliseconds: 1200),
+  ];
+
+  void _scheduleErrorAutoRetry() {
+    if (!widget.active) return;
+    if (_errorRetryAttempts >= _maxErrorAutoRetries) return;
+    final delay = _errorAutoRetryDelays[_errorRetryAttempts];
+    _errorRetryAttempts += 1;
+    _errorRetryTimer?.cancel();
+    _errorRetryTimer = Timer(delay, () {
+      _errorRetryTimer = null;
+      if (!mounted || !widget.active) {
+        _needsRefresh = true;
+        return;
+      }
+      _fetchPage(reset: true, fromAutoRetry: true);
+    });
+  }
+
+  void _cancelErrorAutoRetry() {
+    _errorRetryTimer?.cancel();
+    _errorRetryTimer = null;
+    _errorRetryAttempts = 0;
+  }
+
+  void _retryAfterError() {
+    _cancelErrorAutoRetry();
+    if (!mounted || !widget.active) {
+      _needsRefresh = true;
+      return;
+    }
+    _fetchPage(reset: true);
   }
 
   String? _playerTreeWaitMessage() {
@@ -914,6 +1047,14 @@ class _DesktopPositionGamesTableState
   Future<void> _insertGame(Map<String, dynamic> row) async {
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
+    // Inserting moves from a database game reaches back to its source.
+    if (!admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      _rowAccessContext.copyWith(action: DesktopAction.insertMove),
+      surface: 'position_games_insert',
+    )) {
+      return;
+    }
     try {
       final openedRow =
           widget.localOpeningTreeIndex == null
@@ -1030,6 +1171,13 @@ class _DesktopPositionGamesTableState
   }
 
   Future<void> _loadFullContinuation(String id, List<String> fallback) async {
+    // A hover/preview continuation is a PGN fetch: never started when denied.
+    if (!readDesktopAccess(
+      ref.read,
+      _rowAccessContext.copyWith(action: DesktopAction.fetchPgn),
+    ).isAllowed) {
+      return;
+    }
     try {
       final gameWithPgn = await ref
           .read(gamebaseRepositoryProvider)
@@ -1106,6 +1254,15 @@ class _DesktopPositionGamesTableState
   }) async {
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
+    // Denied => no local hydrate and no board. The central board admission
+    // re-checks with the same provenance.
+    if (!admitBoardSourceOpen(
+      ProviderScope.containerOf(context, listen: false),
+      _rowAccessContext,
+      surface: 'position_games_open',
+    )) {
+      return;
+    }
     final sourceRows = <Map<String, dynamic>>[
       for (final current in _rows) Map<String, dynamic>.from(current),
     ];
@@ -1169,6 +1326,7 @@ class _DesktopPositionGamesTableState
       localOpeningTreeTitle: widget.localOpeningTreeTitle,
       gameListSelectedId: id,
       librarySaveOrigin: _localLibrarySaveOriginForRow(openedRow),
+      accessContext: _rowAccessContext,
     );
     if (inNewWindow) {
       unawaited(openBoardGameWindow(ref, args));
@@ -1313,6 +1471,13 @@ class _DesktopPositionGamesTableState
 
   @override
   Widget build(BuildContext context) {
+    // A purchase, a restore or an offline-grace change can unlock the
+    // position: re-run the query once membership moves.
+    ref.listen(subscriptionProvider, (_, _) {
+      if (_queryLocked && _positionQueryAllowed) {
+        unawaited(_fetchPage(reset: true));
+      }
+    });
     // Re-run the query whenever the explorer's filter slice changes
     // (toggle a chip, set a rating range, pick a player, etc).
     ref.listen<GamebaseFilters>(
@@ -1397,11 +1562,21 @@ class _DesktopPositionGamesTableState
         ),
       );
     }
+    if (_queryLocked && _rows.isEmpty) {
+      final lockedContext = _positionQueryContext;
+      return DesktopAccessLockedSurface(
+        decision: readDesktopAccess(ref.read, lockedContext),
+        accessContext: lockedContext,
+        surface: 'position_games_locked',
+      );
+    }
     if (_error != null && _rows.isEmpty) {
       return _Empty(
         icon: Icons.cloud_off_outlined,
         title: "Couldn't load games",
         message: _error!,
+        actionLabel: _errorRetryable ? 'Retry' : null,
+        onAction: _errorRetryable ? _retryAfterError : null,
       );
     }
     if (_rows.isEmpty) {
@@ -2406,14 +2581,24 @@ class _Empty extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.message,
+    this.actionLabel,
+    this.onAction,
   });
 
   final IconData icon;
   final String title;
   final String message;
 
+  /// Optional recovery action. A failure the user can retry (`Retry`) must
+  /// never be a dead end.
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
   @override
   Widget build(BuildContext context) {
+    final label = actionLabel?.trim() ?? '';
+    final action = onAction;
+    final hasAction = label.isNotEmpty && action != null;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -2437,6 +2622,15 @@ class _Empty extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(color: kLightGreyColor, fontSize: 11),
             ),
+            if (hasAction) ...[
+              const SizedBox(height: 12),
+              DesktopHeaderActionButton(
+                label: label,
+                icon: Icons.refresh_rounded,
+                onPress: action,
+                accented: true,
+              ),
+            ],
           ],
         ),
       ),

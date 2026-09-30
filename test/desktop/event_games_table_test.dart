@@ -705,6 +705,114 @@ void main() {
     },
   );
 
+  test(
+    'event rail standings use team rows when the boards are a team event',
+    () {
+      expect(
+        eventRailShowsTeamStandings(
+          officialTeamEvent: true,
+          games: const <TournamentGameSummary>[],
+        ),
+        isTrue,
+      );
+      expect(
+        eventRailShowsTeamStandings(
+          officialTeamEvent: false,
+          games: [
+            _summary(
+              id: 'board-1',
+              roundLabel: 'Round 1',
+              whiteTeam: 'India',
+              blackTeam: 'Norway',
+            ),
+            _summary(
+              id: 'board-2',
+              roundLabel: 'Round 1',
+              whiteTeam: 'Norway',
+              blackTeam: 'India',
+            ),
+          ],
+        ),
+        isTrue,
+      );
+      expect(
+        eventRailGamesLookLikeTeamEvent([
+          _summary(id: 'board-1', roundLabel: 'Round 1'),
+          _summary(id: 'board-2', roundLabel: 'Round 1'),
+          _summary(
+            id: 'board-3',
+            roundLabel: 'Round 1',
+            whiteTeam: 'India',
+            blackTeam: 'Norway',
+          ),
+        ]),
+        isFalse,
+      );
+      expect(
+        eventRailShowsTeamStandings(
+          officialTeamEvent: false,
+          games: [_summary(id: 'board-1', roundLabel: 'Round 1')],
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets('event rail Standings tab shows team standings for team events', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'team-board-1',
+          pgn: '1. e4 e5 *',
+          label: 'Team board',
+          whiteName: 'Gukesh D',
+          blackName: 'Carlsen, Magnus',
+          tournamentTitle: 'Olympiad Open',
+          eventGames: [
+            _summary(
+              id: 'team-board-1',
+              roundLabel: 'Round 1',
+              whitePlayer: 'Gukesh D',
+              blackPlayer: 'Carlsen, Magnus',
+              whiteTeam: 'India',
+              blackTeam: 'Norway',
+              boardNumber: 1,
+              status: GameStatus.ongoing,
+              hasStarted: true,
+              lastMoveTime: DateTime.now(),
+            ),
+            _summary(
+              id: 'team-board-2',
+              roundLabel: 'Round 1',
+              whitePlayer: 'Erigaisi',
+              blackPlayer: 'Caruana',
+              whiteTeam: 'India',
+              blackTeam: 'USA',
+              boardNumber: 2,
+              status: GameStatus.draw,
+              hasStarted: true,
+              lastMoveTime: DateTime.now(),
+            ),
+          ],
+          gameListSelectedId: 'team-board-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('Standings'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Gukesh D'), findsNothing);
+    expect(find.text('No standings published yet.'), findsNothing);
+    expect(
+      find.text('Team standings appear here once pairings are published.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'live-first toggle keeps live boards above finished board order',
     (tester) async {
@@ -1609,6 +1717,35 @@ void main() {
     expect(segments[1].gameIds, ['cd-b1', 'cd-b2']);
   });
 
+  test('event rail collapse-all also collapses matchups loaded later', () {
+    const initial = (collapseNewMatchups: false, exceptions: <String>{});
+    final collapsed = eventRailMatchupStateAfterToggleAll(
+      state: initial,
+      matchupIds: const ['round-1:alpha|beta', 'round-1:gamma|delta'],
+    );
+    expect(collapsed.collapseNewMatchups, isTrue);
+    expect(
+      eventRailMatchupIsExpanded(
+        state: collapsed,
+        matchupId: 'round-1:newly-loaded',
+      ),
+      isFalse,
+    );
+
+    final expanded = eventRailMatchupStateAfterToggleAll(
+      state: collapsed,
+      matchupIds: const ['round-1:alpha|beta', 'round-1:gamma|delta'],
+    );
+    expect(expanded.collapseNewMatchups, isFalse);
+    expect(
+      eventRailMatchupIsExpanded(
+        state: expanded,
+        matchupId: 'round-1:another-new-matchup',
+      ),
+      isTrue,
+    );
+  });
+
   test('event rail groups knockout stages into per-matchup game lists', () {
     final started = DateTime.now().subtract(const Duration(days: 1));
     TournamentGameSummary stageGame({
@@ -1869,6 +2006,76 @@ void main() {
       ).map((game) => game.id),
       ['round-1-game-2', 'round-2-game-1', 'round-2-game-2'],
     );
+  });
+
+  testWidgets('unnamed database studies have labels and retain row identity', (
+    tester,
+  ) async {
+    final rows = [
+      for (var i = 0; i < 2; i++)
+        TournamentGameSummary(
+          id: 'unnamed-$i',
+          name: 'White ? vs Black ?',
+          whitePlayer: '?',
+          blackPlayer: '?',
+          hasPgn: true,
+          pgn:
+              '[Event "?"]\n[White "?"]\n[Black "?"]\n[Result "*"]\n[ECO "${i == 0 ? 'A18' : 'A68'}"]\n\n1. ${i == 0 ? 'c4' : 'd4'} Nf6 *',
+          openingName: i == 0 ? 'A18' : 'A68',
+          localPgnSource: TournamentGameLocalPgnSource(
+            sourcePath: 'studies.pgn',
+            sourceIndex: 1424 + i,
+            sourceFileGameCount: 1436,
+            title: 'White ? vs Black ?',
+          ),
+        ),
+    ];
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          pgn: rows.first.pgn!,
+          label: rows.first.name,
+          whiteName: '?',
+          blackName: '?',
+          databaseTitle: 'Studies',
+          databaseGames: rows,
+          gameListSelectedId: rows.first.id,
+        ),
+        overrides: [
+          retainedLocalPgnHydratorProvider.overrideWithValue(
+            (row) async => row,
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+    expect(find.text('White ?'), findsNWidgets(2));
+    expect(find.text('Black ?'), findsNWidgets(2));
+    expect(find.textContaining('· Game #'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('database-player-white-unnamed-1')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(EventGamesTable)),
+    );
+    final opened =
+        container.read(boardTabGameArgsByTabIdProvider).values.single;
+    expect(opened.gameListSelectedId, rows.last.id);
+    expect(opened.librarySaveOrigin?.sourceIndex, 1425);
+    expect(opened.librarySaveOrigin?.sourceFileGameCount, 1436);
+    expect(opened.whiteName, '?');
+    expect(opened.blackName, '?');
+    expect(opened.pgn, rows.last.pgn);
+    expect(opened.databaseGames.map((e) => e.id), rows.map((e) => e.id));
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    final previous = container.read(boardTabGameArgsByTabIdProvider).values.single;
+    expect(previous.gameListSelectedId, rows.first.id);
+    expect(previous.librarySaveOrigin?.sourceIndex, 1424);
+    expect(previous.pgn, rows.first.pgn);
   });
 
   testWidgets('database games hide the board and round column', (tester) async {

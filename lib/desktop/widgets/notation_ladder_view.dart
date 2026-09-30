@@ -5,6 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
 import 'package:chessever/desktop/widgets/commentary_symbol_shortcuts.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -19,6 +20,7 @@ import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -329,6 +331,38 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   String? _lastTreeSignature;
   NotationLayoutMode _layoutMode = NotationLayoutMode.ladder;
   bool _annotationsHidden = false;
+  ChessLine? _measuredMainline;
+  bool _largeNotationTree = false;
+  ChessLine? _indexedMainline;
+  String? _indexedStartingFen;
+  String? _indexedSignature;
+  _TranspositionIndex _cachedTranspositions = const {};
+
+  bool _isLargeNotationTree(ChessLine mainline) {
+    if (identical(_measuredMainline, mainline)) return _largeNotationTree;
+    _measuredMainline = mainline;
+    // Stop counting once the tree is clearly too large to unfold in one
+    // Flutter frame. The full game remains available as branches are opened.
+    var moves = 0;
+    bool exceedsLimit(ChessLine line) {
+      for (final move in line) {
+        if (++moves > 300) return true;
+        for (final variation in move.variations ?? const <ChessLine>[]) {
+          if (exceedsLimit(variation)) return true;
+        }
+      }
+      return false;
+    }
+
+    _largeNotationTree = exceedsLimit(mainline);
+    if (_largeNotationTree) {
+      LocalPgnPerformanceLog.event(
+        'notation_large_tree',
+        'mainline=${mainline.length} autoCollapseDepth=1',
+      );
+    }
+    return _largeNotationTree;
+  }
 
   @override
   void initState() {
@@ -439,7 +473,11 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   }
 
   Future<void> _copyPgnToClipboard() async {
-    await Clipboard.setData(ClipboardData(text: exportGameToPgn(widget.game)));
+    await Clipboard.setData(
+      ClipboardData(
+        text: toExternalCompatiblePgn(exportGameToPgn(widget.game)),
+      ),
+    );
   }
 
   void _toggleAllVariationsFromMenu() {
@@ -546,6 +584,12 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   @override
   Widget build(BuildContext context) {
     final mainline = widget.game.mainline;
+    final autoCollapseDepth =
+        widget.autoCollapseDepth == 1 << 30 &&
+                widget.autoCollapseMoveThreshold == 1 << 30 &&
+                _isLargeNotationTree(mainline)
+            ? 1
+            : widget.autoCollapseDepth;
     final startingPly = _startingPlyFromFen(widget.game.startingFen);
     final gameResult = _formatGameResult(
       widget.game.metadata['Result'] as String?,
@@ -558,6 +602,22 @@ class _NotationLadderViewState extends State<NotationLadderView> {
       _collapsed.clear();
       _expanded.clear();
     }
+    if (!identical(_indexedMainline, mainline) ||
+        _indexedStartingFen != widget.game.startingFen ||
+        signature != _indexedSignature) {
+      _indexedMainline = mainline;
+      _indexedStartingFen = widget.game.startingFen;
+      _indexedSignature = signature;
+      final indexClock = Stopwatch()..start();
+      _cachedTranspositions = _buildTranspositionIndex(widget.game);
+      if (indexClock.elapsedMilliseconds >= 16) {
+        LocalPgnPerformanceLog.event(
+          'notation_index',
+          'elapsedMs=${indexClock.elapsedMilliseconds} '
+          'positions=${_cachedTranspositions.length}',
+        );
+      }
+    }
 
     // Variations whose head-pointer-id is on the active pointer's path
     // are always force-expanded so the user's cursor cannot hide inside
@@ -569,7 +629,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
       forcedOpenIds: forcedOpenIds,
       collapsedIds: _collapsed,
       expandedIds: _expanded,
-      autoCollapseDepth: widget.autoCollapseDepth,
+      autoCollapseDepth: autoCollapseDepth,
       autoCollapseMoveThreshold: widget.autoCollapseMoveThreshold,
     );
     if (_layoutMode == NotationLayoutMode.inline) {
@@ -579,7 +639,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
     }
     final displayActivePointer =
         widget.showActiveHighlight ? widget.activePointer : const <int>[];
-    final transpositions = _buildTranspositionIndex(widget.game);
+    final transpositions = _cachedTranspositions;
 
     return _NotationPositionMarkers(
       positionArrowKeys: widget.positionArrowKeys,
@@ -609,7 +669,19 @@ class _NotationLadderViewState extends State<NotationLadderView> {
               Expanded(
                 child:
                     mainline.isEmpty
-                        ? const _EmptyLadderHint()
+                        ? widget.game.rootComments.isEmpty
+                            ? const _EmptyLadderHint()
+                            : SingleChildScrollView(
+                              child: _MoveComments(
+                                depth: 0,
+                                comments:
+                                    _annotationsHidden
+                                        ? const []
+                                        : _cleanPgnComments(
+                                          widget.game.rootComments,
+                                        ),
+                              ),
+                            )
                         : _layoutMode == NotationLayoutMode.inline
                         ? SingleChildScrollView(
                           controller: _scroll,
@@ -619,6 +691,14 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (!_annotationsHidden &&
+                                  widget.game.rootComments.isNotEmpty)
+                                _MoveComments(
+                                  depth: 0,
+                                  comments: _cleanPgnComments(
+                                    widget.game.rootComments,
+                                  ),
+                                ),
                               KeyedSubtree(
                                 key: _inlineNotationKey,
                                 child: _InlineNotationBlock(
@@ -646,7 +726,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                                   collapsedIds: _collapsed,
                                   expandedIds: _expanded,
                                   onToggleCollapsed: _toggleCollapsed,
-                                  autoCollapseDepth: widget.autoCollapseDepth,
+                                  autoCollapseDepth: autoCollapseDepth,
                                   autoCollapseMoveThreshold:
                                       widget.autoCollapseMoveThreshold,
                                   useFigurine: widget.useFigurine,
@@ -689,7 +769,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                             collapsedIds: _collapsed,
                             expandedIds: _expanded,
                             onToggleCollapsed: _toggleCollapsed,
-                            autoCollapseDepth: widget.autoCollapseDepth,
+                            autoCollapseDepth: autoCollapseDepth,
                             autoCollapseMoveThreshold:
                                 widget.autoCollapseMoveThreshold,
                             useFigurine: widget.useFigurine,
@@ -1303,6 +1383,13 @@ class _LineBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final children = <Widget>[];
+    final owner = context.findAncestorStateOfType<_NotationLadderViewState>();
+    if (isMainlineRoot && depth == 0 && !(owner?._annotationsHidden ?? false)) {
+      final roots = _cleanPgnComments(owner?.widget.game.rootComments);
+      if (roots.isNotEmpty) {
+        children.add(_MoveComments(depth: 0, comments: roots));
+      }
+    }
     var i = 0;
     var ply = startPly;
     while (i < line.length) {
@@ -2015,6 +2102,11 @@ class _InlineNotationBlock extends StatelessWidget {
     for (var i = 0; i < line.length; i++) {
       final move = line[i];
       final pointer = <int>[...pointerPrefix, i];
+      if (!annotationsHidden) {
+        for (final comment in _cleanPgnComments(move.startingComments)) {
+          spans.add(TextSpan(text: '$comment ', style: commentStyle));
+        }
+      }
       final selected = _pointersEqual(pointer, activePointer);
       final isMainlineMove = depth == 0 && isMainlineRoot;
       final variationHeadPointer =
@@ -2654,9 +2746,12 @@ class _InlineMove extends StatelessWidget {
             ? kPrimaryColor
             : (depth == 0 ? kLightGreyColor : kWhiteColor70);
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
         if (prefix.isNotEmpty) ...[
           Text(
             prefix,
@@ -2725,7 +2820,8 @@ class _InlineMove extends StatelessWidget {
           variationHead: isVariationHead,
           mainlineDominant: depth == 0,
         ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -3755,14 +3851,17 @@ class _LadderChipState extends State<_LadderChip>
       ],
       for (final d in nags) ...[
         const SizedBox(width: 3),
-        Text(
-          d.symbol,
-          style: TextStyle(
-            color: widget.selected ? kBackgroundColor : d.color,
-            fontSize: d.isQuality ? 13 : 12,
-            fontWeight: d.isQuality ? FontWeight.w800 : FontWeight.w600,
-            height: 1.0,
-            letterSpacing: -0.2,
+        DesktopTooltip(
+          message: d.description ?? d.symbol,
+          child: Text(
+            d.symbol,
+            style: TextStyle(
+              color: widget.selected ? kBackgroundColor : d.color,
+              fontSize: d.isQuality ? 13 : 12,
+              fontWeight: d.isQuality ? FontWeight.w800 : FontWeight.w600,
+              height: 1.0,
+              letterSpacing: -0.2,
+            ),
           ),
         ),
       ],

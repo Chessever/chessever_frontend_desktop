@@ -12,6 +12,10 @@ class PlayerStandingModel {
   final String? memorialSourceIdentity;
   final String? memorialRouteId;
 
+  /// Team name for team events; null for individual events. Carried so team
+  /// standings can group individual rows under their club.
+  final String? team;
+
   /// 1-based position in the *unfiltered* sorted standings. Preserved across
   /// search so filtered results still display the player's overall standing
   /// (e.g. "#42") instead of re-numbering the filtered list from 1.
@@ -28,6 +32,7 @@ class PlayerStandingModel {
     this.gamebasePlayerId,
     this.memorialSourceIdentity,
     this.memorialRouteId,
+    this.team,
     this.overallRank,
   });
 
@@ -41,6 +46,7 @@ class PlayerStandingModel {
       matchScore: _formatTournamentScore(player.score, player.played),
       fideId: player.fideId,
       gamebasePlayerId: null,
+      team: player.team,
     );
   }
 
@@ -68,6 +74,7 @@ class PlayerStandingModel {
     String? gamebasePlayerId,
     String? memorialSourceIdentity,
     String? memorialRouteId,
+    String? team,
     int? overallRank,
   }) {
     return PlayerStandingModel(
@@ -82,6 +89,7 @@ class PlayerStandingModel {
       memorialSourceIdentity:
           memorialSourceIdentity ?? this.memorialSourceIdentity,
       memorialRouteId: memorialRouteId ?? this.memorialRouteId,
+      team: team ?? this.team,
       overallRank: overallRank ?? this.overallRank,
     );
   }
@@ -98,6 +106,7 @@ class PlayerStandingModel {
       gamebasePlayerId: json['gamebasePlayerId'] as String?,
       memorialSourceIdentity: json['memorialSourceIdentity'] as String?,
       memorialRouteId: json['memorialRouteId'] as String?,
+      team: json['team'] as String?,
       overallRank: json['overallRank'] as int?,
     );
   }
@@ -115,6 +124,7 @@ class PlayerStandingModel {
       'gamebasePlayerId': gamebasePlayerId,
       'memorialSourceIdentity': memorialSourceIdentity,
       'memorialRouteId': memorialRouteId,
+      'team': team,
       'overallRank': overallRank,
     };
   }
@@ -133,6 +143,7 @@ class PlayerStandingModel {
         other.gamebasePlayerId == gamebasePlayerId &&
         other.memorialSourceIdentity == memorialSourceIdentity &&
         other.memorialRouteId == memorialRouteId &&
+        other.team == team &&
         other.overallRank == overallRank;
   }
 
@@ -149,6 +160,7 @@ class PlayerStandingModel {
       gamebasePlayerId,
       memorialSourceIdentity,
       memorialRouteId,
+      team,
       overallRank,
     );
   }

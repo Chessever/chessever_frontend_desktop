@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:country_flags/country_flags.dart';
 import 'package:cue/cue.dart';
@@ -27,7 +28,7 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show LiveDesktopGameCard, openTournamentGameTab;
-import 'package:chessever/providers/favorite_players_provider.dart';
+
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/favorites/favorite_players_provider.dart';
 import 'package:chessever/screens/favorites/player_games/provider/favorites_combined_games_provider.dart';
@@ -697,6 +698,7 @@ void _openFavoriteGame(
     eventGames: allGames,
     eventGamesContinuation: const BoardTabGamesContinuation.favorites(),
     viewSource: ChessboardView.favScorecard,
+    accessContext: desktopFavoritesFeedAccessContext,
   );
 }
 
@@ -736,6 +738,7 @@ class _FavoriteLiveGameCard extends ConsumerWidget {
         layout: layout,
         selected: selected,
         viewSource: ChessboardView.favScorecard,
+        accessContext: desktopFavoritesFeedAccessContext,
         streamingEnabled: streamingEnabled && streamEnabled,
         allowStockfishFallback: streamEnabled,
       ),
@@ -1022,12 +1025,14 @@ class _WorldPlayersListState extends ConsumerState<_WorldPlayersList> {
           child: _PlayerTile(
             player: player,
             isFavorite: favorite,
-            onFavoriteTap: () async {
-              await ref
-                  .read(favoritePlayersNotifierProvider.notifier)
-                  .toggleFavorite(player);
-              ref.invalidate(favoritePlayersProviderNew);
-            },
+            onFavoriteTap: () => setDesktopPlayerFavorite(
+                            context, ref, favorite: !favorite,
+                            playerName: player.name, fideId: player.fideId?.toString(),
+                            countryCode: player.countryCode, rating: player.score, title: player.title,
+                            gamebasePlayerId: player.gamebasePlayerId,
+                            memorialSourceIdentity: player.memorialSourceIdentity,
+                            memorialRouteId: player.memorialRouteId,
+                          ),
           ),
         );
       },
@@ -1129,9 +1134,12 @@ class _PlayerTileState extends ConsumerState<_PlayerTile> {
       await custom();
       return;
     }
-    await ref
-        .read(favoritePlayersNotifierProvider.notifier)
-        .removeFavorite(widget.player);
+    final player = widget.player;
+    await setDesktopPlayerFavorite(context, ref,
+      favorite: false, playerName: player.name,
+      fideId: player.fideId?.toString(),
+      memorialSourceIdentity: player.memorialSourceIdentity);
+
   }
 
   @override

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:cue/cue.dart';
 import 'package:flutter/material.dart';
@@ -34,7 +35,7 @@ import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/providers/event_favorite_players_provider.dart';
 import 'package:chessever/providers/favorite_events_provider.dart';
-import 'package:chessever/providers/favorite_players_provider.dart';
+
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_combined_games_provider.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
@@ -749,12 +750,14 @@ class _CountrymenPlayersListState
             child: _CountryPlayerTile(
               player: player,
               isFavorite: favorite,
-              onFavoriteTap: () async {
-                await ref
-                    .read(favoritePlayersNotifierProvider.notifier)
-                    .toggleFavorite(player);
-                ref.invalidate(favoritePlayersProviderNew);
-              },
+              onFavoriteTap: () => setDesktopPlayerFavorite(
+                              context, ref, favorite: !favorite,
+                              playerName: player.name, fideId: player.fideId?.toString(),
+                              countryCode: player.countryCode, rating: player.score, title: player.title,
+                              gamebasePlayerId: player.gamebasePlayerId,
+                              memorialSourceIdentity: player.memorialSourceIdentity,
+                              memorialRouteId: player.memorialRouteId,
+                            ),
             ),
           );
         },

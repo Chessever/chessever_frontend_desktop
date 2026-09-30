@@ -3,6 +3,7 @@ class PngAsset {
   static const premium2Icon = 'assets/pngs/premium2.png';
   static const chesseverIcon = 'assets/pngs/chessever.png';
   static const fideLogo = 'assets/pngs/fide_logo.webp';
+  static const fideFlag = 'assets/pngs/fide_flag.png';
   static const newAppLogoCircle = 'assets/pngs/new_app_logo_circle.webp';
   static const newAppLogo = 'assets/pngs/new_app_logo.webp';
   static const blitzIcon = 'assets/pngs/blitz.png';

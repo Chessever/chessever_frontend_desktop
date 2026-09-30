@@ -2,18 +2,38 @@ import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
+
+/// The private carrier that lets a copied game come home with its exact
+/// ChessEver classes, and the legacy comment marker it replaced.
+///
+/// The implementation is in `chessever_classification_header.dart`, which has
+/// no imports so the writer, the importer and the regressions can all execute
+/// it on a bare Dart VM. Re-exported here because this file is the vocabulary
+/// every other surface already imports.
+export 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart'
+    show
+        kChesseverClassificationHeaderTag,
+        kChesseverClassificationCodes,
+        kExternalNagForChesseverCode,
+        kChesseverMarkerTag,
+        kChesseverUserQualityOverrideNag,
+        isChesseverClassificationCode,
+        chesseverMoveKey,
+        chesseverNextMoveKey,
+        isChesseverMoveKey,
+        chesseverClassificationHeaderValue,
+        parseChesseverClassificationHeader,
+        chesseverClassificationHeaderOf,
+        withoutChesseverClassificationHeader,
+        chesseverCodesFromMarker,
+        restoreChesseverClassificationNags,
+        stripChesseverMarker;
 
 /// PGN quality-verdict NAGs ($1–$6) that answer "how good was this move".
 /// A completed Game Analysis report owns that question and replaces them.
 const moveVerdictNags = <int>{1, 2, 3, 4, 5, 6};
-
-/// Marks a standard quality NAG as a later ChessEver user override.
-///
-/// The paired `$1`–`$6` remains portable for other PGN readers. This marker
-/// preserves edit provenance so a background report cannot reclaim the move
-/// after Save/Copy/Share and reopen.
-const kChesseverUserQualityOverrideNag = 248;
 
 /// ChessEver's classification NAG block: `$240`–`$247`, one code per report
 /// class, written **beside** the standard quality NAG rather than instead of it.
@@ -54,7 +74,20 @@ GameMoveClassification? classificationForChesseverNag(int nag) =>
 
 /// Whether [nag] belongs to the ChessEver classification block.
 bool isChesseverClassificationNag(int nag) =>
-    _classificationByNag.containsKey(nag);
+    isChesseverClassificationCode(nag);
+
+/// The standard NAG (`$1`–`$6`, or null) that carries each ChessEver class to a
+/// foreign reader.
+///
+/// Derived from [kExternalNagForChesseverCode] so this documented, enum-facing
+/// view and the table the copy boundary actually uses cannot drift. The exact
+/// class always travels in the private
+/// [kChesseverClassificationHeaderTag] header tag — this table only decides
+/// what a *foreign* reader sees.
+final Map<GameMoveClassification, int?> kExternalNagForClassification = {
+  for (final entry in kChesseverClassificationNags.entries)
+    entry.key: kExternalNagForChesseverCode[entry.value],
+};
 
 /// The ChessEver classification a move's NAGs carry, if any.
 ///
@@ -68,6 +101,15 @@ GameMoveClassification? classificationFromNags(Iterable<int>? nags) {
   }
   return null;
 }
+
+/// The private carrier for a copied game's exact classes, and how it is read
+/// back, live in `chessever_classification_header.dart` (re-exported above):
+/// [kChesseverClassificationHeaderTag] holds the grammar,
+/// [chesseverClassificationHeaderValue] writes it,
+/// [restoreChesseverClassificationNags] restores the native block on import
+/// (native `$240`–`$247` wins, then the header, then a legacy `[%ce …]`
+/// comment left by a build that copied before 21.5.4), and
+/// [stripChesseverMarker] removes a consumed legacy directive.
 
 /// Report classification a move's NAGs carry, as a display annotation type.
 LichessMoveAnnotationType? annotationTypeFromClassificationNags(
@@ -87,9 +129,10 @@ final _chesseverAnnotationDirective = RegExp(
 /// Machine tags that must never surface as free-text notation comments.
 ///
 /// Includes clocks/evals/arrows plus ChessEver's private classification
-/// directive. Tags-only comments become empty after cleaning and are omitted.
+/// directive and the external-compat classification marker. Tags-only comments
+/// become empty after cleaning and are omitted.
 final _pgnMachineTagDirective = RegExp(
-  r'\[%\s*(?:clk|eval|cal|csl|emt|tag|src|chessever_annotation)\s*[^\]]*\]',
+  r'\[%\s*(?:clk|eval|cal|csl|emt|tag|src|ce|chessever_annotation)\s*[^\]]*\]',
   caseSensitive: false,
 );
 

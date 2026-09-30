@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../state/event_player_board_games.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -25,6 +26,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart' show DragToMoveArea;
 
+import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_clipboard.dart';
@@ -41,12 +43,16 @@ import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
+import 'package:chessever/desktop/services/local_database_save_source.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
     hide mergeGameReportAnnotationsForGif;
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_board_shortcuts.dart';
+import 'package:chessever/desktop/widgets/desktop_board_access_gate.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
@@ -64,6 +70,7 @@ import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/opening_explorer_seed.dart';
 import 'package:chessever/desktop/state/pgn_intake.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/state/player_hover_rounds.dart';
 import 'package:chessever/desktop/state/user_move_nags.dart';
 import 'package:chessever/desktop/utils/mainline_annotation_index.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
@@ -71,11 +78,13 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/desktop/widgets/board_actions_popover.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_panel.dart';
 import 'package:chessever/desktop/services/play/play_from_here.dart';
 import 'package:chessever/desktop/widgets/board_context_menu.dart';
+import 'package:chessever/desktop/widgets/board_save_scope_dialog.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
@@ -87,6 +96,7 @@ import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/desktop/widgets/editable_aware_shortcut_activator.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/desktop/widgets/engine_pv_arrow_palette.dart';
@@ -656,11 +666,22 @@ class BoardPane extends ConsumerWidget {
       key: ValueKey<String>('board-explorer-scope:$activeTabId'),
       overrides: [
         gamebaseExplorerProvider.overrideWith(
-          (ref) => GamebaseExplorerNotifier(ref),
+          (ref) => GamebaseExplorerNotifier(
+            ref,
+            accessCheck:
+                (state, advance) =>
+                    desktopExplorerFetchAllowed(ref.read, state, advance),
+          ),
         ),
         appliedBoardExplorerScopeKeyProvider.overrideWith((ref) => null),
       ],
-      child: _BoardPaneContent(tabId: activeTabId),
+      // Admission is per game lifetime: a locked game never builds the board
+      // content (no PGN hydrate, stream or engine), an admitted one is never
+      // unmounted by an entitlement change.
+      child: DesktopBoardAccessGate(
+        tabId: activeTabId,
+        child: _BoardPaneContent(tabId: activeTabId),
+      ),
     );
   }
 }
@@ -737,6 +758,10 @@ class _BoardPaneContent extends HookConsumerWidget {
             : ref.watch(
               boardTabGameArgsByTabIdProvider.select((m) => m[activeTabId]),
             );
+    final eventPlayerScope = boardArgs?.eventPlayerScope;
+    if (eventPlayerScope is EventPlayerBoardScope && activeTabId != null) {
+      ref.watch(eventPlayerBoardGamesProvider(eventPlayerBoardGamesKey(eventPlayerScope, activeTabId)));
+    }
     final attachedLibrarySaveOrigin =
         activeTabId == null
             ? null
@@ -1184,10 +1209,30 @@ class _BoardPaneContent extends HookConsumerWidget {
           canonicalLocalStateAlreadyClean) {
         return;
       }
+      final logLocalOpen =
+          kDebugMode &&
+          boardArgs?.librarySaveOrigin?.kind ==
+              BoardTabLibrarySaveOriginKind.localPgnFile;
+      final applyClock = logLocalOpen ? (Stopwatch()..start()) : null;
+      final parseClock = logLocalOpen ? (Stopwatch()..start()) : null;
       final ChessGame parsed;
       try {
         parsed = ChessGame.fromPgn('', trimmed);
+        if (logLocalOpen) {
+          LocalPgnPerformanceLog.event(
+            'board_parse',
+            'elapsedMs=${parseClock!.elapsedMilliseconds} '
+            'pgnChars=${trimmed.length} mainline=${parsed.mainline.length}',
+          );
+        }
       } catch (e) {
+        if (logLocalOpen) {
+          LocalPgnPerformanceLog.event(
+            'board_parse_failed',
+            'elapsedMs=${parseClock!.elapsedMilliseconds} '
+            'errorType=${e.runtimeType}',
+          );
+        }
         // Silent failure swallows the empty-notation bug if a malformed
         // PGN ever lands here (e.g. truncated row, corrupted stream
         // payload). Surface it in debug builds so we can spot which
@@ -1416,6 +1461,13 @@ class _BoardPaneContent extends HookConsumerWidget {
         hasUnseenMoves.value = true;
       } else if (landedOnTip) {
         hasUnseenMoves.value = false;
+      }
+      if (logLocalOpen) {
+        LocalPgnPerformanceLog.event(
+          'board_apply_complete',
+          'elapsedMs=${applyClock!.elapsedMilliseconds} '
+          'mainline=${game.mainline.length}',
+        );
       }
     }
 
@@ -2884,7 +2936,13 @@ class _BoardPaneContent extends HookConsumerWidget {
             lastAppliedPgn: lastAppliedPgn.value,
           );
         }
-        await Clipboard.setData(ClipboardData(text: pgn));
+        // Copied PGN leaves the app, so it must import in stricter consumers:
+        // standard NAGs only, wrapped movetext, terminated file. The exact
+        // ChessEver class travels in the private `[ChessEverClassification …]`
+        // header tag, which our own import restores and no other app renders.
+        await Clipboard.setData(
+          ClipboardData(text: toExternalCompatiblePgn(pgn)),
+        );
         showToast('PGN copied to clipboard');
       } catch (e) {
         showToast('Failed to copy PGN: $e', error: true);
@@ -3104,8 +3162,63 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
     }
 
-    Future<void> saveGameToLibraryAction() =>
-        runBoardSave(saveGameToLibraryActionImpl);
+    Future<void> saveSourceDatabaseToCloudImpl({String? sourcePath}) async {
+      final path =
+          sourcePath ??
+          attachedLibrarySaveOrigin?.sourcePath ??
+          boardArgs?.librarySaveOrigin?.sourcePath;
+      if (path == null || !path.toLowerCase().endsWith('.pgn')) return;
+      showToast('Reading all games in the PGN...');
+      LocalDatabaseSaveEnumeration? source;
+      try {
+        source = await openLocalDatabaseSaveEnumerationFromPgn(path: path);
+        if (!context.mounted) return;
+        if (source.totalCount == 0) {
+          showToast('This PGN has no games to save.', error: true);
+          return;
+        }
+        final outcome = await showLibrarySaveToFolderDialog(
+          context: context,
+          ref: ref,
+          gameSource: source,
+          sourceLabel: io.File(path).uri.pathSegments.last,
+          destinationMode: LibrarySaveDestinationMode.cloudOnly,
+          newDatabaseName: localChessDatabaseStemForPath(path),
+        );
+        if (context.mounted && outcome != null && outcome.didSave) {
+          showToast(outcome.toToastMessage());
+        }
+      } catch (error) {
+        if (context.mounted) {
+          showToast('Could not save the whole PGN: $error', error: true);
+        }
+      } finally {
+        source?.release();
+      }
+    }
+    Future<void> saveGameToLibraryAction() => runBoardSave(() async {
+      final sourceOrigin = boardArgs?.librarySaveOrigin;
+      final sourcePath = sourceOrigin?.kind ==
+              BoardTabLibrarySaveOriginKind.localPgnFile
+          ? sourceOrigin?.sourcePath
+          : null;
+      if (sourcePath != null && sourcePath.toLowerCase().endsWith('.pgn')) {
+        final saveCompletion = captureBoardSaveCompletion();
+        final scope = await showBoardSaveScopeDialog(context);
+        if (!context.mounted ||
+            !saveCompletion.ownsActivation() ||
+            scope == null) {
+          return;
+        }
+        if (scope == BoardSaveScope.wholePgnFile) {
+          await saveSourceDatabaseToCloudImpl(sourcePath: sourcePath);
+          return;
+        }
+      }
+      await saveGameToLibraryActionImpl();
+    });
+    Future<void> saveSourceDatabaseToCloud() =>
+        runBoardSave(saveSourceDatabaseToCloudImpl);
     Future<void> savePgnAction() => runBoardSave(savePgnActionImpl);
 
     void setMoveComment(ChessMovePointer target, String? comment) {
@@ -4729,10 +4842,8 @@ class _BoardPaneContent extends HookConsumerWidget {
       required ChessMovePointer activePointer,
       required ValueChanged<ChessMovePointer> onJump,
       required ValueNotifier<NotationLayoutMode> layoutModeController,
-      required Widget headerTrailing,
     }) {
       return NotationLadderView(
-        headerTrailing: headerTrailing,
         game: chessGame.value,
         activePointer: activePointer,
         // Notation stays mounted under Explorer; keep the cursor highlight.
@@ -4832,6 +4943,13 @@ class _BoardPaneContent extends HookConsumerWidget {
         onCopyFen: copyFenAction,
         onSavePgn: savePgnAction,
         onSaveGameToLibrary: () => unawaited(saveGameToLibraryAction()),
+        onSaveSourceDatabaseToCloud:
+            (attachedLibrarySaveOrigin?.sourcePath ??
+                        boardArgs?.librarySaveOrigin?.sourcePath)
+                    ?.toLowerCase()
+                    .endsWith('.pgn') == true
+                ? () => unawaited(saveSourceDatabaseToCloud())
+                : null,
         onOpenBoardSettings: openBoardSettingsTab,
         onOpenPositionSetup: openPositionSetup,
         onClearAnalysis:
@@ -4888,7 +5006,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         ? null
         : BroadcastVideoPanel(
             key: ValueKey<String>(
-              'broadcast-video:$broadcastTourId:$broadcastRoundId',
+              'broadcast-video:${activeTabId ?? ''}:$broadcastTourId:$broadcastRoundId',
             ),
             tourId: broadcastTourId,
             roundId: broadcastRoundId.isEmpty ? null : broadcastRoundId,
@@ -5154,9 +5272,6 @@ class _BoardPaneContent extends HookConsumerWidget {
                       hideLocalOpeningTreePicker:
                           boardArgs?.hideLocalOpeningTreePicker ?? false,
                       notationChild: buildNotationLadder(
-                        headerTrailing: _BoardMoreActionsButton(
-                          onPressed: openBoardContextMenu,
-                        ),
                         scrollController: notationScrollController,
                         activePointer: pointer.value,
                         onJump: jumpToPointer,
@@ -5279,6 +5394,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           gameReport.value = report;
                         },
                         reportResetRevision: reportResetRevision.value,
+                        reportRevealRevision: reportRevealRevision.value,
                         onReportRunningChanged: (running) {
                           if (!context.mounted) return;
                           if (reportRunning.value != running) {
@@ -5297,6 +5413,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                                 : () => unawaited(openPictureInPictureAction()),
                         pictureInPictureSelected:
                             currentGameIsInPictureInPicture,
+                        headerTrailing: _BoardMoreActionsButton(
+                          onPressed: openBoardContextMenu,
+                        ),
                       ),
                     ),
                   ),
@@ -8826,71 +8945,17 @@ class _BoardMoreActionsButtonState extends State<_BoardMoreActionsButton> {
 
   @override
   Widget build(BuildContext context) {
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: DesktopTooltip(
+    return SizedBox.square(
+      key: _anchorKey,
+      dimension: 28,
+      child: DesktopHeaderIconButton(
+        key: const ValueKey<String>('desktop-board-more-actions'),
         message: 'More board actions',
-        child: SizedBox.square(
-          key: _anchorKey,
-          dimension: _focusButtonSize,
-          child: FButton.icon(
-            key: const ValueKey<String>('desktop-board-more-actions'),
-            style: _floatingBoardIconButtonStyle(selected: false),
-            onPress: _openMenu,
-            child: const Icon(Icons.more_vert_rounded, size: 16),
-          ),
-        ),
+        icon: Icons.more_vert_rounded,
+        onPress: _openMenu,
       ),
     );
   }
-}
-
-FBaseButtonStyle Function(FButtonStyle style) _floatingBoardIconButtonStyle({
-  required bool selected,
-}) {
-  return FButtonStyle.outline(
-    (style) => style.copyWith(
-      decoration: FWidgetStateMap({
-        WidgetState.disabled: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.transparent),
-        ),
-        WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-          color:
-              selected
-                  ? kPrimaryColor.withValues(alpha: 0.12)
-                  : kWhiteColor.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color:
-                selected
-                    ? kPrimaryColor.withValues(alpha: 0.42)
-                    : kWhiteColor.withValues(alpha: 0.10),
-          ),
-        ),
-        WidgetState.any: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.transparent),
-        ),
-      }),
-      iconContentStyle:
-          (content) => content.copyWith(
-            padding: const EdgeInsets.all(8),
-            iconStyle: FWidgetStateMap({
-              WidgetState.disabled: const IconThemeData(
-                color: Color(0x4DFFFFFF),
-                size: 18,
-              ),
-              WidgetState.any: IconThemeData(
-                color: selected ? kPrimaryColor : kWhiteColor70,
-                size: 18,
-              ),
-            }),
-          ),
-    ),
-  );
 }
 
 /// The chessboard plus its annotation layer (right-click drawing) and a
@@ -9215,8 +9280,11 @@ EventPlayerGamesKey? boardPlayerHistoryKey({
   required int? fideId,
   required String ownerId,
   GamesTourModel? sourceGame,
+  bool allowSourceFallback = false,
 }) {
-  final primaryTourId = eventKey?.tourId.trim() ?? '';
+  final primaryTourId = eventKey?.tourId.trim() ??
+      (allowSourceFallback && sourceGame?.source == GameSource.supabase
+          ? sourceGame?.tourId.trim() : null) ?? '';
   if (primaryTourId.isEmpty || playerName.trim().isEmpty) return null;
 
   final additionalTourIds = <String>{};
@@ -9350,15 +9418,22 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     // ids. Live clocks now rebuild below this header, while other header state
     // changes still avoid an O(eventGames) scan plus a UI-isolate string join.
     final historyKey = useMemoized(
-      () => boardPlayerHistoryKey(
+      () => boardArgs?.eventPlayerScope is EventPlayerBoardScope
+          ? EventPlayerGamesKey(
+              tourId: (boardArgs!.eventPlayerScope!).tourIds.first,
+              additionalTourIds: (boardArgs!.eventPlayerScope!).tourIds.skip(1),
+              playerName: name, fideId: fideId, ownerId: historyOwnerId ?? '',
+            )
+          : boardPlayerHistoryKey(
         eventKey: eventKey,
         eventGames: hydratedEventGames,
         sourceGame: sourceGame,
+        allowSourceFallback: _canOpenEventPlayerGames,
         playerName: name,
         fideId: fideId,
         ownerId: historyOwnerId ?? '',
       ),
-      [eventKey, hydratedEventGames, sourceGame, name, fideId, historyOwnerId],
+      [boardArgs?.eventPlayerScope, eventKey, hydratedEventGames, sourceGame, name, fideId, historyOwnerId],
     );
     final requestedHistoryContext = useState<String?>(null);
     final historyRequestContext = useMemoized(
@@ -9378,6 +9453,17 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             ?.map(TournamentGameSummary.fromGamesTourModel)
             .toList(growable: false) ??
         const <TournamentGameSummary>[];
+
+    final hoverRounds =
+        historyKey == null ||
+                requestedHistoryContext.value != historyRequestContext
+            ? const <PlayerHoverRound>[]
+            : ref
+                    .watch(playerHoverRoundsProvider(
+                      playerHoverRoundsKey(historyKey.tourIds),
+                    ))
+                    .valueOrNull ??
+                const <PlayerHoverRound>[];
 
     // Local PGNs (e.g. TWIC) often carry a FIDE ID but no title tag; resolve
     // the title on demand from chess_players, same as the flag backfill.
@@ -9433,9 +9519,10 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             photoUrl: photoUrl,
           ),
           games: hoverGames,
+          rounds: hoverRounds,
           isLoading: hoverIsLoading,
           openAbove: openAbove,
-          contextKey: hoverContextKey,
+          contextKey: '$hoverContextKey|$historyRequestContext',
           onPreviewOpened:
               historyRequestContext == null
                   ? null
@@ -9457,10 +9544,11 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             fontWeight: FontWeight.w600,
           ),
           onOpenPlayerInNewTab: (player) => _openProfileInNewTab(ref, player),
+          onOpenScoreCard: () => _openPlayer(ref, name),
           onOpenOpponentInNewTab:
               (opponent) => _openProfileInNewTab(ref, opponent),
           onOpenGameInNewTab:
-              (game) => _openPreviewGameInNewTab(ref, game, hoverGames),
+              (game) => _openPreviewGameInNewTab(ref, game, hoverGames, historyKey),
         );
       },
       [
@@ -9475,6 +9563,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         photoUrl,
         hoverGames,
         hoverIsLoading,
+        hoverRounds,
         historyRequestContext,
         boardArgs,
         sourceGame,
@@ -9720,12 +9809,52 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     );
   }
 
+  bool get _canOpenEventPlayerGames {
+    final args = boardArgs;
+    return args != null &&
+        (args.viewSource == ChessboardView.tour ||
+            args.viewSource == ChessboardView.forYou ||
+            args.viewSource == ChessboardView.countryman) &&
+        args.databaseGames.isEmpty &&
+        args.databaseGamesContinuation == null &&
+        (args.eventPlayerScope != null ||
+            (sourceGame ?? args.sourceGame)?.source == GameSource.supabase);
+  }
+
   void _openPreviewGameInNewTab(
     WidgetRef ref,
     TournamentGameSummary selected,
     List<TournamentGameSummary> previewGames,
+    EventPlayerGamesKey? historyKey,
   ) {
     final args = boardArgs;
+    if (historyKey != null && args != null && _canOpenEventPlayerGames) {
+      final priorScope = args.eventPlayerScope;
+      final scope = EventPlayerBoardScope(
+        tourIds: historyKey.tourIds,
+        playerName: name, fideId: fideId,
+        eventTitle: priorScope is EventPlayerBoardScope ? priorScope.eventTitle : args.tournamentTitle,
+        eventBroadcastId: args.eventBroadcastId,
+      );
+      final games = eventPlayerBoardGames(scope, previewGames);
+      if (!games.any((game) => game.id == selected.id)) return;
+      final openContext = ref.context;
+      unawaited(openTournamentGameTab(
+        ref,
+        _gamesTourModelFromSummary(selected, source: sourceGame?.source ?? GameSource.supabase),
+        scope.title,
+        eventGames: [for (final game in games) _gamesTourModelFromSummary(game, source: sourceGame?.source ?? GameSource.supabase)],
+        eventPlayerScope: scope,
+        eventBroadcastId: scope.eventBroadcastId,
+        // A player subset changes the rail, never its source entitlement.
+        accessContext: args.sourceAccessContext,
+        viewSource: ChessboardView.tour,
+        focus: true, reuseExisting: false, replaceActive: false,
+      ).catchError((Object error) {
+        if (openContext.mounted) showDesktopToast(openContext, 'Could not open event games. Please retry.', error: true);
+      }));
+      return;
+    }
     if (args?.databaseGames.isNotEmpty == true) {
       final pgn = selected.pgn?.trim() ?? '';
       final localPgnSaveOrigin = _boardLibrarySaveOriginForSummary(selected);
@@ -9769,6 +9898,8 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           hideLocalOpeningTreePicker: args.hideLocalOpeningTreePicker,
           gameListSelectedId: selected.id,
           librarySaveOrigin: localPgnSaveOrigin,
+          // Source provenance only: the next rail game is a fresh request.
+          accessContext: args.sourceAccessContext,
         ),
         focus: true,
         reuseExisting: false,
@@ -9824,6 +9955,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         replaceActive: false,
         viewSource: viewSource,
         eventBroadcastId: args?.eventBroadcastId,
+        accessContext: args?.sourceAccessContext,
       ),
     );
   }
@@ -9926,7 +10058,10 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         .read(scoreCardGamesContextProvider.notifier)
         .state = _scoreCardGamesContextForBoardTap(eventGame, boardArgs);
 
-    openPlayerScoreCard(ref, player, fromTournamentContext: true);
+    openPlayerScoreCard(
+      ref, player, fromTournamentContext: true,
+      accessContext: boardArgs?.sourceAccessContext,
+    );
   }
 
   PlayerProfileDataSource _profileSourceFor(GameSource source) {

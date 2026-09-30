@@ -11,6 +11,7 @@ import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_endgame_board_overlay.dart';
+import 'package:chessever/desktop/widgets/desktop_locked_content.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
@@ -34,6 +35,9 @@ import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
 const String _kStartFen =
     'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+/// Inner padding of a grid card, shared by its player rows and board area.
+const double _kGridCardPadding = 12;
 
 /// View modes for the desktop game card. Each renders inside the multi-
 /// column [DesktopGameCardsFlow]; the desktop look is its own thing and
@@ -91,9 +95,20 @@ class DesktopGameCard extends ConsumerWidget {
     this.dragPayload,
     this.onContextMenu,
     this.allowStockfishFallback = true,
+    this.lockedReason,
   });
 
   final GameCardData data;
+
+  /// Non-null draws the card locked at rest: its content greyscaled and dimmed
+  /// inside the card chrome (so selection keeps the brand border), results in a
+  /// neutral tone, and a lock glyph explaining [lockedReason] in a spot the
+  /// layout keeps clear of text, badges and the board. Purely visual; the
+  /// owner re-checks access when the card is opened.
+  ///
+  /// Compact and grid layouts only. A locked list uses a table row with its
+  /// own lock column.
+  final String? lockedReason;
   final VoidCallback? onTap;
   final VoidCallback? onDoubleTap;
   final DesktopCardLayout layout;
@@ -131,6 +146,10 @@ class DesktopGameCard extends ConsumerWidget {
       ),
     );
     final showEvaluationBar = showBoardEvalBar && showEngineGauge;
+    assert(
+      lockedReason == null || layout != DesktopCardLayout.list,
+      'The list layout has no lock treatment; use a table row instead.',
+    );
     final Widget card;
     switch (layout) {
       case DesktopCardLayout.grid:
@@ -139,6 +158,7 @@ class DesktopGameCard extends ConsumerWidget {
           selected: selected,
           allowStockfishFallback: allowStockfishFallback,
           showEvaluationBar: showEvaluationBar,
+          lockedReason: lockedReason,
         );
       case DesktopCardLayout.compact:
         card = _CompactLayout(
@@ -146,6 +166,7 @@ class DesktopGameCard extends ConsumerWidget {
           selected: selected,
           allowStockfishFallback: allowStockfishFallback,
           showEvaluationBar: showEvaluationBar,
+          lockedReason: lockedReason,
         );
       case DesktopCardLayout.list:
         card = _ListLayout(
@@ -163,7 +184,7 @@ class DesktopGameCard extends ConsumerWidget {
         onTap?.call();
         return;
       }
-      p.spawn(ref, focus: false);
+      p.spawnAdmitted(ref, focus: false, surface: 'game_card_new_tab');
     }
 
     final tappable = ClickCursor(
@@ -603,10 +624,15 @@ class _CleanPlayerRow extends StatelessWidget {
 /// small muted tabular numerals. Black mirrors right-aligned so the
 /// two sides read as opposing teams.
 class _CleanFaceOffBlock extends StatelessWidget {
-  const _CleanFaceOffBlock({required this.data, required this.isWhite});
+  const _CleanFaceOffBlock({
+    required this.data,
+    required this.isWhite,
+    this.locked = false,
+  });
 
   final GameCardData data;
   final bool isWhite;
+  final bool locked;
 
   @override
   Widget build(BuildContext context) {
@@ -631,14 +657,18 @@ class _CleanFaceOffBlock extends StatelessWidget {
       ),
       if (title.isNotEmpty) ...[
         const SizedBox(width: 5),
-        DesktopPlainPlayerTitle(title: title, compact: true),
+        DesktopPlainPlayerTitle(
+          title: title,
+          compact: true,
+          color: locked ? kWhiteColor70 : kPrimaryColor,
+        ),
       ],
       if (rating > 0) ...[
         const SizedBox(width: 6),
         Text(
           '$rating',
           style: const TextStyle(
-            color: kLightGreyColor,
+            color: kWhiteColor70,
             fontSize: 10.5,
             fontWeight: FontWeight.w600,
             letterSpacing: 0.3,
@@ -681,14 +711,21 @@ class _CleanFaceOffBlock extends StatelessWidget {
 /// blank because the top-right pulse/eval strip already carries live state;
 /// showing a dash/minus there reads like a wrong result while play is active.
 class _CompactScorePanel extends StatelessWidget {
-  const _CompactScorePanel({required this.data});
+  const _CompactScorePanel({required this.data, this.locked = false});
   final GameCardData data;
+  final bool locked;
 
   @override
   Widget build(BuildContext context) {
     if (data.status.isFinished) {
+      // A greyscaled primary is too dim to read on a locked card, so the score
+      // there is drawn in the neutral tone.
       final winning =
-          data.status == GameStatus.draw ? kLightGreyColor : kPrimaryColor;
+          locked
+              ? kWhiteColor70
+              : data.status == GameStatus.draw
+              ? kLightGreyColor
+              : kPrimaryColor;
       return _ScorePlate(label: _resultLabel(data), color: winning);
     }
     if (data.hasStarted) {
@@ -909,11 +946,13 @@ class _CompactLayout extends StatefulWidget {
     required this.selected,
     required this.allowStockfishFallback,
     required this.showEvaluationBar,
+    this.lockedReason,
   });
   final GameCardData data;
   final bool selected;
   final bool allowStockfishFallback;
   final bool showEvaluationBar;
+  final String? lockedReason;
 
   @override
   State<_CompactLayout> createState() => _CompactLayoutState();
@@ -931,6 +970,7 @@ class _CompactLayoutState extends State<_CompactLayout>
     // top-right corner is the only state chrome; ambient tint handles
     // the rest. Designed to read clearly even at 220 px tile width.
     const cardHeight = 82.0;
+    final locked = widget.lockedReason != null;
 
     final highlight = widget.selected || _hovered;
     final baseFill = _tileBaseFill(data: widget.data, highlight: highlight);
@@ -973,37 +1013,42 @@ class _CompactLayoutState extends State<_CompactLayout>
             borderRadius: BorderRadius.circular(9),
             child: Stack(
               children: [
-                Padding(
-                  // When live, top padding clears the 3 px top-edge
-                  // eval bar plus the 12 px centered eval-score strip
-                  // beneath it; bottom padding clears the mirrored
-                  // 12 px last-move strip pinned at the bottom edge.
-                  // Non-live tiles keep the calmer 10 px both ways.
-                  padding: EdgeInsets.fromLTRB(
-                    14,
-                    isLive ? 22 : 10,
-                    14,
-                    isLive ? 18 : 10,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: _CleanFaceOffBlock(
-                          data: widget.data,
-                          isWhite: true,
+                DesktopDesaturated(
+                  enabled: locked,
+                  child: Padding(
+                    // When live, top padding clears the 3 px top-edge
+                    // eval bar plus the 12 px centered eval-score strip
+                    // beneath it; bottom padding clears the mirrored
+                    // 12 px last-move strip pinned at the bottom edge.
+                    // Non-live tiles keep the calmer 10 px both ways.
+                    padding: EdgeInsets.fromLTRB(
+                      14,
+                      isLive ? 22 : 10,
+                      14,
+                      isLive ? 18 : 10,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: _CleanFaceOffBlock(
+                            data: widget.data,
+                            isWhite: true,
+                            locked: locked,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      _CompactScorePanel(data: widget.data),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _CleanFaceOffBlock(
-                          data: widget.data,
-                          isWhite: false,
+                        const SizedBox(width: 12),
+                        _CompactScorePanel(data: widget.data, locked: locked),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _CleanFaceOffBlock(
+                            data: widget.data,
+                            isWhite: false,
+                            locked: locked,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 if (isLive) ...[
@@ -1034,6 +1079,18 @@ class _CompactLayoutState extends State<_CompactLayout>
                     child: _LiveLastMoveStrip(lastMove: widget.data.lastMove),
                   ),
                 ],
+                // The face-off row hugs the top padding, so a finished tile
+                // keeps an empty band under the names: the lock sits there,
+                // right-aligned with Black's name. A live tile fills that band
+                // with the last-move strip, so its lock moves beside the
+                // centred eval strip at the top instead.
+                if (widget.lockedReason case final reason?)
+                  Positioned(
+                    top: isLive ? 5 : null,
+                    bottom: isLive ? null : 10,
+                    right: 14,
+                    child: DesktopLockGlyph(reason: reason),
+                  ),
               ],
             ),
           ),
@@ -1049,11 +1106,13 @@ class _GridLayout extends StatefulWidget {
     required this.selected,
     required this.allowStockfishFallback,
     required this.showEvaluationBar,
+    this.lockedReason,
   });
   final GameCardData data;
   final bool selected;
   final bool allowStockfishFallback;
   final bool showEvaluationBar;
+  final String? lockedReason;
 
   @override
   State<_GridLayout> createState() => _GridLayoutState();
@@ -1098,15 +1157,27 @@ class _GridLayoutState extends State<_GridLayout>
             ),
           ),
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            // Vertical only: the rows pad themselves, and the board area spans
+            // the card's full inner width so a lock can sit centred in the
+            // gutter beside the board.
+            padding: const EdgeInsets.symmetric(vertical: _kGridCardPadding),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _PlayerRow(
-                  data: widget.data,
-                  isWhite: false,
-                  result: _resultFor(widget.data, isWhite: false),
-                  compact: true,
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: _kGridCardPadding,
+                  ),
+                  child: DesktopDesaturated(
+                    enabled: widget.lockedReason != null,
+                    child: _PlayerRow(
+                      data: widget.data,
+                      isWhite: false,
+                      result: _resultFor(widget.data, isWhite: false),
+                      compact: true,
+                      locked: widget.lockedReason != null,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Expanded(
@@ -1125,7 +1196,9 @@ class _GridLayoutState extends State<_GridLayout>
                   // a square via SizedBox keeps the chain finite.
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      final w = constraints.maxWidth;
+                      // The board still fits inside the side padding the
+                      // player rows use.
+                      final w = constraints.maxWidth - 2 * _kGridCardPadding;
                       final h = constraints.maxHeight;
                       if (!w.isFinite || w <= 0) {
                         return const SizedBox.shrink();
@@ -1145,7 +1218,7 @@ class _GridLayoutState extends State<_GridLayout>
                       if (!boardSide.isFinite || boardSide <= 0) {
                         return const SizedBox.shrink();
                       }
-                      return Center(
+                      final board = Center(
                         child: SizedBox(
                           width: boardSide + railWidth,
                           height: boardSide,
@@ -1183,15 +1256,49 @@ class _GridLayoutState extends State<_GridLayout>
                           ),
                         ),
                       );
+                      final lockedReason = widget.lockedReason;
+                      if (lockedReason == null) return board;
+                      // Centred in the empty gutter between the board and the
+                      // card's right edge: no text, badge or square is there.
+                      final gutter =
+                          (constraints.maxWidth - boardSide - railWidth) / 2;
+                      const lockSize = 14.0;
+                      return Stack(
+                        children: [
+                          DesktopDesaturated(enabled: true, child: board),
+                          if (gutter >= lockSize + 6)
+                            Positioned(
+                              top: 0,
+                              bottom: 0,
+                              right: 0,
+                              width: gutter,
+                              child: Center(
+                                child: DesktopLockGlyph(
+                                  reason: lockedReason,
+                                  size: lockSize,
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
                     },
                   ),
                 ),
                 const SizedBox(height: 10),
-                _PlayerRow(
-                  data: widget.data,
-                  isWhite: true,
-                  result: _resultFor(widget.data, isWhite: true),
-                  compact: true,
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: _kGridCardPadding,
+                  ),
+                  child: DesktopDesaturated(
+                    enabled: widget.lockedReason != null,
+                    child: _PlayerRow(
+                      data: widget.data,
+                      isWhite: true,
+                      result: _resultFor(widget.data, isWhite: true),
+                      compact: true,
+                      locked: widget.lockedReason != null,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -1330,12 +1437,17 @@ class _PlayerRow extends StatelessWidget {
     required this.isWhite,
     required this.result,
     this.compact = false,
+    this.locked = false,
   });
 
   final GameCardData data;
   final bool isWhite;
   final String result; // '1', '0', '½', or empty while ongoing/unknown.
   final bool compact;
+
+  /// Drawn inside a locked card: colour-coded title and result take the
+  /// neutral tone, since their greyscaled hues fall below readable contrast.
+  final bool locked;
 
   @override
   Widget build(BuildContext context) {
@@ -1370,7 +1482,11 @@ class _PlayerRow extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         if (title.isNotEmpty) ...[
-          DesktopPlainPlayerTitle(title: title, compact: compact),
+          DesktopPlainPlayerTitle(
+            title: title,
+            compact: compact,
+            color: locked ? kWhiteColor70 : kPrimaryColor,
+          ),
           const SizedBox(width: 6),
         ],
         Expanded(
@@ -1408,7 +1524,14 @@ class _PlayerRow extends StatelessWidget {
         ],
         if (result.isNotEmpty) ...[
           const SizedBox(width: 10),
-          _ResultBadge(label: result, compact: compact, color: _resultBadgeColor(data.status, isWhite)),
+          _ResultBadge(
+            label: result,
+            compact: compact,
+            color:
+                locked
+                    ? kWhiteColor70
+                    : _resultBadgeColor(data.status, isWhite),
+          ),
         ],
       ],
     );

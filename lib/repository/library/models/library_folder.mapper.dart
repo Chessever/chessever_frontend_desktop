@@ -67,10 +67,23 @@ class LibraryFolderMapper extends ClassMapperBase<LibraryFolder> {
     _$parentId,
     opt: true,
   );
+  static String? _$nodeType(LibraryFolder v) => v.nodeType;
+  static const Field<LibraryFolder, String> _f$nodeType = Field(
+    'nodeType',
+    _$nodeType,
+    opt: true,
+  );
   static bool _$isSubscribed(LibraryFolder v) => v.isSubscribed;
   static const Field<LibraryFolder, bool> _f$isSubscribed = Field(
     'isSubscribed',
     _$isSubscribed,
+    opt: true,
+    def: false,
+  );
+  static bool _$isLikedGames(LibraryFolder v) => v.isLikedGames;
+  static const Field<LibraryFolder, bool> _f$isLikedGames = Field(
+    'isLikedGames',
+    _$isLikedGames,
     opt: true,
     def: false,
   );
@@ -88,7 +101,9 @@ class LibraryFolderMapper extends ClassMapperBase<LibraryFolder> {
     #shareToken: _f$shareToken,
     #ownerDisplayName: _f$ownerDisplayName,
     #parentId: _f$parentId,
+    #nodeType: _f$nodeType,
     #isSubscribed: _f$isSubscribed,
+    #isLikedGames: _f$isLikedGames,
   };
 
   static LibraryFolder _instantiate(DecodingData data) {
@@ -104,7 +119,9 @@ class LibraryFolderMapper extends ClassMapperBase<LibraryFolder> {
       shareToken: data.dec(_f$shareToken),
       ownerDisplayName: data.dec(_f$ownerDisplayName),
       parentId: data.dec(_f$parentId),
+      nodeType: data.dec(_f$nodeType),
       isSubscribed: data.dec(_f$isSubscribed),
+      isLikedGames: data.dec(_f$isLikedGames),
     );
   }
 
@@ -182,7 +199,9 @@ abstract class LibraryFolderCopyWith<$R, $In extends LibraryFolder, $Out>
     String? shareToken,
     String? ownerDisplayName,
     String? parentId,
+    String? nodeType,
     bool? isSubscribed,
+    bool? isLikedGames,
   });
   LibraryFolderCopyWith<$R2, $In, $Out2> $chain<$R2, $Out2>(Then<$Out2, $R2> t);
 }
@@ -208,7 +227,9 @@ class _LibraryFolderCopyWithImpl<$R, $Out>
     Object? shareToken = $none,
     Object? ownerDisplayName = $none,
     Object? parentId = $none,
+    Object? nodeType = $none,
     bool? isSubscribed,
+    bool? isLikedGames,
   }) => $apply(
     FieldCopyWithData({
       if (id != null) #id: id,
@@ -222,7 +243,9 @@ class _LibraryFolderCopyWithImpl<$R, $Out>
       if (shareToken != $none) #shareToken: shareToken,
       if (ownerDisplayName != $none) #ownerDisplayName: ownerDisplayName,
       if (parentId != $none) #parentId: parentId,
+      if (nodeType != $none) #nodeType: nodeType,
       if (isSubscribed != null) #isSubscribed: isSubscribed,
+      if (isLikedGames != null) #isLikedGames: isLikedGames,
     }),
   );
   @override
@@ -238,7 +261,9 @@ class _LibraryFolderCopyWithImpl<$R, $Out>
     shareToken: data.get(#shareToken, or: $value.shareToken),
     ownerDisplayName: data.get(#ownerDisplayName, or: $value.ownerDisplayName),
     parentId: data.get(#parentId, or: $value.parentId),
+    nodeType: data.get(#nodeType, or: $value.nodeType),
     isSubscribed: data.get(#isSubscribed, or: $value.isSubscribed),
+    isLikedGames: data.get(#isLikedGames, or: $value.isLikedGames),
   );
 
   @override

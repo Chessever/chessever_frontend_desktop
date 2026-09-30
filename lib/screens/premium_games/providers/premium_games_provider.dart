@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:chessever/repository/gamebase/miniatures/miniatures_order.dart';
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
@@ -690,8 +691,15 @@ class PremiumGamesNotifier
     GamebaseRepository repository,
   ) async {
     try {
+      // The list order is canonical (UTC day, then average rating), not a
+      // user choice, so the request always asks for the most recent page.
       final page = await repository.getMiniatures(
-        filter: _ref.read(miniatureGamesFilterProvider),
+        filter: _ref
+            .read(miniatureGamesFilterProvider)
+            .copyWith(
+              sort: MiniatureGamesSort.recent,
+              order: MiniatureGamesSortOrder.desc,
+            ),
         limit: _pageSize,
         offset: _offset,
       );
@@ -709,7 +717,7 @@ class PremiumGamesNotifier
     }
   }
 
-  GamesTourModel _miniatureToGame(GamebaseMiniature miniature) {
+  static GamesTourModel _miniatureToGame(GamebaseMiniature miniature) {
     final whiteName = _cleanText(miniature.whiteName, fallback: 'White');
     final blackName = _cleanText(miniature.blackName, fallback: 'Black');
     final eventName = _cleanText(miniature.event, fallback: 'Miniatures');
@@ -782,22 +790,22 @@ class PremiumGamesNotifier
     );
   }
 
-  String _cleanText(String? value, {String fallback = ''}) {
+  static String _cleanText(String? value, {String fallback = ''}) {
     final trimmed = value?.trim();
     return trimmed == null || trimmed.isEmpty ? fallback : trimmed;
   }
 
-  String? _cleanNullableText(String? value) {
+  static String? _cleanNullableText(String? value) {
     final trimmed = _cleanText(value);
     return trimmed.isEmpty ? null : trimmed;
   }
 
-  int? _safeRating(int? value) {
+  static int? _safeRating(int? value) {
     if (value == null || value <= 0 || value > 4000) return null;
     return value;
   }
 
-  String _pgnResult(GameStatus status) {
+  static String _pgnResult(GameStatus status) {
     return switch (status) {
       GameStatus.whiteWins => '1-0',
       GameStatus.blackWins => '0-1',
@@ -807,18 +815,18 @@ class PremiumGamesNotifier
     };
   }
 
-  String? _miniatureOpeningName(GamebaseMiniature miniature) {
+  static String? _miniatureOpeningName(GamebaseMiniature miniature) {
     final opening = _cleanNullableText(miniature.opening);
     final variation = _cleanNullableText(miniature.variation);
     if (opening == null) return variation;
     return variation == null ? opening : '$opening: $variation';
   }
 
-  String _pgnTagValue(String value) {
+  static String _pgnTagValue(String value) {
     return value.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
   }
 
-  String _miniatureHeaderPgn({
+  static String _miniatureHeaderPgn({
     required String whiteName,
     required String blackName,
     required String eventName,
@@ -879,41 +887,9 @@ class PremiumGamesNotifier
   void _sortGames() {
     _allGames.sort((a, b) {
       if (_type == PremiumGamesType.miniatures) {
-        final filter = _ref.read(miniatureGamesFilterProvider);
-        final primaryCompare = switch (filter.sort) {
-          MiniatureGamesSort.rating => _compareMiniatureValues(
-            _miniatureRating(a),
-            _miniatureRating(b),
-            filter.order,
-          ),
-          MiniatureGamesSort.moves => _compareMiniatureValues(
-            a.boardNr ?? 0,
-            b.boardNr ?? 0,
-            filter.order,
-          ),
-          MiniatureGamesSort.recent => _compareMiniatureDates(
-            a.lastMoveTime,
-            b.lastMoveTime,
-            filter.order,
-          ),
-        };
-        if (primaryCompare != 0) return primaryCompare;
-
-        final dateCompare = _compareMiniatureDates(
-          a.lastMoveTime,
-          b.lastMoveTime,
-          MiniatureGamesSortOrder.desc,
-        );
-        if (dateCompare != 0) return dateCompare;
-
-        final eloCompare = _compareMiniatureValues(
-          _miniatureRating(a),
-          _miniatureRating(b),
-          MiniatureGamesSortOrder.desc,
-        );
-        if (eloCompare != 0) return eloCompare;
-
-        return a.gameId.compareTo(b.gameId);
+        // UTC day desc, then average rating desc (1800 for a missing side),
+        // then game id. The same order mobile uses.
+        return compareMiniatureGamesByDayAndAverageRating(a, b);
       }
 
       if (_isCurrentSmartEventType) {
@@ -951,29 +927,6 @@ class PremiumGamesNotifier
         return bElo.compareTo(aElo);
       }
     });
-  }
-
-  int _compareMiniatureValues(int a, int b, MiniatureGamesSortOrder order) {
-    return order == MiniatureGamesSortOrder.asc
-        ? a.compareTo(b)
-        : b.compareTo(a);
-  }
-
-  int _compareMiniatureDates(
-    DateTime? a,
-    DateTime? b,
-    MiniatureGamesSortOrder order,
-  ) {
-    final aDate = a ?? DateTime(0);
-    final bDate = b ?? DateTime(0);
-    return order == MiniatureGamesSortOrder.asc
-        ? aDate.compareTo(bDate)
-        : bDate.compareTo(aDate);
-  }
-
-  int _miniatureRating(GamesTourModel game) {
-    final avgElo = game.avgElo;
-    return avgElo != null && avgElo > 0 ? avgElo : _avgElo(game);
   }
 
   /// Calculate average ELO for a game.
@@ -1113,3 +1066,9 @@ bool isPremiumLiveGame(GamesTourModel game) {
 
   return whiteClock > 0 && blackClock > 0;
 }
+
+/// Board-ready model for a Gamebase miniature, identical to what the
+/// Miniatures collection renders. Public so the Players scorecard shows and
+/// opens the same model the Games list does.
+GamesTourModel miniatureGameFromGamebase(GamebaseMiniature miniature) =>
+    PremiumGamesNotifier._miniatureToGame(miniature);

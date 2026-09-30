@@ -45,6 +45,16 @@ const int boardEvalSufficientDepth = 20;
 const Duration _localEvalLookupTimeout = Duration(milliseconds: 120);
 const Duration _gameCardEvalKeepAliveDuration = Duration(seconds: 4);
 
+/// Per-card eval tracing is opt-in: a scrolling card grid produced >1,300
+/// synchronous console writes per minute, which is real cost on the UI
+/// thread in a debug build. Enable with -d CHESSEVER_EVAL_TRACE=true.
+const bool _evalTraceEnabled = bool.fromEnvironment('CHESSEVER_EVAL_TRACE');
+
+/// Set by card surfaces while they are actively scrolling. WEB PARITY:
+/// the web grid does no evaluation I/O for a card that is about to leave
+/// the viewport, so a local-cache miss must not fan out to Gamebase here.
+bool gameCardEvalScrollGate = false;
+
 void _keepGameCardEvalAliveBriefly(Ref ref) {
   final link = ref.keepAlive();
   final timer = Timer(_gameCardEvalKeepAliveDuration, link.close);
@@ -168,7 +178,9 @@ Future<CloudEval?> _readGamebaseEvalFast({
   } catch (e) {
     debugPrint('⚠️ $sourceTag: Gamebase error: $e');
   }
-  debugPrint("⚪️ EVAL SOURCE ($sourceTag): GAMEBASE MISS - fen=$fen");
+  if (_evalTraceEnabled) {
+    debugPrint("⚪️ EVAL SOURCE ($sourceTag): GAMEBASE MISS - fen=$fen");
+  }
   return null;
 }
 
@@ -617,6 +629,9 @@ Future<CloudEval?> _readGameCardCacheOrRemoteEval({
     return cachedLocal;
   }
 
+  if (gameCardEvalScrollGate) {
+    return null;
+  }
   return _readGamebaseEvalFast(
     gamebase: gamebase,
     local: local,

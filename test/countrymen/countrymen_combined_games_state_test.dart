@@ -19,6 +19,7 @@ void main() {
 }
 
 GamesTourModel _game(String id, GameStatus status) {
+  final now = DateTime.now();
   return GamesTourModel(
     gameId: id,
     whitePlayer: PlayerCard(
@@ -44,5 +45,7 @@ GamesTourModel _game(String id, GameStatus status) {
     gameStatus: status,
     roundId: 'round-1',
     tourId: 'tour-1',
+    lastMove: 'e4',
+    lastMoveTime: now,
   );
 }

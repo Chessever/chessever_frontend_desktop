@@ -431,6 +431,22 @@ class MyDatabasesFocusNotifier extends StateNotifier<MyDatabasesFocusState> {
     });
   }
 
+  /// Preserve pin position and recency when a closed local PGN is renamed.
+  Future<void> renameLocalDatabase(String from, String to) {
+    final oldKey = libraryLocalDatabasePinKey(from);
+    final newKey = libraryLocalDatabasePinKey(to);
+    return _queueMutation((current) {
+      final recency = {...current.lastOpenedAtByItemKey};
+      final opened = recency.remove(oldKey);
+      if (opened != null) recency[newKey] = opened;
+      return current.copyWith(
+        orderedPinnedDatabaseKeys: [for (final key in current.orderedPinnedDatabaseKeys) key == oldKey ? newKey : key],
+        orderedFolderKeys: [for (final key in current.orderedFolderKeys) key == oldKey ? newKey : key],
+        lastOpenedAtByItemKey: recency,
+      );
+    });
+  }
+
   Future<void> _queueMutation(
     MyDatabasesFocusState Function(MyDatabasesFocusState current) mutation,
   ) {

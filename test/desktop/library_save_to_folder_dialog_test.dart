@@ -1,7 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:chessever/desktop/services/library_folder_create_guard.dart';
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/services/local_library_writer.dart';
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 
@@ -293,22 +297,416 @@ void main() {
       },
     );
   });
+  group('saving a local database as a new cloud database', () {
+    test('offers containers only, never an existing database', () {
+      final folders = <LibraryFolder>[
+        _folder(
+          id: 'my-database',
+          name: 'My Database',
+          icon: 'folder_container',
+          nodeType: kLibraryNodeTypeFolder,
+        ),
+        _folder(
+          id: 'my-subdatabase',
+          name: 'My Subdatabase',
+          icon: 'database',
+          parentId: 'my-database',
+          nodeType: kLibraryNodeTypeDatabase,
+        ),
+      ];
+
+      // Saving a whole local database creates a database inside the chosen
+      // folder, so an existing database must not be offered as a destination:
+      // selecting it used to dump every entry into that unrelated database.
+      expect(
+        librarySaveWritableCloudFolders(
+          folders: folders,
+          destinationMode: LibrarySaveDestinationMode.cloudOnly,
+          foldersOnly: true,
+        ).map((folder) => folder.id),
+        ['my-database'],
+      );
+      // Every other flow keeps both kinds as destinations.
+      expect(
+        librarySaveWritableCloudFolders(
+          folders: folders,
+          destinationMode: LibrarySaveDestinationMode.cloudOnly,
+        ).map((folder) => folder.id),
+        ['my-database', 'my-subdatabase'],
+      );
+    });
+
+    test('creates the database in the folder the user picked', () {
+      final folders = <LibraryFolder>[
+        _folder(
+          id: 'my-database',
+          name: 'My Database',
+          icon: 'folder_container',
+          nodeType: kLibraryNodeTypeFolder,
+        ),
+      ];
+
+      expect(
+        libraryNewDatabaseParents(
+          selected: folders,
+          allFolders: folders,
+        ).map((parent) => parent?.id),
+        ['my-database'],
+      );
+    });
+
+    test('retargets a database destination to its folder exactly once', () {
+      final folder = _folder(
+        id: 'my-database',
+        name: 'My Database',
+        icon: 'folder_container',
+        nodeType: kLibraryNodeTypeFolder,
+      );
+      final subdatabase = _folder(
+        id: 'my-subdatabase',
+        name: 'My Subdatabase',
+        icon: 'database',
+        parentId: 'my-database',
+        nodeType: kLibraryNodeTypeDatabase,
+      );
+
+      // Selecting the folder and its own database resolves to one parent, so a
+      // single database is created and no duplicate name is ever attempted.
+      expect(
+        libraryNewDatabaseParents(
+          selected: <LibraryFolder>[folder, subdatabase],
+          allFolders: <LibraryFolder>[folder, subdatabase],
+        ).map((parent) => parent?.id),
+        ['my-database'],
+      );
+    });
+
+    test('a legacy folder node stays its own destination', () {
+      final legacy = _folder(
+        id: 'students',
+        name: 'Students',
+        icon: 'folder_container',
+        nodeType: kLibraryNodeTypeDatabase,
+      );
+
+      expect(
+        libraryNewDatabaseParents(
+          selected: <LibraryFolder>[legacy],
+          allFolders: <LibraryFolder>[legacy],
+        ).map((parent) => parent?.id),
+        ['students'],
+      );
+    });
+
+    test('a nested folder is used as the create parent itself', () {
+      final root = _folder(
+        id: 'root',
+        name: 'My Database',
+        icon: 'folder_container',
+        nodeType: kLibraryNodeTypeFolder,
+      );
+      final nested = _folder(
+        id: 'nested',
+        name: 'Prep',
+        icon: 'folder_container',
+        parentId: 'root',
+        nodeType: kLibraryNodeTypeFolder,
+      );
+
+      expect(
+        libraryNewDatabaseParents(
+          selected: <LibraryFolder>[nested],
+          allFolders: <LibraryFolder>[root, nested],
+        ).map((parent) => parent?.id),
+        ['nested'],
+      );
+    });
+
+    test('names the created database in the save toast', () {
+      const outcome = LibrarySaveOutcome(
+        savedRows: 16,
+        folderCount: 1,
+        newDatabaseNames: <String>['Aadvik Prep'],
+      );
+      expect(
+        outcome.toToastMessage(),
+        'Saved 16 entries to new database "Aadvik Prep"',
+      );
+
+      // Every other flow keeps the original wording.
+      const plain = LibrarySaveOutcome(savedRows: 16, folderCount: 1);
+      expect(plain.toToastMessage(), 'Saved 16 entries to the cloud library');
+      expect(plain.didSave, isTrue);
+    });
+  });
+
+  group('whole-database save counts', () {
+    test('targets every game of the database, not the loaded page', () {
+      // 1 436 games into one new cloud database. The reported bug handed the
+      // dialog the loaded page (200 rows), so its progress and quota described
+      // 200; the whole-database save must describe all 1 436.
+      expect(
+        librarySaveEntryTarget(gameCount: 1436, destinationCount: 1),
+        1436,
+      );
+      expect(
+        librarySaveEntryTarget(gameCount: 200, destinationCount: 1),
+        200,
+        reason: 'one loaded page is what the old save offered',
+      );
+      expect(librarySaveEntryTarget(gameCount: 1436, destinationCount: 2), 2872);
+      expect(librarySaveEntryTarget(gameCount: 1436, destinationCount: 0), 0);
+      expect(librarySaveEntryTarget(gameCount: 0, destinationCount: 1), 0);
+    });
+
+    test('reads a paged source total instead of the empty games list', () {
+      // A whole-database save passes `gameSource` and an empty `games` list.
+      // Reading the list would say "nothing to save" and skip the dialog.
+      expect(
+        librarySaveDialogGameCount(materializedCount: 0, sourceTotal: 1436),
+        1436,
+      );
+      expect(
+        librarySaveDialogGameCount(materializedCount: 1436, sourceTotal: null),
+        1436,
+        reason: 'every existing flow keeps counting its materialized list',
+      );
+      expect(librarySaveDialogGameCount(materializedCount: 3, sourceTotal: null), 3);
+    });
+  });
+
+  group('local database cloud names', () {
+    test('derives the cloud database name from the file name', () {
+      expect(
+        localChessDatabaseStemForPath(r'C:\Prep\Aadvik Prep.pgn'),
+        'Aadvik Prep',
+      );
+      expect(localChessDatabaseStemForLabel('Aadvik Prep.pgn'), 'Aadvik Prep');
+      expect(localChessDatabaseStemForLabel('NoExtension'), 'NoExtension');
+      expect(localChessDatabaseStemForLabel(''), '');
+      expect(localChessDatabaseStemForLabel('.pgn'), '.pgn');
+    });
+  });
+
+  group('new cloud database name hint', () {
+    test('flags a name the account already had before Save', () {
+      final existing = _folder(id: 'existing', name: 'Aadvik Prep');
+
+      // The pre-save guard reads the same account-wide list, so a real clash
+      // is still refused with exactly the wording the user knows.
+      expect(libraryCloudNodeNamed('Aadvik Prep', [existing])?.id, 'existing');
+      expect(
+        libraryNewCloudDatabaseNameConflict('Aadvik Prep', [existing])?.id,
+        'existing',
+      );
+      expect(
+        libraryDuplicateCloudNodeMessage('Aadvik Prep'),
+        'You already have a library item named "Aadvik Prep". '
+        'Choose a different name.',
+      );
+    });
+
+    test('never flags the database this save created itself', () {
+      // A local-database save inserts its destination database before the
+      // first game row, so the folders realtime stream publishes it while the
+      // rows are still streaming. Matching the typed name against a list that
+      // now contains that node printed the red "You already have a library
+      // item named ..." text under a save that was succeeding.
+      const name = 'CHESSEVER_4264312_CHESSEVER_STAVROULA_TSOLAKIDOU';
+      final folders = <LibraryFolder>[
+        _folder(
+          id: 'parent',
+          name: 'Prep',
+          icon: 'folder_container',
+          nodeType: kLibraryNodeTypeFolder,
+        ),
+        _folder(id: 'created', name: name),
+      ];
+
+      expect(
+        libraryNewCloudDatabaseNameConflict(
+          name,
+          folders,
+          createdIds: const <String>['created'],
+        ),
+        isNull,
+      );
+      expect(
+        libraryNewCloudDatabaseNameConflict(
+          name,
+          folders,
+          createdNames: const <String>[name],
+        ),
+        isNull,
+        reason: 'the create response and the realtime payload name one node',
+      );
+    });
+
+    test('excludes every database one save created, not just the first', () {
+      final folders = <LibraryFolder>[
+        _folder(id: 'kept', name: 'Aadvik Prep'),
+        _folder(id: 'created-a', name: 'Aadvik Prep', parentId: 'kept'),
+        _folder(id: 'created-b', name: 'Aadvik Prep', parentId: 'kept'),
+      ];
+
+      expect(
+        libraryNewCloudDatabaseNameConflict(
+          'Aadvik Prep',
+          folders,
+          createdIds: const <String>['created-a', 'created-b'],
+        )?.id,
+        'kept',
+        reason: 'a node the save did not create is still a real clash',
+      );
+      expect(
+        libraryNewCloudDatabaseNameConflict(
+          'Aadvik Prep',
+          folders,
+          createdIds: const <String>['kept', 'created-a', 'created-b'],
+        ),
+        isNull,
+      );
+    });
+
+    test('keeps the hint quiet for the whole write', () {
+      final existing = _folder(id: 'existing', name: 'Aadvik Prep');
+
+      expect(
+        libraryNewCloudDatabaseNameConflict(
+          'Aadvik Prep',
+          [existing],
+          saveInFlight: true,
+        ),
+        isNull,
+        reason: 'a running save already had its name accepted before the first insert; only the pre-save guard can refuse it',
+      );
+      expect(
+        libraryNewCloudDatabaseNameConflict('Aadvik Prep', [existing])?.id,
+        'existing',
+        reason: 'outside a save the same clash is reported exactly as before',
+      );
+    });
+
+    test('mirrors the account-wide UNIQUE rule for the live hint too', () {
+      // UNIQUE (user_id, name) is case-sensitive and account-wide, and a
+      // followed book belongs to another account, so it can never collide.
+      expect(
+        libraryNewCloudDatabaseNameConflict(
+          'aadvik prep',
+          [_folder(id: 'a', name: 'Aadvik Prep')],
+        ),
+        isNull,
+      );
+      expect(
+        libraryNewCloudDatabaseNameConflict(
+          'Aadvik Prep',
+          [_folder(id: 'book', name: 'Aadvik Prep', isSubscribed: true)],
+        ),
+        isNull,
+      );
+      expect(
+        libraryNewCloudDatabaseNameConflict(
+          '  Aadvik Prep  ',
+          [_folder(id: 'a', name: 'Aadvik Prep')],
+        )?.id,
+        'a',
+      );
+      expect(
+        libraryNewCloudDatabaseNameConflict(
+          '',
+          [_folder(id: 'a', name: 'Aadvik Prep')],
+        ),
+        isNull,
+      );
+    });
+
+    test('the dialog evaluates the hint against the pre-save nodes', () {
+      // Source guard: the widget owns the state, so the wiring is asserted
+      // where it lives. Reverting the hint to the raw account list (the
+      // reported bug) or dropping the in-flight suppression fails here.
+      final source = File(
+        'lib/desktop/widgets/library/library_save_to_folder_dialog.dart',
+      ).readAsStringSync();
+      final hint = _region(
+        source,
+        'Widget _buildNewDatabaseSection(',
+        'final destinations = <String>{',
+      );
+      expect(hint, contains('libraryNewCloudDatabaseNameConflict('));
+      expect(hint, contains('createdIds: _createdCloudNodeIds'));
+      expect(hint, contains('createdNames: _createdCloudNodeNames'));
+      expect(hint, contains('saveInFlight: _isSaving'));
+      expect(
+        hint,
+        isNot(contains('libraryCloudNodeNamed(typed, allFolders)')),
+        reason: 'the live hint must not match the database the save created',
+      );
+
+      // The pre-save guard keeps refusing a genuinely pre-existing clash. It
+      // tolerates only nodes this dialog created for its own saves (a failed
+      // attempt whose cleanup did not complete, or whose removal the live
+      // folder list has not caught up with); see
+      // library_failed_cloud_save_cleanup_test.dart.
+      final beforeCreate = _region(
+        source,
+        'if (nameCtrl != null) {',
+        'final parents = libraryNewDatabaseParents(',
+      );
+      expect(beforeCreate, contains('librarySaveToleratesOwnCloudName('));
+      expect(
+        beforeCreate,
+        contains('clash: libraryCloudNodeNamed(newName, allFolders)'),
+      );
+      expect(beforeCreate, contains('ownNodeIds: _ownCloudNodeIds'));
+      expect(
+        beforeCreate,
+        contains('libraryDuplicateCloudNodeMessage(newName)'),
+      );
+
+      // The created node is remembered next to the write material.
+      final create = _region(
+        source,
+        'final created = await repo.createFolder(',
+        'await for (final batch in _gameBatches(effectiveGames))',
+      );
+      expect(create, contains('_createdCloudNodeIds.add(created.id)'));
+      expect(
+        create,
+        contains('_createdCloudNodeNames.add(created.name.trim())'),
+      );
+    });
+  });
+
+}
+
+/// Source slice between two markers, failing loudly when a marker is gone.
+String _region(String source, String start, String end) {
+  final from = source.indexOf(start);
+  final to = source.indexOf(end);
+  expect(from, isNonNegative, reason: 'missing marker: $start');
+  expect(to, greaterThan(from), reason: 'missing marker after: $end');
+  return source.substring(from, to);
 }
 
 LibraryFolder _folder({
   required String id,
   required String name,
   bool isSubscribed = false,
+  String icon = 'database',
+  String? parentId,
+  String? nodeType,
 }) {
   return LibraryFolder(
     id: id,
     userId: 'user',
     name: name,
     color: '#0FB4E5',
-    icon: 'database',
+    icon: icon,
     orderIndex: 0,
     createdAt: DateTime(2026),
     updatedAt: DateTime(2026),
     isSubscribed: isSubscribed,
+    parentId: parentId,
+    nodeType: nodeType,
   );
 }

@@ -1,4 +1,11 @@
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -506,6 +513,8 @@ class PlayerWorkspacePane extends HookConsumerWidget {
               .read(playerWorkspaceProvider.notifier)
               .importManualPgnPaths(paths: paths);
         } catch (error) {
+          // Already presented as a paywall by the guard: no toast.
+          if (error is DesktopPremiumRequiredException) return;
           if (!context.mounted) return;
           ScaffoldMessenger.of(
             context,
@@ -3255,6 +3264,8 @@ class _TreeTargetCard extends HookConsumerWidget {
             cancellationToken: cancellationToken,
           );
         } catch (error) {
+          // Already presented as a paywall by the guard: no toast.
+          if (error is DesktopPremiumRequiredException) return;
           if (!context.mounted ||
               cancellationToken.isCanceled ||
               isOperationCanceled(error)) {
@@ -3950,6 +3961,21 @@ String _disabledTreeActionLabel(String reason) {
 /// Opens the same per-source tree used by the Players Build Tree tab, building
 /// its local index first when needed. If the source has not been downloaded
 /// yet, it is synced through [PlayerWorkspaceNotifier] before tree generation.
+/// Opening trees: tree files are kept and stay exportable and removable;
+/// building a tree and exploring one interactively are Premium.
+const DesktopAccessContext _openingTreeExplore = DesktopAccessContext(
+  feature: DesktopFeature.openingTree,
+  action: DesktopAction.previewNavigate,
+  origin: DesktopDiscoveryOrigin.localFile,
+);
+
+bool _admitOpeningTree(BuildContext context, DesktopAction action) =>
+    admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      _openingTreeExplore.copyWith(action: action),
+      surface: 'opening_tree_${action.name}',
+    );
+
 Future<void> openOrBuildPlayerWorkspaceSourceTree({
   required BuildContext context,
   required WidgetRef ref,
@@ -3957,6 +3983,8 @@ Future<void> openOrBuildPlayerWorkspaceSourceTree({
   required PlayerWorkspaceSource source,
   required PlayerBuildTreePreparationSide preparationSide,
 }) async {
+  // Denied => no player selection side effects, no combined rebuild, no build.
+  if (!_admitOpeningTree(context, DesktopAction.previewNavigate)) return;
   final workspaceNotifier = ref.read(playerWorkspaceProvider.notifier);
   await workspaceNotifier.selectPlayer(player.id);
 
@@ -4064,6 +4092,8 @@ Future<void> _prepareAndBuildCombinedTree(
     if (!context.mounted) return;
     finishPreparation();
     if (isOperationCanceled(error)) return;
+    // Already presented as a paywall by the guard: no toast.
+    if (error is DesktopPremiumRequiredException) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(error.toString())));
@@ -4078,6 +4108,7 @@ Future<void> _buildLocalTree(
   required PlayerBuildTreePreparationSide preparationSide,
   OperationCancellationToken? cancellationToken,
 }) async {
+  if (!_admitOpeningTree(context, DesktopAction.recompute)) return;
   cancellationToken?.throwIfCanceled();
   final index = await ref
       .read(_playerTreeBuildProvider.notifier)
@@ -4102,6 +4133,7 @@ Future<void> _openOrBuildLocalTreeTarget(
   required PlayerBuildTreePreparationSide preparationSide,
   OperationCancellationToken? cancellationToken,
 }) async {
+  if (!_admitOpeningTree(context, DesktopAction.previewNavigate)) return;
   cancellationToken?.throwIfCanceled();
   PlayerOpeningTreeIndex? cachedIndex;
   try {
@@ -4157,9 +4189,11 @@ void _openLocalTree(
       // library keeps its picker, but switching to Global or another tree here
       // would silently break the player's prep scope.
       hideLocalOpeningTreePicker: true,
+      accessContext: _openingTreeExplore,
     ),
     reuseExisting: false,
   );
+  if (tabId.isEmpty) return;
   // Seed the opening explorer with the chosen prep colour. Local trees carry
   // per-colour buckets, so this filters the tree by side via the same
   // BoardExplorerScope → gamebase filter seam used by Players tree actions
@@ -4258,6 +4292,8 @@ Future<void> _runAccountSync(
   try {
     await ref.read(playerWorkspaceProvider.notifier).syncAccount(account);
   } catch (error) {
+    // Already presented as a paywall by the guard: no toast.
+    if (error is DesktopPremiumRequiredException) return;
     if (!context.mounted) return;
     ScaffoldMessenger.of(
       context,
@@ -4290,6 +4326,8 @@ Future<void> _runAccountReinstall(
   try {
     await ref.read(playerWorkspaceProvider.notifier).reinstallAccount(account);
   } catch (error) {
+    // Already presented as a paywall by the guard: no toast.
+    if (error is DesktopPremiumRequiredException) return;
     if (!context.mounted) return;
     ScaffoldMessenger.of(
       context,
@@ -4324,6 +4362,8 @@ Future<void> _runRefreshAccountEntry(
         .read(playerWorkspaceProvider.notifier)
         .refreshAccountEntry(account);
   } catch (error) {
+    // Already presented as a paywall by the guard: no toast.
+    if (error is DesktopPremiumRequiredException) return;
     if (!context.mounted) return;
     ScaffoldMessenger.of(
       context,
@@ -4428,6 +4468,8 @@ Future<void> _showAccountConnectFlow(
             .read(playerWorkspaceProvider.notifier)
             .reconnectLockedChessEverSource();
       } catch (error) {
+        // Already presented as a paywall by the guard: no toast.
+        if (error is DesktopPremiumRequiredException) return;
         if (!context.mounted) return;
         ScaffoldMessenger.of(
           context,
@@ -4696,6 +4738,11 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (error) {
+      // Already presented as a paywall by the guard: no error row.
+      if (error is DesktopPremiumRequiredException) {
+        if (mounted) setState(() => _working = false);
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _working = false;
@@ -4716,6 +4763,11 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (error) {
+      // Already presented as a paywall by the guard: no error row.
+      if (error is DesktopPremiumRequiredException) {
+        if (mounted) setState(() => _working = false);
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _working = false;
@@ -5026,6 +5078,11 @@ class _RenamePlayerDialogState extends State<_RenamePlayerDialog> {
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (error) {
+      // Already presented as a paywall by the guard: no error row.
+      if (error is DesktopPremiumRequiredException) {
+        if (mounted) setState(() => _working = false);
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _working = false;
@@ -5240,6 +5297,11 @@ class _ConnectAccountDialogState extends State<_ConnectAccountDialog> {
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (error) {
+      // Already presented as a paywall by the guard: no error row.
+      if (error is DesktopPremiumRequiredException) {
+        if (mounted) setState(() => _working = false);
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _working = false;
@@ -5469,6 +5531,11 @@ class _ConnectAccountsDialogState extends State<_ConnectAccountsDialog> {
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (error) {
+      // Already presented as a paywall by the guard: no error row.
+      if (error is DesktopPremiumRequiredException) {
+        if (mounted) setState(() => _saving = false);
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _saving = false;
@@ -5923,11 +5990,35 @@ class _AddPlayerResult {
   final bool connectUsernames;
 }
 
+/// Adding a preparation target (and searching the index to pick one) is
+/// Premium. Retained roster browsing, rename, remove and export are not.
+const DesktopAccessContext _prepareCreateAccess = DesktopAccessContext(
+  feature: DesktopFeature.prepare,
+  action: DesktopAction.create,
+  origin: DesktopDiscoveryOrigin.localFile,
+);
+
+/// Connecting a source to an existing target is Premium.
+const DesktopAccessContext _prepareSourceAccess = DesktopAccessContext(
+  feature: DesktopFeature.prepare,
+  action: DesktopAction.acquireSource,
+  origin: DesktopDiscoveryOrigin.localFile,
+);
+
 Future<void> _showAddPlayerDialog(
   BuildContext context,
   WidgetRef ref, {
   required void Function(String playerId) onOpenPlayer,
 }) async {
+  // The click is the explicit action: a free user gets the paywall here and
+  // no dialog, so no search can run and no control pretends to be live.
+  if (!admitDesktopAction(
+    ProviderScope.containerOf(context, listen: false),
+    _prepareCreateAccess,
+    surface: 'prepare_add_player',
+  )) {
+    return;
+  }
   final result = await showFDialog<_AddPlayerResult>(
     context: context,
     builder:
@@ -5935,6 +6026,7 @@ Future<void> _showAddPlayerDialog(
           title: 'Add player',
           animation: animation,
           offerConnect: true,
+          searchAccess: _prepareCreateAccess,
           onSearch:
               (query) => ref
                   .read(playerWorkspaceProvider.notifier)
@@ -5962,6 +6054,13 @@ Future<void> _showAddPlayerDialog(
 }
 
 Future<void> _showConnectChessEverDialog(BuildContext context, WidgetRef ref) {
+  if (!admitDesktopAction(
+    ProviderScope.containerOf(context, listen: false),
+    _prepareSourceAccess,
+    surface: 'prepare_connect_chessever',
+  )) {
+    return Future<void>.value();
+  }
   final lockedFideId = _normalizedDialogFideId(
     ref.read(playerWorkspaceProvider).selectedPlayer?.fideId,
   );
@@ -5972,6 +6071,7 @@ Future<void> _showConnectChessEverDialog(BuildContext context, WidgetRef ref) {
           title: 'Connect ChessEver',
           animation: animation,
           lockedFideId: lockedFideId,
+          searchAccess: _prepareSourceAccess,
           onSearch:
               (query) => ref
                   .read(playerWorkspaceProvider.notifier)
@@ -5986,16 +6086,21 @@ Future<void> _showConnectChessEverDialog(BuildContext context, WidgetRef ref) {
   );
 }
 
-class _AddPlayerDialog extends StatefulWidget {
+class _AddPlayerDialog extends ConsumerStatefulWidget {
   const _AddPlayerDialog({
     required this.title,
     required this.animation,
     required this.onSearch,
     required this.onAddChessEver,
+    required this.searchAccess,
     this.onAddManual,
     this.lockedFideId,
     this.offerConnect = false,
   });
+
+  /// The request searching (and adding from) this dialog makes. Checked
+  /// before every query; a denial renders a locked state, never "no match".
+  final DesktopAccessContext searchAccess;
 
   final String title;
   final Animation<double> animation;
@@ -6015,15 +6120,33 @@ class _AddPlayerDialog extends StatefulWidget {
   final String? lockedFideId;
 
   @override
-  State<_AddPlayerDialog> createState() => _AddPlayerDialogState();
+  ConsumerState<_AddPlayerDialog> createState() => _AddPlayerDialogState();
 }
 
-class _AddPlayerDialogState extends State<_AddPlayerDialog> {
+class _AddPlayerDialogState extends ConsumerState<_AddPlayerDialog> {
   late final TextEditingController _controller;
   Timer? _debounce;
   Future<List<GamebasePlayer>>? _results;
   bool _working = false;
   String? _error;
+
+  /// Set when membership no longer covers this dialog's search or add. The
+  /// results area then shows the locked surface; its button is the only way
+  /// the paywall opens from here.
+  DesktopAccessDecision? _locked;
+
+  DesktopAccessDecision _searchDecision() => readDesktopAccess(
+    ProviderScope.containerOf(context, listen: false).read,
+    widget.searchAccess,
+  );
+
+  /// Whether a query may run now. Updates [_locked] either way.
+  bool _searchAdmitted() {
+    final decision = _searchDecision();
+    final locked = decision.isAllowed ? null : decision;
+    if (locked != _locked) setState(() => _locked = locked);
+    return locked == null;
+  }
 
   @override
   void initState() {
@@ -6045,8 +6168,16 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
       setState(() => _results = null);
       return;
     }
+    if (!_searchAdmitted()) {
+      setState(() => _results = null);
+      return;
+    }
     _debounce = Timer(const Duration(milliseconds: 240), () {
       if (!mounted) return;
+      if (!_searchAdmitted()) {
+        setState(() => _results = null);
+        return;
+      }
       setState(() {
         _results = _searchChessEver(query);
         _error = null;
@@ -6055,7 +6186,14 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
   }
 
   Future<List<GamebasePlayer>> _searchChessEver(String query) async {
-    final players = await widget.onSearch(query);
+    final List<GamebasePlayer> players;
+    try {
+      players = await widget.onSearch(query);
+    } on DesktopPremiumRequiredException {
+      // Hand the denial to [_locked] so this lock also follows membership.
+      if (mounted) _searchAdmitted();
+      rethrow;
+    }
     final lockedFideId = _lockedFideId;
     if (lockedFideId == null) return players;
     return players
@@ -6084,6 +6222,16 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
       );
     } catch (error) {
       if (!mounted) return;
+      if (error is DesktopPremiumRequiredException) {
+        // The guard already presented the paywall. No error text on top of
+        // it; the results area shows the locked state instead.
+        setState(() {
+          _working = false;
+          _results = null;
+        });
+        _searchAdmitted();
+        return;
+      }
       setState(() {
         _working = false;
         _error = _stageErrorText(error);
@@ -6104,6 +6252,14 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
       );
     } catch (error) {
       if (!mounted) return;
+      if (error is DesktopPremiumRequiredException) {
+        setState(() {
+          _working = false;
+          _results = null;
+        });
+        _searchAdmitted();
+        return;
+      }
       setState(() {
         _working = false;
         _error = _stageErrorText(error);
@@ -6115,6 +6271,16 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // The lock follows live membership: a successful Retry, a verified
+    // purchase or a lapse updates it in place, and an unlock re-runs the
+    // query that was typed, instead of waiting for the user to edit it.
+    ref.listen<DesktopAccessDecision>(
+      desktopAccessDecisionProvider(widget.searchAccess),
+      (_, __) {
+        if (_locked == null) return;
+        if (_searchAdmitted()) _onQueryChanged(_controller.text);
+      },
+    );
     final lockedFideId = _lockedFideId;
     return FDialog.raw(
       animation: widget.animation,
@@ -6179,7 +6345,13 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
               SizedBox(
                 height: 330,
                 child:
-                    _results == null
+                    _locked != null
+                        ? DesktopAccessLockedSurface(
+                          decision: _locked!,
+                          accessContext: widget.searchAccess,
+                          surface: 'prepare_player_search',
+                        )
+                        : _results == null
                         ? _InlineEmpty(
                           icon: Icons.search_outlined,
                           title: 'Search ChessEver',
@@ -6197,6 +6369,14 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                                 child: CircularProgressIndicator(
                                   color: kPrimaryColor,
                                 ),
+                              );
+                            }
+                            if (snapshot.error
+                                is DesktopPremiumRequiredException) {
+                              return DesktopAccessLockedSurface(
+                                decision: _searchDecision(),
+                                accessContext: widget.searchAccess,
+                                surface: 'prepare_player_search',
                               );
                             }
                             final players =
@@ -6250,7 +6430,9 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                               ? DesktopDialogButtonTone.secondary
                               : DesktopDialogButtonTone.primary,
                       onPress:
-                          !_working && _controller.text.trim().isNotEmpty
+                          !_working &&
+                                  _locked == null &&
+                                  _controller.text.trim().isNotEmpty
                               ? () => unawaited(_addManual(connect: false))
                               : null,
                     ),
@@ -6263,7 +6445,9 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                             'Add this player, then connect lichess.org / '
                             'chess.com usernames',
                         onPress:
-                            !_working && _controller.text.trim().isNotEmpty
+                            !_working &&
+                                    _locked == null &&
+                                    _controller.text.trim().isNotEmpty
                                 ? () => unawaited(_addManual(connect: true))
                                 : null,
                       ),

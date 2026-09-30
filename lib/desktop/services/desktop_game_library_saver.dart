@@ -9,6 +9,7 @@ import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
@@ -48,7 +49,9 @@ Future<int> copyDesktopGamesAsResolvedPgn({
     return 0;
   }
 
-  await Clipboard.setData(ClipboardData(text: pgns.join('\n\n')));
+  await Clipboard.setData(
+    ClipboardData(text: toExternalCompatiblePgn(pgns.join('\n\n'))),
+  );
   if (!context.mounted) return pgns.length;
   final count = pgns.length;
   final suffix = skipped > 0 ? ' ($skipped skipped without moves)' : '';

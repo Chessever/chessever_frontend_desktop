@@ -9,12 +9,14 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/repository/freemium/freemium_quota.dart';
 import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart'
     show kTwicBookId, libraryFoldersStreamProvider, subscribedBooksProvider;
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
@@ -186,7 +188,9 @@ Future<int> copyPgnTextsAsPgn({
     }
     return 0;
   }
-  await Clipboard.setData(ClipboardData(text: parts.join('\n\n')));
+  await Clipboard.setData(
+    ClipboardData(text: toExternalCompatiblePgn(parts.join('\n\n'))),
+  );
   if (context.mounted) {
     final n = parts.length;
     final skipped = rawPgns.length - n;
@@ -236,9 +240,16 @@ Future<int> _saveAndToast({
     return saved;
   } catch (e) {
     if (context.mounted) {
+      final rejection = freemiumQuotaRejection(
+        e,
+        fallbackKind: FreemiumQuotaKind.savedGames,
+        requested: games.length,
+      );
       showDesktopToast(
         context,
-        '${verb.toLowerCase()} failed: $e',
+        rejection != null
+            ? freemiumQuotaBlockedMessage(rejection)
+            : '${verb.toLowerCase()} failed: $e',
         error: true,
       );
     }
@@ -253,8 +264,13 @@ Future<int> _bulkSave({
   required List<ChessGame> games,
   bool Function()? isCurrentOwner,
 }) async {
-  final allowed = await canSaveMoreGames(context, gamesToAdd: games.length);
-  if (!allowed || !context.mounted || isCurrentOwner?.call() == false) {
+  final quota = await requestSaveGamesQuota(
+    context,
+    gamesToAdd: games.length,
+  );
+  if (!context.mounted || isCurrentOwner?.call() == false) return 0;
+  if (!quota.isAllowed) {
+    showDesktopToast(context, freemiumQuotaBlockedMessage(quota), error: true);
     return 0;
   }
 

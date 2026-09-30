@@ -14,6 +14,7 @@ void main() {
     WidgetTester tester, {
     required Map<String, dynamic> metadata,
     String side = 'White',
+    bool unknownSideLabel = false,
     List<Override> overrides = const [],
   }) async {
     await tester.pumpWidget(
@@ -24,7 +25,11 @@ void main() {
             body: Row(
               children: [
                 Expanded(
-                  child: LocalGamePlayerCell(metadata: metadata, side: side),
+                  child: LocalGamePlayerCell(
+                    metadata: metadata,
+                    side: side,
+                    unknownSideLabel: unknownSideLabel,
+                  ),
                 ),
               ],
             ),
@@ -62,8 +67,8 @@ void main() {
     );
 
     expect(find.text('GM'), findsOneWidget);
-    // Names render in the shared library-table abbreviated form (`Last, F.`).
-    expect(find.text('Carlsen, M.'), findsOneWidget);
+    // PGN player labels render verbatim; they may be study labels, not names.
+    expect(find.text('Carlsen,M'), findsOneWidget);
     expect(find.byType(FederationFlag), findsOneWidget);
   });
 
@@ -80,7 +85,7 @@ void main() {
     );
 
     expect(find.byType(FederationFlag), findsOneWidget);
-    expect(find.text('Mueller, H.'), findsOneWidget);
+    expect(find.text('Mueller, Hans'), findsOneWidget);
   });
 
   testWidgets('normalizes malformed title tags', (tester) async {
@@ -108,19 +113,20 @@ void main() {
     );
 
     expect(find.byType(FederationFlag), findsNothing);
-    expect(find.text('Someone, A.'), findsOneWidget);
+    expect(find.text('Someone, Anon'), findsOneWidget);
   });
 
   testWidgets('falls back to side label for missing names', (tester) async {
     await pumpCell(
       tester,
       metadata: const {'White': '?'},
+      unknownSideLabel: true,
       overrides: [
         chessPlayerByNameProvider.overrideWith((ref, name) async => null),
       ],
     );
 
-    expect(find.text('White'), findsOneWidget);
+    expect(find.text('White ?'), findsOneWidget);
   });
 
   testWidgets('resolves a missing title on demand by FIDE ID', (tester) async {

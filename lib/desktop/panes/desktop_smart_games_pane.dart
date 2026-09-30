@@ -5,8 +5,15 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/services/desktop_local_day_clock.dart';
+import 'package:chessever/desktop/services/miniature_game_open.dart';
+import 'package:chessever/desktop/services/miniatures_access.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/desktop_miniature_players.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
+import 'package:chessever/desktop/state/smart_collection_access.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
@@ -17,13 +24,20 @@ import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart'
     show DesktopGameKeyboardItem;
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_miniatures_filter_controls.dart';
+import 'package:chessever/desktop/widgets/desktop_lock_reasons.dart';
+import 'package:chessever/desktop/widgets/desktop_locked_content.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/miniatures/desktop_miniature_players_view.dart';
+import 'package:chessever/desktop/widgets/miniatures/desktop_miniatures_about_view.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show LiveDesktopGameCard, openTournamentGameTab;
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/repository/gamebase/miniatures/miniatures_order.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
@@ -52,6 +66,7 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
   Timer? _miniatureSearchDebounce;
   String _query = '';
   bool _didSyncInitialMiniatureSearch = false;
+  _MiniaturesSection _miniaturesSection = _MiniaturesSection.games;
 
   @override
   void initState() {
@@ -145,6 +160,9 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
     }
     final gamesAsync = ref.watch(premiumGamesProvider(type));
     final copy = _copyForType(type);
+    final showGamesList =
+        type != PremiumGamesType.miniatures ||
+        _miniaturesSection == _MiniaturesSection.games;
 
     return Container(
       color: kBackgroundColor,
@@ -178,21 +196,58 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                     ],
                   ),
                 ),
-                DesktopTooltip(
-                  message: 'Refresh',
-                  child: FButton.icon(
-                    style: FButtonStyle.ghost(),
-                    onPress: () {
-                      ref.read(premiumGamesProvider(type).notifier).refresh();
-                    },
-                    child: const Icon(Icons.refresh_rounded),
+                // Header controls act on what is on screen: the games list on
+                // Games, the leaderboard on Players, nothing on About.
+                if (showGamesList ||
+                    _miniaturesSection == _MiniaturesSection.players)
+                  DesktopTooltip(
+                    message: showGamesList ? 'Refresh' : 'Refresh players',
+                    child: FButton.icon(
+                      style: FButtonStyle.ghost(),
+                      onPress: () {
+                        if (showGamesList) {
+                          ref
+                              .read(premiumGamesProvider(type).notifier)
+                              .refresh();
+                          return;
+                        }
+                        unawaited(
+                          ref
+                              .read(desktopMiniaturePlayersProvider.notifier)
+                              .refresh(),
+                        );
+                        ref.invalidate(desktopMiniaturePlayerRecordProvider);
+                        ref.invalidate(desktopMiniaturePlayerGamesProvider);
+                      },
+                      child: const Icon(Icons.refresh_rounded),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                const GameViewModeToggle(),
+                if (showGamesList) ...[
+                  const SizedBox(width: 8),
+                  const GameViewModeToggle(),
+                ],
               ],
             ),
           ),
+          if (type == PremiumGamesType.miniatures)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
+              child: Row(
+                children: [
+                  for (final section in _MiniaturesSection.values) ...[
+                    if (section != _MiniaturesSection.values.first)
+                      const SizedBox(width: 6),
+                    _MiniaturesSectionTab(
+                      label: section.label,
+                      selected: _miniaturesSection == section,
+                      onPressed:
+                          () => setState(() => _miniaturesSection = section),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          if (showGamesList) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
             child:
@@ -203,7 +258,7 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                           child: DesktopSearchField(
                             controller: _searchController,
                             hintText:
-                                'Search miniatures — player, event, opening, ECO…',
+                                'Search miniatures: player, event, opening or ECO',
                             onChanged: (value) => _onSearchChanged(type, value),
                           ),
                         ),
@@ -343,6 +398,13 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
               },
             ),
           ),
+          ] else
+            Expanded(
+              child:
+                  _miniaturesSection == _MiniaturesSection.players
+                      ? const DesktopMiniaturePlayersView()
+                      : const DesktopMiniaturesAboutView(),
+            ),
         ],
       ),
     );
@@ -533,7 +595,9 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     List<GamesTourModel> games,
     MiniatureGamesFilter filter,
   ) {
-    final groups = buildDesktopGameDateGroups(games, preserveGameOrder: true);
+    // UTC calendar day of each game, labelled against the LOCAL today, the
+    // same frame the today-only rule uses, so a Today section is openable.
+    final groups = buildMiniatureDayGroups(games);
 
     return [
       for (final group in groups)
@@ -580,6 +644,21 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),
     );
     final cardStreamingEnabled = streamingEnabled;
+    final isMiniatures = widget.type == PremiumGamesType.miniatures;
+    // Miniatures are free only when dated today: redraw locks at local
+    // midnight, on resume and when the membership changes.
+    final subscription = isMiniatures ? ref.watch(subscriptionProvider) : null;
+    final entitlement =
+        isMiniatures ? ref.watch(desktopEntitlementProvider) : null;
+    if (isMiniatures) ref.watch(desktopLocalDayProvider);
+    bool lockedAtRest(GamesTourModel game) =>
+        subscription != null &&
+        entitlement != null &&
+        miniatureGameIsLockedAtRest(
+          game,
+          subscription: subscription,
+          entitlement: entitlement,
+        );
     final sections =
         widget.type == PremiumGamesType.miniatures
             ? _buildMiniatureSections(
@@ -628,6 +707,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
             onActivateGroup: _toggleGroup,
             onActivateGame:
                 (game) => _openSmartGame(
+                  context,
                   ref,
                   game,
                   widget.type,
@@ -682,7 +762,29 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                               gameId: game.gameId,
                               onSelect: selectGame,
                               child: LiveDesktopGameCard(
+                                lockedReason:
+                                    lockedAtRest(game)
+                                        ? kMiniatureLockedReason
+                                        : null,
                                 game: game,
+                                accessContext: smartGamesAccessContextFor(
+                                  widget.type,
+                                  game,
+                                ),
+                                onTap:
+                                    isMiniatures
+                                        ? () => _openSmartGame(
+                                          context,
+                                          ref,
+                                          game,
+                                          widget.type,
+                                          widget.routeTitle,
+                                          groupedGames,
+                                        )
+                                        : null,
+                                // Its Open entries would bypass the
+                                // Miniatures gate.
+                                enableContextMenu: !isMiniatures,
                                 tournamentTitle: _smartGameTournamentTitle(
                                   game,
                                   widget.routeTitle,
@@ -723,6 +825,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
         onActivateGroup: _toggleGroup,
         onActivateGame:
             (game) => _openSmartGame(
+              context,
               ref,
               game,
               widget.type,
@@ -761,6 +864,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                     sliver: SliverToBoxAdapter(
                       child: _SmartGamesTable(
                         type: widget.type,
+                        lockedAtRest: lockedAtRest,
                         games: sections[sectionIndex].games,
                         routeTitle: widget.routeTitle,
                         routeGames: groupedGames,
@@ -797,6 +901,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
       onActivateGroup: _toggleGroup,
       onActivateGame:
           (game) => _openSmartGame(
+            context,
             ref,
             game,
             widget.type,
@@ -849,7 +954,29 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                           gameId: game.gameId,
                           onSelect: selectGame,
                           child: LiveDesktopGameCard(
+                            lockedReason:
+                                lockedAtRest(game)
+                                    ? kMiniatureLockedReason
+                                    : null,
                             game: game,
+                            accessContext: smartGamesAccessContextFor(
+                              widget.type,
+                              game,
+                            ),
+                                onTap:
+                                    isMiniatures
+                                        ? () => _openSmartGame(
+                                          context,
+                                          ref,
+                                          game,
+                                          widget.type,
+                                          widget.routeTitle,
+                                          groupedGames,
+                                        )
+                                        : null,
+                                // Its Open entries would bypass the
+                                // Miniatures gate.
+                                enableContextMenu: !isMiniatures,
                             tournamentTitle: _smartGameTournamentTitle(
                               game,
                               widget.routeTitle,
@@ -1112,14 +1239,25 @@ class _SmartHeaderBadge extends StatelessWidget {
   }
 }
 
-void _openSmartGame(
+Future<void> _openSmartGame(
+  BuildContext context,
   WidgetRef ref,
   GamesTourModel game,
   PremiumGamesType type,
   String routeTitle,
   List<GamesTourModel> routeGames,
-) {
-  openTournamentGameTab(
+) async {
+  if (type == PremiumGamesType.miniatures) {
+    await openMiniatureGame(
+      context,
+      ref,
+      game,
+      routeTitle: routeTitle,
+      routeGames: routeGames,
+    );
+    return;
+  }
+  await openTournamentGameTab(
     ref,
     game,
     game.tourSlug ?? routeTitle,
@@ -1127,8 +1265,39 @@ void _openSmartGame(
     routeGames: routeGames,
     routeGamesContinuation: smartGamesBoardContinuationFor(type),
     viewSource: ChessboardView.tour,
+    accessContext: smartGamesAccessContextFor(type, game),
   );
 }
+
+/// Provenance of a game opened from a fixed collection. Its card carries it
+/// through tap, keyboard, context menu, Cmd/Ctrl-click, middle-click and drag,
+/// and every board it opens keeps it.
+///
+/// Miniatures are judged by each game's own date. Live, GM and Classical are
+/// smart collections: opening content through them is Premium, as it is
+/// through the phone's smart events, while the same game stays free through
+/// its own broadcast. Favorites stay free; Countrymen keep their paid origin.
+@visibleForTesting
+DesktopAccessContext smartGamesAccessContextFor(
+  PremiumGamesType type,
+  GamesTourModel game,
+) => switch (type) {
+  PremiumGamesType.miniatures => miniatureGameAccessContext(
+    game,
+    DesktopAction.openContent,
+  ),
+  PremiumGamesType.live ||
+  PremiumGamesType.gm ||
+  PremiumGamesType.classical => smartCollectionAccessContext(
+    SmartCollectionContentAction.openGame,
+  ),
+  PremiumGamesType.favorites => desktopFavoritesFeedAccessContext,
+  PremiumGamesType.countrymen => const DesktopAccessContext(
+    feature: DesktopFeature.countrymen,
+    action: DesktopAction.openContent,
+    origin: DesktopDiscoveryOrigin.countrymen,
+  ),
+};
 
 @visibleForTesting
 BoardTabGamesContinuation? smartGamesBoardContinuationFor(
@@ -1229,6 +1398,7 @@ bool shouldLoadMoreForCollapsedMiniatures({
 class _SmartGamesTable extends ConsumerWidget {
   const _SmartGamesTable({
     required this.type,
+    required this.lockedAtRest,
     required this.games,
     required this.routeTitle,
     required this.routeGames,
@@ -1239,6 +1409,7 @@ class _SmartGamesTable extends ConsumerWidget {
   });
 
   final PremiumGamesType type;
+  final bool Function(GamesTourModel game) lockedAtRest;
   final List<GamesTourModel> games;
   final String routeTitle;
   final List<GamesTourModel> routeGames;
@@ -1301,10 +1472,12 @@ class _SmartGamesTable extends ConsumerWidget {
               child: _SmartGamesTableRow(
                 game: effectiveGames[i],
                 selected: selectedGameId == effectiveGames[i].gameId,
+                locked: lockedAtRest(effectiveGames[i]),
                 showDivider: i < effectiveGames.length - 1,
                 onSelect: () => onSelectGame(effectiveGames[i].gameId),
                 onOpen:
                     () => _openSmartGame(
+                      context,
                       ref,
                       effectiveGames[i],
                       type,
@@ -1386,10 +1559,12 @@ class _SmartGamesTableRow extends StatefulWidget {
     required this.showDivider,
     required this.onSelect,
     required this.onOpen,
+    this.locked = false,
   });
 
   final GamesTourModel game;
   final bool selected;
+  final bool locked;
   final bool showDivider;
   final VoidCallback onSelect;
   final VoidCallback onOpen;
@@ -1436,9 +1611,19 @@ class _SmartGamesTableRowState extends State<_SmartGamesTableRow> {
           ),
           child: Row(
             children: [
+              // The status column stays outside the greyscale, so the lock
+              // renders at full strength as it does in every locked table.
               SizedBox(
                 width: 68,
-                child: Row(
+                child:
+                    widget.locked
+                        ? const Align(
+                          alignment: Alignment.centerLeft,
+                          child: DesktopLockGlyph(
+                            reason: kMiniatureLockedReason,
+                          ),
+                        )
+                        : Row(
                   children: [
                     Container(
                       width: 6,
@@ -1460,33 +1645,57 @@ class _SmartGamesTableRowState extends State<_SmartGamesTableRow> {
                   ],
                 ),
               ),
-              Expanded(flex: 4, child: _PlayerCell(player: game.whitePlayer)),
-              SizedBox(
-                width: 56,
-                child: Center(child: _ResultCell(game: game)),
-              ),
-              Expanded(flex: 4, child: _PlayerCell(player: game.blackPlayer)),
-              SizedBox(
-                width: 64,
-                child: Text(
-                  desktopGameAverageRating(game).toString(),
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    color: kWhiteColor70,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
               Expanded(
-                flex: 3,
-                child: Text(
-                  _smartGameEventLabel(game),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+                child: DesktopDesaturated(
+                  enabled: widget.locked,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 4,
+                        child: _PlayerCell(
+                          player: game.whitePlayer,
+                          muted: widget.locked,
+                        ),
+                      ),
+                      SizedBox(
+                        width: 56,
+                        child: Center(child: _ResultCell(game: game)),
+                      ),
+                      Expanded(
+                        flex: 4,
+                        child: _PlayerCell(
+                          player: game.blackPlayer,
+                          muted: widget.locked,
+                        ),
+                      ),
+                      SizedBox(
+                        width: 64,
+                        child: Text(
+                          desktopGameAverageRating(game).toString(),
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        flex: 3,
+                        child: Text(
+                          _smartGameEventLabel(game),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -1498,8 +1707,12 @@ class _SmartGamesTableRowState extends State<_SmartGamesTableRow> {
 }
 
 class _PlayerCell extends StatelessWidget {
-  const _PlayerCell({required this.player});
+  const _PlayerCell({required this.player, this.muted = false});
   final PlayerCard player;
+
+  /// On a locked row the title takes the neutral tone: a greyscaled primary
+  /// falls below readable contrast.
+  final bool muted;
 
   @override
   Widget build(BuildContext context) {
@@ -1508,8 +1721,8 @@ class _PlayerCell extends StatelessWidget {
         if (player.title.isNotEmpty) ...[
           Text(
             player.title,
-            style: const TextStyle(
-              color: kPrimaryColor,
+            style: TextStyle(
+              color: muted ? kWhiteColor70 : kPrimaryColor,
               fontSize: 11,
               fontWeight: FontWeight.w800,
             ),
@@ -1875,4 +2088,46 @@ class _InlineLoader extends StatelessWidget {
       emptyMessage: 'No countrymen games were found.',
     ),
   };
+}
+
+enum _MiniaturesSection {
+  games('Games'),
+  players('Players'),
+  about('About');
+
+  const _MiniaturesSection(this.label);
+
+  final String label;
+}
+
+class _MiniaturesSectionTab extends StatelessWidget {
+  const _MiniaturesSectionTab({
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      selected: selected,
+      child: DesktopToolbarPillButton(
+        label: label,
+        icon: switch (label) {
+          'Players' => Icons.people_alt_outlined,
+          'About' => Icons.info_outline_rounded,
+          _ => Icons.grid_view_rounded,
+        },
+        tone:
+            selected
+                ? DesktopToolbarPillTone.primary
+                : DesktopToolbarPillTone.neutral,
+        onPress: selected ? () {} : onPressed,
+      ),
+    );
+  }
 }
