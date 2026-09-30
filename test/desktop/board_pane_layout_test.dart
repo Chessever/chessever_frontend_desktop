@@ -279,6 +279,30 @@ void main() {
     );
   });
 
+  test('explorer line previews hide stale move decorations', () {
+    expect(
+      shouldShowBoardMoveDecorations(
+        hasMovePreview: false,
+        hasLinePreview: true,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldShowBoardMoveDecorations(
+        hasMovePreview: true,
+        hasLinePreview: false,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldShowBoardMoveDecorations(
+        hasMovePreview: false,
+        hasLinePreview: false,
+      ),
+      isTrue,
+    );
+  });
+
   test('generated report assessment preserves incoming Lichess commentary', () {
     final merged = mergeReportMoveAnnotations(
       lichessAnnotations: const <int, LichessMoveAnnotation>{
@@ -317,6 +341,32 @@ void main() {
     expect(resolved.annotation?.type, LichessMoveAnnotationType.blunder);
     expect(resolved.glyph, isNull);
   });
+
+  test(
+    'user classification NAGs render their board badges over report quality',
+    () {
+      for (final entry
+          in <int, LichessMoveAnnotationType>{
+            242: LichessMoveAnnotationType.bestMove,
+            247: LichessMoveAnnotationType.bookMove,
+            243: LichessMoveAnnotationType.missedWin,
+          }.entries) {
+        final resolved = resolveBoardMoveAssessment(
+          isOnMainline: true,
+          userNags: [entry.key],
+          pgnNags: const <int>[1, 16],
+          moveAnnotation: const LichessMoveAnnotation(
+            type: LichessMoveAnnotationType.blunder,
+            comment: '',
+            useClassificationIcon: true,
+            reportOwnsMoveQuality: true,
+          ),
+        );
+        expect(resolved.annotation?.type, entry.value);
+        expect(resolved.glyph, isNull);
+      }
+    },
+  );
 
   test('report reveal resets whenever another game is activated', () {
     var state = const GameReportRevealState();

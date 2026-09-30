@@ -3901,6 +3901,10 @@ class _BoardPaneContent extends HookConsumerWidget {
       explorerPreviewLine.value,
       explorerPreviewLineStep.value,
     );
+    final showBoardMoveDecorations = shouldShowBoardMoveDecorations(
+      hasMovePreview: explorerPreview != null,
+      hasLinePreview: explorerLinePreview != null,
+    );
     final boardPosition =
         explorerLinePreview?.position ?? explorerPreview?.position ?? position;
     final activeEvalTarget = activeBoardEvalTarget(
@@ -4318,7 +4322,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     final showFinishedResult = shouldShowFinishedBoardResult(
       pointer.value,
       gameEndingPlyIndex: gameEndingPlyIndex,
-      isPreviewing: explorerPreview != null || explorerLinePreview != null,
+      isPreviewing: !showBoardMoveDecorations,
     );
     final isAtGameEndingPly = showFinishedResult && pointer.value.isNotEmpty;
     final gameEnding =
@@ -5124,11 +5128,11 @@ class _BoardPaneContent extends HookConsumerWidget {
                           onPromotionSelection: onPromotionSelection,
                           pgnHeaders: pgnHeaders.value,
                           pgnShapes:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? pgnShapes
                                   : const <cg.Shape>[],
                           onGraphicCommentaryChanged:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? (shapes) => setMoveGraphicCommentary(
                                     pointer.value,
                                     shapes,
@@ -5137,17 +5141,17 @@ class _BoardPaneContent extends HookConsumerWidget {
                           whiteClock: whiteClockRaw,
                           blackClock: blackClockRaw,
                           boardAnnotation:
-                              explorerPreview == null ? boardAnnotation : null,
+                              showBoardMoveDecorations ? boardAnnotation : null,
                           boardAnnotationGlyph:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? boardAnnotationGlyph
                                   : null,
                           boardAnnotationSquare:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? boardAnnotationSquare
                                   : null,
                           gameEnding:
-                              explorerPreview == null ? gameEnding : null,
+                              showBoardMoveDecorations ? gameEnding : null,
                           showFinishedResult: showFinishedResult,
                           onWheelStep: stepNotationHorizontally,
                           isLiveAtTip: isLiveAtTip,
@@ -5515,7 +5519,8 @@ ChessLine _stripCommentsAndNags(ChessLine line) {
 /// `?!`, `□`). Mirrors `UserMoveNagsNotifier._isQualityNag`'s range so the
 /// board-pane merge logic doesn't accidentally suppress a PGN `±` (eval)
 /// or `⟳` (observation) NAG just because the user added a quality glyph.
-bool _isQualityNag(int nag) => nag >= 1 && nag <= 7;
+bool _isQualityNag(int nag) =>
+    (nag >= 1 && nag <= 7) || isChesseverClassificationNag(nag);
 
 /// Classic-glyph export merge (mobile-identical). Re-exported for existing
 /// call sites and tests; implementation lives in [chessever_annotation.dart].
@@ -5645,7 +5650,12 @@ resolveBoardMoveAssessment({
     ),
   ];
   if (mergedNags.isNotEmpty) {
-    final primary = primaryBoardNag(mergedNags) ?? mergedNags.first;
+    final classificationNag = mergedNags.cast<int?>().firstWhere(
+      (nag) => nag != null && isChesseverClassificationNag(nag),
+      orElse: () => null,
+    );
+    final primary =
+        classificationNag ?? primaryBoardNag(mergedNags) ?? mergedNags.first;
     final mapped = _mapNagToAnnotationType(primary);
     if (mapped != null) {
       return (
@@ -6053,6 +6063,12 @@ bool shouldShowFinishedBoardResult(
       gameEndingPlyIndex != null &&
       pointer.first == gameEndingPlyIndex;
 }
+
+@visibleForTesting
+bool shouldShowBoardMoveDecorations({
+  required bool hasMovePreview,
+  required bool hasLinePreview,
+}) => !hasMovePreview && !hasLinePreview;
 
 bool _pointersEqual(ChessMovePointer a, ChessMovePointer b) {
   if (identical(a, b)) return true;
@@ -10796,7 +10812,8 @@ Square? _normaliseLastMoveSquare(Move? move) {
 /// SVG badge whether the glyph came from PGN-baked `$1`–`$6` or from a
 /// Lichess / ChessEver analysis classification.
 LichessMoveAnnotationType? _mapNagToAnnotationType(int nag) {
-  return annotationTypeFromQualityNags(<int>[nag]);
+  return annotationTypeFromClassificationNags(<int>[nag]) ??
+      annotationTypeFromQualityNags(<int>[nag]);
 }
 
 LichessMoveAnnotationType _annotationTypeForReportClassification(
