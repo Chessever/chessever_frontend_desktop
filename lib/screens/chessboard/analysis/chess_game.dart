@@ -1,11 +1,59 @@
-import 'package:dartchess/dartchess.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
+import 'package:dartchess/dartchess.dart';
 
 typedef Number = int;
 
 typedef ChessLine = List<ChessMove>;
 
 final RegExp _evalRegex = RegExp(r'\[%eval ([^\]]+)\]');
+
+/// The address of the first move of a game: the walk the private
+/// `[ChessEverClassification "…"]` header tag is built from starts at ply 1.
+const String kChesseverFirstMainlineMoveKey = '1';
+
+/// Move NAGs as a parsed PGN node delivers them, with ChessEver's private
+/// classification restored into the native `$240`–`$247` block.
+///
+/// This is the single import-side hook that makes the external-compatible copy
+/// lossless: a game copied out for chess.com (standard NAGs only, exact class
+/// in the header tag) comes back into the app with the same
+/// Brilliant/Book/Missed-win classification it left with. A PGN that already
+/// carries the native block is returned untouched, so nothing is ever annotated
+/// twice — see [restoreChesseverClassificationNags].
+///
+/// [key] is this move's address in the movetext ([chesseverMoveKey]) and
+/// [headerCodes] the tag the copy wrote, so a restored class lands on the move
+/// it belonged to even inside a variation.
+///
+/// Pair it with [importedMoveComments] so a legacy consumed `[%ce …]` marker
+/// does not ride along into the game (and into the files it is saved to).
+List<int>? restoredMoveNags(
+  List<int>? nags,
+  PgnNodeData data, {
+  String? key,
+  Map<String, int>? headerCodes,
+}) => restoreChesseverClassificationNags(
+  nags: nags,
+  comments: <String>[...?data.startingComments, ...?data.comments],
+  moveKey: key,
+  headerCodes: headerCodes,
+);
+
+/// A parsed PGN node's comments, minus any legacy `[%ce …]` marker whose codes
+/// were folded into the move's NAGs by [restoredMoveNags].
+///
+/// Prose, clocks and `[%eval …]` payloads are untouched, and a marker whose
+/// codes are unknown is preserved: nothing was restored, so nothing is dropped.
+List<String>? importedMoveComments(
+  List<String>? startingComments,
+  List<String>? comments,
+) {
+  final combined = <String>[...?startingComments, ...?comments];
+  if (combined.isEmpty) return null;
+  final stripped = stripChesseverMarker(combined);
+  return (stripped?.isEmpty ?? true) ? null : stripped;
+}
 
 class ChessGame {
   static const String metadataIsLiveKey = 'isLiveGame';
@@ -17,6 +65,7 @@ class ChessGame {
   final String startingFen;
   final Map<String, dynamic> metadata;
   final ChessLine mainline;
+  final List<String> rootComments;
 
   /// Analysis displaced by an authoritative takeback to the root position.
   ///
@@ -31,6 +80,7 @@ class ChessGame {
     required this.startingFen,
     required this.metadata,
     required this.mainline,
+    this.rootComments = const [],
     this.detachedRootAnalysis,
   });
 
@@ -38,6 +88,7 @@ class ChessGame {
     return ChessGame(
       gameId: json['id'] as String,
       startingFen: json['sf'] as String,
+      rootComments: (json['rc'] as List?)?.cast<String>() ?? const [],
       metadata: (json['md'] as Map).cast<String, dynamic>(),
       mainline:
           (json['m'] as List)
@@ -67,6 +118,7 @@ class ChessGame {
   Map<String, dynamic> toJson() => {
     'id': gameId,
     'sf': startingFen,
+    if (rootComments.isNotEmpty) 'rc': rootComments,
     'md': metadata,
     'm': mainline.map((move) => move.toJson()).toList(),
     if (detachedRootAnalysis != null)
@@ -81,6 +133,7 @@ class ChessGame {
     String? startingFen,
     Map<String, dynamic>? metadata,
     ChessLine? mainline,
+    List<String>? rootComments,
     List<ChessLine>? detachedRootAnalysis,
     bool overrideDetachedRootAnalysis = false,
   }) {
@@ -89,6 +142,7 @@ class ChessGame {
       startingFen: startingFen ?? this.startingFen,
       metadata: metadata ?? this.metadata,
       mainline: mainline ?? this.mainline,
+      rootComments: rootComments ?? this.rootComments,
       detachedRootAnalysis:
           overrideDetachedRootAnalysis
               ? detachedRootAnalysis
@@ -157,43 +211,70 @@ class ChessGame {
   factory ChessGame.fromPgn(String gameId, String pgn) {
     final pgnGame = PgnGame.parsePgn(pgn);
     final startingPosition = PgnGame.startingPosition(pgnGame.headers);
+    // The classes a copy carries out-of-band. Read before the headers become
+    // metadata, so the private carrier can never ride into the game — or into
+    // the user's files, which keep the native block.
+    final headerCodes = parseChesseverClassificationHeader(
+      chesseverClassificationHeaderOf(pgnGame.headers),
+    );
 
-    final mainline = _parsePgnNodes(pgnGame.moves.children, startingPosition);
-    if (mainline.isNotEmpty && pgnGame.comments.isNotEmpty) {
-      mainline[0] = mainline[0].copyWith(
-        comments: [...pgnGame.comments, ...?mainline[0].comments],
-      );
-    }
+    final mainline = _parsePgnNodes(
+      pgnGame.moves.children,
+      startingPosition,
+      headerCodes,
+    );
 
     return ChessGame(
       gameId: gameId,
       startingFen: startingPosition.fen,
-      metadata: pgnGame.headers,
+      metadata: withoutChesseverClassificationHeader(pgnGame.headers),
       mainline: mainline,
+      rootComments: pgnGame.comments,
     );
   }
 
   static List<ChessMove> _parsePgnNodes(
     List<PgnNode> siblings,
     Position position,
+    Map<String, int> headerCodes,
   ) {
     if (siblings.isEmpty) return const [];
 
     final mainlineNode = siblings.first;
     if (mainlineNode is! PgnChildNode) return const [];
 
-    final line = _parsePgnLineFromChild(mainlineNode, position);
+    final line = _parsePgnLineFromChild(
+      mainlineNode,
+      position,
+      key: kChesseverFirstMainlineMoveKey,
+      headerCodes: headerCodes,
+    );
     if (line.isEmpty) return line;
     // Root siblings are alternatives to the first move, not continuations
     // after it. The model represents these as same-turn RAVs on that move.
-    final rootVariations = <ChessLine>[
-      for (final sibling in siblings.skip(1))
-        if (sibling is PgnChildNode<PgnNodeData>)
-          _parsePgnLineFromChild(sibling, position),
-    ].where((variation) => variation.isNotEmpty).toList();
-    if (rootVariations.isNotEmpty) {
+    final rootVariations = <ChessLine>[];
+    var alternative = 0;
+    for (final sibling in siblings.skip(1)) {
+      if (sibling is! PgnChildNode<PgnNodeData>) continue;
+      alternative++;
+      rootVariations.add(
+        _parsePgnLineFromChild(
+          sibling,
+          position,
+          key: chesseverMoveKey(
+            parentKey: kChesseverFirstMainlineMoveKey,
+            variation: alternative,
+            index: 1,
+          ),
+          headerCodes: headerCodes,
+        ),
+      );
+    }
+    final usableVariations =
+        rootVariations.where((variation) => variation.isNotEmpty).toList();
+    if (usableVariations.isNotEmpty) {
       line[0] = line[0].copyWith(
-        variations: [...rootVariations, ...?line[0].variations],
+        variations: [...usableVariations, ...?line[0].variations],
         overrideVariations: true,
       );
     }
@@ -202,18 +283,52 @@ class ChessGame {
 
   static List<ChessMove> _parsePgnLineFromChild(
     PgnChildNode<PgnNodeData> node,
-    Position position,
-  ) {
+    Position position, {
+    required String? key,
+    required Map<String, int> headerCodes,
+  }) {
     final data = node.data;
+    // CBH analysis uses explicit null moves. dartchess has no NullMove type;
+    // preserve the analysis ply and position instead of truncating its subtree.
+    final isNullMove = data.san == '--';
     final move = position.parseSan(data.san);
-    if (move == null) return const [];
+    if (move == null && !isNullMove) return const [];
 
-    final nextPosition = position.play(move);
+    final nextPosition =
+        isNullMove
+            ? position.copyWith(
+              turn: position.turn == Side.white ? Side.black : Side.white,
+              epSquare: null,
+              halfmoves: position.halfmoves + 1,
+              fullmoves:
+                  position.fullmoves + (position.turn == Side.black ? 1 : 0),
+            )
+            : position.play(move!);
+    final continuationKey = key == null ? null : chesseverNextMoveKey(key);
 
     final variations = <ChessLine>[];
     if (node.children.length > 1) {
+      // Siblings of the continuation move are written *after* it: each block is
+      // an alternative to that move, so the block's moves are addressed from
+      // the continuation move's own key.
+      var alternative = 0;
       for (final variationNode in node.children.skip(1)) {
-        variations.add(_parsePgnLineFromChild(variationNode, nextPosition));
+        alternative++;
+        variations.add(
+          _parsePgnLineFromChild(
+            variationNode,
+            nextPosition,
+            key:
+                continuationKey == null
+                    ? null
+                    : chesseverMoveKey(
+                      parentKey: continuationKey,
+                      variation: alternative,
+                      index: 1,
+                    ),
+            headerCodes: headerCodes,
+          ),
+        );
       }
     }
 
@@ -236,20 +351,31 @@ class ChessGame {
       num: position.fullmoves,
       fen: nextPosition.fen,
       san: data.san,
-      uci: move.uci,
+      uci: isNullMove ? '0000' : move!.uci,
       turn: position.turn == Side.black ? ChessColor.black : ChessColor.white,
       clockTime: clockTime,
       eval: eval,
-      comments: data.startingComments == null
-          ? data.comments
-          : [...data.startingComments!, ...?data.comments],
-      nags: data.nags,
+      startingComments: importedMoveComments(data.startingComments, null),
+      comments: importedMoveComments(null, data.comments),
+      nags: restoredMoveNags(
+        data.nags,
+        data,
+        key: key,
+        headerCodes: headerCodes,
+      ),
       variations: variations.isNotEmpty ? variations : null,
     );
 
     final line = <ChessMove>[currentMove];
     if (node.children.isNotEmpty) {
-      line.addAll(_parsePgnLineFromChild(node.children.first, nextPosition));
+      line.addAll(
+        _parsePgnLineFromChild(
+          node.children.first,
+          nextPosition,
+          key: continuationKey,
+          headerCodes: headerCodes,
+        ),
+      );
     }
 
     return line;
@@ -283,6 +409,7 @@ class ChessMove {
   final String? clockTime;
   final String? eval;
   final List<String>? comments;
+  final List<String>? startingComments;
   final List<int>? nags;
   final List<ChessLine>? variations;
 
@@ -295,6 +422,7 @@ class ChessMove {
     this.clockTime,
     this.eval,
     this.comments,
+    this.startingComments,
     this.nags,
     this.variations,
   });
@@ -309,6 +437,7 @@ class ChessMove {
       clockTime: json['ct'] as String?,
       eval: json['e'] as String?,
       comments: (json['c'] as List?)?.cast<String>(),
+      startingComments: (json['sc'] as List?)?.cast<String>(),
       nags: (json['g'] as List?)?.cast<int>(),
       variations:
           json['v'] == null
@@ -337,6 +466,7 @@ class ChessMove {
     'ct': clockTime,
     'e': eval,
     if (comments != null) 'c': comments,
+    if (startingComments != null) 'sc': startingComments,
     if (nags != null) 'g': nags,
     if (variations != null)
       'v':
@@ -356,6 +486,7 @@ class ChessMove {
     String? clockTime,
     String? eval,
     List<String>? comments,
+    List<String>? startingComments,
     List<int>? nags,
     List<ChessLine>? variations,
     bool overrideVariations = false,
@@ -369,6 +500,7 @@ class ChessMove {
       clockTime: clockTime ?? this.clockTime,
       eval: eval ?? this.eval,
       comments: comments ?? this.comments,
+      startingComments: startingComments ?? this.startingComments,
       nags: nags ?? this.nags,
       variations: overrideVariations ? variations : this.variations,
     );

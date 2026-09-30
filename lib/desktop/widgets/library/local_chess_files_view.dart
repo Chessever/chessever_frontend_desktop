@@ -1,7 +1,11 @@
 import 'package:chessever/desktop/services/local_pgn_source.dart';
+import 'package:chessever/desktop/services/local_pgn_source_recovery.dart';
 import 'dart:async';
+import '../../services/local_chess_pgn_fingerprint.dart';
+import '../../state/local_board_games.dart';
+import 'package:chessever/desktop/state/local_game_grid_layout.dart';
+import 'package:chessever/desktop/state/local_game_page_loader.dart';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -10,13 +14,18 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
+import 'package:chessever/desktop/services/local_database_save_source.dart';
+import 'package:chessever/desktop/services/local_raw_pgn_catalog.dart';
 import 'package:chessever/desktop/services/local_player_enrichment_service.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
-import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
@@ -28,6 +37,7 @@ import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/library/local_database_show_in_folder.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
@@ -157,10 +167,7 @@ class LocalChessFilesView extends HookConsumerWidget {
             _LocalGamesSortDir.asc,
           ),
     );
-    final databasePageWindow = useState(const _LocalDatabasePageWindow('', 0));
-    final databaseLoadedPages = useState(
-      const _LoadedLocalDatabasePages.empty(),
-    );
+
     // Pick up Overview → Games handoff and external clear without wiping
     // in-view edits when the parent re-passes the same filter instance.
     useEffect(() {
@@ -237,8 +244,9 @@ class LocalChessFilesView extends HookConsumerWidget {
     );
     final isBackgroundImporting = backgroundImportProgress != null;
     final isDirectPgnCatalog =
-        selectedDatabase?.contentFingerprint.isEmpty == true &&
-        selectedDatabase?.pgnOffsetIndex != null;
+        selectedDatabase?.rawPgnCatalog != null ||
+        (selectedDatabase?.contentFingerprint.isEmpty == true &&
+            selectedDatabase?.pgnOffsetIndex != null);
     final hasSearchIndex = !isDirectPgnCatalog;
     final needsSearchIndex =
         query.value.trim().isNotEmpty ||
@@ -287,22 +295,6 @@ class LocalChessFilesView extends HookConsumerWidget {
           playerFideId,
           Object.hashAll(playerAliases),
         ).toString();
-    final effectiveDatabasePageWindow =
-        databasePageWindow.value.queryKey == databaseQueryKey
-            ? databasePageWindow.value
-            : _LocalDatabasePageWindow(databaseQueryKey, 0);
-    useEffect(() {
-      if (databasePageWindow.value.queryKey != databaseQueryKey) {
-        databasePageWindow.value = _LocalDatabasePageWindow(
-          databaseQueryKey,
-          0,
-        );
-      }
-      if (databaseLoadedPages.value.queryKey != databaseQueryKey) {
-        databaseLoadedPages.value = const _LoadedLocalDatabasePages.empty();
-      }
-      return null;
-    }, [databaseQueryKey]);
     useEffect(
       () {
         final path = selectedDatabase?.path;
@@ -351,83 +343,115 @@ class LocalChessFilesView extends HookConsumerWidget {
         Object.hashAll(playerAliases),
       ],
     );
-    final databaseGamesPageFuture =
-        useMemoized<Future<LocalChessGameQueryPage?>?>(
-          () {
-            final database = selectedDatabase;
-            if (database == null ||
-                databaseEntryCount <= 0 ||
-                !hasSearchIndex ||
-                isBackgroundImporting) {
-              return null;
-            }
-            return _queryLocalDatabaseGamesPage(
-              ref.read(localChessDatabaseRepositoryProvider),
-              databasePath: database.path,
-              search: query.value,
-              sort: sort.value,
-              filter: gameFilter.value,
+    // The table keeps its search and filters. Cloud save builds a separate
+    // unfiltered page loader so a one-row view cannot upload just one game.
+    final databasePageLoad = useMemoized<LocalDatabasePageLoad?>(() {
+      final database = selectedDatabase;
+      if (database == null ||
+          databaseEntryCount <= 0 ||
+          isBackgroundImporting) {
+        return null;
+      }
+      final search = query.value;
+      final querySort = sort.value;
+      final filter = gameFilter.value;
+      final descriptor = database.rawPgnCatalog;
+      if (descriptor != null) {
+        return (int page) async {
+          final clock = Stopwatch()..start();
+          final result = await localRawPgnCatalogPage(
+            LocalRawPgnCatalogPageQuery(
+              descriptor: descriptor,
+              search: search,
+              sortBy: _localRepositorySortField(querySort.key),
+              sortDirection: _localRepositorySortDirection(querySort.dir),
+              filter: filter,
               playerFideId: playerFideId,
               playerAliases: playerAliases,
-              pageNumber: effectiveDatabasePageWindow.pageNumber,
+              pageNumber: page,
+              pageSize: _kLocalDatabaseGameQueryPageSize,
+            ),
+          );
+          LocalPgnPerformanceLog.event(
+            'table_page',
+            'route=catalog page=$page elapsedMs=${clock.elapsedMilliseconds} '
+                'rows=${result?.games.length ?? 0}',
+          );
+          return result;
+        };
+      }
+      if (!hasSearchIndex) return null;
+      final repository = ref.read(localChessDatabaseRepositoryProvider);
+      return (int page) async {
+        final clock = Stopwatch()..start();
+        final result = await repository.localDatabaseGamesPage(
+          databasePath: database.path,
+          search: search,
+          sortBy: _localRepositorySortField(querySort.key),
+          sortDirection: _localRepositorySortDirection(querySort.dir),
+          filter: filter,
+          playerFideId: playerFideId,
+          playerAliases: playerAliases,
+          pageNumber: page,
+          pageSize: _kLocalDatabaseGameQueryPageSize,
+        );
+        LocalPgnPerformanceLog.event(
+          'table_page',
+          'route=index page=$page elapsedMs=${clock.elapsedMilliseconds} '
+              'rows=${result?.games.length ?? 0}',
+        );
+        return result;
+      };
+    }, [databaseQueryKey]);
+    final pageLoader = useMemoized(
+      () =>
+          databasePageLoad == null
+              ? null
+              : LocalGamePageLoader(databasePageLoad),
+      [databasePageLoad],
+    );
+    useListenable(pageLoader);
+    useEffect(() {
+      pageLoader?.request(0);
+      return pageLoader?.dispose;
+    }, [pageLoader]);
+    final databaseRows =
+        pageLoader == null || pageLoader.pages.isEmpty
+            ? null
+            : _LoadedLocalDatabasePages(
+              queryKey: databaseQueryKey,
+              pages: {
+                for (final e in pageLoader.pages.entries) e.key: e.value.games,
+              },
+              totalCount: pageLoader.totalCount ?? 0,
               pageSize: _kLocalDatabaseGameQueryPageSize,
             );
-          },
-          [
-            selectedDatabase?.path,
-            databaseEntryCount,
-            hasSearchIndex,
-            isBackgroundImporting,
-            query.value,
-            sort.value.key,
-            sort.value.dir,
-            gameFilter.value,
-            playerFideId,
-            Object.hashAll(playerAliases),
-            effectiveDatabasePageWindow.queryKey,
-            effectiveDatabasePageWindow.pageNumber,
-          ],
-        );
-    final databaseGamesPageSnapshot = useFuture(
-      databaseGamesPageFuture,
-      preserveState: false,
-    );
-    final databaseGamesPage = databaseGamesPageSnapshot.data;
-    useEffect(() {
-      final page = databaseGamesPage;
-      if (page == null) return null;
-      if (databasePageWindow.value.queryKey != databaseQueryKey) return null;
-      databaseLoadedPages.value = databaseLoadedPages.value.merge(
-        queryKey: databaseQueryKey,
-        page: page,
-      );
-      return null;
-    }, [databaseGamesPage, databaseQueryKey]);
-    final databaseRows = _visibleLocalDatabaseRows(
-      queryKey: databaseQueryKey,
-      loaded: databaseLoadedPages.value,
-      livePage: databaseGamesPage,
-    );
     final filtered = databaseRows?.loadedGames ?? fallbackFiltered;
-    final totalFilteredCount =
-        databaseRows?.totalCount ??
-        databaseGamesPage?.totalCount ??
-        filtered.length;
-    final isLoadingDatabasePage =
-        databaseGamesPageFuture != null &&
-        databaseGamesPageSnapshot.connectionState != ConnectionState.done;
-    final boardContextGames = databaseRows == null ? allGames : filtered;
-
-    void requestDatabasePage(int pageNumber) {
-      if (pageNumber < 0 || databaseRows?.hasPage(pageNumber) == true) return;
-      if (effectiveDatabasePageWindow.pageNumber == pageNumber &&
-          isLoadingDatabasePage) {
-        return;
+    final totalFilteredCount = databaseRows?.totalCount ?? filtered.length;
+    final isLoadingDatabasePage = pageLoader?.isLoading ?? false;
+    final boardContextGames = filtered;
+    LocalBoardGamesSource? boardSource(LocalChessGame selected, int rank) {
+      // A cached preview is not a complete catalog or a ranked query page.
+      // Do not turn an early click into a permanently truncated Board source.
+      if (databaseRows == null && allGames.length < databaseEntryCount) {
+        return null;
       }
-      databasePageWindow.value = _LocalDatabasePageWindow(
-        databaseQueryKey,
-        pageNumber,
-      );
+      final source =
+          databaseRows == null
+              ? LocalBoardGamesSource.catalog(fallbackFiltered)
+              : LocalBoardGamesSource.query(
+                path: selectedDatabase!.path,
+                totalCount: totalFilteredCount,
+                rawPgnCatalog: selectedDatabase.rawPgnCatalog,
+                search: query.value,
+                sortBy: _localRepositorySortField(sort.value.key),
+                sortDirection: _localRepositorySortDirection(sort.value.dir),
+                filter: gameFilter.value,
+                playerFideId: playerFideId,
+                playerAliases: List.unmodifiable(playerAliases),
+              );
+      source.rememberSelection(selected.id, rank);
+      return source;
     }
 
     void selectLocalPath(String path) {
@@ -435,21 +459,162 @@ class LocalChessFilesView extends HookConsumerWidget {
       onSelectPath(path);
     }
 
-    Future<void> saveVisible() async {
-      if (filtered.isEmpty) return;
-      // Scanner builds light ChessGames with empty mainlines. Re-parse the
-      // raw PGN on a worker isolate so saved rows carry full move data.
-      final hydrated = await compute(_hydrateLocalGamesForSave, filtered);
-      if (!context.mounted) return;
-      final outcome = await showLibrarySaveToFolderDialog(
-        context: context,
-        ref: ref,
-        games: hydrated,
-        sourceLabel: databaseTitle,
-        destinationMode: LibrarySaveDestinationMode.cloudOnly,
+    /// Builds an unfiltered whole-database save source, or explains why it cannot.
+    ///
+    /// Never returns a source that only covers a loaded page: an unfinished
+    /// index is reported as such, and a session-only preview is replaced by an
+    /// enumeration read straight from the source PGN.
+    Future<LibrarySaveGameSource?> openDatabaseSaveSource(String path) async {
+      // The table query may contain a search or player filter. Save to cloud
+      // promises the whole database, so page the source without those filters.
+      if (databasePageLoad != null && selectedDatabase != null) {
+        final descriptor = selectedDatabase.rawPgnCatalog;
+        final LocalDatabasePageLoad loadPage =
+            descriptor != null
+                ? (page) => localRawPgnCatalogPage(
+                  LocalRawPgnCatalogPageQuery(
+                    descriptor: descriptor,
+                    pageNumber: page,
+                    pageSize: _kLocalDatabaseGameQueryPageSize,
+                  ),
+                )
+                : (page) => ref
+                    .read(localChessDatabaseRepositoryProvider)
+                    .localDatabaseGamesPage(
+                      databasePath: path,
+                      pageNumber: page,
+                      pageSize: _kLocalDatabaseGameQueryPageSize,
+                    );
+        // Read page 0 before handing the source over: the save's total must be
+        // the query's own answer, never what the table happens to have loaded
+        // (clicking Save to cloud before the first page lands must not shrink
+        // the upload to the session preview). The page is reused, not re-read.
+        try {
+          final firstPage = await loadPage(0);
+          if (firstPage == null) {
+            if (context.mounted) {
+              showDesktopToast(
+                context,
+                'The local database could not be read. Refresh it and try '
+                'again.',
+                error: true,
+              );
+            }
+            return null;
+          }
+          return LocalDatabaseSaveEnumeration(
+            loadPage: loadPage,
+            totalCount: firstPage.totalCount,
+            pageSize: _kLocalDatabaseGameQueryPageSize,
+            prefetchedPages: <int, LocalChessGameQueryPage>{0: firstPage},
+          );
+        } catch (error) {
+          if (context.mounted) {
+            showDesktopToast(
+              context,
+              'Could not read the whole local database: $error',
+              error: true,
+            );
+          }
+          return null;
+        }
+      }
+      // No paged query exists yet. A running index build is transient — the
+      // database is about to become fully searchable, so say so rather than
+      // uploading whatever subset happens to be in memory.
+      final importProgress = backgroundImportProgress;
+      if (importProgress != null) {
+        final percent = (importProgress.fraction * 100).round().clamp(0, 100);
+        showDesktopToast(
+          context,
+          'This database is still being prepared ($percent%). '
+          'Try Save to cloud again when it finishes.',
+          error: true,
+        );
+        return null;
+      }
+      // A workspace in session-preview state holds only the file's first page
+      // in memory. Enumerate the source PGN itself so the preview is never what
+      // gets uploaded.
+      if (path.toLowerCase().endsWith('.pgn')) {
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Reading the whole local database before saving...',
+          );
+        }
+        try {
+          return await openLocalDatabaseSaveEnumerationFromPgn(
+            path: path,
+            sourceLabel: databaseTitle,
+            pageSize: _kLocalDatabaseGameQueryPageSize,
+          );
+        } catch (error) {
+          if (context.mounted) {
+            showDesktopToast(
+              context,
+              'Could not read the whole local database: $error',
+              error: true,
+            );
+          }
+          return null;
+        }
+      }
+      showDesktopToast(
+        context,
+        'Only a single local PGN database can be saved to the cloud.',
+        error: true,
       );
-      if (outcome == null || !outcome.didSave || !context.mounted) return;
-      showDesktopToast(context, outcome.toToastMessage());
+      return null;
+    }
+
+    /// Saves every game in the local database, regardless of table filters.
+    /// The dialog pulls one bounded batch at a time.
+    Future<void> saveVisible() async {
+      final database = selectedDatabase;
+      final path = database?.path;
+      final databaseSourceName =
+          database == null
+              ? localChessDatabaseStemForLabel(databaseTitle)
+              : localChessDatabaseStemForPath(database.path);
+      if (path == null || path.trim().isEmpty) {
+        showDesktopToast(
+          context,
+          'Open a single local database before saving it to the cloud.',
+          error: true,
+        );
+        return;
+      }
+      final source = await openDatabaseSaveSource(path);
+      if (source == null) return;
+      try {
+        if (source.totalCount <= 0) {
+          if (context.mounted) {
+            showDesktopToast(
+              context,
+              'This local database has no entries to save.',
+            );
+          }
+          return;
+        }
+        if (!context.mounted) return;
+        // This workspace *is* one local database, so the cloud copy is a new
+        // cloud database named after the file, created inside the destination
+        // folder the user picks — never a dump of these games into an existing
+        // cloud database, and never a truncated page of them.
+        final outcome = await showLibrarySaveToFolderDialog(
+          context: context,
+          ref: ref,
+          gameSource: source,
+          sourceLabel: databaseTitle,
+          destinationMode: LibrarySaveDestinationMode.cloudOnly,
+          newDatabaseName: databaseSourceName,
+        );
+        if (outcome == null || !outcome.didSave || !context.mounted) return;
+        showDesktopToast(context, outcome.toToastMessage());
+      } finally {
+        source.release();
+      }
     }
 
     useEffect(() {
@@ -560,6 +725,19 @@ class LocalChessFilesView extends HookConsumerWidget {
     }
 
     void rebuildDatabaseTree() {
+      // Building an opening tree is Premium; the database and its games stay
+      // free. Denied => no build starts.
+      if (!admitDesktopAction(
+        ProviderScope.containerOf(context, listen: false),
+        const DesktopAccessContext(
+          feature: DesktopFeature.openingTree,
+          action: DesktopAction.recompute,
+          origin: DesktopDiscoveryOrigin.localFile,
+        ),
+        surface: 'local_files_build_tree',
+      )) {
+        return;
+      }
       final override = onBuildTreeOverride;
       if (override != null) {
         override();
@@ -626,6 +804,21 @@ class LocalChessFilesView extends HookConsumerWidget {
                             ? cancelDatabaseTreeBuild
                             : null,
                     onSelectPath: selectLocalPath,
+                    onShowInFolder:
+                        selectedDatabase == null
+                            ? null
+                            : () => unawaited(
+                              revealLocalDatabasePath(
+                                context,
+                                selectedDatabase.path,
+                              ),
+                            ),
+                    onRevealFolder:
+                        node is LocalChessFolderNode
+                            ? () => unawaited(
+                              revealLocalFolderPath(context, node.path),
+                            )
+                            : null,
                   ),
                 if (!isBrowsingFolder)
                   DecoratedBox(
@@ -710,6 +903,19 @@ class LocalChessFilesView extends HookConsumerWidget {
                     selectedPath: selectedPath,
                     onSelect: selectLocalPath,
                   ),
+                if (pageLoader?.errors.containsKey(0) == true &&
+                    databaseRows == null)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text('Could not load database rows. '),
+                      FButton(
+                        style: FButtonStyle.ghost(),
+                        onPress: () => pageLoader?.retry(0),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
                 Expanded(
                   child:
                       isBrowsingFolder
@@ -732,15 +938,21 @@ class LocalChessFilesView extends HookConsumerWidget {
                             database: selectedDatabase,
                             games: filtered,
                             databaseGames: boardContextGames,
+                            boardSource: boardSource,
                             sort: sort.value,
                             onSortChange: (next) => sort.value = next,
                             onRefresh: onRefreshOverride,
                             onPaste: pasteIntoLocalDatabase,
+                            onSaveToCloud: () => unawaited(saveVisible()),
                             onSelectPath: onSelectPath,
                             totalCount: totalFilteredCount,
                             virtualRows: databaseRows,
                             pageSize: _kLocalDatabaseGameQueryPageSize,
-                            onRequestPage: requestDatabasePage,
+                            onRequestPage: (page) => pageLoader?.request(page),
+                            onDemandPages: (pages) => pageLoader?.demand(pages),
+                            pageErrors:
+                                pageLoader?.errors.keys.toSet() ?? const {},
+                            onRetryPage: (page) => pageLoader?.retry(page),
                             compactPadding: compactTablePadding,
                           ),
                 ),
@@ -768,6 +980,8 @@ class _LocalHeader extends StatelessWidget {
     required this.onBuildTree,
     required this.onCancelTreeBuild,
     required this.onSelectPath,
+    this.onShowInFolder,
+    this.onRevealFolder,
   });
 
   final LocalChessSource source;
@@ -784,9 +998,18 @@ class _LocalHeader extends StatelessWidget {
   final VoidCallback? onCancelTreeBuild;
   final ValueChanged<String> onSelectPath;
 
+  /// Reveals the open database's own file in the OS file manager. `null` when
+  /// the selected node is not a single local database file.
+  final VoidCallback? onShowInFolder;
+
+  /// Reveals the open FOLDER itself in the OS file manager. `null` when the
+  /// selected node is not a folder.
+  final VoidCallback? onRevealFolder;
+
   @override
   Widget build(BuildContext context) {
     final selectedDatabase = selectedLocalChessDatabaseFile(node);
+    final showInFolder = onShowInFolder;
     final isDatabaseView = selectedDatabase != null;
     final (gameCount, fileCount, unsupportedCount) = switch (node) {
       LocalChessFolderNode(
@@ -887,6 +1110,14 @@ class _LocalHeader extends StatelessWidget {
               icon: Icons.refresh_rounded,
               onPress: onRefresh,
             ),
+            if (onRevealFolder != null) ...[
+              const SizedBox(width: 2),
+              _HeaderAction(
+                tooltip: kLocalDatabaseShowInFolderLabel,
+                icon: Icons.folder_open_outlined,
+                onPress: onRevealFolder!,
+              ),
+            ],
             const SizedBox(width: 6),
           ],
           if (isDatabaseView) ...[
@@ -896,6 +1127,13 @@ class _LocalHeader extends StatelessWidget {
               onBuild: onBuildTree,
               onCancel: onCancelTreeBuild,
             ),
+            const SizedBox(width: 2),
+            if (showInFolder != null)
+              _HeaderAction(
+                tooltip: kLocalDatabaseShowInFolderLabel,
+                icon: Icons.folder_open_outlined,
+                onPress: showInFolder,
+              ),
             const SizedBox(width: 6),
           ],
           DesktopToolbarPillButton(
@@ -906,7 +1144,7 @@ class _LocalHeader extends StatelessWidget {
             tooltip:
                 onSave == null
                     ? 'No parsed local entries here'
-                    : 'Save visible local entries to your cloud library',
+                    : 'Save the whole local database to your cloud library',
           ),
         ],
       ),
@@ -1192,15 +1430,20 @@ class _LocalGamesTable extends HookConsumerWidget {
     required this.database,
     required this.games,
     required this.databaseGames,
+    required this.boardSource,
     required this.sort,
     required this.onSortChange,
     required this.onRefresh,
     required this.onPaste,
+    required this.onSaveToCloud,
     required this.onSelectPath,
     required this.totalCount,
     required this.virtualRows,
     required this.pageSize,
     required this.onRequestPage,
+    required this.onDemandPages,
+    required this.pageErrors,
+    required this.onRetryPage,
     required this.compactPadding,
   });
 
@@ -1208,15 +1451,22 @@ class _LocalGamesTable extends HookConsumerWidget {
   final LocalChessFileNode? database;
   final List<LocalChessGame> games;
   final List<LocalChessGame> databaseGames;
+  final LocalBoardGamesSource? Function(LocalChessGame, int) boardSource;
   final _LocalGamesSortConfig sort;
   final ValueChanged<_LocalGamesSortConfig> onSortChange;
   final Future<void> Function()? onRefresh;
   final Future<void> Function() onPaste;
+
+  /// Whole-database cloud save, owned by the view that knows the paging query.
+  final VoidCallback onSaveToCloud;
   final ValueChanged<String> onSelectPath;
   final int totalCount;
   final _LoadedLocalDatabasePages? virtualRows;
   final int pageSize;
   final ValueChanged<int> onRequestPage;
+  final ValueChanged<Iterable<int>> onDemandPages;
+  final Set<int> pageErrors;
+  final ValueChanged<int> onRetryPage;
   final bool compactPadding;
 
   @override
@@ -1225,46 +1475,121 @@ class _LocalGamesTable extends HookConsumerWidget {
     final focusNode = useFocusNode(debugLabel: 'local-pgn-games-table');
     final scheduledPages = useRef<Set<int>>(<int>{});
     final pendingSelectionIndex = useRef<int?>(null);
-    final resizedColumnWidths = useState(<_LocalGamesSortKey, double>{});
+    final horizontalController = useScrollController();
+    final columnsButtonKey = useMemoized(() => GlobalKey());
+    final layout = ref.watch(localGameGridLayoutProvider);
+    final layoutNotifier = ref.read(localGameGridLayoutProvider.notifier);
+    final columns =
+        layout.visible
+            .map((id) => _LocalGamesSortKey.values.byName(id))
+            .toList();
+    final resizedColumnWidths = {
+      for (final e in layout.widths.entries)
+        _LocalGamesSortKey.values.byName(e.key): e.value,
+    };
     final headerCellKeys = useMemoized(
-      () => <_LocalGamesSortKey, GlobalKey>{
-        for (final key in _kLocalGameColumnOrder) key: GlobalKey(),
-      },
+      () => {for (final key in _kLocalGameColumnOrder) key: GlobalKey()},
     );
-    final columnWidths = _localGamesTableColumnWidths(
-      resizedColumnWidths.value,
-    );
+    void setWidth(_LocalGamesSortKey key, double width) {
+      layoutNotifier.update(
+        ref
+            .read(localGameGridLayoutProvider)
+            .copyWith(
+              widths: {
+                ...ref.read(localGameGridLayoutProvider).widths,
+                key.name: width.clamp(_localGamesColumnMinWidth(key), 2400.0),
+              },
+            ),
+      );
+    }
 
     void startColumnResize(_LocalGamesSortKey key) {
-      if (resizedColumnWidths.value.containsKey(key)) return;
-      final renderObject =
-          headerCellKeys[key]?.currentContext?.findRenderObject();
-      if (renderObject is! RenderBox || !renderObject.hasSize) return;
-      resizedColumnWidths.value = <_LocalGamesSortKey, double>{
-        ...resizedColumnWidths.value,
-        key: renderObject.size.width,
-      };
+      final box = headerCellKeys[key]?.currentContext?.findRenderObject();
+      if (box is RenderBox && box.hasSize) setWidth(key, box.size.width);
     }
 
     void updateColumnResize(_LocalGamesSortKey key, double delta) {
-      final current = resizedColumnWidths.value[key];
-      if (current == null) return;
-      final next = (current + delta).clamp(
-        _localGamesColumnMinWidth(key),
-        2400.0,
-      );
-      if (next == current) return;
-      resizedColumnWidths.value = <_LocalGamesSortKey, double>{
-        ...resizedColumnWidths.value,
-        key: next,
-      };
+      final current = ref.read(localGameGridLayoutProvider).widths[key.name];
+      if (current != null) setWidth(key, current + delta);
     }
 
-    void resetColumnResize(_LocalGamesSortKey key) {
-      if (!resizedColumnWidths.value.containsKey(key)) return;
-      final next = Map<_LocalGamesSortKey, double>.of(resizedColumnWidths.value)
-        ..remove(key);
-      resizedColumnWidths.value = next;
+    void autoFitColumn(_LocalGamesSortKey key) {
+      // Bounded to the loaded page window; never scan/hydrate a whole database.
+      double widest = 0;
+      final samples = <String>[
+        key.name.toUpperCase(),
+        for (final game in games.take(400)) _localColumnText(game, key),
+      ];
+      for (final text in samples) {
+        final painter = TextPainter(
+          text: TextSpan(
+            text: text,
+            style: DefaultTextStyle.of(
+              context,
+            ).style.copyWith(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout();
+        if (painter.width > widest) widest = painter.width;
+        painter.dispose();
+      }
+      setWidth(
+        key,
+        widest +
+            (key == _LocalGamesSortKey.white || key == _LocalGamesSortKey.black
+                ? 60
+                : 28),
+      );
+      unawaited(layoutNotifier.save());
+    }
+
+    void reorderColumn(_LocalGamesSortKey source, _LocalGamesSortKey target) {
+      final order = [...ref.read(localGameGridLayoutProvider).order];
+      final targetIndex = order.indexOf(target.name);
+      order.remove(source.name);
+      order.insert(targetIndex, source.name);
+      layoutNotifier.update(
+        ref.read(localGameGridLayoutProvider).copyWith(order: order),
+      );
+      unawaited(layoutNotifier.save());
+    }
+
+    Future<void> showColumns(Offset position) async {
+      final current = ref.read(localGameGridLayoutProvider);
+      final choice = await showDesktopContextMenu<String>(
+        context: context,
+        position: position,
+        entries: [
+          for (final id in current.order)
+            DesktopContextMenuItem(
+              value: id,
+              icon:
+                  current.hidden.contains(id)
+                      ? Icons.check_box_outline_blank
+                      : Icons.check_box_outlined,
+              label: _localColumnLabel(_LocalGamesSortKey.values.byName(id)),
+              enabled: id != 'originalOrder',
+            ),
+          const DesktopContextMenuDivider(),
+          const DesktopContextMenuItem(
+            value: 'reset',
+            icon: Icons.restart_alt,
+            label: 'Reset columns',
+          ),
+        ],
+      );
+      if (!context.mounted || choice == null) return;
+      if (choice == 'reset') {
+        layoutNotifier.reset();
+        return;
+      }
+      final hidden = {...ref.read(localGameGridLayoutProvider).hidden};
+      if (!hidden.remove(choice)) hidden.add(choice);
+      layoutNotifier.update(
+        ref.read(localGameGridLayoutProvider).copyWith(hidden: hidden),
+      );
+      unawaited(layoutNotifier.save());
     }
 
     final openableTreeIndex =
@@ -1293,6 +1618,43 @@ class _LocalGamesTable extends HookConsumerWidget {
       [games, virtualRows],
     );
     final itemCount = virtualRows?.totalCount ?? totalCount;
+    useEffect(() {
+      var active = true;
+      var scheduled = false;
+      void scheduleDemand() {
+        if (scheduled) return;
+        scheduled = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          scheduled = false;
+          if (!active ||
+              !context.mounted ||
+              !controller.hasClients ||
+              virtualRows == null ||
+              itemCount == 0) {
+            return;
+          }
+          final position = controller.position;
+          final first = (position.pixels / _kLocalGameRowHeight).floor().clamp(
+            0,
+            itemCount - 1,
+          );
+          final last = ((position.pixels + position.viewportDimension) /
+                  _kLocalGameRowHeight)
+              .floor()
+              .clamp(first, itemCount - 1);
+          onDemandPages([
+            for (var p = first ~/ pageSize; p <= last ~/ pageSize; p++) p,
+          ]);
+        });
+      }
+
+      controller.addListener(scheduleDemand);
+      scheduleDemand();
+      return () {
+        active = false;
+        controller.removeListener(scheduleDemand);
+      };
+    }, [controller, virtualRows, itemCount, onDemandPages]);
 
     LocalChessGame? gameAt(int index) {
       final rows = virtualRows;
@@ -1309,7 +1671,7 @@ class _LocalGamesTable extends HookConsumerWidget {
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         scheduledPages.value.remove(pageNumber);
-        onRequestPage(pageNumber);
+        if (context.mounted) onRequestPage(pageNumber);
       });
     }
 
@@ -1451,10 +1813,13 @@ class _LocalGamesTable extends HookConsumerWidget {
       final game = games[index < 0 ? 0 : index];
       _openLocalGame(
         ref,
+        context,
         game,
         sourceLabel: databaseTitle,
         databaseGames: databaseGames,
         localOpeningTreeIndex: openableTreeIndex,
+        boardSource: boardSource(game, rowIndexById[game.id] ?? 0),
+        onRefresh: onRefresh,
       );
       return true;
     }
@@ -1507,7 +1872,9 @@ class _LocalGamesTable extends HookConsumerWidget {
         );
         return;
       }
-      await Clipboard.setData(ClipboardData(text: '${parts.join('\n\n')}\n'));
+      await Clipboard.setData(
+        ClipboardData(text: toExternalCompatiblePgn(parts.join('\n\n'))),
+      );
       if (!context.mounted) return;
       final skipped = gamesToCopy.length - parts.length;
       showDesktopToast(
@@ -1516,22 +1883,6 @@ class _LocalGamesTable extends HookConsumerWidget {
             ? 'Copied ${parts.length} ${parts.length == 1 ? 'game' : 'games'} as PGN.'
             : 'Copied ${parts.length} ${parts.length == 1 ? 'game' : 'games'}; $skipped had no PGN moves available.',
       );
-    }
-
-    Future<void> saveSelectedGames({List<LocalChessGame>? scope}) async {
-      final gamesToSave = scope ?? currentSelectedGames();
-      if (gamesToSave.isEmpty) return;
-      final hydrated = await compute(_hydrateLocalGamesForSave, gamesToSave);
-      if (!context.mounted) return;
-      final outcome = await showLibrarySaveToFolderDialog(
-        context: context,
-        ref: ref,
-        games: hydrated,
-        sourceLabel: databaseTitle,
-        destinationMode: LibrarySaveDestinationMode.cloudOnly,
-      );
-      if (outcome == null || !outcome.didSave || !context.mounted) return;
-      showDesktopToast(context, outcome.toToastMessage());
     }
 
     Future<void> deleteSelectedGames({List<LocalChessGame>? scope}) async {
@@ -1652,7 +2003,12 @@ class _LocalGamesTable extends HookConsumerWidget {
         case _LocalGameRowAction.pasteGames:
           unawaited(onPaste());
         case _LocalGameRowAction.saveToCloud:
-          unawaited(saveSelectedGames(scope: rowScope));
+          // The row action names the same destination as the header action: a
+          // NEW cloud database named after this local database. Saving only the
+          // clicked or selected rows would create a database under the
+          // database's own name holding a fraction of it, so it saves the whole
+          // database just like the header button.
+          onSaveToCloud();
         case _LocalGameRowAction.delete:
           unawaited(deleteSelectedGames(scope: rowScope));
       }
@@ -1688,6 +2044,31 @@ class _LocalGamesTable extends HookConsumerWidget {
                   : const EdgeInsets.fromLTRB(20, 4, 20, 20),
           child: Column(
             children: [
+              Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: DesktopToolbarPillButton(
+                    key: columnsButtonKey,
+                    label: 'Columns',
+                    icon: Icons.view_column_outlined,
+                    height: 28,
+                    tooltip:
+                        'Show, hide or reset columns. Drag headers to reorder; double-click an edge to fit loaded rows.',
+                    onPress: () {
+                      final box =
+                          columnsButtonKey.currentContext?.findRenderObject();
+                      if (box is RenderBox) {
+                        unawaited(
+                          showColumns(
+                            box.localToGlobal(Offset(0, box.size.height)),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                ),
+              ),
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
@@ -1696,92 +2077,165 @@ class _LocalGamesTable extends HookConsumerWidget {
                     border: Border.all(color: kDividerColor),
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      _LocalGamesHeaderRow(
-                        sort: sort,
-                        onSortChange: onSortChange,
-                        columnWidths: columnWidths,
-                        headerCellKeys: headerCellKeys,
-                        resizedColumnWidths: resizedColumnWidths.value,
-                        onResizeStart: startColumnResize,
-                        onResizeUpdate: updateColumnResize,
-                        onResizeReset: resetColumnResize,
-                      ),
-                      const Divider(height: 1, color: kDividerColor),
-                      Expanded(
-                        child: Scrollbar(
-                          controller: controller,
-                          thumbVisibility: true,
-                          child: ListView.builder(
-                            key: const ValueKey('local-games-table-list'),
-                            controller: controller,
-                            physics: const DesktopScrollPhysics(),
-                            itemExtent: _kLocalGameRowHeight,
-                            itemCount: itemCount,
-                            itemBuilder: (context, index) {
-                              final game = gameAt(index);
-                              if (game == null) {
-                                requestPageForIndex(index);
-                                return _LocalGamesPlaceholderRow(
-                                  index: index,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final resolved = _resolveLocalColumnWidths(
+                        columns,
+                        resizedColumnWidths,
+                        constraints.maxWidth - 22,
+                      );
+                      final columnWidths = <int, TableColumnWidth>{
+                        for (var i = 0; i < resolved.length; i++)
+                          i: FixedColumnWidth(resolved[i]),
+                      };
+                      final contentWidth = resolved.fold<double>(
+                        22,
+                        (sum, width) => sum + width,
+                      );
+                      return Scrollbar(
+                        controller: horizontalController,
+                        thumbVisibility: true,
+                        notificationPredicate:
+                            (n) => n.metrics.axis == Axis.horizontal,
+                        child: SingleChildScrollView(
+                          controller: horizontalController,
+                          scrollDirection: Axis.horizontal,
+                          child: SizedBox(
+                            width: contentWidth,
+                            height: constraints.maxHeight,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _LocalGamesHeaderRow(
+                                  sort: sort,
+                                  onSortChange: onSortChange,
                                   columnWidths: columnWidths,
-                                );
-                              }
-                              return _LocalGamesDataRow(
-                                key: ValueKey('local-game-table-${game.id}'),
-                                index: index,
-                                game: game,
-                                selected: effectiveSelectedIds.contains(
-                                  game.id,
+                                  columns: columns,
+                                  headerCellKeys: headerCellKeys,
+                                  onReorder: reorderColumn,
+                                  onColumns: showColumns,
+                                  onResizeEnd:
+                                      () => unawaited(layoutNotifier.save()),
+                                  onResizeStart: startColumnResize,
+                                  onResizeUpdate: updateColumnResize,
+                                  onResizeReset: autoFitColumn,
                                 ),
-                                columnWidths: columnWidths,
-                                onTapDown: (details) {
-                                  final keys =
-                                      HardwareKeyboard
-                                          .instance
-                                          .logicalKeysPressed;
-                                  selectIndex(
-                                    index,
-                                    toggle:
-                                        keys.contains(
-                                          LogicalKeyboardKey.controlLeft,
-                                        ) ||
-                                        keys.contains(
-                                          LogicalKeyboardKey.controlRight,
-                                        ) ||
-                                        keys.contains(
-                                          LogicalKeyboardKey.metaLeft,
-                                        ) ||
-                                        keys.contains(
-                                          LogicalKeyboardKey.metaRight,
-                                        ),
-                                    range:
-                                        LibraryMultiSelect.rangeModifierPressed(
-                                          keys,
-                                        ),
-                                  );
-                                },
-                                onDoubleTap: () {
-                                  selectIndex(index);
-                                  _openLocalGame(
-                                    ref,
-                                    game,
-                                    sourceLabel: databaseTitle,
-                                    databaseGames: databaseGames,
-                                    localOpeningTreeIndex: openableTreeIndex,
-                                  );
-                                },
-                                onSecondaryTapUp:
-                                    (details) => unawaited(
-                                      openRowMenu(game, details.globalPosition),
+                                const Divider(height: 1, color: kDividerColor),
+                                Expanded(
+                                  child: Scrollbar(
+                                    controller: controller,
+                                    thumbVisibility: true,
+                                    child: ListView.builder(
+                                      key: const ValueKey(
+                                        'local-games-table-list',
+                                      ),
+                                      controller: controller,
+                                      physics: const DesktopScrollPhysics(),
+                                      itemExtent: _kLocalGameRowHeight,
+                                      itemCount: itemCount,
+                                      itemBuilder: (context, index) {
+                                        final game = gameAt(index);
+                                        if (game == null) {
+                                          if (pageErrors.contains(
+                                            index ~/ pageSize,
+                                          )) {
+                                            return Row(
+                                              children: [
+                                                const SizedBox(width: 12),
+                                                const Text(
+                                                  'Could not load rows. ',
+                                                ),
+                                                FButton(
+                                                  style: FButtonStyle.ghost(),
+                                                  onPress:
+                                                      () => onRetryPage(
+                                                        index ~/ pageSize,
+                                                      ),
+                                                  child: const Text('Retry'),
+                                                ),
+                                              ],
+                                            );
+                                          }
+                                          return _LocalGamesPlaceholderRow(
+                                            index: index,
+                                            columnWidths: columnWidths,
+                                            columns: columns,
+                                          );
+                                        }
+                                        return _LocalGamesDataRow(
+                                          key: ValueKey(
+                                            'local-game-table-${game.id}',
+                                          ),
+                                          index: index,
+                                          game: game,
+                                          selected: effectiveSelectedIds
+                                              .contains(game.id),
+                                          columnWidths: columnWidths,
+                                          columns: columns,
+                                          onTapDown: (details) {
+                                            final keys =
+                                                HardwareKeyboard
+                                                    .instance
+                                                    .logicalKeysPressed;
+                                            selectIndex(
+                                              index,
+                                              toggle:
+                                                  keys.contains(
+                                                    LogicalKeyboardKey
+                                                        .controlLeft,
+                                                  ) ||
+                                                  keys.contains(
+                                                    LogicalKeyboardKey
+                                                        .controlRight,
+                                                  ) ||
+                                                  keys.contains(
+                                                    LogicalKeyboardKey.metaLeft,
+                                                  ) ||
+                                                  keys.contains(
+                                                    LogicalKeyboardKey
+                                                        .metaRight,
+                                                  ),
+                                              range:
+                                                  LibraryMultiSelect.rangeModifierPressed(
+                                                    keys,
+                                                  ),
+                                            );
+                                          },
+                                          onDoubleTap: () {
+                                            selectIndex(index);
+                                            _openLocalGame(
+                                              ref,
+                                              context,
+                                              game,
+                                              sourceLabel: databaseTitle,
+                                              databaseGames: databaseGames,
+                                              localOpeningTreeIndex:
+                                                  openableTreeIndex,
+                                              boardSource: boardSource(
+                                                game,
+                                                index,
+                                              ),
+                                              onRefresh: onRefresh,
+                                            );
+                                          },
+                                          onSecondaryTapUp:
+                                              (details) => unawaited(
+                                                openRowMenu(
+                                                  game,
+                                                  details.globalPosition,
+                                                ),
+                                              ),
+                                        );
+                                      },
                                     ),
-                              );
-                            },
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      );
+                    },
                   ),
                 ),
               ),
@@ -1794,17 +2248,13 @@ class _LocalGamesTable extends HookConsumerWidget {
 }
 
 const double _kLocalGameRowHeight = 44;
-const int _kLocalDatabaseGameQueryPageSize = 200;
-const int _kLocalDatabaseCachedPageLimit = 24;
+
+/// Rows per page for the database table. Shared with the whole-database cloud
+/// save so the upload enumerates the table's own paging (`Save to cloud` used
+/// to stop at whatever this page size had loaded).
+const int _kLocalDatabaseGameQueryPageSize = kLocalDatabaseSaveBatchSize;
 const String _kLocalDatabaseTreeStartingFen =
     'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-
-class _LocalDatabasePageWindow {
-  const _LocalDatabasePageWindow(this.queryKey, this.pageNumber);
-
-  final String queryKey;
-  final int pageNumber;
-}
 
 class _LoadedLocalDatabasePages {
   const _LoadedLocalDatabasePages({
@@ -1813,12 +2263,6 @@ class _LoadedLocalDatabasePages {
     required this.totalCount,
     required this.pageSize,
   });
-
-  const _LoadedLocalDatabasePages.empty()
-    : queryKey = '',
-      pages = const <int, List<LocalChessGame>>{},
-      totalCount = 0,
-      pageSize = _kLocalDatabaseGameQueryPageSize;
 
   final String queryKey;
   final Map<int, List<LocalChessGame>> pages;
@@ -1851,46 +2295,6 @@ class _LoadedLocalDatabasePages {
     }
     return null;
   }
-
-  _LoadedLocalDatabasePages merge({
-    required String queryKey,
-    required LocalChessGameQueryPage page,
-  }) {
-    final nextPages =
-        this.queryKey == queryKey
-            ? Map<int, List<LocalChessGame>>.of(pages)
-            : <int, List<LocalChessGame>>{};
-    nextPages[page.pageNumber] = List<LocalChessGame>.unmodifiable(page.games);
-    if (nextPages.length > _kLocalDatabaseCachedPageLimit) {
-      final farthestFirst = nextPages.keys.toList(growable: false)..sort(
-        (a, b) =>
-            (b - page.pageNumber).abs().compareTo((a - page.pageNumber).abs()),
-      );
-      for (final pageNumber in farthestFirst) {
-        if (nextPages.length <= _kLocalDatabaseCachedPageLimit) break;
-        if (pageNumber != page.pageNumber) nextPages.remove(pageNumber);
-      }
-    }
-    return _LoadedLocalDatabasePages(
-      queryKey: queryKey,
-      pages: Map<int, List<LocalChessGame>>.unmodifiable(nextPages),
-      totalCount: page.totalCount,
-      pageSize: page.pageSize,
-    );
-  }
-}
-
-_LoadedLocalDatabasePages? _visibleLocalDatabaseRows({
-  required String queryKey,
-  required _LoadedLocalDatabasePages loaded,
-  required LocalChessGameQueryPage? livePage,
-}) {
-  final current =
-      loaded.queryKey == queryKey
-          ? loaded
-          : const _LoadedLocalDatabasePages.empty();
-  if (livePage == null) return current.hasRows ? current : null;
-  return current.merge(queryKey: queryKey, page: livePage);
 }
 
 String _localDatabaseCountLabel({
@@ -1915,6 +2319,7 @@ enum _LocalGamesSortKey {
   opening,
   event,
   date,
+  annotator,
 }
 
 enum _LocalGamesSortDir { asc, desc }
@@ -1924,34 +2329,6 @@ class _LocalGamesSortConfig {
 
   final _LocalGamesSortKey key;
   final _LocalGamesSortDir dir;
-}
-
-Future<LocalChessGameQueryPage?> _queryLocalDatabaseGamesPage(
-  LocalChessDatabaseRepository repository, {
-  required String databasePath,
-  required String search,
-  required _LocalGamesSortConfig sort,
-  LocalChessGameFilter? filter,
-  String? playerFideId,
-  List<String> playerAliases = const <String>[],
-  required int pageNumber,
-  required int pageSize,
-}) async {
-  try {
-    return await repository.localDatabaseGamesPage(
-      databasePath: databasePath,
-      search: search,
-      sortBy: _localRepositorySortField(sort.key),
-      sortDirection: _localRepositorySortDirection(sort.dir),
-      filter: filter,
-      playerFideId: playerFideId,
-      playerAliases: playerAliases,
-      pageNumber: pageNumber,
-      pageSize: pageSize,
-    );
-  } on Object {
-    return null;
-  }
 }
 
 LocalChessGameSortField _localRepositorySortField(_LocalGamesSortKey key) {
@@ -1966,6 +2343,7 @@ LocalChessGameSortField _localRepositorySortField(_LocalGamesSortKey key) {
     _LocalGamesSortKey.opening => LocalChessGameSortField.opening,
     _LocalGamesSortKey.event => LocalChessGameSortField.event,
     _LocalGamesSortKey.date => LocalChessGameSortField.date,
+    _LocalGamesSortKey.annotator => LocalChessGameSortField.originalOrder,
   };
 }
 
@@ -2040,6 +2418,7 @@ int _compareLocalGames(
       dir,
     ),
     _LocalGamesSortKey.date => _compareLocalText(_date(amd), _date(bmd), dir),
+    _LocalGamesSortKey.annotator => 0,
   };
 }
 
@@ -2104,7 +2483,7 @@ List<LocalChessGame> _localGamesForSelection({
 // alignment while virtualized pages are loaded.
 const double _kLocalColNumber = 44;
 const double _kLocalColElo = 56;
-const double _kLocalColResult = 56;
+const double _kLocalColResult = 72;
 const double _kLocalColEco = 62;
 const double _kLocalColDate = 88;
 const double _kLocalCellGap = 6;
@@ -2120,43 +2499,81 @@ const List<_LocalGamesSortKey> _kLocalGameColumnOrder = <_LocalGamesSortKey>[
   _LocalGamesSortKey.eco,
   _LocalGamesSortKey.opening,
   _LocalGamesSortKey.date,
+  _LocalGamesSortKey.annotator,
 ];
 
-Map<int, TableColumnWidth> _localGamesTableColumnWidths(
+List<double> _resolveLocalColumnWidths(
+  List<_LocalGamesSortKey> columns,
   Map<_LocalGamesSortKey, double> resized,
+  double available,
 ) {
-  TableColumnWidth width(
-    _LocalGamesSortKey key,
-    TableColumnWidth defaultWidth,
-  ) {
-    final resizedWidth = resized[key];
-    return resizedWidth == null ? defaultWidth : FixedColumnWidth(resizedWidth);
+  final widths = [
+    for (final key in columns)
+      (resized[key] ??
+              switch (key) {
+                _LocalGamesSortKey.originalOrder => _kLocalColNumber,
+                _LocalGamesSortKey.white || _LocalGamesSortKey.black => 180.0,
+                _LocalGamesSortKey.whiteElo ||
+                _LocalGamesSortKey.blackElo => _kLocalColElo,
+                _LocalGamesSortKey.result => _kLocalColResult,
+                _LocalGamesSortKey.eco => _kLocalColEco,
+                _LocalGamesSortKey.date => _kLocalColDate,
+                _ => 160.0,
+              })
+          .clamp(_localGamesColumnMinWidth(key), 2400.0),
+  ];
+  final total = widths.fold<double>(0, (a, b) => a + b);
+  final flexible = [
+    for (var i = 0; i < columns.length; i++)
+      if (!resized.containsKey(columns[i]) &&
+          [
+            _LocalGamesSortKey.white,
+            _LocalGamesSortKey.black,
+            _LocalGamesSortKey.event,
+            _LocalGamesSortKey.opening,
+          ].contains(columns[i]))
+        i,
+  ];
+  if (available > total && flexible.isNotEmpty) {
+    for (final i in flexible) {
+      widths[i] += (available - total) / flexible.length;
+    }
   }
+  return widths;
+}
 
-  return <int, TableColumnWidth>{
-    0: width(
-      _LocalGamesSortKey.originalOrder,
-      const FixedColumnWidth(_kLocalColNumber),
+List<Widget> _orderedLocalCells(
+  List<_LocalGamesSortKey> columns,
+  List<Widget> canonical,
+) => [
+  for (final key in columns)
+    KeyedSubtree(
+      key: ValueKey('local-cell-${key.name}'),
+      child: canonical[_kLocalGameColumnOrder.indexOf(key)],
     ),
-    1: width(_LocalGamesSortKey.white, const FlexColumnWidth(5)),
-    2: width(
-      _LocalGamesSortKey.whiteElo,
-      const FixedColumnWidth(_kLocalColElo),
-    ),
-    3: width(
-      _LocalGamesSortKey.result,
-      const FixedColumnWidth(_kLocalColResult),
-    ),
-    4: width(_LocalGamesSortKey.black, const FlexColumnWidth(5)),
-    5: width(
-      _LocalGamesSortKey.blackElo,
-      const FixedColumnWidth(_kLocalColElo),
-    ),
-    6: width(_LocalGamesSortKey.event, const FlexColumnWidth(4)),
-    7: width(_LocalGamesSortKey.eco, const FixedColumnWidth(_kLocalColEco)),
-    8: width(_LocalGamesSortKey.opening, const FlexColumnWidth(4)),
-    9: width(_LocalGamesSortKey.date, const FixedColumnWidth(_kLocalColDate)),
-  };
+];
+
+String _localColumnLabel(_LocalGamesSortKey key) => switch (key) {
+  _LocalGamesSortKey.originalOrder => '#',
+  _LocalGamesSortKey.whiteElo => 'Elo W',
+  _LocalGamesSortKey.blackElo => 'Elo B',
+  _ => '${key.name[0].toUpperCase()}${key.name.substring(1)}',
+};
+String _localColumnText(LocalChessGame game, _LocalGamesSortKey key) {
+  final md = game.game.metadata;
+  return desktopTableDisplayValue(switch (key) {
+    _LocalGamesSortKey.originalOrder => '${game.indexInFile + 1}',
+    _LocalGamesSortKey.white => _playerName(md, 'White'),
+    _LocalGamesSortKey.black => _playerName(md, 'Black'),
+    _LocalGamesSortKey.whiteElo => _meta(md, 'WhiteElo'),
+    _LocalGamesSortKey.blackElo => _meta(md, 'BlackElo'),
+    _LocalGamesSortKey.result => _result(md),
+    _LocalGamesSortKey.event => _event(md),
+    _LocalGamesSortKey.eco => _meta(md, 'ECO'),
+    _LocalGamesSortKey.opening => _opening(md),
+    _LocalGamesSortKey.date => _date(md),
+    _LocalGamesSortKey.annotator => _meta(md, 'Annotator'),
+  });
 }
 
 double _localGamesColumnMinWidth(_LocalGamesSortKey key) => switch (key) {
@@ -2167,6 +2584,7 @@ double _localGamesColumnMinWidth(_LocalGamesSortKey key) => switch (key) {
   _LocalGamesSortKey.event || _LocalGamesSortKey.opening => 88,
   _LocalGamesSortKey.eco => 54,
   _LocalGamesSortKey.date => 82,
+  _LocalGamesSortKey.annotator => 88,
 };
 
 EdgeInsets _localGamesCellPadding(int index) => EdgeInsets.only(
@@ -2178,10 +2596,12 @@ class _LocalGamesPlaceholderRow extends StatelessWidget {
   const _LocalGamesPlaceholderRow({
     required this.index,
     required this.columnWidths,
+    required this.columns,
   });
 
   final int index;
   final Map<int, TableColumnWidth> columnWidths;
+  final List<_LocalGamesSortKey> columns;
 
   @override
   Widget build(BuildContext context) {
@@ -2195,7 +2615,7 @@ class _LocalGamesPlaceholderRow extends StatelessWidget {
         defaultVerticalAlignment: TableCellVerticalAlignment.middle,
         children: [
           TableRow(
-            children: [
+            children: _orderedLocalCells(columns, [
               Padding(
                 padding: _localGamesCellPadding(0),
                 child: Text(
@@ -2223,7 +2643,7 @@ class _LocalGamesPlaceholderRow extends StatelessWidget {
               ),
               for (var i = 2; i < _kLocalGameColumnOrder.length; i++)
                 const SizedBox.shrink(),
-            ],
+            ]),
           ),
         ],
       ),
@@ -2236,21 +2656,27 @@ class _LocalGamesHeaderRow extends StatelessWidget {
     required this.sort,
     required this.onSortChange,
     required this.columnWidths,
+    required this.columns,
     required this.headerCellKeys,
-    required this.resizedColumnWidths,
     required this.onResizeStart,
     required this.onResizeUpdate,
     required this.onResizeReset,
+    required this.onResizeEnd,
+    required this.onReorder,
+    required this.onColumns,
   });
 
   final _LocalGamesSortConfig sort;
   final ValueChanged<_LocalGamesSortConfig> onSortChange;
   final Map<int, TableColumnWidth> columnWidths;
+  final List<_LocalGamesSortKey> columns;
   final Map<_LocalGamesSortKey, GlobalKey> headerCellKeys;
-  final Map<_LocalGamesSortKey, double> resizedColumnWidths;
   final ValueChanged<_LocalGamesSortKey> onResizeStart;
   final void Function(_LocalGamesSortKey key, double delta) onResizeUpdate;
   final ValueChanged<_LocalGamesSortKey> onResizeReset;
+  final VoidCallback onResizeEnd;
+  final void Function(_LocalGamesSortKey, _LocalGamesSortKey) onReorder;
+  final ValueChanged<Offset> onColumns;
 
   @override
   Widget build(BuildContext context) {
@@ -2304,39 +2730,86 @@ class _LocalGamesHeaderRow extends StatelessWidget {
           (
             label: 'DATE',
             key: _LocalGamesSortKey.date,
-            alignment: Alignment.centerRight,
+            alignment: Alignment.centerLeft,
+          ),
+          (
+            label: 'ANNOTATOR',
+            key: _LocalGamesSortKey.annotator,
+            alignment: Alignment.centerLeft,
           ),
         ];
 
-    return Container(
-      color: kBlack3Color.withValues(alpha: 0.4),
-      padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
-      child: Table(
-        columnWidths: columnWidths,
-        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-        children: [
-          TableRow(
-            children: [
-              for (var i = 0; i < cells.length; i++)
-                _LocalResizableHeaderCell(
-                  key: headerCellKeys[cells[i].key],
-                  columnKey: cells[i].key,
-                  padding: _localGamesCellPadding(i),
-                  active: resizedColumnWidths.containsKey(cells[i].key),
-                  onDragStart: () => onResizeStart(cells[i].key),
-                  onDragUpdate: (delta) => onResizeUpdate(cells[i].key, delta),
-                  onReset: () => onResizeReset(cells[i].key),
-                  child: _LocalHeaderCell(
-                    cells[i].label,
-                    sortKey: cells[i].key,
-                    sort: sort,
-                    alignment: cells[i].alignment,
-                    onSortChange: onSortChange,
+    final orderedCells = [
+      for (final key in columns) cells.firstWhere((cell) => cell.key == key),
+    ];
+    return GestureDetector(
+      onSecondaryTapUp: (details) => onColumns(details.globalPosition),
+      child: Container(
+        color: kBlack3Color.withValues(alpha: 0.4),
+        padding: const EdgeInsets.fromLTRB(8, 0, 14, 0),
+        child: Table(
+          columnWidths: columnWidths,
+          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+          children: [
+            TableRow(
+              children: [
+                for (var i = 0; i < orderedCells.length; i++)
+                  _LocalResizableHeaderCell(
+                    key: headerCellKeys[orderedCells[i].key],
+                    columnKey: orderedCells[i].key,
+                    padding: _localGamesCellPadding(
+                      _kLocalGameColumnOrder.indexOf(orderedCells[i].key),
+                    ),
+                    onDragStart: () => onResizeStart(orderedCells[i].key),
+                    onDragUpdate:
+                        (delta) => onResizeUpdate(orderedCells[i].key, delta),
+                    onReset: () => onResizeReset(orderedCells[i].key),
+                    onDragEnd: onResizeEnd,
+                    child: DragTarget<_LocalGamesSortKey>(
+                      onWillAcceptWithDetails:
+                          (d) => d.data != orderedCells[i].key,
+                      onAcceptWithDetails:
+                          (d) => onReorder(d.data, orderedCells[i].key),
+                      builder:
+                          (context, candidates, rejected) =>
+                              Draggable<_LocalGamesSortKey>(
+                                data: orderedCells[i].key,
+                                axis: Axis.horizontal,
+                                feedback: Material(
+                                  color: kBlack3Color,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(10),
+                                    child: Text(
+                                      orderedCells[i].label,
+                                      style: const TextStyle(
+                                        color: kPrimaryColor,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                child: ColoredBox(
+                                  color:
+                                      candidates.isEmpty
+                                          ? Colors.transparent
+                                          : kPrimaryColor.withValues(
+                                            alpha: 0.12,
+                                          ),
+                                  child: _LocalHeaderCell(
+                                    orderedCells[i].label,
+                                    sortKey: orderedCells[i].key,
+                                    sort: sort,
+                                    alignment: orderedCells[i].alignment,
+                                    onSortChange: onSortChange,
+                                  ),
+                                ),
+                              ),
+                    ),
                   ),
-                ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2347,41 +2820,41 @@ class _LocalResizableHeaderCell extends StatelessWidget {
     super.key,
     required this.columnKey,
     required this.padding,
-    required this.active,
     required this.onDragStart,
     required this.onDragUpdate,
     required this.onReset,
+    required this.onDragEnd,
     required this.child,
   });
 
   final _LocalGamesSortKey columnKey;
   final EdgeInsets padding;
-  final bool active;
   final VoidCallback onDragStart;
   final ValueChanged<double> onDragUpdate;
   final VoidCallback onReset;
+  final VoidCallback onDragEnd;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 22,
+      height: 42,
       child: Stack(
         fit: StackFit.expand,
         clipBehavior: Clip.none,
         children: [
           Padding(padding: padding, child: child),
           Positioned(
-            top: -10,
+            top: 0,
             right: 0,
-            bottom: -10,
-            width: 9,
+            bottom: 0,
+            width: 14,
             child: _LocalColumnResizeHandle(
               key: ValueKey<String>('local-column-resizer-${columnKey.name}'),
-              active: active,
               onDragStart: onDragStart,
               onDragUpdate: onDragUpdate,
               onReset: onReset,
+              onDragEnd: onDragEnd,
             ),
           ),
         ],
@@ -2393,16 +2866,16 @@ class _LocalResizableHeaderCell extends StatelessWidget {
 class _LocalColumnResizeHandle extends StatefulWidget {
   const _LocalColumnResizeHandle({
     super.key,
-    required this.active,
     required this.onDragStart,
     required this.onDragUpdate,
     required this.onReset,
+    required this.onDragEnd,
   });
 
-  final bool active;
   final VoidCallback onDragStart;
   final ValueChanged<double> onDragUpdate;
   final VoidCallback onReset;
+  final VoidCallback onDragEnd;
 
   @override
   State<_LocalColumnResizeHandle> createState() =>
@@ -2415,7 +2888,7 @@ class _LocalColumnResizeHandleState extends State<_LocalColumnResizeHandle> {
 
   @override
   Widget build(BuildContext context) {
-    final highlighted = _hovered || _dragging || widget.active;
+    final highlighted = _hovered || _dragging;
     return MouseRegion(
       cursor: SystemMouseCursors.resizeColumn,
       onEnter: (_) => setState(() => _hovered = true),
@@ -2429,8 +2902,14 @@ class _LocalColumnResizeHandleState extends State<_LocalColumnResizeHandle> {
         },
         onHorizontalDragUpdate:
             (details) => widget.onDragUpdate(details.delta.dx),
-        onHorizontalDragEnd: (_) => setState(() => _dragging = false),
-        onHorizontalDragCancel: () => setState(() => _dragging = false),
+        onHorizontalDragEnd: (_) {
+          setState(() => _dragging = false);
+          widget.onDragEnd();
+        },
+        onHorizontalDragCancel: () {
+          setState(() => _dragging = false);
+          widget.onDragEnd();
+        },
         child: Align(
           alignment: Alignment.centerRight,
           child: AnimatedContainer(
@@ -2471,6 +2950,20 @@ class _LocalHeaderCell extends StatelessWidget {
             ? _LocalGamesSortDir.desc
             : _LocalGamesSortDir.asc;
 
+    if (sortKey == _LocalGamesSortKey.annotator) {
+      return Align(
+        alignment: alignment,
+        child: Text(
+          label,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: kLightGreyColor,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
     return DesktopTooltip(
       message: 'Sort by $label',
       hoverEnterDuration: const Duration(milliseconds: 450),
@@ -2479,15 +2972,30 @@ class _LocalHeaderCell extends StatelessWidget {
         onPress: () => onSortChange(_LocalGamesSortConfig(sortKey, nextDir)),
         child: Align(
           alignment: alignment,
-          child: Text(
-            label,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: active ? kPrimaryColor : kLightGreyColor,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.4,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: active ? kPrimaryColor : kLightGreyColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
+              if (active)
+                Icon(
+                  sort.dir == _LocalGamesSortDir.asc
+                      ? Icons.arrow_drop_up
+                      : Icons.arrow_drop_down,
+                  size: 12,
+                  color: kPrimaryColor,
+                ),
+            ],
           ),
         ),
       ),
@@ -2502,6 +3010,7 @@ class _LocalGamesDataRow extends StatefulWidget {
     required this.game,
     required this.selected,
     required this.columnWidths,
+    required this.columns,
     required this.onTapDown,
     required this.onDoubleTap,
     required this.onSecondaryTapUp,
@@ -2511,6 +3020,7 @@ class _LocalGamesDataRow extends StatefulWidget {
   final LocalChessGame game;
   final bool selected;
   final Map<int, TableColumnWidth> columnWidths;
+  final List<_LocalGamesSortKey> columns;
   final GestureTapDownCallback onTapDown;
   final VoidCallback onDoubleTap;
   final GestureTapUpCallback onSecondaryTapUp;
@@ -2543,6 +3053,16 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
           decoration: librarySelectedRowDecoration(
             selected: widget.selected,
             hovered: _hovered,
+          ).copyWith(
+            border: const Border(bottom: BorderSide(color: kDividerColor)),
+          ),
+          foregroundDecoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(
+                width: 3,
+                color: widget.selected ? kPrimaryColor : Colors.transparent,
+              ),
+            ),
           ),
           padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
           child: Table(
@@ -2550,7 +3070,7 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
             defaultVerticalAlignment: TableCellVerticalAlignment.middle,
             children: [
               TableRow(
-                children: [
+                children: _orderedLocalCells(widget.columns, [
                   Padding(
                     padding: _localGamesCellPadding(0),
                     child: _LocalMonoRight('${widget.game.indexInFile + 1}'),
@@ -2561,6 +3081,10 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
                       metadata: md,
                       side: 'White',
                       padding: EdgeInsets.zero,
+                      // A record whose players are placeholders still names
+                      // its sides, so the row never reads as a blank/broken
+                      // entry next to games that carry full headers.
+                      unknownSideLabel: true,
                     ),
                   ),
                   Padding(
@@ -2579,6 +3103,7 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
                       metadata: md,
                       side: 'Black',
                       padding: EdgeInsets.zero,
+                      unknownSideLabel: true,
                     ),
                   ),
                   Padding(
@@ -2601,9 +3126,19 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
                   ),
                   Padding(
                     padding: _localGamesCellPadding(9),
-                    child: _LocalMonoRight(_date(md)),
+                    child: _LocalMonoRight(
+                      _date(md),
+                      textAlign: TextAlign.left,
+                    ),
                   ),
-                ],
+                  Padding(
+                    padding: _localGamesCellPadding(10),
+                    child: _LocalCellText(
+                      _meta(md, 'Annotator'),
+                      color: kWhiteColor70,
+                    ),
+                  ),
+                ]),
               ),
             ],
           ),
@@ -2632,9 +3167,11 @@ class _LocalCellText extends StatelessWidget {
   }
 }
 
-/// Right-aligned tabular-figure text cell for the `#`, ELO and date columns.
+/// Tabular figures; dates opt into a stable left-aligned origin.
 class _LocalMonoRight extends StatelessWidget {
-  const _LocalMonoRight(this.value);
+  const _LocalMonoRight(this.value, {this.textAlign = TextAlign.right});
+
+  final TextAlign textAlign;
 
   final String value;
 
@@ -2643,7 +3180,7 @@ class _LocalMonoRight extends StatelessWidget {
     final display = desktopTableDisplayValue(value);
     return Text(
       display,
-      textAlign: TextAlign.right,
+      textAlign: textAlign,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: const TextStyle(
@@ -2993,23 +3530,50 @@ void _openLocalDatabaseTree(
       localOpeningTreeIndex: _localOpeningTreeHandle(index),
       localOpeningTreeTitle: sourceLabel,
       enableLocalOpeningTreePicker: true,
+      // Exploring a local tree is Premium; the board admission decides.
+      accessContext: const DesktopAccessContext(
+        feature: DesktopFeature.openingTree,
+        action: DesktopAction.previewNavigate,
+        origin: DesktopDiscoveryOrigin.localFile,
+      ),
     ),
     reuseExisting: false,
   );
+  if (tabId.isEmpty) return;
   ref.read(rightRailActivePageProvider(tabId).notifier).state = 1;
 }
 
 void _openLocalGame(
   WidgetRef ref,
+  BuildContext context,
   LocalChessGame localGame, {
   required String sourceLabel,
   required List<LocalChessGame> databaseGames,
   PlayerOpeningTreeIndex? localOpeningTreeIndex,
   bool focus = true,
+  required LocalBoardGamesSource? boardSource,
+  Future<void> Function()? onRefresh,
 }) {
-  openBoardGameTab(
-    ref,
-    _boardArgsForLocalGame(
+  final clock = Stopwatch()..start();
+  LocalPgnPerformanceLog.watchFrames('game_open');
+  LocalPgnPerformanceLog.event(
+    'game_open_start',
+    'index=${localGame.indexInFile} inlinePgn=${localGame.hasInlineRawPgn} '
+        'contextRows=${databaseGames.length}',
+  );
+  if (boardSource == null) {
+    showDesktopToast(
+      context,
+      'The full database list is still loading. Please try again shortly.',
+    );
+    return;
+  }
+  final BoardTabGameArgs args;
+  try {
+    // The picked record is read here (its physical range, then its identity
+    // checks) before anything opens, so a record that genuinely cannot be read
+    // reports which record and why instead of a dead click.
+    args = _boardArgsForLocalGame(
       localGame,
       sourceLabel: sourceLabel,
       databaseGames: databaseGames,
@@ -3017,9 +3581,37 @@ void _openLocalGame(
           localOpeningTreeIndex == null
               ? null
               : _localOpeningTreeHandle(localOpeningTreeIndex),
-    ),
-    reuseExisting: false,
-    focus: focus,
+      boardSource: boardSource,
+    );
+  } on Object catch (error) {
+    LocalPgnPerformanceLog.event(
+      'game_open_failed',
+      'elapsedMs=${clock.elapsedMilliseconds} errorType=${error.runtimeType}',
+    );
+    // Never a silent no-op: name the record, state the reason, offer the
+    // repair. Wording comes from the shared local-PGN failure vocabulary.
+    showDesktopToast(
+      context,
+      localPgnOpenRecordErrorMessage(
+        indexInFile: localGame.indexInFile,
+        fileName: localGame.fileName,
+        title: localGame.title,
+        error: error,
+      ),
+      error: true,
+      actionLabel: onRefresh == null ? null : 'Refresh',
+      onAction: onRefresh == null ? null : () => unawaited(onRefresh()),
+    );
+    return;
+  }
+  LocalPgnPerformanceLog.event(
+    'game_args_ready',
+    'elapsedMs=${clock.elapsedMilliseconds} pgnChars=${args.pgn.length}',
+  );
+  final tabId = openBoardGameTab(ref, args, reuseExisting: false, focus: focus);
+  LocalPgnPerformanceLog.event(
+    'game_tab_opened',
+    'elapsedMs=${clock.elapsedMilliseconds} opened=${tabId.isNotEmpty}',
   );
 }
 
@@ -3050,6 +3642,7 @@ BoardTabGameArgs _boardArgsForLocalGame(
   required String sourceLabel,
   required List<LocalChessGame> databaseGames,
   PlayerOpeningTreeIndex? localOpeningTreeIndex,
+  required LocalBoardGamesSource boardSource,
 }) {
   final game = localGame.game;
   final md = game.metadata;
@@ -3060,7 +3653,20 @@ BoardTabGameArgs _boardArgsForLocalGame(
     return value > 0 ? value : null;
   }
 
+  final readClock = Stopwatch()..start();
   final pgn = localGame.rawPgn;
+  LocalPgnPerformanceLog.event(
+    'record_read',
+    'index=${localGame.indexInFile} elapsedMs=${readClock.elapsedMilliseconds} '
+        'pgnChars=${pgn.length}',
+  );
+  final identityClock = Stopwatch()..start();
+  final fingerprint = localChessPgnFingerprint(pgn);
+  final revision = localPgnRecordRevision(pgn);
+  LocalPgnPerformanceLog.event(
+    'record_identity',
+    'index=${localGame.indexInFile} elapsedMs=${identityClock.elapsedMilliseconds}',
+  );
   return BoardTabGameArgs(
     pgn: pgn,
     label: localGame.title,
@@ -3079,6 +3685,7 @@ BoardTabGameArgs _boardArgsForLocalGame(
     databaseGames: _summariesFromLocalGames(
       _localBoardContextGames(localGame, databaseGames),
     ),
+    databaseGamesContinuation: BoardTabGamesContinuation.localPgn(boardSource),
     localOpeningTreeIndex: localOpeningTreeIndex,
     localOpeningTreeTitle: sourceLabel,
     enableLocalOpeningTreePicker: true,
@@ -3087,8 +3694,8 @@ BoardTabGameArgs _boardArgsForLocalGame(
       sourcePath: localGame.sourcePath,
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
-      sourcePgnFingerprint: localGame.pgnFingerprint,
-      sourceRecordRevision: localPgnRecordRevision(pgn),
+      sourcePgnFingerprint: fingerprint,
+      sourceRecordRevision: revision,
       title: localGame.title,
     ),
   );
@@ -3121,7 +3728,23 @@ List<LocalChessGame> _localBoardContextGames(
 List<TournamentGameSummary> _summariesFromLocalGames(
   List<LocalChessGame> games,
 ) {
-  return [for (final game in games) _summaryFromLocalGame(game)];
+  final clock = Stopwatch()..start();
+  final summaries = <TournamentGameSummary>[];
+  for (final game in games) {
+    final rowClock = Stopwatch()..start();
+    summaries.add(_summaryFromLocalGame(game));
+    if (rowClock.elapsedMilliseconds >= 16) {
+      LocalPgnPerformanceLog.event(
+        'context_row',
+        'index=${game.indexInFile} elapsedMs=${rowClock.elapsedMilliseconds}',
+      );
+    }
+  }
+  LocalPgnPerformanceLog.event(
+    'context_rows',
+    'rows=${games.length} elapsedMs=${clock.elapsedMilliseconds}',
+  );
+  return summaries;
 }
 
 TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
@@ -3134,7 +3757,16 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
     return value > 0 ? value : null;
   }
 
-  final pgn = localGame.rawPgn.trim();
+  // One unreadable neighbour must not abort the open of the row the user
+  // picked: this summary is rail context, so it degrades to "no PGN". Nothing
+  // is invented — an unread record gets no fingerprint and no revision, so a
+  // later save still fails safe instead of adopting an unverified identity.
+  String pgn;
+  try {
+    pgn = localGame.rawPgn.trim();
+  } on Object {
+    pgn = '';
+  }
   final lastFen =
       game.mainline.isNotEmpty ? game.mainline.last.fen : game.startingFen;
   return TournamentGameSummary(
@@ -3161,8 +3793,8 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
       sourcePath: localGame.sourcePath,
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
-      pgnFingerprint: localGame.pgnFingerprint,
-      recordRevision: localPgnRecordRevision(pgn),
+      pgnFingerprint: pgn.isEmpty ? '' : localChessPgnFingerprint(pgn),
+      recordRevision: pgn.isEmpty ? '' : localPgnRecordRevision(pgn),
       title: localGame.title,
     ),
   );
@@ -3196,26 +3828,4 @@ IconData _iconFor(LocalChessNode node) {
       Icons.error_outline_rounded,
     _ => Icons.insert_drive_file_outlined,
   };
-}
-
-List<ChessGame> _hydrateLocalGamesForSave(List<LocalChessGame> games) {
-  final out = <ChessGame>[];
-  for (final game in games) {
-    try {
-      final parsed = ChessGame.fromPgn(game.id, game.rawPgn);
-      // The stored header bag may carry backfilled tags (WhiteTitle/WhiteFed)
-      // the raw PGN never had; keep them when saving to the library.
-      out.add(
-        parsed.copyWith(
-          metadata: <String, dynamic>{
-            ...game.game.metadata,
-            ...parsed.metadata,
-          },
-        ),
-      );
-    } catch (_) {
-      out.add(game.game);
-    }
-  }
-  return out;
 }

@@ -21,6 +21,9 @@ $env:CHESSEVER_DEV_ISOLATED = '1'
 $env:TEMP = $devTempDir
 $env:TMP = $devTempDir
 
+& python (Join-Path $repo 'tools\cbh_converter\build_windows.py')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 & $flutterPath build windows --debug `
   --dart-define=CHESSEVER_DATA_DIR="$DevDataDir" `
   --dart-define=CHESSEVER_SINGLE_INSTANCE_PORT=$SingleInstancePort

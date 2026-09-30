@@ -3,7 +3,6 @@ import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:webview_all/webview_all.dart';
 import 'package:webview_all_windows/webview_all_windows.dart'
@@ -14,11 +13,12 @@ import 'package:webview_all_wkwebview/webview_all_wkwebview.dart'
 import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/state/broadcast_video_streams_provider.dart';
+import 'package:chessever/desktop/state/broadcast_video_visibility_provider.dart';
+import 'package:chessever/desktop/widgets/broadcast_video_player_retention.dart';
+import 'package:chessever/desktop/widgets/broadcast_video_toolbar.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
-import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:country_flags/country_flags.dart';
 
 /// Live-stream panel for the top of the Board pane's right rail.
 ///
@@ -46,8 +46,9 @@ class BroadcastVideoPanel extends ConsumerStatefulWidget {
   final String tourId;
 
   /// Whether the owning Board tab is the foreground surface. Inactive tabs
-  /// render nothing and tear playback down, so a hidden tab can never keep a
-  /// stream (and its audio) alive behind the one on screen.
+  /// keep rendering the player in place (the tab stack hides them) for a
+  /// short grace so a switch-back keeps the same webview; after that they
+  /// blank it so a hidden tab cannot keep a stream (and its audio) playing.
   final bool active;
 
   /// Round of the game on the board, when known. The API resolves stream
@@ -55,8 +56,8 @@ class BroadcastVideoPanel extends ConsumerStatefulWidget {
   /// scope it has.
   final String? roundId;
 
-  /// Identity for the session preference slot (`ce-video.v1:<id>`), matching
-  /// the web's per-tournament sessionStorage key.
+  /// Stable owning event identity for session stream choice and durable
+  /// visibility, independent of the current round or inherited source.
   final String tournamentStorageId;
 
   @override
@@ -91,7 +92,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   int _autoRetries = 0;
 
   /// Leaving the tab or hiding the window does not blank the player at once:
-  /// a quick switch back re-attaches the same player instead of asking the
+  /// a quick switch back keeps the same player instead of asking the
   /// provider for it again. After the grace the player is blanked, so
   /// nothing keeps playing from a screen the user is not viewing.
   static const Duration _stopGrace = Duration(seconds: 20);
@@ -126,12 +127,14 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     if (_loadedEmbedUrl == null) return;
     _loadedEmbedUrl = null;
     final controller = _controller;
-    if (controller == null) return;
-    unawaited(
-      controller
-          .loadRequest(Uri.parse('about:blank'))
-          .catchError((Object _) {}),
-    );
+    if (controller != null) {
+      unawaited(
+        controller
+            .loadRequest(Uri.parse('about:blank'))
+            .catchError((Object _) {}),
+      );
+    }
+    if (mounted) setState(() {});
   }
 
   void _retryEmbed() {
@@ -224,6 +227,10 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
             if (error.isForMainFrame != true || !mounted) return;
             _markFrameFailed();
           },
+          // Deliberately not filtered on the reported url: a redirect (or a
+          // normalized trailing slash) would no longer match the url we asked
+          // for and the frame check would never run, leaving a dead embed with
+          // no fallback. Staleness is handled inside the check instead.
           onPageFinished: (_) => unawaited(_verifyEmbedDocument()),
         ),
       );
@@ -295,7 +302,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   /// external link rather than showing that page in the rail.
   Future<void> _verifyEmbedDocument() async {
     final controller = _controller;
-    if (controller == null || _loadedEmbedUrl == null) return;
+    final expectedUrl = _loadedEmbedUrl;
+    if (controller == null || expectedUrl == null) return;
     Object? result;
     try {
       result = await controller.runJavaScriptReturningResult(
@@ -305,7 +313,9 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       return; // Not answerable (page torn down); the next load re-checks.
     }
     final hasFrame = result == true || result.toString() == 'true';
-    if (!mounted || _loadedEmbedUrl == null) return;
+    // The stream was switched while the query was in flight: that answer
+    // describes the old document, so it can neither clear nor fail this one.
+    if (!mounted || _loadedEmbedUrl != expectedUrl) return;
     if (hasFrame) {
       _autoRetries = 0;
       return;
@@ -315,11 +325,28 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
 
   void _scheduleEmbedLoad(Uri url) {
     final key = url.toString();
-    if (_loadedEmbedUrl == key) return;
+    if (!shouldReloadBroadcastVideoEmbed(
+      loadedEmbedUrl: _loadedEmbedUrl,
+      nextEmbedUrl: key,
+    )) {
+      return;
+    }
     _loadedEmbedUrl = key;
     _frameFailed = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      // A newer selection (or a stop) already claimed the slot in this frame.
+      if (!mounted || _loadedEmbedUrl != key) return;
+      final visibility = ref.read(
+        broadcastVideoVisibilityProvider(widget.tournamentStorageId),
+      );
+      if (!widget.active ||
+          !ref.read(liveGameStreamingLifecycleProvider) ||
+          visibility.isLoading ||
+          visibility.hasError ||
+          visibility.valueOrNull != true) {
+        _loadedEmbedUrl = null;
+        return;
+      }
       unawaited(_ensureController().loadRequest(url));
     });
   }
@@ -330,7 +357,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     final controller = _controller;
     if (controller == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      // A load that landed in the same frame must survive the queued stop.
+      if (!mounted || _loadedEmbedUrl != null) return;
       unawaited(controller.loadRequest(Uri.parse('about:blank')));
     });
   }
@@ -362,6 +390,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   void _selectStream(BroadcastVideoStream stream) {
+    _setVisible(true);
     ref
         .read(broadcastVideoSessionPreferencesProvider.notifier)
         .write(
@@ -381,6 +410,24 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   void _setVisible(bool visible) {
+    if (!visible) {
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _cancelStopGrace();
+      _stopPlaybackNow();
+    }
+    unawaited(
+      ref
+          .read(
+            broadcastVideoVisibilityProvider(
+              widget.tournamentStorageId,
+            ).notifier,
+          )
+          .remember(visible)
+          .catchError((Object error) {
+            debugPrint('Could not persist video visibility: $error');
+          }),
+    );
     final preferences =
         ref.read(broadcastVideoSessionPreferencesProvider)[_storageKey] ??
         const BroadcastVideoPreference();
@@ -396,68 +443,200 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
         );
   }
 
+  void _toggleVisible() {
+    final visibility = ref.read(
+      broadcastVideoVisibilityProvider(widget.tournamentStorageId),
+    );
+    if (visibility.isLoading || visibility.hasError || !visibility.hasValue) {
+      return;
+    }
+    _setVisible(!visibility.requireValue);
+  }
+
+  void _togglePin(String streamId) {
+    unawaited(
+      ref
+          .read(broadcastVideoPinsProvider(widget.tournamentStorageId).notifier)
+          .toggle(streamId),
+    );
+  }
+
+  List<BroadcastVideoStream> _desktopStreams(
+    ResolvedBroadcastVideoStreams? data,
+  ) {
+    if (data == null) return const <BroadcastVideoStream>[];
+    return data.streams
+        .where(
+          (stream) => broadcastStreamSupportsPlatform(
+            stream,
+            BroadcastVideoClientPlatform.desktop,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  bool get _hasPreservedPlayer =>
+      _controller != null && _loadedEmbedUrl != null && !_frameFailed;
+
   @override
   Widget build(BuildContext context) {
-    // A hidden or minimised window is not a screen the user is viewing;
-    // YouTube's policies forbid a background player (III.I.9) and Twitch
-    // may disable autoplay for hidden embeds, so playback stops with the
-    // window and resumes when it is shown again.
+    // Always watch the stream list while this panel's State is mounted,
+    // including background Board tabs. The family is autoDispose: an early
+    // return that skipped the watch used to drop the listener, refetch on
+    // return, and blank the player because `data` looked empty.
     final windowVisible = ref.watch(liveGameStreamingLifecycleProvider);
-    if (!widget.active || !windowVisible) {
-      _scheduleStopPlaybackAfterGrace();
-      return const SizedBox.shrink();
-    }
-    _cancelStopGrace();
-    final scope = _scope;
-    final streamsState = ref.watch(broadcastVideoStreamsProvider(scope));
-    final data = streamsState.valueOrNull;
-    // No list yet, or the read failed: the web's in-game view renders
-    // nothing in both cases (its "temporarily unavailable" notice only
-    // exists on the tournament hall). A permanent failure means the scope
-    // has no embeddable coverage; a transient one keeps polling every 30s
-    // and the panel appears once a read succeeds.
-    if (data == null) {
-      _scheduleStopPlayback();
-      return const SizedBox.shrink();
-    }
-    if (data.streams.isEmpty) {
-      _scheduleStopPlayback();
-      return const SizedBox.shrink();
-    }
+    final streamsState = ref.watch(broadcastVideoStreamsProvider(_scope));
     final languageState = ref.watch(broadcastVideoLanguageProvider);
-    // The remembered language only applies once loaded, so the first paint
-    // never flashes (and loads) the default stream before settling on the
-    // spectator's last pick. Mirrors the web's `language.loaded` gate.
-    if (languageState.isLoading) return const SizedBox.shrink();
     final preferences =
         ref.watch(broadcastVideoSessionPreferencesProvider)[_storageKey] ??
         const BroadcastVideoPreference();
-    final language = languageState.valueOrNull;
-    final selected = resolveBroadcastVideoSelection(
-      data.streams,
-      selectedId: preferences.selectedId,
-      language: language,
-      countryCode: preferences.countryCode,
+    final data = streamsState.valueOrNull;
+    final streams = _desktopStreams(data);
+    final selected =
+        data == null
+            ? null
+            : resolveBroadcastVideoSelection(
+              streams,
+              selectedId: preferences.selectedId,
+              language:
+                  languageState.isLoading ? null : languageState.valueOrNull,
+              countryCode: preferences.countryCode,
+            );
+    final visibility = ref.watch(
+      broadcastVideoVisibilityProvider(widget.tournamentStorageId),
     );
-    if (selected == null) {
+    // Restore before creating a player; storage errors fail closed. Keep
+    // watching the streams above so restoration cannot trigger a refetch.
+    if (visibility.isLoading || visibility.hasError || !visibility.hasValue) {
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _cancelStopGrace();
       _scheduleStopPlayback();
       return const SizedBox.shrink();
     }
-    final visible = preferences.visible ?? true;
-    if (!visible) _scheduleStopPlayback();
-    final groups = groupBroadcastVideoStreams(data.streams);
-    final watchUri = data.source != null
-        ? broadcastVideoWatchUri(
-            scope: data.source!.scope,
-            scopeId: data.source!.id,
-            streamId: selected.id,
-          )
-        : Uri.parse(selected.url);
-    // Player first, toolbar under it: every popover and tooltip the toolbar
-    // opens then falls downward over our own notation panel, never in front
-    // of the provider player. Both Twitch ("should not be obscured in any
-    // way by other page elements") and YouTube ("must not display overlays
-    // … in front of any part of a YouTube embedded player") forbid that.
+    final userHidden = !visibility.requireValue;
+    if (userHidden) {
+      // Explicit Hide also stops other mounted tabs of this owning event,
+      // without waiting for the background-player grace period.
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _cancelStopGrace();
+      _scheduleStopPlayback();
+    }
+    final retention = resolveBroadcastVideoPlayerRetention(
+      tabActive: widget.active,
+      windowVisible: windowVisible,
+      hasPreservedPlayer: _hasPreservedPlayer,
+      streamsResolved: data != null,
+      languageReady: !languageState.isLoading,
+      hasPlayableStream: streams.isNotEmpty && selected != null,
+      userHidden: userHidden,
+    );
+    switch (retention) {
+      case BroadcastVideoPlayerRetention.hide:
+        if (!widget.active || !windowVisible) {
+          _scheduleStopPlaybackAfterGrace();
+          return const SizedBox.shrink();
+        }
+        _cancelStopGrace();
+        _scheduleStopPlayback();
+        // Web keeps the language/camera rail when the spectator collapses
+        // the player; only the frame goes away. Returning shrink here used
+        // to lose the toggle so the stream could not be turned back on.
+        if (userHidden &&
+            streams.isNotEmpty &&
+            selected != null &&
+            !languageState.isLoading) {
+          return _playerSkeleton(
+            stream: selected,
+            source: data!.source,
+            mayLoad: false,
+            showPlayer: false,
+            toolbar: _toolbar(
+              streams: streams,
+              selected: selected,
+              expanded: false,
+            ),
+          );
+        }
+        return const SizedBox.shrink();
+      case BroadcastVideoPlayerRetention.preserveOffstage:
+        // Background tab (or hidden window) with a loaded player: render
+        // the exact same skeleton as the foreground tab. The tab stack
+        // already hides inactive tabs behind its own Offstage; the player
+        // element itself never moves, so a switch back cannot dispose or
+        // reload it. Playback still stops via the grace when it expires.
+        _scheduleStopPlaybackAfterGrace();
+        break;
+      case BroadcastVideoPlayerRetention.show:
+        _cancelStopGrace();
+        break;
+    }
+    // Only the foreground surface may start a load: a background tab that
+    // shares its tournament's stream choice must not autoplay a newly
+    // selected stream while hidden. It picks the new selection up when it
+    // returns to the foreground.
+    final mayLoad = retention == BroadcastVideoPlayerRetention.show;
+    // A loading gap (or a list that cannot pick a stream) keeps the loaded
+    // player mounted in its slot; the toolbar slot is reserved from the
+    // first frame so resolving the rail never reparents the webview.
+    if (data == null ||
+        streams.isEmpty ||
+        selected == null ||
+        languageState.isLoading) {
+      return _playerSkeleton(
+        stream: selected,
+        source: data?.source,
+        mayLoad: mayLoad,
+      );
+    }
+    return _playerSkeleton(
+      stream: selected,
+      source: data.source,
+      mayLoad: mayLoad,
+      toolbar: _toolbar(streams: streams, selected: selected, expanded: true),
+    );
+  }
+
+  Widget _toolbar({
+    required List<BroadcastVideoStream> streams,
+    required BroadcastVideoStream selected,
+    required bool expanded,
+  }) {
+    final pins =
+        ref
+            .watch(broadcastVideoPinsProvider(widget.tournamentStorageId))
+            .valueOrNull ??
+        const <String>[];
+    return BroadcastVideoToolbar(
+      streams: streams,
+      selectedId: selected.id,
+      visible: expanded,
+      pins: pins,
+      onSelect: _selectStream,
+      onToggle: _toggleVisible,
+      onPin: _togglePin,
+    );
+  }
+
+  /// The one stable shape every non-hide frame renders: the language rail
+  /// at index 0 (web's `VideoStreamToolbar`), the player slot at index 1.
+  ///
+  /// A tab switch flips only ancestor Offstage/TickerMode flags; this
+  /// subtree is identical foreground and background, so the platform view
+  /// is never detached and the broadcast continues instead of restarting.
+  /// Collapsing the player (web's camera toggle) drops only the slot; the
+  /// toolbar stays so the spectator can turn the stream back on.
+  Widget _playerSkeleton({
+    required BroadcastVideoStream? stream,
+    required BroadcastVideoSourceRef? source,
+    required bool mayLoad,
+    Widget? toolbar,
+    bool showPlayer = true,
+  }) {
+    // Same order as the site's `.ce-video`: flags and overflow sit above
+    // the frame. Menus and tooltips open upward off the player (see the
+    // toolbar), matching Twitch / YouTube overlay rules.
     return DecoratedBox(
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: kDividerColor)),
@@ -465,80 +644,120 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (visible) _buildPlayer(selected, data.source),
-          _BroadcastVideoToolbar(
-            groups: groups,
-            selectedId: selected.id,
-            visible: visible,
-            providerName: selected.provider.displayName,
-            onSelect: _selectStream,
-            onToggle: () => _setVisible(!visible),
-            onOpenWatch: () => unawaited(launchDesktopWebUrl(watchUri)),
-            onOpenSource: () =>
-                unawaited(launchDesktopWebUrl(Uri.parse(selected.url))),
+          KeyedSubtree(
+            key: const ValueKey<String>('desktop-broadcast-video-toolbar-slot'),
+            child: toolbar ?? const SizedBox.shrink(),
           ),
+          if (showPlayer) _playerSlot(stream, source, mayLoad: mayLoad),
         ],
       ),
     );
   }
 
-  Widget _buildPlayer(
-    BroadcastVideoStream stream,
-    BroadcastVideoSourceRef? source,
-  ) {
-    final provider = stream.provider;
-    void openExternal() =>
-        unawaited(launchDesktopWebUrl(Uri.parse(stream.url)));
-    // The API attaches the resolving scope to every non-empty list; without
-    // it there is no site document to frame the player through.
-    if (source == null) {
-      _scheduleStopPlayback();
-      return _OpenExternallyRow(
-        message: 'This stream can only be watched on ${provider.displayName}.',
-        provider: provider,
-        onOpenExternal: openExternal,
-      );
+  /// The player lives here for the whole life of the panel State: one
+  /// [WebViewWidget] at one tree position, with no [GlobalKey] because it
+  /// never moves. A rail too narrow for the provider, or a load that
+  /// delivered no frame, hides it in place (an [Offstage] flag flip, not a
+  /// reparent) and shows the external row beneath it. Nothing here may
+  /// unmount or relocate the webview to "park" it: detaching the platform
+  /// view is what restarts the broadcast on every tab but the first.
+  Widget _playerSlot(
+    BroadcastVideoStream? stream,
+    BroadcastVideoSourceRef? source, {
+    required bool mayLoad,
+  }) {
+    // Windows boots the controller only once the shared environment is
+    // ready; before that there is no player to preserve, so this branch is
+    // a one-way first mount, never a detach.
+    if (!_environmentReady && !_hasPreservedPlayer) {
+      return const SizedBox(height: 8);
     }
-    final embedPage = broadcastVideoEmbedPageUri(
-      scope: source.scope,
-      scopeId: source.id,
-      streamId: stream.id,
-      play: true,
-    );
-    if (!_environmentReady) return const SizedBox(height: 8);
+    final provider = stream?.provider;
+    final embedPage =
+        stream == null || source == null
+            ? null
+            : broadcastVideoEmbedPageUri(
+              scope: source.scope,
+              scopeId: source.id,
+              streamId: stream.id,
+              play: true,
+            );
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxWidth < provider.minWidth) {
-          _scheduleStopPlayback();
-          return _OpenExternallyRow(
-            message: 'Open ${provider.displayName} to watch at this width.',
-            provider: provider,
-            onOpenExternal: openExternal,
-          );
+        final tooNarrow =
+            provider != null && constraints.maxWidth < provider.minWidth;
+        // Hide (never unmount) when the rail cannot show this provider's
+        // player, when the last load delivered no frame, or when there is
+        // neither a URL nor a kept page to show. A kept player whose scope
+        // lost its source (a refresh anomaly) stays visible: it is still
+        // the stream the spectator was watching.
+        final hidePlayer =
+            tooNarrow ||
+            _frameFailed ||
+            (embedPage == null && !_hasPreservedPlayer);
+        // Only a visible slot on the foreground surface may load: a hidden
+        // webview must not autoplay (provider policy), a background tab
+        // must not start a newly selected stream, and a loading gap has no
+        // URL yet. The loaded page of a kept player is left untouched.
+        final embedUrl = hidePlayer || !mayLoad ? null : embedPage;
+        if (embedUrl != null) _scheduleEmbedLoad(embedUrl);
+        Widget? row;
+        void openExternal() {
+          final url = stream?.url;
+          if (url != null) unawaited(launchDesktopWebUrl(Uri.parse(url)));
         }
-        _scheduleEmbedLoad(embedPage);
-        if (_frameFailed) {
-          return _OpenExternallyRow(
+
+        if (_frameFailed && provider != null) {
+          row = _OpenExternallyRow(
             message: 'The player could not load here.',
             provider: provider,
             onOpenExternal: openExternal,
             onRetry: _retryEmbed,
           );
+        } else if (tooNarrow) {
+          row = _OpenExternallyRow(
+            message: 'Open ${provider.displayName} to watch at this width.',
+            provider: provider,
+            onOpenExternal: openExternal,
+          );
+        } else if (stream != null &&
+            source == null &&
+            provider != null &&
+            !_hasPreservedPlayer) {
+          // The API attaches the resolving scope to every non-empty list;
+          // without it there is no site document to frame the player
+          // through.
+          row = _OpenExternallyRow(
+            message:
+                'This stream can only be watched on ${provider.displayName}.',
+            provider: provider,
+            onOpenExternal: openExternal,
+          );
         }
-        final controller = _ensureController();
         // 16:9 for the rail width, never below the provider's minimum player
         // height, and capped so the notation below keeps a usable share of
         // the rail on short windows.
-        final height = (constraints.maxWidth * 9 / 16)
-            .clamp(provider.minHeight, math.max(340.0, provider.minHeight))
-            .toDouble();
-        return SizedBox(
-          height: height,
-          width: double.infinity,
-          child: ColoredBox(
-            color: kBlackColor,
-            child: WebViewWidget(controller: controller),
-          ),
+        final minHeight = provider?.minHeight ?? 200.0;
+        final height =
+            (constraints.maxWidth * 9 / 16)
+                .clamp(minHeight, math.max(340.0, minHeight))
+                .toDouble();
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Offstage(
+              offstage: hidePlayer,
+              child: SizedBox(
+                height: height,
+                width: double.infinity,
+                child: ColoredBox(
+                  color: kBlackColor,
+                  child: WebViewWidget(controller: _ensureController()),
+                ),
+              ),
+            ),
+            if (row != null) row,
+          ],
         );
       },
     );
@@ -587,644 +806,6 @@ class _OpenExternallyRow extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _BroadcastVideoToolbar extends StatelessWidget {
-  const _BroadcastVideoToolbar({
-    required this.groups,
-    required this.selectedId,
-    required this.visible,
-    required this.providerName,
-    required this.onSelect,
-    required this.onToggle,
-    required this.onOpenWatch,
-    required this.onOpenSource,
-  });
-
-  final List<BroadcastVideoStreamGroup> groups;
-  final String selectedId;
-  final bool visible;
-  final String providerName;
-  final ValueChanged<BroadcastVideoStream> onSelect;
-  final VoidCallback onToggle;
-  final VoidCallback onOpenWatch;
-  final VoidCallback onOpenSource;
-
-  // A 30px flag, plus the 18px count badge laid out beside it when the
-  // language owns several streams. Reserving the badged footprint for every
-  // slot keeps the row from overflowing when the first N groups happen to be
-  // multi-stream.
-  static const double _slot = 48;
-  static const double _gap = 6;
-
-  @override
-  Widget build(BuildContext context) {
-    // Extra bottom room for the count badge, which hangs below its flag so
-    // nothing of ours reaches up into the player above.
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // The trailing actions are fixed; only the remaining width can hold
-          // language slots.
-          const actionsWidth = 106.0;
-          final flagsWidth = constraints.maxWidth - actionsWidth;
-          final capacity = flagsWidth <= 0
-              ? 0
-              : ((flagsWidth + _gap) / (_slot + _gap)).floor();
-          final visibleCount = capacity >= groups.length
-              ? groups.length
-              : (capacity - 1).clamp(0, groups.length);
-          final visibleGroups = groups.take(visibleCount).toList();
-          final hiddenGroups = groups.skip(visibleCount).toList();
-          return Row(
-            children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    for (final group in visibleGroups) ...[
-                      _LanguageGroupButton(
-                        group: group,
-                        selectedId: selectedId,
-                        onSelect: onSelect,
-                      ),
-                      const SizedBox(width: _gap),
-                    ],
-                    if (hiddenGroups.isNotEmpty)
-                      _OverflowLanguageButton(
-                        groups: hiddenGroups,
-                        selectedId: selectedId,
-                        onSelect: onSelect,
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              _RailIconButton(
-                icon: Icons.open_in_new_rounded,
-                tooltip: 'Open on $providerName',
-                onPress: onOpenSource,
-              ),
-              const SizedBox(width: 2),
-              _RailIconButton(
-                icon: Icons.grid_view_rounded,
-                tooltip: 'Watch video with live boards',
-                onPress: onOpenWatch,
-              ),
-              const SizedBox(width: 2),
-              _RailIconButton(
-                icon: visible
-                    ? Icons.videocam_rounded
-                    : Icons.videocam_off_rounded,
-                tooltip: visible ? 'Hide video' : 'Show video',
-                selected: visible,
-                onPress: onToggle,
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _LanguageGroupButton extends StatefulWidget {
-  const _LanguageGroupButton({
-    required this.group,
-    required this.selectedId,
-    required this.onSelect,
-  });
-
-  final BroadcastVideoStreamGroup group;
-  final String selectedId;
-  final ValueChanged<BroadcastVideoStream> onSelect;
-
-  @override
-  State<_LanguageGroupButton> createState() => _LanguageGroupButtonState();
-}
-
-class _LanguageGroupButtonState extends State<_LanguageGroupButton>
-    with SingleTickerProviderStateMixin {
-  /// Same grace the site gives: leaving the flag closes the list unless the
-  /// pointer reaches it within this window.
-  static const Duration _closeGrace = Duration(milliseconds: 140);
-
-  late final FPopoverController _menuController = FPopoverController(
-    vsync: this,
-  );
-  Timer? _closeTimer;
-
-  bool get _multiple => widget.group.streams.length > 1;
-
-  @override
-  void dispose() {
-    _closeTimer?.cancel();
-    _menuController.dispose();
-    super.dispose();
-  }
-
-  void _cancelClose() {
-    _closeTimer?.cancel();
-    _closeTimer = null;
-  }
-
-  /// Hovering a flag that owns several streams lists them, as on the site;
-  /// a single-stream flag only carries its tooltip.
-  void _openMenu() {
-    if (!_multiple) return;
-    _cancelClose();
-    final status = _menuController.status;
-    if (status == AnimationStatus.completed ||
-        status == AnimationStatus.forward) {
-      return;
-    }
-    unawaited(_menuController.show());
-  }
-
-  void _closeMenu() {
-    _cancelClose();
-    unawaited(_menuController.hide());
-  }
-
-  void _closeMenuSoon() {
-    if (!_multiple) return;
-    _cancelClose();
-    _closeTimer = Timer(_closeGrace, () {
-      _closeTimer = null;
-      if (mounted) unawaited(_menuController.hide());
-    });
-  }
-
-  Widget _withTooltip(String? message, Widget child) => message == null
-      ? child
-      : DesktopTooltip(
-          message: message,
-          tipAnchor: Alignment.topCenter,
-          childAnchor: Alignment.bottomCenter,
-          child: child,
-        );
-
-  @override
-  Widget build(BuildContext context) {
-    final multiple = _multiple;
-    final primary = widget.group.streams.first;
-    final selected = widget.group.streams.any(
-      (stream) => stream.id == widget.selectedId,
-    );
-    final tooltip = multiple
-        ? '${widget.group.label} · ${widget.group.streams.length} streams'
-        : '${widget.group.label} · ${broadcastVideoStreamTitle(primary)}';
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: FPopover(
-        controller: _menuController,
-        popoverBuilder: (context, _) => MouseRegion(
-          onEnter: (_) => _cancelClose(),
-          onExit: (_) => _closeMenuSoon(),
-          child: _GroupStreamMenu(
-            group: widget.group,
-            selectedId: widget.selectedId,
-            onSelect: (stream) {
-              _closeMenu();
-              widget.onSelect(stream);
-            },
-          ),
-        ),
-        child: MouseRegion(
-          onEnter: (_) => _openMenu(),
-          onExit: (_) => _closeMenuSoon(),
-          child: _withTooltip(
-            // A multi-stream flag answers hover with the list itself; a
-            // tooltip on top of it would only clutter the rail.
-            multiple ? null : tooltip,
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _FlagButton(
-                  code: widget.group.countryCode,
-                  selected: selected,
-                  semanticsLabel: tooltip,
-                  onPress: () {
-                    _closeMenu();
-                    widget.onSelect(primary);
-                  },
-                ),
-                if (multiple)
-                  _StreamCountBadge(
-                    count: widget.group.streams.length,
-                    semanticsLabel:
-                        'Choose among ${widget.group.streams.length} ${widget.group.label} streams',
-                    onPress: () {
-                      _cancelClose();
-                      unawaited(_menuController.toggle());
-                    },
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _FlagButton extends StatelessWidget {
-  const _FlagButton({
-    required this.code,
-    required this.selected,
-    required this.onPress,
-    required this.semanticsLabel,
-  });
-
-  final String? code;
-  final bool selected;
-  final VoidCallback onPress;
-  final String semanticsLabel;
-
-  @override
-  Widget build(BuildContext context) {
-    final code = this.code;
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: FTappable(
-        onPress: onPress,
-        semanticsLabel: semanticsLabel,
-        builder: (context, states, child) {
-          final hovered = states.contains(WidgetState.hovered);
-          final pressed = states.contains(WidgetState.pressed);
-          final focused = states.contains(WidgetState.focused);
-          final border = selected || focused
-              ? kPrimaryColor
-              : (hovered ? kWhiteColor.withValues(alpha: 0.28) : kDividerColor);
-          return Container(
-            width: 30,
-            height: 30,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: selected
-                  ? kPrimaryColor.withValues(alpha: 0.12)
-                  : (hovered || pressed ? kBlack3Color : Colors.transparent),
-              border: Border.all(color: border),
-            ),
-            child: child,
-          );
-        },
-        child: code == null
-            ? const Icon(Icons.language_rounded, size: 16, color: kWhiteColor70)
-            : CountryFlag.fromCountryCode(
-                code,
-                theme: const ImageTheme(width: 20, height: 20, shape: Circle()),
-              ),
-      ),
-    );
-  }
-}
-
-class _StreamCountBadge extends StatelessWidget {
-  const _StreamCountBadge({
-    required this.count,
-    required this.onPress,
-    required this.semanticsLabel,
-  });
-
-  final int count;
-  final VoidCallback onPress;
-  final String semanticsLabel;
-
-  @override
-  Widget build(BuildContext context) {
-    return Transform.translate(
-      offset: const Offset(-4, 8),
-      child: FTheme(
-        data: FThemes.zinc.dark,
-        child: FTappable(
-          onPress: onPress,
-          semanticsLabel: semanticsLabel,
-          builder: (context, states, _) {
-            final hovered = states.contains(WidgetState.hovered);
-            final focused = states.contains(WidgetState.focused);
-            return Container(
-              constraints: const BoxConstraints(minWidth: 18),
-              height: 18,
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: hovered || focused
-                    ? kPrimaryColor.withValues(alpha: 0.18)
-                    : kBlack2Color,
-                borderRadius: BorderRadius.circular(9),
-                border: Border.all(color: kPrimaryColor),
-              ),
-              child: Text(
-                '$count',
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w800,
-                  color: kPrimaryColor,
-                  height: 1,
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-class _OverflowLanguageButton extends StatefulWidget {
-  const _OverflowLanguageButton({
-    required this.groups,
-    required this.selectedId,
-    required this.onSelect,
-  });
-
-  final List<BroadcastVideoStreamGroup> groups;
-  final String selectedId;
-  final ValueChanged<BroadcastVideoStream> onSelect;
-
-  @override
-  State<_OverflowLanguageButton> createState() =>
-      _OverflowLanguageButtonState();
-}
-
-class _OverflowLanguageButtonState extends State<_OverflowLanguageButton>
-    with SingleTickerProviderStateMixin {
-  late final FPopoverController _controller = FPopoverController(vsync: this);
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: FPopover(
-        controller: _controller,
-        popoverBuilder: (context, _) => _OverflowMenu(
-          groups: widget.groups,
-          selectedId: widget.selectedId,
-          onSelect: (stream) {
-            _controller.hide();
-            widget.onSelect(stream);
-          },
-        ),
-        child: DesktopTooltip(
-          message: 'More video languages',
-          tipAnchor: Alignment.topCenter,
-          childAnchor: Alignment.bottomCenter,
-          child: _RailIconButton(
-            icon: Icons.keyboard_arrow_down_rounded,
-            tooltip: '',
-            onPress: _controller.toggle,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Per-language stream list. Shown when a flag owns more than one stream.
-class _GroupStreamMenu extends StatelessWidget {
-  const _GroupStreamMenu({
-    required this.group,
-    required this.selectedId,
-    required this.onSelect,
-  });
-
-  final BroadcastVideoStreamGroup group;
-  final String selectedId;
-  final ValueChanged<BroadcastVideoStream> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    return _MenuSurface(
-      width: 260,
-      children: [
-        _MenuHeader(label: group.label),
-        for (final stream in group.streams)
-          _MenuRow(
-            label: broadcastVideoStreamDisplayName(stream),
-            trailing: stream.provider.displayName,
-            selected: stream.id == selectedId,
-            onTap: () => onSelect(stream),
-          ),
-      ],
-    );
-  }
-}
-
-/// Hidden language groups. A group with several streams lists them directly
-/// (the site nests a submenu; a flat list reads better in the rail).
-class _OverflowMenu extends StatelessWidget {
-  const _OverflowMenu({
-    required this.groups,
-    required this.selectedId,
-    required this.onSelect,
-  });
-
-  final List<BroadcastVideoStreamGroup> groups;
-  final String selectedId;
-  final ValueChanged<BroadcastVideoStream> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    return _MenuSurface(
-      width: 260,
-      children: [
-        for (final group in groups) ...[
-          _MenuHeader(label: group.label, code: group.countryCode),
-          for (final stream in group.streams)
-            _MenuRow(
-              label: broadcastVideoStreamDisplayName(stream),
-              trailing: stream.provider.displayName,
-              selected: stream.id == selectedId,
-              onTap: () => onSelect(stream),
-            ),
-        ],
-      ],
-    );
-  }
-}
-
-class _MenuSurface extends StatelessWidget {
-  const _MenuSurface({required this.width, required this.children});
-
-  final double width;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: width,
-      constraints: const BoxConstraints(maxHeight: 340),
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      decoration: BoxDecoration(
-        color: kBlack2Color,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: kDividerColor),
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: children,
-        ),
-      ),
-    );
-  }
-}
-
-class _MenuHeader extends StatelessWidget {
-  const _MenuHeader({required this.label, this.code});
-
-  final String label;
-  final String? code;
-
-  @override
-  Widget build(BuildContext context) {
-    final country = code;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: Row(
-        children: [
-          if (country != null) ...[
-            CountryFlag.fromCountryCode(
-              country,
-              theme: const ImageTheme(width: 14, height: 14, shape: Circle()),
-            ),
-            const SizedBox(width: 8),
-          ],
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: kLightGreyColor,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MenuRow extends StatelessWidget {
-  const _MenuRow({
-    required this.label,
-    required this.trailing,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final String trailing;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final selected = this.selected;
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: FTappable(
-        onPress: onTap,
-        semanticsLabel: '$label, $trailing',
-        builder: (context, states, _) {
-          final hovered = states.contains(WidgetState.hovered);
-          final focused = states.contains(WidgetState.focused);
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            color: selected
-                ? kPrimaryColor.withValues(alpha: 0.12)
-                : (hovered || focused ? kBlack3Color : Colors.transparent),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: selected ? kPrimaryColor : kWhiteColor,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  trailing,
-                  style: const TextStyle(fontSize: 11, color: kLightGreyColor),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _RailIconButton extends StatelessWidget {
-  const _RailIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPress,
-    this.selected = false,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPress;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final button = FTheme(
-      data: FThemes.zinc.dark,
-      child: FTappable(
-        onPress: onPress,
-        semanticsLabel: tooltip.isEmpty ? null : tooltip,
-        builder: (context, states, _) {
-          final hovered = states.contains(WidgetState.hovered);
-          final pressed = states.contains(WidgetState.pressed);
-          final focused = states.contains(WidgetState.focused);
-          final background = selected
-              ? kPrimaryColor.withValues(alpha: hovered ? 0.16 : 0.10)
-              : (hovered || pressed ? kBlack3Color : Colors.transparent);
-          final foreground = selected
-              ? kPrimaryColor
-              : (hovered ? kWhiteColor : kWhiteColor70);
-          return Container(
-            width: 30,
-            height: 30,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              color: background,
-              border: Border.all(
-                color: selected || focused
-                    ? kPrimaryColor.withValues(alpha: 0.35)
-                    : Colors.transparent,
-              ),
-            ),
-            child: Icon(icon, size: 17, color: foreground),
-          );
-        },
-      ),
-    );
-    if (tooltip.isEmpty) return button;
-    return DesktopTooltip(
-      message: tooltip,
-      tipAnchor: Alignment.topCenter,
-      childAnchor: Alignment.bottomCenter,
-      child: button,
     );
   }
 }

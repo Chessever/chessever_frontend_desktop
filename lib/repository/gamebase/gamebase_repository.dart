@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:chessever/repository/gamebase/miniatures/miniature_players.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -207,6 +208,7 @@ class MiniatureGamesFilter {
     this.dateFrom,
     this.dateTo,
     this.player,
+    this.playerId,
   });
 
   final MiniatureGamesWindow window;
@@ -227,6 +229,10 @@ class MiniatureGamesFilter {
   final String? dateFrom;
   final String? dateTo;
   final String? player;
+
+  /// Gamebase player uuid scoping the list to one player's miniatures (the
+  /// Players scorecard). A scope, not a user filter: not counted as active.
+  final String? playerId;
 
   static const defaultFilter = MiniatureGamesFilter();
 
@@ -277,6 +283,8 @@ class MiniatureGamesFilter {
     bool clearDates = false,
     String? player,
     bool clearPlayer = false,
+    String? playerId,
+    bool clearPlayerId = false,
   }) {
     return MiniatureGamesFilter(
       window: window ?? this.window,
@@ -297,6 +305,7 @@ class MiniatureGamesFilter {
       dateFrom: clearDates ? null : (dateFrom ?? this.dateFrom),
       dateTo: clearDates ? null : (dateTo ?? this.dateTo),
       player: clearPlayer ? null : (player ?? this.player),
+      playerId: clearPlayerId ? null : (playerId ?? this.playerId),
     );
   }
 
@@ -343,6 +352,8 @@ class MiniatureGamesFilter {
     if (to != null) query['dateTo'] = to;
     final normalizedPlayer = _cleanText(player);
     if (normalizedPlayer != null) query['player'] = normalizedPlayer;
+    final normalizedPlayerId = _cleanText(playerId);
+    if (normalizedPlayerId != null) query['playerId'] = normalizedPlayerId;
 
     return query;
   }
@@ -1252,6 +1263,40 @@ class GamebaseRepository {
       );
     } catch (e) {
       throw Exception('Failed to load miniatures: $e');
+    }
+  }
+
+  /// Gamebase miniatures leaderboard rows: a player's W-L record across
+  /// miniatures and their gamebase player id. The desktop Players view ranks
+  /// by rating from `chess_players`; this only decorates a row and scopes a
+  /// scorecard, so no sort is sent.
+  Future<MiniaturePlayersPage> getMiniaturePlayers({
+    String? search,
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    try {
+      final searchClean = (search ?? '').trim();
+      final response = await _dio.get(
+        '$_miniaturesBaseUrl/api/miniatures/players',
+        queryParameters: {
+          'window': MiniatureGamesWindow.all.apiValue,
+          'limit': limit,
+          'offset': offset,
+          if (searchClean.isNotEmpty) 'q': searchClean,
+        },
+        options: _miniaturesRequestOptions(),
+      );
+      final data = response.data;
+      if (data is! Map) {
+        throw Exception('Unexpected response format');
+      }
+      return MiniaturePlayersPage.fromJson(Map<String, dynamic>.from(data));
+    } on DioException catch (e) {
+      throw Exception(
+        'Failed to load miniature players: '
+        '${e.response?.statusCode ?? 'network error'}',
+      );
     }
   }
 

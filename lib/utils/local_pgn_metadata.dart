@@ -23,6 +23,19 @@ String localPgnFederation(Map<String, dynamic> metadata, String side) {
 }
 
 /// Title tag for one side, with placeholder values treated as absent.
+/// Display name for one side of a local PGN header bag.
+///
+/// A real player name is returned unchanged; a missing or placeholder value
+/// (`?`, `-`, empty) names the side instead, so a record whose players were
+/// never known never paints a bare `?` — the wording a user reads as "this
+/// entry is broken". Storage is untouched: this is a presentation helper, and
+/// identity matching keeps reading the raw tag values.
+String localPgnDisplayPlayerName(Map<String, dynamic> metadata, String side) {
+  final value = metadata[side]?.toString().trim() ?? '';
+  if (value.isNotEmpty && value != '?' && value != '-') return value;
+  return '$side ?';
+}
+
 String localPgnTitle(Map<String, dynamic> metadata, String side) {
   final value = metadata['${side}Title']?.toString().trim() ?? '';
   if (value == '?' || value == '-') return '';

@@ -93,6 +93,7 @@ DesktopPane? paneForTabKind(TabKind kind) {
     case TabKind.play:
       return DesktopPane.play;
     case TabKind.playerScoreCard:
+    case TabKind.teamScoreCard:
     case TabKind.playerProfile:
     case TabKind.userProfile:
       // Player detail/profile tabs are destinations, not the Prepare
@@ -100,9 +101,8 @@ DesktopPane? paneForTabKind(TabKind kind) {
       // clickable as an explicit way back to opponent preparation.
       return null;
     case TabKind.boardSettings:
-    case TabKind.notificationSettings:
-      // Both subscreens of the desktop preferences pane — keep the
-      // Settings sidebar item highlighted while one is foregrounded.
+      // Subscreen of the desktop preferences pane: keep the Settings
+      // sidebar item highlighted while it is foregrounded.
       return DesktopPane.settings;
   }
 }

@@ -23,6 +23,7 @@ Map<String, Object> _tree(ChessGame game) {
         reason: 'Duplicate UCI path $key',
       );
       result[key] = {
+        'startingComments': (move.startingComments ?? const <String>[]).map((c) => c.trim()).toList(),
         'comments': [
           for (final comment in move.comments ?? const <String>[])
             if (!comment.startsWith('[%src ')) comment.trim(),
@@ -51,9 +52,9 @@ Map<String, Object> _pgnTree(String pgn) {
       expect(move, isNotNull, reason: child.data.san);
       final nextPath = [...path, move!.uci];
       result[nextPath.join(' ')] = {
+        'startingComments': (child.data.startingComments ?? const <String>[]).map((c) => c.trim()).toList(),
         'comments':
             [
-              ...?child.data.startingComments,
               ...?child.data.comments,
             ].map((c) => c.trim()).toList(),
         'nags': child.data.nags ?? const <int>[],
@@ -294,8 +295,8 @@ void main() {
     );
     final reopened = _game(exportGameToPgn(original));
     final comments = reopened.mainline.first.comments!.join(' ');
+    expect(reopened.rootComments, ['Introduction']);
     for (final text in [
-      'Introduction',
       'prose',
       'more prose',
       '[%cal Ge2e4]',

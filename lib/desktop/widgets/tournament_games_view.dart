@@ -1,21 +1,31 @@
 import 'dart:async';
+import '../state/event_player_board_games.dart';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/services/desktop_like_actions.dart';
+import 'package:chessever/desktop/widgets/library/my_likes/like_tags_dialog.dart';
+import 'package:chessever/repository/liked_games/liked_games_provider.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
     show tournamentDetailGamesSearchByTabIdProvider;
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
+import 'package:chessever/desktop/services/miniatures_access.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart' show gameCardEvalScrollGate;
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
@@ -55,12 +65,10 @@ import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
 /// Per-round expansion for the desktop Games tab.
 ///
-/// Keyed by `(roundId, initiallyExpanded)` so the default follows round status
-/// — future rounds collapse while a round is live / the latest one is finished,
-/// past + focus rounds stay open — and re-seeds when that live-state flips (the
-/// key changes), while still honouring a manual toggle until then. Kept local
-/// to the desktop tab so the shared `roundExpansionProvider` (mobile app-bar
-/// scroll logic) is left untouched.
+/// Keyed by `(roundId, initiallyExpanded)` so only the current/top round mounts
+/// its board wall initially, while still honouring a manual toggle afterwards.
+/// Kept local to the desktop tab so the shared `roundExpansionProvider`
+/// (mobile app-bar scroll logic) is left untouched.
 typedef _TournamentRoundExpansionKey = ({String id, bool initiallyExpanded});
 
 typedef _TournamentMatchExpansionKey =
@@ -90,6 +98,18 @@ bool shouldShowKnockoutMatchSections({
     isKnockout &&
     canGroup &&
     presentation == DesktopKnockoutGamesPresentation.matchSeries;
+
+@visibleForTesting
+bool shouldInitiallyExpandTournamentRound({
+  required String roundId,
+  required String? topRoundId,
+}) => roundId == topRoundId;
+
+const int _kTournamentCardStockfishGameLimit = 24;
+
+@visibleForTesting
+bool shouldAllowTournamentCardStockfishFallback(int tournamentGameCount) =>
+    tournamentGameCount <= _kTournamentCardStockfishGameLimit;
 
 /// Orders match sections by elimination stage, then by pairing start time with
 /// the latest pairing first. Some feeds number matches in their slug
@@ -212,6 +232,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   Set<String> _registeredPollingTourIds = const <String>{};
   final Map<String, GamesTourNotifier> _pollingNotifiersByTourId =
       <String, GamesTourNotifier>{};
+  List<String> _liveBatchMembership = const <String>[];
+  Map<String, LiveGamesBatchKey> _cachedLiveBatchKeys =
+      const <String, LiveGamesBatchKey>{};
   Set<String> _pendingPollingTourIds = const <String>{};
   bool? _registeredPollingActive;
   bool _pendingPollingActive = false;
@@ -356,6 +379,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
 
   void _markLiveCardsScrolling() {
     _setLiveCardsPausedForScroll(true);
+    // WEB PARITY: while this surface scrolls, a card whose eval is not cached
+    // locally does no evaluation I/O at all.
+    gameCardEvalScrollGate = true;
     _scrollIdleTimer?.cancel();
     _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
   }
@@ -368,6 +394,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   void _markLiveCardsIdle() {
     if (!mounted) return;
     _setLiveCardsPausedForScroll(false);
+    gameCardEvalScrollGate = false;
   }
 
   void _setLiveCardsPausedForScroll(bool paused) {
@@ -378,6 +405,24 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       reason: _liveCardsPauseReason,
       paused: paused,
     );
+  }
+
+  Map<String, LiveGamesBatchKey> _liveBatchKeysForExpandedGames(
+    List<GamesTourModel> games, {
+    required bool enabled,
+  }) {
+    if (!enabled) return const <String, LiveGamesBatchKey>{};
+    final membership = <String>[for (final game in games) game.gameId];
+    if (listEquals(_liveBatchMembership, membership)) {
+      return _cachedLiveBatchKeys;
+    }
+    _liveBatchMembership = List<String>.unmodifiable(membership);
+    _cachedLiveBatchKeys = liveBatchKeysForGames(
+      games: games,
+      scopePrefix: 'desktop_context:${widget.tabId}',
+      includeFinishedGames: true,
+    );
+    return _cachedLiveBatchKeys;
   }
 
   Future<void> _retryTournamentGames() async {
@@ -469,17 +514,6 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       active: streamingEnabled,
     );
     final cardStreamingEnabled = streamingEnabled;
-    // Build deterministic chunks once for the whole tournament render. Doing
-    // this inside every card turns one parent refresh into O(gameCount^2)
-    // filtering/key allocation on large broadcasts.
-    final liveBatchKeyByGameId =
-        cardStreamingEnabled
-            ? liveBatchKeysForGames(
-              games: grouped.allGames,
-              scopePrefix: 'desktop_context:${widget.tabId}',
-              includeFinishedGames: true,
-            )
-            : const <String, LiveGamesBatchKey>{};
     // Source of truth: the persisted board-settings store. Toggling here
     // (or anywhere else — Settings, Library, etc.) writes to the same
     // record, so every desktop pane stays in sync. See `desktop_game_card.dart`
@@ -525,10 +559,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     );
     final topRoundId = displayRounds.isEmpty ? null : displayRounds.first.id;
     final tournamentScopeId = 'tournament:${widget.tournamentId}';
-    // Open the actual top round plus every already-started round. There is no
-    // separate focus scroll; opening a tournament naturally starts at the top.
+    // Mount only the current/top round initially. Building mini boards for
+    // every historical round at once makes large events hitch badly; older
+    // rounds remain available through their headers and expand on demand.
     bool initialExpanded(GamesAppBarModel round) =>
-        round.id == topRoundId || round.roundStatus != RoundStatus.upcoming;
+        shouldInitiallyExpandTournamentRound(
+          roundId: round.id,
+          topRoundId: topRoundId,
+        );
     bool isRoundExpanded(GamesAppBarModel round) => ref.watch(
       _tournamentRoundExpandedProvider((
         id: round.id,
@@ -542,6 +580,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     // invisible item with no `currentContext` for `Scrollable.ensureVisible`.
     // Filter to expanded rounds only, in on-screen (descending) order.
     final keyboardGroups = <DesktopGameKeyboardGroup>[];
+    final expandedGames = <GamesTourModel>[];
     for (final round in displayRounds) {
       final expanded = isRoundExpanded(round);
       final roundGames =
@@ -570,6 +609,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
           }
         }
       }
+      expandedGames.addAll(visibleRoundGames);
       keyboardGroups.add(
         DesktopGameKeyboardGroup(
           id: round.id,
@@ -578,6 +618,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         ),
       );
     }
+
+    // Only expanded rounds can mount cards. Building Realtime chunks for the
+    // complete historical catalog made a lazy grid pay eager O(allGames) work
+    // on every parent refresh.
+    final liveBatchKeyByGameId = _liveBatchKeysForExpandedGames(
+      expandedGames,
+      enabled: cardStreamingEnabled,
+    );
 
     void toggleRound(String roundId) {
       final round = displayRounds.firstWhere((item) => item.id == roundId);
@@ -695,7 +743,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                               // A small overscan keeps wheel/trackpad scrolling
                               // smooth without mounting an entire 1,000-board
                               // broadcast and its realtime subscriptions.
-                              cacheExtent: 400,
+                              // Flutter's sliver builder is the RecyclerView
+                              // equivalent. Keep a small prefetch band so a
+                              // fast wheel scroll stays smooth without eagerly
+                              // mounting several extra rows of chessboards.
+                              scrollCacheExtent:
+                                  const ScrollCacheExtent.viewport(
+                                0.15,
+                              ),
                               slivers: [
                                 SliverPadding(
                                   padding: const EdgeInsets.fromLTRB(
@@ -1023,12 +1078,30 @@ class _RoundSliverSection extends ConsumerWidget {
     final contentSlivers = <Widget>[];
     if (expanded) {
       if (showTeamMatches) {
-        for (final group in buildDesktopTeamMatchGroups(games)) {
+        // WEB PARITY (BoardGrid.tsx:366 `key={board.id}`, StackedRounds.tsx
+        // section keys): a sliver list is matched positionally, so an
+        // unkeyed run of [header, grid, header, grid, ...] re-inflates
+        // every group after the first structural change. Keying each
+        // group's slivers by its own identity lets a refresh MOVE them
+        // instead of rebuilding the whole wall.
+        final teamGroups = buildDesktopTeamMatchGroups(games);
+        for (final group in teamGroups) {
+          final groupKey = '${group.leftTeam}|${group.rightTeam}';
           contentSlivers
-            ..add(SliverToBoxAdapter(child: _TeamMatchHeader(group: group)))
+            ..add(
+              SliverToBoxAdapter(
+                key: ValueKey<String>(
+                  'team-match-header:$scopeId:${round.id}:$groupKey',
+                ),
+                child: _TeamMatchHeader(group: group),
+              ),
+            )
             ..add(const SliverToBoxAdapter(child: SizedBox(height: 8)))
             ..add(
               _TournamentGamesSliverGrid(
+                key: ValueKey<String>(
+                  'team-match-grid:$scopeId:${round.id}:$groupKey',
+                ),
                 scopeId: scopeId,
                 selectedGameId: selectedGameId,
                 onSelectGame: onSelectGame,
@@ -1038,6 +1111,7 @@ class _RoundSliverSection extends ConsumerWidget {
                 tournamentTitle: tournamentTitle,
                 layout: layout,
                 columns: columns,
+                centerSparseRow: true,
                 roundStartsAtById: roundStartsAtById,
                 roundNameById: roundNameById,
                 streamingEnabled: streamingEnabled,
@@ -1076,6 +1150,7 @@ class _RoundSliverSection extends ConsumerWidget {
       } else {
         contentSlivers.add(
           _TournamentGamesSliverGrid(
+            key: ValueKey<String>('round-grid:$scopeId:${round.id}'),
             scopeId: scopeId,
             selectedGameId: selectedGameId,
             onSelectGame: onSelectGame,
@@ -1127,6 +1202,7 @@ class _RoundSliverSection extends ConsumerWidget {
 
 class _TournamentGamesSliverGrid extends StatelessWidget {
   const _TournamentGamesSliverGrid({
+    super.key,
     required this.scopeId,
     required this.selectedGameId,
     required this.onSelectGame,
@@ -1139,6 +1215,7 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
     required this.roundStartsAtById,
     required this.roundNameById,
     required this.streamingEnabled,
+    this.centerSparseRow = false,
   });
 
   final String scopeId;
@@ -1150,36 +1227,77 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
   final String tournamentTitle;
   final DesktopCardLayout layout;
   final int columns;
+  final bool centerSparseRow;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
   final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context) {
+    if (!centerSparseRow || games.isEmpty || games.length >= columns) {
+      return _buildGrid(crossAxisCount: columns);
+    }
+
+    return SliverLayoutBuilder(
+      builder: (context, constraints) {
+        final metrics = DesktopGameCardsFlow.metricsFor(layout);
+        final padding = desktopCenteredSparseRowPadding(
+          availableWidth: constraints.crossAxisExtent,
+          itemCount: games.length,
+          columns: columns,
+          spacing: metrics.spacing,
+        );
+        return SliverPadding(
+          padding: EdgeInsets.symmetric(horizontal: padding),
+          sliver: _buildGrid(
+            crossAxisCount: desktopCenteredSparseRowColumns(
+              itemCount: games.length,
+              columns: columns,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildGrid({required int crossAxisCount}) {
     final metrics = DesktopGameCardsFlow.metricsFor(layout);
     final gridDelegate =
         layout == DesktopCardLayout.grid
             ? SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
+              crossAxisCount: crossAxisCount,
               mainAxisSpacing: metrics.spacing,
               crossAxisSpacing: metrics.spacing,
               childAspectRatio: 0.95,
             )
             : SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
+              crossAxisCount: crossAxisCount,
               mainAxisSpacing: metrics.spacing,
               crossAxisSpacing: metrics.spacing,
               mainAxisExtent: metrics.tileHeight,
             );
+    final indexByGameId = <String, int>{
+      for (var index = 0; index < games.length; index++)
+        games[index].gameId: index,
+    };
     return SliverGrid(
       gridDelegate: gridDelegate,
       delegate: SliverChildBuilderDelegate(
         (context, index) {
           final game = games[index];
-          return DesktopGameKeyboardItem(
+          // WEB PARITY (.ce-cell `contain: layout paint`, components.css): a
+          // card's own clock/eval repaint must not dirty its neighbours.
+          // WEB PARITY (BoardGrid.tsx:366 `key={board.id}` + TanStack row
+          // recycling): the card's identity key lives on the delegate's
+          // own child, and `findChildIndexCallback` maps it back to its
+          // index, so a filtered/reordered round moves a card's element
+          // instead of destroying and re-inflating it (and its Realtime
+          // subscription).
+          return RepaintBoundary(
             key: ValueKey<String>(
               'tournament-lazy-card:$scopeId:${game.gameId}',
             ),
+          child: DesktopGameKeyboardItem(
             itemKey: keyForGame(game.gameId),
             gameId: game.gameId,
             onSelect: onSelectGame,
@@ -1193,16 +1311,33 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
               layout: layout,
               selected: selectedGameId == game.gameId,
               roundStartsAtById: roundStartsAtById,
-              roundNameById: roundNameById,
-              streamingEnabled: streamingEnabled,
-            ),
+                roundNameById: roundNameById,
+                streamingEnabled:
+                    streamingEnabled && !game.gameStatus.isFinished,
+                allowStockfishFallback:
+                    shouldAllowTournamentCardStockfishFallback(
+                      eventGames.length,
+                    ),
+              ),
+          ),
           );
         },
         childCount: games.length,
+        findChildIndexCallback: (Key key) {
+          if (key is! ValueKey<String>) return null;
+          final prefix = 'tournament-lazy-card:$scopeId:';
+          final value = key.value;
+          if (!value.startsWith(prefix)) return null;
+          final gameId = value.substring(prefix.length);
+          return indexByGameId[gameId];
+        },
         // Cards outside the viewport must dispose their Riverpod listeners.
         // Selection lives in DesktopGameKeyboardFocus, not in card State, so
         // keeping every historical child alive only wastes realtime/CPU work.
         addAutomaticKeepAlives: false,
+        // Each child already has an explicit RepaintBoundary above. Avoid the
+        // delegate adding a second layer around the same expensive mini-board.
+        addRepaintBoundaries: false,
       ),
     );
   }
@@ -1240,37 +1375,26 @@ class _TeamMatchHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: kPrimaryColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: kPrimaryColor.withValues(alpha: 0.35)),
-            ),
-            child: const Text(
-              'TEAM',
-              style: TextStyle(
-                color: kPrimaryColor,
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.7,
+          Expanded(
+            child: _TeamMatchSideLabel(
+              name: group.leftTeam,
+              flag: desktopTeamMatchFlagCode(
+                teamName: group.leftTeam,
+                players: group.leftPlayers,
               ),
+              fideId: group.leftPlayers
+                  .map((player) => player.fideId)
+                  .whereType<int>()
+                  .where((id) => id > 0)
+                  .firstOrNull,
+              playerName: group.leftPlayers
+                  .map((player) => player.name.trim())
+                  .where((name) => name.isNotEmpty)
+                  .firstOrNull,
+              isRight: false,
             ),
           ),
           const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              group.leftTeam,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
           _TeamScoreText(label: leftScore, color: leftColor),
           const SizedBox(width: 10),
           const Text(
@@ -1284,27 +1408,95 @@ class _TeamMatchHeader extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           _TeamScoreText(label: rightScore, color: rightColor),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              group.rightTeam,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.end,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
           const SizedBox(width: 12),
-          Text(
-            '${group.games.length} board${group.games.length == 1 ? '' : 's'}',
-            style: const TextStyle(color: kLightGreyColor, fontSize: 11),
+          Expanded(
+            child: _TeamMatchSideLabel(
+              name: group.rightTeam,
+              flag: desktopTeamMatchFlagCode(
+                teamName: group.rightTeam,
+                players: group.rightPlayers,
+              ),
+              fideId: group.rightPlayers
+                  .map((player) => player.fideId)
+                  .whereType<int>()
+                  .where((id) => id > 0)
+                  .firstOrNull,
+              playerName: group.rightPlayers
+                  .map((player) => player.name.trim())
+                  .where((name) => name.isNotEmpty)
+                  .firstOrNull,
+              isRight: true,
+            ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _TeamMatchSideLabel extends StatelessWidget {
+  const _TeamMatchSideLabel({
+    required this.name,
+    required this.flag,
+    required this.fideId,
+    required this.playerName,
+    required this.isRight,
+  });
+
+  final String name;
+  final String? flag;
+  final int? fideId;
+  final String? playerName;
+  final bool isRight;
+
+  @override
+  Widget build(BuildContext context) {
+    final federation = (flag ?? name).trim();
+    final flagWidget =
+        federation.isEmpty
+            ? const SizedBox.shrink()
+            : BackfilledFederationFlag(
+              federation: federation,
+              fideId: fideId,
+              playerName: playerName,
+              width: 20,
+              height: 14,
+              borderRadius: BorderRadius.circular(2),
+            );
+    final nameWidget = Flexible(
+      fit: FlexFit.loose,
+      child: Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        textAlign: isRight ? TextAlign.start : TextAlign.end,
+        style: const TextStyle(
+          color: kWhiteColor,
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+
+    return Row(
+      mainAxisAlignment:
+          isRight ? MainAxisAlignment.start : MainAxisAlignment.end,
+      children:
+          isRight
+              ? [
+                nameWidget,
+                if (federation.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  flagWidget,
+                ],
+              ]
+              : [
+                if (federation.isNotEmpty) ...[
+                  flagWidget,
+                  const SizedBox(width: 8),
+                ],
+                nameWidget,
+              ],
     );
   }
 }
@@ -1367,7 +1559,7 @@ Widget buildLazyTournamentGamesViewportForTesting({
         keysByGameId: batchKeys,
         child: CustomScrollView(
           controller: scrollController,
-          cacheExtent: cacheExtent,
+          scrollCacheExtent: ScrollCacheExtent.pixels(cacheExtent),
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.all(24),
@@ -1811,6 +2003,8 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
   ChessboardView viewSource = ChessboardView.tour,
   String? eventBroadcastId,
   bool includeServerEventRail = true,
+  DesktopAccessContext? accessContext,
+  EventPlayerBoardScope? eventPlayerScope,
 }) {
   final pgn = pgnHasMoves(game.pgn) ? game.pgn!.trim() : '';
   final normalizedGame = _withFreshestFen(game, pgnOverride: pgn);
@@ -1819,6 +2013,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
       routeGamesContinuation?.kind == BoardTabGamesContinuationKind.smartGames;
   final eventGamesKey =
       !includeServerEventRail ||
+              eventPlayerScope != null ||
               sourceOwnsSmartCollection ||
               viewSource == ChessboardView.favScorecard ||
               eventTourId.isEmpty
@@ -1829,6 +2024,16 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
             selectedRoundId: normalizedGame.roundId,
             selectedBoardNumber: normalizedGame.boardNr,
           );
+  if (eventPlayerScope != null) {
+    final modelsById = {for (final row in eventGames) row.gameId: row};
+    eventGames = [
+      for (final row in eventPlayerBoardGames(
+        eventPlayerScope,
+        eventGames.map(TournamentGameSummary.fromGamesTourModel),
+      ))
+        modelsById[row.id]!,
+    ];
+  }
   final eventContextGames = _boardRailContextGames(
     normalizedGame,
     eventGames,
@@ -1863,7 +2068,9 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
     gameId: normalizedGame.gameId,
     pgn: pgn,
     label:
-        '${normalizedGame.whitePlayer.name} vs ${normalizedGame.blackPlayer.name}',
+        eventPlayerScope != null
+            ? eventPlayerScope.title
+            : '${normalizedGame.whitePlayer.name} vs ${normalizedGame.blackPlayer.name}',
     whiteName: normalizedGame.whitePlayer.name,
     blackName: normalizedGame.blackPlayer.name,
     whiteFederation: normalizedGame.whitePlayer.federation,
@@ -1882,12 +2089,45 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
     eventGames: eventSummaries,
     eventGamesLoading: false,
     eventGamesKey: eventGamesKey,
+    eventPlayerScope: eventPlayerScope,
     eventGamesContinuation: eventGamesContinuation,
     routeTitle: routeTitle,
     routeGames: routeSummaries,
     routeGamesContinuation: routeGamesContinuation,
     gameListSelectedId: normalizedGame.gameId,
+    accessContext: accessContext,
   );
+}
+
+/// Provenance of a tournament-feed open, decided BEFORE any fetch: the
+/// explicit [accessContext] when the surface supplied one, otherwise the
+/// board's conservative inference from the same args shape the open builds.
+DesktopAccessContext tournamentGameAccessContext(
+  GamesTourModel game,
+  String tournamentTitle, {
+  DesktopAccessContext? accessContext,
+  BoardTabGamesContinuation? eventGamesContinuation,
+  BoardTabGamesContinuation? routeGamesContinuation,
+  ChessboardView viewSource = ChessboardView.tour,
+  String? eventBroadcastId,
+}) {
+  if (accessContext != null) {
+    // A Miniatures context is always judged by THIS game's date, never by the
+    // game it was first built for.
+    return retargetMiniatureAccessContext(
+      accessContext.copyWith(action: DesktopAction.openContent),
+      game.lastMoveTime,
+    );
+  }
+  return buildTournamentBoardTabArgs(
+    game,
+    tournamentTitle,
+    eventGamesContinuation: eventGamesContinuation,
+    routeGamesContinuation: routeGamesContinuation,
+    viewSource: viewSource,
+    eventBroadcastId: eventBroadcastId,
+    includeServerEventRail: false,
+  ).admissionContext;
 }
 
 Future<void> openTournamentGameTab(
@@ -1907,6 +2147,8 @@ Future<void> openTournamentGameTab(
   ChessboardView viewSource = ChessboardView.tour,
   String? eventBroadcastId,
   bool Function(ProviderContainer container)? canCommitOpen,
+  DesktopAccessContext? accessContext,
+  EventPlayerBoardScope? eventPlayerScope,
 }) async {
   // Capture the ProviderContainer up front. `ref` belongs to the widget
   // that owns the tap (often a LiveDesktopGameCard whose live-stream
@@ -1915,18 +2157,46 @@ Future<void> openTournamentGameTab(
   // unmounted — which used to swallow the click silently. The container
   // is held by the surrounding ProviderScope and survives card disposal.
   final container = ProviderScope.containerOf(ref.context, listen: false);
+  final admission = tournamentGameAccessContext(
+    game,
+    tournamentTitle,
+    accessContext: accessContext,
+    eventGamesContinuation: eventGamesContinuation,
+    routeGamesContinuation: routeGamesContinuation,
+    viewSource: viewSource,
+    eventBroadcastId: eventBroadcastId,
+  );
+  // Denied => the PGN hydrate below never starts. The click's window shows
+  // the decision; the source list keeps its selection.
+  if (!admitBoardSourceOpen(
+    container,
+    admission,
+    surface: 'tournament_game_open',
+  )) {
+    return;
+  }
   final gameRepo = container.read(gameRepositoryProvider);
+  if (eventPlayerScope != null) {
+    eventPlayerScope = await resolveEventPlayerBoardScope(
+      container,
+      eventPlayerScope,
+    );
+    eventBroadcastId = eventPlayerScope.eventBroadcastId;
+  }
 
   final hydratedGame = await _hydrateTournamentGameForBoardOpen(
     gameRepo: gameRepo,
     game: game,
   );
   if (canCommitOpen != null && !canCommitOpen(container)) return;
+  // Membership can move while the hydrate is in flight (logout, expiry).
+  if (!readDesktopAccess(container.read, admission).isAllowed) return;
   _seedBaseGameIfFresher(container, hydratedGame);
 
   final args = buildTournamentBoardTabArgs(
     hydratedGame,
     tournamentTitle,
+    eventPlayerScope: eventPlayerScope,
     eventGames: _replaceGameInModels(eventGames, hydratedGame),
     routeTitle: routeTitle,
     routeGames: _replaceGameInModels(routeGames, hydratedGame),
@@ -1936,6 +2206,7 @@ Future<void> openTournamentGameTab(
     roundNameById: roundNameById,
     viewSource: viewSource,
     eventBroadcastId: eventBroadcastId,
+    accessContext: admission,
   );
   container.read(chessboardViewFromProviderNew.notifier).state = viewSource;
   final tabId = openBoardGameTabFromContainer(
@@ -1945,6 +2216,7 @@ Future<void> openTournamentGameTab(
     reuseExisting: reuseExisting,
     replaceActive: replaceActive,
   );
+  if (tabId.isEmpty) return;
 
   unawaited(
     _refreshOpenedBoardTabWithLatestLiveGame(
@@ -1969,7 +2241,24 @@ Future<void> openTournamentGameWindow({
   Map<String, String> roundNameById = const <String, String>{},
   ChessboardView viewSource = ChessboardView.tour,
   String? eventBroadcastId,
+  DesktopAccessContext? accessContext,
 }) async {
+  final admission = tournamentGameAccessContext(
+    game,
+    tournamentTitle,
+    accessContext: accessContext,
+    eventGamesContinuation: eventGamesContinuation,
+    routeGamesContinuation: routeGamesContinuation,
+    viewSource: viewSource,
+    eventBroadcastId: eventBroadcastId,
+  );
+  if (!admitBoardSourceOpen(
+    container,
+    admission,
+    surface: 'tournament_game_window_open',
+  )) {
+    return;
+  }
   // Both services belong to the surrounding ProviderScope, not to the live
   // card that initiated the action. Capture them before hydration so removing
   // or filtering that card cannot invalidate the detached-window open.
@@ -1979,6 +2268,7 @@ Future<void> openTournamentGameWindow({
     gameRepo: gameRepo,
     game: game,
   );
+  if (!readDesktopAccess(container.read, admission).isAllowed) return;
   _seedBaseGameIfFresher(container, hydratedGame);
   final args = buildTournamentBoardTabArgs(
     hydratedGame,
@@ -1992,6 +2282,7 @@ Future<void> openTournamentGameWindow({
     roundNameById: roundNameById,
     viewSource: viewSource,
     eventBroadcastId: eventBroadcastId,
+    accessContext: admission,
   );
   await windowService.openBoardGameWindow(args);
 }
@@ -2277,11 +2568,22 @@ GameTabDragPayload tournamentGameDragPayload(
   Map<String, String> roundNameById = const <String, String>{},
   ChessboardView viewSource = ChessboardView.tour,
   String? eventBroadcastId,
+  DesktopAccessContext? accessContext,
 }) {
   return GameTabDragPayload(
     id: game.gameId,
     label: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
     eventBroadcastId: _normalizedOptionalId(eventBroadcastId),
+    // Admitted by the drop target and the card's new-tab gestures before the
+    // spawn runs, so a gated payload opens nothing.
+    accessContext:
+        accessContext == null
+            ? null
+            : tournamentGameAccessContext(
+              game,
+              tournamentTitle,
+              accessContext: accessContext,
+            ),
     spawn:
         (ref, {required focus}) => openTournamentGameTab(
           ref,
@@ -2297,6 +2599,8 @@ GameTabDragPayload tournamentGameDragPayload(
           focus: focus,
           viewSource: viewSource,
           eventBroadcastId: eventBroadcastId,
+          // The drop re-runs admission with the card's provenance.
+          accessContext: accessContext,
           // Drag/drop and modifier clicks are explicit new-tab gestures.
           // They must not jump to an already-open copy of the same game.
           replaceActive: false,
@@ -2340,10 +2644,20 @@ class LiveDesktopGameCard extends ConsumerWidget {
     this.allowStockfishFallback = true,
     this.federationFallbackForName,
     this.federationFallback,
+    this.accessContext,
+    this.lockedReason,
   });
 
   final GamesTourModel game;
   final String tournamentTitle;
+
+  /// Draws the card locked at rest; see [DesktopGameCard.lockedReason].
+  final String? lockedReason;
+
+  /// Where this card's game was discovered. Countrymen, player profiles and
+  /// smart collections pass their paid provenance; ordinary broadcast lists
+  /// leave it null (free).
+  final DesktopAccessContext? accessContext;
   final List<GamesTourModel> eventGames;
   final String routeTitle;
   final List<GamesTourModel> routeGames;
@@ -2388,15 +2702,18 @@ class LiveDesktopGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final batchScope = _TournamentLiveBatchScope.maybeOf(context);
     final effectiveLiveBatchKey =
         liveBatchKey ??
-        _TournamentLiveBatchScope.keyFor(context, game.gameId) ??
-        liveContextBatchKeyForGame(
-          game: game,
-          contextGames: eventGames.isNotEmpty ? eventGames : routeGames,
-          scopePrefix: 'desktop_context',
-          includeFinishedGames: true,
-        );
+        batchScope?.keysByGameId[game.gameId] ??
+        (batchScope == null
+            ? liveContextBatchKeyForGame(
+              game: game,
+              contextGames: eventGames.isNotEmpty ? eventGames : routeGames,
+              scopePrefix: 'desktop_context',
+              includeFinishedGames: true,
+            )
+            : null);
     final liveGame = watchLiveGame(
       ref,
       game,
@@ -2450,10 +2767,27 @@ class LiveDesktopGameCard extends ConsumerWidget {
         roundNameById: roundNameById,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       );
     }
 
-    return DesktopGameCard(
+    final resolvedAllowStockfishFallback =
+        streamingEnabled && allowStockfishFallback && shouldStream &&
+        !liveCardsPaused;
+    // WEB PARITY (RoundGameRow.tsx:294 `railRowEqual`, RoundGamesList.tsx:396):
+    // the card subtree is memoized on the exact fields it renders, so a
+    // Realtime batch tick that only touches another board (or a flag/clock it
+    // does not draw) no longer rebuilds this card's mini board. Without this
+    // the grid rebuilt ~520 cards/second during a Round-4 scroll.
+    return _LiveCardMemo(
+      signature: _liveCardSignature(
+        data: data,
+        selected: selected,
+        allowStockfishFallback: resolvedAllowStockfishFallback,
+        layout: layout,
+        lockedReason: lockedReason,
+      ),
+      builder: () => DesktopGameCard(
       // Re-derive every rebuild so the eval bar's FEN, the status pill,
       // and the "In play"/result label pick up Realtime deltas.
       data: data,
@@ -2486,6 +2820,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
                     roundNameById: roundNameById,
                     viewSource: viewSource,
                     eventBroadcastId: eventBroadcastId,
+                    accessContext: accessContext,
                   ),
                 );
               }
@@ -2502,16 +2837,96 @@ class LiveDesktopGameCard extends ConsumerWidget {
         roundNameById: roundNameById,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       ),
       layout: layout,
       selected: selected,
-      allowStockfishFallback:
-          streamingEnabled &&
-          allowStockfishFallback &&
-          shouldStream &&
-          !liveCardsPaused,
+      lockedReason: lockedReason,
+      allowStockfishFallback: resolvedAllowStockfishFallback,
+      ),
     );
   }
+}
+
+/// Content signature of one tournament game card - the Flutter equivalent of
+/// the web rail's `railRowEqual`: only the values the card actually renders.
+Object _liveCardSignature({
+  required GameCardData data,
+  required bool selected,
+  required bool allowStockfishFallback,
+  required DesktopCardLayout layout,
+  required String? lockedReason,
+}) {
+  return Object.hashAll(<Object?>[
+    data.id,
+    data.title,
+    data.whiteName,
+    data.blackName,
+    data.whiteFederation,
+    data.blackFederation,
+    data.whiteTitle,
+    data.blackTitle,
+    data.whiteRating,
+    data.blackRating,
+    data.whiteFideId,
+    data.blackFideId,
+    data.whiteCustomPoints,
+    data.blackCustomPoints,
+    data.fen,
+    data.lastMove,
+    data.status,
+    data.hasStarted,
+    data.openingName,
+    data.subtitle,
+    data.whiteClockSeconds,
+    data.blackClockSeconds,
+    data.whiteClockCentiseconds,
+    data.blackClockCentiseconds,
+    data.lastMoveTime,
+    data.activePlayer,
+    data.canResolveRemoteFen,
+    selected,
+    allowStockfishFallback,
+    layout,
+    lockedReason,
+  ]);
+}
+
+/// Hands back the SAME widget instance while [signature] is unchanged, so
+/// `Element.updateChild` short-circuits and the card's mini board, players,
+/// clocks and eval bar are not rebuilt for an unrelated live tick.
+class _LiveCardMemo extends StatefulWidget {
+  const _LiveCardMemo({required this.signature, required this.builder});
+
+  final Object signature;
+  final Widget Function() builder;
+
+  @override
+  State<_LiveCardMemo> createState() => _LiveCardMemoState();
+}
+
+class _LiveCardMemoState extends State<_LiveCardMemo> {
+  Object? _signature;
+  Widget? _child;
+
+  @override
+  void initState() {
+    super.initState();
+    _signature = widget.signature;
+    _child = widget.builder();
+  }
+
+  @override
+  void didUpdateWidget(_LiveCardMemo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(_signature, widget.signature)) {
+      _signature = widget.signature;
+      _child = widget.builder();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _child!;
 }
 
 class _TournamentLiveBatchScope extends InheritedWidget {
@@ -2522,11 +2937,8 @@ class _TournamentLiveBatchScope extends InheritedWidget {
 
   final Map<String, LiveGamesBatchKey> keysByGameId;
 
-  static LiveGamesBatchKey? keyFor(BuildContext context, String gameId) {
-    return context
-        .dependOnInheritedWidgetOfExactType<_TournamentLiveBatchScope>()
-        ?.keysByGameId[gameId];
-  }
+  static _TournamentLiveBatchScope? maybeOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_TournamentLiveBatchScope>();
 
   @override
   bool updateShouldNotify(_TournamentLiveBatchScope oldWidget) {
@@ -2540,6 +2952,8 @@ enum _LiveGameContextAction {
   openNewWindow,
   openBackground,
   saveToLibrary,
+  toggleLike,
+  editLikeTags,
   share,
   copyShareLink,
   whiteProfile,
@@ -2562,9 +2976,11 @@ Future<void> _showLiveGameContextMenu({
   required Map<String, String> roundNameById,
   required ChessboardView viewSource,
   required String? eventBroadcastId,
+  DesktopAccessContext? accessContext,
 }) async {
   final shareUrl = buildDesktopGameShareUrl(game: game);
   final canSaveToLibrary = canSaveDesktopGameToLibrary(game);
+  final isLiked = ref.read(isGameLikedProvider(game.likeId));
   final picked = await showDesktopContextMenu<_LiveGameContextAction>(
     context: context,
     position: position,
@@ -2599,6 +3015,19 @@ Future<void> _showLiveGameContextMenu({
         ),
       ],
       const DesktopContextMenuDivider(),
+      DesktopContextMenuItem(
+        value: _LiveGameContextAction.toggleLike,
+        icon:
+            isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+        label: isLiked ? 'Remove from My Likes' : 'Like game',
+      ),
+      if (isLiked)
+        const DesktopContextMenuItem(
+          value: _LiveGameContextAction.editLikeTags,
+          icon: Icons.sell_outlined,
+          label: 'Edit like tags',
+        ),
+      const DesktopContextMenuDivider(),
       const DesktopContextMenuItem(
         value: _LiveGameContextAction.share,
         icon: Icons.share_rounded,
@@ -2631,6 +3060,37 @@ Future<void> _showLiveGameContextMenu({
   );
   if (picked == null || !context.mounted) return;
 
+  // Opens admit themselves inside openTournamentGameTab/Window. Save, share,
+  // share-link and liking are content actions on the game's provenance; the
+  // saved game quota itself is decided by the save flow.
+  final contentAction = switch (picked) {
+    _LiveGameContextAction.saveToLibrary => DesktopAction.save,
+    _LiveGameContextAction.share ||
+    _LiveGameContextAction.copyShareLink => DesktopAction.share,
+    // Liking stores the full game in My Likes: a copy of the content. Removing
+    // a like is never gated.
+    _LiveGameContextAction.toggleLike when !isLiked => DesktopAction.copy,
+    _ => null,
+  };
+  if (contentAction != null) {
+    final provenance = tournamentGameAccessContext(
+      game,
+      tournamentTitle,
+      accessContext: accessContext,
+      eventGamesContinuation: eventGamesContinuation,
+      routeGamesContinuation: routeGamesContinuation,
+      viewSource: viewSource,
+      eventBroadcastId: eventBroadcastId,
+    ).copyWith(action: contentAction, quota: DesktopQuota.none, additions: 0);
+    if (!admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      provenance,
+      surface: 'tournament_game_context_menu',
+    )) {
+      return;
+    }
+  }
+
   switch (picked) {
     case _LiveGameContextAction.open:
       await openTournamentGameTab(
@@ -2646,6 +3106,7 @@ Future<void> _showLiveGameContextMenu({
         roundNameById: roundNameById,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       );
     case _LiveGameContextAction.openNewTab:
       await openTournamentGameTab(
@@ -2663,6 +3124,7 @@ Future<void> _showLiveGameContextMenu({
         replaceActive: false,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       );
     case _LiveGameContextAction.openNewWindow:
       final container = ProviderScope.containerOf(context, listen: false);
@@ -2679,6 +3141,7 @@ Future<void> _showLiveGameContextMenu({
         roundNameById: roundNameById,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       );
     case _LiveGameContextAction.openBackground:
       await openTournamentGameTab(
@@ -2696,6 +3159,7 @@ Future<void> _showLiveGameContextMenu({
         replaceActive: false,
         viewSource: viewSource,
         eventBroadcastId: eventBroadcastId,
+        accessContext: accessContext,
       );
     case _LiveGameContextAction.saveToLibrary:
       await saveDesktopGameToLibrary(
@@ -2704,6 +3168,10 @@ Future<void> _showLiveGameContextMenu({
         game: game,
         sourceLabel: tournamentTitle,
       );
+    case _LiveGameContextAction.toggleLike:
+      await toggleDesktopGameLike(context: context, ref: ref, game: game);
+    case _LiveGameContextAction.editLikeTags:
+      await showLikeTagsDialog(context, game.likeId);
     case _LiveGameContextAction.share:
       await showDesktopGameShareDialog(context: context, ref: ref, game: game);
     case _LiveGameContextAction.copyShareLink:

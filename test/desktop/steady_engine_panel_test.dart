@@ -105,5 +105,5 @@ class _ManualEval extends BoardEvalNotifier {
 class _Settings extends EngineSettingsNotifierNew {
   @override
   Future<EngineSettings> build() async =>
-      const EngineSettings(showEngineAnalysis: true, autoGameAnalysis: false);
+      const EngineSettings(showEngineAnalysis: true);
 }

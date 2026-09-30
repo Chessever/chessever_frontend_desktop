@@ -1,14 +1,15 @@
+import 'package:chessever/desktop/services/local_chess_database_open_guard.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_filter_adapter.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
-import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
@@ -47,6 +48,7 @@ GamebasePositionGamesQuery gamebasePositionGamesQueryWithPage(
     pageNumber: pageNumber,
     pageSize: query.pageSize,
     notationPlies: query.notationPlies,
+    useFenEndpoint: query.useFenEndpoint,
   );
 }
 
@@ -66,19 +68,28 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
     if (localOpeningTreeIndex.gamesByFen.isEmpty &&
         localDatabasePath != null &&
         localDatabasePath.isNotEmpty) {
-      final localResponse = await ref
-          .read(localChessDatabaseRepositoryProvider)
-          .localPositionGamesResponse(
-            databasePath: localDatabasePath,
-            fen: query.fen,
-            moves: query.moves,
-            uci: query.uci,
-            filters: localCriteria,
-            sortBy: query.sortBy,
-            sortDirection: query.sortDirection,
-            pageNumber: query.pageNumber,
-            pageSize: query.pageSize,
-          );
+      final GamebaseSearchQueryResponse? localResponse;
+      try {
+        localResponse = await ref
+            .read(localChessDatabaseRepositoryProvider)
+            .localPositionGamesResponse(
+              databasePath: localDatabasePath,
+              fen: query.fen,
+              moves: query.moves,
+              uci: query.uci,
+              filters: localCriteria,
+              sortBy: query.sortBy,
+              sortDirection: query.sortDirection,
+              pageNumber: query.pageNumber,
+              pageSize: query.pageSize,
+            );
+      } on LocalChessDatabaseUnavailableException catch (error) {
+        // The tree store is generated: name the user's own database instead of
+        // `<name>.pgn.cetg`, keep the failure retryable (a build may still be
+        // publishing the store) and let the panel recover in place rather than
+        // dead-ending on a raw native string.
+        throw error.withLabel(p.basename(localDatabasePath));
+      }
       if (localResponse != null) {
         return DesktopPositionGamesPageResult(
           response: localResponse,
@@ -307,9 +318,9 @@ Future<GamebaseSearchQueryResponse> _fetchExactFenPositionGames(
   WidgetRef ref,
   GamebasePositionGamesQuery query,
 ) {
-  return ref
-      .read(gamebaseRepositoryProvider)
-      .getFenPositionGames(
+  return ref.read(
+    positionGamesProvider(
+      GamebasePositionGamesQuery(
         fen: query.fen,
         uci: query.uci,
         timeControl: query.timeControl,
@@ -326,7 +337,10 @@ Future<GamebaseSearchQueryResponse> _fetchExactFenPositionGames(
         pageNumber: query.pageNumber,
         pageSize: query.pageSize,
         notationPlies: query.notationPlies,
-      );
+        useFenEndpoint: true,
+      ),
+    ).future,
+  );
 }
 
 TournamentGameSummary gamebasePositionGameSummaryFromRow(

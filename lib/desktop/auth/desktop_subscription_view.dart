@@ -5,9 +5,11 @@ import 'package:forui/forui.dart' as forui;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/desktop/auth/desktop_guest_upgrade_dialog.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
+import 'package:chessever/desktop/services/billing/desktop_trial_eligibility_provider.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
@@ -18,7 +20,7 @@ import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// The desktop subscription body, reused by both the onboarding "Subscribe"
-/// step and the standalone [DesktopPremiumRequiredScreen].
+/// step and the standalone paywall surfaces.
 ///
 /// Listens to [subscriptionProvider] and, the moment the user becomes
 /// premium (either via deep-link from Stripe or the polled refresh from
@@ -50,7 +52,7 @@ class DesktopSubscriptionView extends ConsumerStatefulWidget {
   final String? reason;
 
   /// Optional widget rendered below the "I already subscribed" refresh
-  /// button. Used by [DesktopPremiumRequiredScreen] to host a sign-out
+  /// button. Used by paywall surfaces to host a sign-out
   /// action without re-rendering a top-bar.
   final Widget? trailing;
 
@@ -68,6 +70,11 @@ class _DesktopSubscriptionViewState
   bool _completed = false;
   String? _error;
   String? _notice;
+
+  /// A created Checkout Session held back because the trial it was sold
+  /// with turned out not to be granted. Same shape as the website's
+  /// pending checkout: declining just never opens it.
+  DesktopCheckoutSession? _pendingTrialCheckout;
   StreamSubscription<EntitlementSnapshot>? _checkoutSub;
 
   @override
@@ -80,6 +87,9 @@ class _DesktopSubscriptionViewState
   Widget build(BuildContext context) {
     final pricingState = ref.watch(desktopPricingProvider);
     final pricing = pricingState.valueOrNull?.pricing;
+    final showsTrial = DesktopPricing.offersTrial(
+      effectiveTrialEligibility(ref),
+    );
     final subscriptionError = ref.watch(
       subscriptionProvider.select((state) => state.error),
     );
@@ -109,8 +119,21 @@ class _DesktopSubscriptionViewState
           const SizedBox(height: 16),
           if (pricing == null)
             const _PriceLinePlaceholder()
-          else
+          else ...[
             _PriceLine(pricing: pricing, interval: _interval),
+            const SizedBox(height: 8),
+            Text(
+              DesktopPricing.planSubtext(
+                pricing: pricing,
+                interval: _interval,
+                showsTrial: showsTrial,
+              ),
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.6),
+                fontSize: 13,
+              ),
+            ),
+          ],
           if (_waitingForCheckout) ...[
             const SizedBox(height: 14),
             _CheckoutStatus(),
@@ -159,6 +182,23 @@ class _DesktopSubscriptionViewState
               ),
             ],
           ),
+          const SizedBox(height: 10),
+          Text(
+            DesktopPricing.premiumAssuranceLabel(showsTrial: showsTrial),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.55),
+              fontSize: 12,
+            ),
+          ),
+          if (_pendingTrialCheckout != null) ...[
+            const SizedBox(height: 12),
+            _PendingTrialConfirm(
+              busy: _busy,
+              onConfirm: _confirmPendingTrialCheckout,
+              onDismiss: () => setState(() => _pendingTrialCheckout = null),
+            ),
+          ],
           const SizedBox(height: 12),
           Center(
             child: DesktopPaywallButton(
@@ -189,6 +229,10 @@ class _DesktopSubscriptionViewState
   }
 
   Future<void> _continueInApp(int tier) async {
+    // Purchasing needs a permanent account: a guest signs in first, then the
+    // checkout they asked for continues.
+    if (!await ensureDesktopPermanentAccountForPurchase(context)) return;
+    if (!mounted) return;
     AnalyticsService.instance.trackEventDetached(
       'Desktop Checkout Started',
       properties: {
@@ -202,54 +246,32 @@ class _DesktopSubscriptionViewState
       _waitingForCheckout = false;
       _error = null;
       _notice = null;
+      _pendingTrialCheckout = null;
     });
     try {
-      await _checkoutSub?.cancel();
-      _checkoutSub = DesktopBillingService.instance
-          .startCheckout(tier: tier, interval: _interval)
-          .listen(
-            (snapshot) {
-              if (!mounted) return;
-              if (!snapshot.isActive) return;
-              unawaited(
-                DesktopSubscriptionNotifier.current?.refreshFromBackend(
-                  forceSessionRefresh: true,
-                ),
-              );
-              AnalyticsService.instance.trackEventDetached(
-                'Desktop Checkout Completed',
-                properties: {
-                  'checkout_surface': 'stripe_desktop',
-                  'interval': _interval,
-                  'tier': tier,
-                },
-              );
-              _completeOnce();
-            },
-            onError: (Object e, StackTrace st) {
-              ErrorReporter.report(e, stackTrace: st, tag: 'billing.checkout');
-              AnalyticsService.instance.trackEventDetached(
-                'Desktop Checkout Failed',
-                properties: {
-                  'checkout_surface': 'stripe_desktop',
-                  'interval': _interval,
-                  'tier': tier,
-                  'stage': 'entitlement_watch',
-                },
-              );
-              if (mounted) {
-                setState(() {
-                  _waitingForCheckout = false;
-                  _error = ErrorReporter.genericUserMessage;
-                });
-              }
-            },
-            onDone: () {
-              if (mounted && !_completed) {
-                setState(() => _waitingForCheckout = false);
-              }
-            },
-          );
+      // Whether THIS purchase was sold as a trial, read before the round trip.
+      final soldAsTrial = DesktopPricing.offersTrial(
+        ref.read(desktopTrialEligibilityOverrideProvider) ??
+            ref.read(desktopTrialEligibilityProvider).valueOrNull,
+      );
+      final created = await DesktopBillingService.instance
+          .createCheckoutSession(tier: tier, interval: _interval);
+      // We promised a trial and Stripe is not giving one: stop and let the
+      // user choose, the same stop chessever.com/premium makes. The price
+      // line above re-renders without the trial first.
+      if (soldAsTrial && created.trialDays == 0) {
+        ref.read(desktopTrialEligibilityOverrideProvider.notifier).state =
+            false;
+        if (mounted) {
+          setState(() {
+            _busy = false;
+            _pendingTrialCheckout = created;
+          });
+        }
+        return;
+      }
+      await DesktopBillingService.instance.launchCheckoutUrl(created.url);
+      await _watchInAppCheckout(tier: tier, authToken: created.authToken);
       if (mounted) setState(() => _waitingForCheckout = true);
     } catch (e, st) {
       ErrorReporter.report(e, stackTrace: st, tag: 'billing.checkout_start');
@@ -270,7 +292,96 @@ class _DesktopSubscriptionViewState
     }
   }
 
+  Future<void> _confirmPendingTrialCheckout() async {
+    final pending = _pendingTrialCheckout;
+    if (pending == null || _busy || _waitingForCheckout) return;
+    final pricing = ref.read(desktopPricingProvider).valueOrNull?.pricing;
+    if (pricing == null) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await DesktopBillingService.instance.launchCheckoutUrl(pending.url);
+      await _watchInAppCheckout(
+        tier: pricing.tier,
+        authToken: pending.authToken,
+      );
+      if (mounted) {
+        setState(() {
+          _waitingForCheckout = true;
+          _pendingTrialCheckout = null;
+        });
+      }
+    } catch (e, st) {
+      ErrorReporter.report(e, stackTrace: st, tag: 'billing.checkout_start');
+      if (mounted) {
+        setState(() => _error = ErrorReporter.genericUserMessage);
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Watches the entitlement after the browser was opened for an in-app
+  /// checkout. Shared by Continue and the withheld-trial confirm.
+  Future<void> _watchInAppCheckout({
+    required int tier,
+    required String authToken,
+  }) async {
+    await _checkoutSub?.cancel();
+    _checkoutSub = DesktopBillingService.instance
+        .pollAfterCheckout(authToken)
+        .listen(
+          (snapshot) {
+            if (!mounted) return;
+            if (!snapshot.isActive) return;
+            unawaited(
+              DesktopSubscriptionNotifier.current?.refreshFromBackend(
+                forceSessionRefresh: true,
+              ),
+            );
+            AnalyticsService.instance.trackEventDetached(
+              'Desktop Checkout Completed',
+              properties: {
+                'checkout_surface': 'stripe_desktop',
+                'interval': _interval,
+                'tier': tier,
+              },
+            );
+            _completeOnce();
+          },
+          onError: (Object e, StackTrace st) {
+            ErrorReporter.report(e, stackTrace: st, tag: 'billing.checkout');
+            AnalyticsService.instance.trackEventDetached(
+              'Desktop Checkout Failed',
+              properties: {
+                'checkout_surface': 'stripe_desktop',
+                'interval': _interval,
+                'tier': tier,
+                'stage': 'entitlement_watch',
+              },
+            );
+            if (mounted) {
+              setState(() {
+                _waitingForCheckout = false;
+                _error = ErrorReporter.genericUserMessage;
+              });
+            }
+          },
+          onDone: () {
+            if (mounted && !_completed) {
+              setState(() => _waitingForCheckout = false);
+            }
+          },
+        );
+  }
+
   Future<void> _openWebsite() async {
+    // Purchasing needs a permanent account: a guest signs in first, then the
+    // checkout they asked for continues.
+    if (!await ensureDesktopPermanentAccountForPurchase(context)) return;
+    if (!mounted) return;
     AnalyticsService.instance.trackEventDetached(
       'Desktop Web Checkout Opened',
       properties: {'interval': _interval},
@@ -421,6 +532,81 @@ class _NoticeBanner extends StatelessWidget {
       child: Text(
         message,
         style: const TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
+      ),
+    );
+  }
+}
+
+/// The withheld-trial stop: same copy as chessever.com/premium's pending
+/// checkout. The price line above has already re-rendered without the
+/// trial, so this explains a change the user can see.
+class _PendingTrialConfirm extends StatelessWidget {
+  const _PendingTrialConfirm({
+    required this.busy,
+    required this.onConfirm,
+    required this.onDismiss,
+  });
+
+  final bool busy;
+  final VoidCallback onConfirm;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kPrimaryColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kPrimaryColor.withValues(alpha: 0.26)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            "You've already used your free trial",
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Continuing starts your subscription today at the price shown above.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: kWhiteColor70,
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: DesktopPaywallButton(
+                  label: busy ? 'Opening Stripe...' : 'Continue to checkout',
+                  tone: DesktopPaywallButtonTone.primary,
+                  fillWidth: true,
+                  loading: busy,
+                  onPress: busy ? null : onConfirm,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DesktopPaywallButton(
+                  label: 'Not now',
+                  tone: DesktopPaywallButtonTone.ghost,
+                  fillWidth: true,
+                  onPress: busy ? null : onDismiss,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

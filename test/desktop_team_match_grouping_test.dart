@@ -2,13 +2,13 @@ import 'package:chessever/desktop/widgets/desktop_team_match_grouping.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-PlayerCard _player(String name, String team) {
+PlayerCard _player(String name, String team, {String country = 'USA'}) {
   return PlayerCard(
     name: name,
-    federation: 'USA',
+    federation: country,
     title: 'GM',
     rating: 2700,
-    countryCode: 'USA',
+    countryCode: country,
     team: team,
   );
 }
@@ -19,11 +19,13 @@ GamesTourModel _game({
   required String blackTeam,
   required GameStatus status,
   int board = 1,
+  String whiteCountry = 'USA',
+  String blackCountry = 'USA',
 }) {
   return GamesTourModel(
     gameId: id,
-    whitePlayer: _player('White $id', whiteTeam),
-    blackPlayer: _player('Black $id', blackTeam),
+    whitePlayer: _player('White $id', whiteTeam, country: whiteCountry),
+    blackPlayer: _player('Black $id', blackTeam, country: blackCountry),
     whiteTimeDisplay: '--:--',
     blackTimeDisplay: '--:--',
     whiteClockCentiseconds: 0,
@@ -106,5 +108,87 @@ void main() {
     expect(groups.first.score.right, 1.0);
     expect(groups.last.leftTeam, 'Knights');
     expect(groups.last.rightTeam, 'Bishops');
+  });
+
+  test('resolves team flags from player country codes', () {
+    final groups = buildDesktopTeamMatchGroups([
+      _game(
+        id: 'board-1',
+        whiteTeam: 'Jamaica',
+        blackTeam: 'Uzbekistan',
+        whiteCountry: 'JM',
+        blackCountry: 'UZ',
+        status: GameStatus.ongoing,
+      ),
+      _game(
+        id: 'board-2',
+        whiteTeam: 'Uzbekistan',
+        blackTeam: 'Jamaica',
+        whiteCountry: 'UZ',
+        blackCountry: 'JM',
+        status: GameStatus.ongoing,
+        board: 2,
+      ),
+    ]);
+
+    expect(groups, hasLength(1));
+    expect(
+      desktopTeamMatchFlagCode(
+        teamName: groups.single.leftTeam,
+        players: groups.single.leftPlayers,
+      ),
+      'JM',
+    );
+    expect(
+      desktopTeamMatchFlagCode(
+        teamName: groups.single.rightTeam,
+        players: groups.single.rightPlayers,
+      ),
+      'UZ',
+    );
+  });
+
+  test('falls back to the team name when players have no country', () {
+    expect(
+      desktopTeamMatchFlagCode(
+        teamName: 'United States of America',
+        players: [
+          PlayerCard(
+            name: 'Player',
+            federation: '',
+            title: '',
+            rating: 0,
+            countryCode: '',
+            team: 'United States of America',
+          ),
+        ],
+      ),
+      'United States of America',
+    );
+  });
+
+  test('centers a short team-match board row in the Games grid', () {
+    expect(
+      desktopCenteredSparseRowPadding(
+        availableWidth: 1000,
+        itemCount: 4,
+        columns: 5,
+        spacing: 10,
+      ),
+      101,
+    );
+    expect(
+      desktopCenteredSparseRowColumns(itemCount: 4, columns: 5),
+      4,
+    );
+    expect(
+      desktopCenteredSparseRowPadding(
+        availableWidth: 1000,
+        itemCount: 5,
+        columns: 5,
+        spacing: 10,
+      ),
+      0,
+    );
   });
 }

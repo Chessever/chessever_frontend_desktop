@@ -6,7 +6,10 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'package:chessever/chat/botvinnik_provider.dart';
+import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
+import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 import 'package:chessever/desktop/shell/desktop_main_routes.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
@@ -123,6 +126,7 @@ class DesktopSidebar extends StatelessWidget {
                       screenshotKey: feedbackScreenshotKey,
                     ),
               ),
+              _BotvinnikSidebarItem(expanded: expanded),
             ],
           ],
           const Spacer(),
@@ -548,6 +552,34 @@ const _NavEntry _feedbackEntry = _NavEntry(
   icon: Icons.feedback_outlined,
 );
 
+const _NavEntry _botvinnikEntry = _NavEntry(
+  label: 'Botvinnik',
+  icon: Icons.forum_outlined,
+);
+
+/// Toggles the shell's Botvinnik dock. Not a tab route, so it takes no
+/// Cmd/Ctrl+number shortcut and never reshuffles the route list.
+class _BotvinnikSidebarItem extends ConsumerWidget {
+  const _BotvinnikSidebarItem({required this.expanded});
+
+  final bool expanded;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final enabled =
+        ChatApi.buildEnabled &&
+        (ref.watch(botvinnikEnabledProvider).valueOrNull ?? true);
+    if (!enabled) return const SizedBox.shrink();
+    final open = ref.watch(botvinnikDockProvider.select((dock) => dock.open));
+    return _SidebarItem(
+      entry: _botvinnikEntry,
+      expanded: expanded,
+      selected: open,
+      onTap: ({required bool inNewTab}) => toggleBotvinnikDock(ref),
+    );
+  }
+}
+
 const _NavEntry _howToUseEntry = _NavEntry(
   label: 'How to use',
   icon: Icons.help_outline,
@@ -580,6 +612,7 @@ List<String> debugDesktopSidebarLabelsInOrder() {
       labels.add(_searchEntry.label);
       labels.add(_howToUseEntry.label);
       labels.add(_feedbackEntry.label);
+      labels.add(_botvinnikEntry.label);
     }
   }
   labels.add(_settingsEntry.label);

@@ -157,6 +157,10 @@ class GamesTourModel {
   final int? avgElo; // New: average ELO of the tournament
   final bool isOnline;
 
+  /// The original game a saved-analysis row was made from. Null for live
+  /// sources, whose [gameId] already is the original.
+  final String? sourceGameId;
+
   GamesTourModel({
     required this.gameId,
     this.source = GameSource.supabase,
@@ -190,7 +194,16 @@ class GamesTourModel {
     this.timeControlText,
     this.avgElo,
     this.isOnline = false,
+    this.sourceGameId,
   });
+
+  /// Identity used by the like system. Prefers [sourceGameId] (the original
+  /// game) and falls back to [gameId] for live sources, so a game liked in one
+  /// place matches the same game opened anywhere else.
+  String get likeId {
+    final s = sourceGameId;
+    return (s != null && s.isNotEmpty) ? s : gameId;
+  }
 
   /// Calendar day the game belongs to, for UI bucketing.
   ///
@@ -241,6 +254,7 @@ class GamesTourModel {
     String? timeControlText,
     int? avgElo,
     bool? isOnline,
+    String? sourceGameId,
   }) {
     return GamesTourModel(
       gameId: gameId ?? this.gameId,
@@ -284,6 +298,7 @@ class GamesTourModel {
       timeControlText: timeControlText ?? this.timeControlText,
       avgElo: avgElo ?? this.avgElo,
       isOnline: isOnline ?? this.isOnline,
+      sourceGameId: sourceGameId ?? this.sourceGameId,
     );
   }
 
@@ -637,7 +652,8 @@ class GamesTourModel {
         other.openingName == openingName &&
         other.timeControl == timeControl &&
         other.avgElo == avgElo &&
-        other.isOnline == isOnline;
+        other.isOnline == isOnline &&
+        other.sourceGameId == sourceGameId;
   }
 
   @override
@@ -672,6 +688,7 @@ class GamesTourModel {
       timeControl,
       avgElo,
       isOnline,
+      sourceGameId,
     ]);
   }
 }

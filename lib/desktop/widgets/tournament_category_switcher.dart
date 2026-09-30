@@ -53,7 +53,7 @@ class _TournamentCategorySwitcherState
       (m) => m.tour.id == selectedId,
       orElse: () => tourData.tours.first,
     );
-    final label = _categoryLabel(selected.tour.name);
+    final label = tournamentCategoryLabel(selected.tour.name);
 
     return FTheme(
       data: FThemes.zinc.dark,
@@ -350,7 +350,7 @@ class _CategoryRowState extends State<_CategoryRow> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        _categoryLabel(tour.name),
+                        tournamentCategoryLabel(tour.name),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -406,7 +406,7 @@ class _CategoryRowState extends State<_CategoryRow> {
 /// Strip the parent broadcast title so the chip reads "Open" / "Women" /
 /// "U18", not the full `Tournament | Open`. Mobile parses with regex on
 /// `|` and `:` separators (see `category_dropdown.dart`).
-String _categoryLabel(String tourName) {
+String tournamentCategoryLabel(String tourName) {
   final name = tourName.trim();
   if (name.isEmpty) return 'Category';
   for (final sep in const [' | ', ' : ', ' - ', ' — ']) {

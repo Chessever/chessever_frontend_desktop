@@ -348,51 +348,35 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     }
   }
 
-  // Future rounds: Lichess publishes pairings for upcoming rounds ahead of
-  // time. Those games never pass isEventBoardGameVisible (no played position),
-  // so their rounds would be dropped entirely. Surface them as pairing-only
-  // rounds instead — but only with resolved player names ("?" placeholder
-  // pairings stay hidden) and never for multi-stage knockouts, whose rounds
-  // are synthetic stage ids.
+  // Named pairings never pass isEventBoardGameVisible until a move exists,
+  // so a live Olympiad-sized round would otherwise keep only the boards that
+  // have already started. Merge resolved names into every open round — and
+  // mark the round pairing-only only when it still has no played boards.
+  // "?" placeholders stay hidden. Multi-stage knockouts keep synthetic ids.
   final upcomingPairingRoundIds = <String>{};
   if (!isMultiStageKnockout) {
+    final defaultRoundId = rounds.firstOrNull?.id;
     for (final round in rounds) {
-      if (gamesByRound[round.id]?.isNotEmpty ?? false) continue;
-      // Rounds that are conclusively over (completed) are excluded; a round
-      // that flips to ongoing at starts_at while its broadcast lags keeps
-      // showing its pairings instead of vanishing until the first moves.
-      if (round.roundStatus == RoundStatus.completed) continue;
-
-      final pairings =
-          allGamesScreenModel
-              .where(
-                (game) =>
-                    game.roundId == round.id &&
-                    (isKnockoutTournament ||
-                        _shouldIncludeGame(displayMode, game)) &&
-                    _hasResolvedPlayer(game.whitePlayer) &&
-                    _hasResolvedPlayer(game.blackPlayer),
-              )
-              .toList()
-            ..sort((a, b) {
-              final aBoard = a.boardNr;
-              final bBoard = b.boardNr;
-              if (aBoard != null && bBoard != null) {
-                return aBoard.compareTo(bBoard);
-              }
-              if (aBoard != null) return -1;
-              if (bBoard != null) return 1;
-              return a.gameId.compareTo(b.gameId);
-            });
-      if (pairings.isEmpty) continue;
-
       ensureRoundEntry(round.id);
-      for (final game in pairings) {
+      final merge = resolveNamedPairingsForRound(
+        roundStatus: round.roundStatus,
+        allGames: allGamesScreenModel,
+        roundId: round.id,
+        knownRoundIds: roundIds,
+        defaultRoundId: defaultRoundId,
+        alreadyVisibleGameIds: seenGameIdsPerRound[round.id]!,
+        includeGame:
+            (game) =>
+                isKnockoutTournament || _shouldIncludeGame(displayMode, game),
+      );
+      for (final game in merge.gamesToAdd) {
         if (seenGameIdsPerRound[round.id]!.add(game.gameId)) {
           gamesByRound[round.id]!.add(game);
         }
       }
-      upcomingPairingRoundIds.add(round.id);
+      if (merge.markAsPairingOnly) {
+        upcomingPairingRoundIds.add(round.id);
+      }
     }
   }
 
@@ -568,13 +552,100 @@ bool isEventBoardGameVisible(GamesTourModel game) {
     return false;
   }
 
+  // A decided result is enough proof the game is real, even with no moves
+  // (no-show / forfeit / defaulted boards).
+  if (game.gameStatus.isFinished) {
+    return true;
+  }
+
   if (_hasPlayedPosition(game)) {
     return true;
   }
 
   // Do not turn unstarted pairings/placeholders into playable event boards.
-  // Pairing-only rounds are surfaced separately via upcomingPairingRoundIds.
+  // Open rounds merge those pairings via [resolveNamedPairingsForRound].
   return false;
+}
+
+/// Named pairings that belong on an open round even when some boards have
+/// already started. Without this, one first move hides the rest of a live
+/// team field (Olympiad, league matches).
+@visibleForTesting
+NamedPairingMerge resolveNamedPairingsForRound({
+  required RoundStatus roundStatus,
+  required Iterable<GamesTourModel> allGames,
+  required String roundId,
+  required Set<String> knownRoundIds,
+  required String? defaultRoundId,
+  required Set<String> alreadyVisibleGameIds,
+  required bool Function(GamesTourModel game) includeGame,
+}) {
+  if (roundStatus == RoundStatus.completed) {
+    return const NamedPairingMerge(gamesToAdd: [], markAsPairingOnly: false);
+  }
+
+  final hadVisiblePlayedGames = alreadyVisibleGameIds.isNotEmpty;
+  final pairings =
+      allGames
+          .where(
+            (game) =>
+                pairingBelongsToRound(
+                  game: game,
+                  roundId: roundId,
+                  knownRoundIds: knownRoundIds,
+                  defaultRoundId: defaultRoundId,
+                ) &&
+                includeGame(game) &&
+                _hasResolvedPlayer(game.whitePlayer) &&
+                _hasResolvedPlayer(game.blackPlayer),
+          )
+          .toList(growable: false)
+        ..sort(_comparePairingsByBoardThenId);
+
+  final gamesToAdd = [
+    for (final game in pairings)
+      if (!alreadyVisibleGameIds.contains(game.gameId)) game,
+  ];
+
+  return NamedPairingMerge(
+    gamesToAdd: gamesToAdd,
+    markAsPairingOnly: !hadVisiblePlayedGames && gamesToAdd.isNotEmpty,
+  );
+}
+
+@visibleForTesting
+bool pairingBelongsToRound({
+  required GamesTourModel game,
+  required String roundId,
+  required Set<String> knownRoundIds,
+  required String? defaultRoundId,
+}) {
+  if (game.roundId == roundId) return true;
+  return defaultRoundId != null &&
+      roundId == defaultRoundId &&
+      !knownRoundIds.contains(game.roundId);
+}
+
+int _comparePairingsByBoardThenId(GamesTourModel left, GamesTourModel right) {
+  final leftBoard = left.boardNr;
+  final rightBoard = right.boardNr;
+  if (leftBoard != null && rightBoard != null) {
+    return leftBoard.compareTo(rightBoard);
+  }
+  if (leftBoard != null) return -1;
+  if (rightBoard != null) return 1;
+  return left.gameId.compareTo(right.gameId);
+}
+
+@immutable
+class NamedPairingMerge {
+  const NamedPairingMerge({
+    required this.gamesToAdd,
+    required this.markAsPairingOnly,
+  });
+
+  final List<GamesTourModel> gamesToAdd;
+  final bool markAsPairingOnly;
 }
 
 bool _hasResolvedPlayer(PlayerCard player) {

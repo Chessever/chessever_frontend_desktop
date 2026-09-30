@@ -1,11 +1,19 @@
 import 'dart:async';
+import '../state/local_board_games.dart';
+import 'package:forui/forui.dart';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import '../state/event_player_board_games.dart';
 import 'dart:math' as math;
 
 import 'package:chessever/desktop/services/retained_local_pgn.dart';
 import 'package:chessever/desktop/widgets/desktop_game_points.dart';
 import 'package:chessever/utils/awarded_points.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -14,6 +22,10 @@ import 'package:motor/motor.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_pgn_source_recovery.dart';
+import 'package:chessever/desktop/services/miniatures_access.dart';
+import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
@@ -30,8 +42,11 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/widgets/desktop_team_standings_view.dart';
 import 'package:chessever/desktop/widgets/tournament_standings_view.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:chessever/desktop/widgets/table_display_value.dart';
+import 'package:chessever/desktop/widgets/database_game_label.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
@@ -67,6 +82,20 @@ final _eventRoundExpandedProvider = StateProvider.autoDispose
 final _eventRailExpandedRoundsProvider = StateProvider.autoDispose
     .family<Set<String>?, String>((ref, scope) => null);
 
+/// Matchup sections collapsed inside an expanded event-rail round.
+///
+/// The scope includes the Board tab and event identity, so two open broadcasts
+/// keep independent disclosure state. [collapseNewMatchups] is the important
+/// default for matchup rows that arrive after the user presses collapse-all;
+/// [exceptions] holds individual sections toggled away from that default.
+typedef EventRailMatchupExpansionState =
+    ({bool collapseNewMatchups, Set<String> exceptions});
+
+final _eventRailMatchupExpansionProvider = StateProvider.autoDispose.family<
+  EventRailMatchupExpansionState,
+  String
+>((ref, scope) => (collapseNewMatchups: false, exceptions: const <String>{}));
+
 Set<String> _resolveExpandedEventRoundIds({
   required Set<String>? stored,
   required List<String> orderedRoundIds,
@@ -77,6 +106,31 @@ Set<String> _resolveExpandedEventRoundIds({
         : <String>{orderedRoundIds.first};
   }
   return stored.where(orderedRoundIds.contains).toSet();
+}
+
+String _eventRailMatchupId(
+  _EventRoundGroup group,
+  _EventRoundSegment segment,
+) => '${group.id}:${segment.id}';
+
+@visibleForTesting
+bool eventRailMatchupIsExpanded({
+  required EventRailMatchupExpansionState state,
+  required String matchupId,
+}) =>
+    state.collapseNewMatchups
+        ? state.exceptions.contains(matchupId)
+        : !state.exceptions.contains(matchupId);
+
+@visibleForTesting
+EventRailMatchupExpansionState eventRailMatchupStateAfterToggleAll({
+  required EventRailMatchupExpansionState state,
+  required List<String> matchupIds,
+}) {
+  final allExpanded = matchupIds.every(
+    (id) => eventRailMatchupIsExpanded(state: state, matchupId: id),
+  );
+  return (collapseNewMatchups: allExpanded, exceptions: const <String>{});
 }
 
 @visibleForTesting
@@ -114,6 +168,15 @@ final eventRailNowProviderForTesting = Provider<DateTime Function()>(
 );
 
 bool _eventGameReplacementConfirmationOpen = false;
+
+/// Counts rail entries whose widget was actually constructed.
+///
+/// With lazily built entries only the rows the rail's [ListView] mounts run
+/// their builder, so this stays proportional to the viewport instead of the
+/// number of loaded boards in a large live event. Tests reset it to prove a
+/// rail rebuild does not construct widgets for off-screen rows.
+@visibleForTesting
+int eventRailEntryBuilds = 0;
 
 @visibleForTesting
 List<String> eventRailRangeSelectionIds({
@@ -384,6 +447,34 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   /// Ordered-row count behind the current window, so growth stops at the end
   /// of what is loaded instead of climbing forever.
   int _eventRailWindowTotal = 0;
+
+  /// The streamed/non-streamed identity of the rail's list in the last build,
+  /// plus the offset the user held when it changed.
+  ///
+  /// That identity is part of the [ListView]'s key, so changing it rebuilds the
+  /// list from scratch and a fresh [ScrollPosition] starts at zero — a
+  /// controller only restores a previous offset through `PageStorage`, which
+  /// needs a `PageStorageKey` this list deliberately does not have.
+  bool? _railStreamedListIdentity;
+  double? _railOffsetAcrossIdentityFlip;
+  int _railOffsetRestoreGeneration = 0;
+
+  /// Rail entries by content id, reused across rebuilds while their signature
+  /// still matches (see [_buildRoundGroupsList] and [_RailChunkSignature]).
+  final Map<String, _RailEntry> _railEntryCache = <String, _RailEntry>{};
+
+  /// The current build's rail inputs, read by cached row callbacks at INVOKE
+  /// time — the same reason the web rail keeps `onSelectRef.current = onSelect`
+  /// (RoundGamesList.tsx:403).
+  List<TournamentGameSummary> _railLatestOrderedGames =
+      const <TournamentGameSummary>[];
+  List<TournamentGameSummary> _railLatestScopeGames =
+      const <TournamentGameSummary>[];
+  BoardTabGameArgs? _railLatestArgs;
+  _GameListKind _railLatestKind = _GameListKind.event;
+  String _railLatestTitle = '';
+  Map<String, LiveGamesBatchKey> _railLatestLiveBatchKeys =
+      const <String, LiveGamesBatchKey>{};
 
   @override
   void initState() {
@@ -760,6 +851,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           _copyHighlightedGamesAsPgn(
             orderedGames,
             selectedGameId: selectedGameId,
+            activeArgs: activeArgs,
           ),
         );
       }
@@ -845,6 +937,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   Future<void> _copyHighlightedGamesAsPgn(
     List<TournamentGameSummary> orderedGames, {
     required String? selectedGameId,
+    required BoardTabGameArgs? activeArgs,
   }) async {
     final games = eventRailGamesForCopy(
       orderedGames: orderedGames,
@@ -856,6 +949,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       context: context,
       ref: ref,
       games: games,
+      activeArgs: activeArgs,
     );
   }
 
@@ -1141,6 +1235,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
 
     final continuation = _continuationForKind(activeArgs, resolved.kind);
     if (continuation == null) return;
+    if (continuation.kind == BoardTabGamesContinuationKind.localPgn) return;
     final loadKey = _continuationKey(activeTabId, continuation);
     if (_loadingContinuationKey == loadKey) return;
     if (!force && _continuationLoadErrorKey == loadKey) return;
@@ -1254,6 +1349,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return null;
+
         final async = ref.watch(premiumGamesProvider(argument));
         final state = async.valueOrNull;
         return snapshot(
@@ -1303,6 +1399,23 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           totalCount: state.totalCount > 0 ? state.totalCount : null,
           error: state.error,
         );
+      case BoardTabGamesContinuationKind.localPgn:
+        final source = continuation.argument;
+        if (source is! LocalBoardGamesSource) return null;
+        final page = _localPage(source, selectedGameId);
+        final value = ref.watch(
+          localBoardGamesPageProvider((source: source, page: page)),
+        );
+        return _ContinuationSnapshot(
+          games: value.valueOrNull ?? fallbackGames,
+          isLoading: value.isLoading,
+          hasMore: false,
+          totalCount: source.totalCount,
+          error:
+              value.hasError
+                  ? 'Could not load this page. Retry or reopen the database.'
+                  : null,
+        );
     }
   }
 
@@ -1328,6 +1441,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
 
   bool _canLoadMoreContinuation(BoardTabGamesContinuation continuation) {
     switch (continuation.kind) {
+      case BoardTabGamesContinuationKind.localPgn:
+        return false;
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return false;
@@ -1367,6 +1482,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     BoardTabGamesContinuation continuation,
   ) async {
     switch (continuation.kind) {
+      case BoardTabGamesContinuationKind.localPgn:
+        return;
       case BoardTabGamesContinuationKind.smartGames:
         final argument = continuation.argument;
         if (argument is! PremiumGamesType) return;
@@ -1415,6 +1532,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         isForegroundTab && streamingEnabled && _appLifecycleAllowsStreaming;
     final activeSelectedGameId = _selectedGameIdForArgs(activeArgs);
     final requestedRailTab = ref.watch(_gameRailTabProvider(activeTabId));
+    final pendingOpen = ref.watch(_localRailOpenPendingProvider(activeTabId));
+    final pendingOpenLabel =
+        pendingOpen != null && identical(pendingOpen.ownerArgs, activeArgs)
+            ? pendingOpen.label
+            : null;
     final eventRailProviderKey =
         activeArgs?.eventGamesKey == null
             ? null
@@ -1468,11 +1590,37 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       fallbackGames: activeArgs?.routeGames ?? const <TournamentGameSummary>[],
       selectedGameId: activeSelectedGameId,
     );
-    final eventContinuationSnapshot = _watchContinuationSnapshot(
-      activeArgs?.eventGamesContinuation,
-      fallbackGames: activeArgs?.eventGames ?? const <TournamentGameSummary>[],
-      selectedGameId: activeSelectedGameId,
-    );
+    final playerScope = activeArgs?.eventPlayerScope;
+    final playerRows =
+        playerScope == null
+            ? null
+            : ref.watch(
+              eventPlayerBoardGamesProvider(
+                eventPlayerBoardGamesKey(playerScope, activeTabId),
+              ),
+            );
+    final eventContinuationSnapshot =
+        playerScope != null
+            ? _ContinuationSnapshot(
+              games: _mergeEventPlayerGames(
+                playerScope,
+                activeArgs!.eventGames,
+                playerRows?.valueOrNull,
+              ),
+              isLoading: playerRows?.isLoading ?? false,
+              hasMore: false,
+              totalCount: playerRows?.valueOrNull?.length,
+              error:
+                  playerRows?.hasError == true
+                      ? playerRows!.error.toString()
+                      : null,
+            )
+            : _watchContinuationSnapshot(
+              activeArgs?.eventGamesContinuation,
+              fallbackGames:
+                  activeArgs?.eventGames ?? const <TournamentGameSummary>[],
+              selectedGameId: activeSelectedGameId,
+            );
     final freshTournamentEventGames =
         eventRailProviderKey == null
             ? _watchFreshTournamentEventGames(activeArgs)
@@ -1554,7 +1702,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     }
     final preserveEventInputOrder =
         resolved.kind == _GameListKind.event &&
-        effectiveArgs?.viewSource == ChessboardView.playerProfile;
+        (effectiveArgs?.viewSource == ChessboardView.playerProfile ||
+            effectiveArgs?.eventPlayerScope != null);
 
     // The rail seeds from the games handed over when the board opened, then the
     // provider resolves with the authoritative round catalog. Painting headings
@@ -1573,6 +1722,17 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       activeArgs: effectiveArgs,
       games: resolved.games,
       keyedTourId: eventTourId,
+    );
+    final eventGamesLookLikeTeam = eventRailGamesLookLikeTeamEvent(
+      resolved.games,
+    );
+    final officialTeamEvent =
+        eventGamesLookLikeTeam || standingsTourId.isEmpty
+            ? false
+            : ref.watch(isTeamEventProvider(standingsTourId));
+    final showTeamStandings = eventRailShowsTeamStandings(
+      officialTeamEvent: officialTeamEvent,
+      games: resolved.games,
     );
     final eventRoundCatalog =
         eventRailValue?.roundCatalog ?? const <EventRailRoundMetadata>[];
@@ -1655,6 +1815,10 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     // be built and streamed at once for large broadcasts.
     final expandedRoundScope =
         '$activeTabId:${eventRailProviderKey?.eventKey.tourId.trim() ?? eventTourId ?? resolved.title}';
+    final matchupExpansionState =
+        isEventRail
+            ? ref.watch(_eventRailMatchupExpansionProvider(expandedRoundScope))
+            : (collapseNewMatchups: false, exceptions: const <String>{});
     final storedExpandedRoundIds =
         isEventRail
             ? ref.watch(_eventRailExpandedRoundsProvider(expandedRoundScope))
@@ -1686,12 +1850,19 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             ? resolved.games
             : visibleRoundGroups
                 .expand(
-                  (round) => round.displaySegments.expand(
-                    (segment) => orderEventRailGamesForDisplay(
-                      segment.games,
-                      liveFirst: liveFirst,
-                    ),
-                  ),
+                  (round) => round.displaySegments
+                      .where(
+                        (segment) => eventRailMatchupIsExpanded(
+                          state: matchupExpansionState,
+                          matchupId: _eventRailMatchupId(round, segment),
+                        ),
+                      )
+                      .expand(
+                        (segment) => orderEventRailGamesForDisplay(
+                          segment.games,
+                          liveFirst: liveFirst,
+                        ),
+                      ),
                 )
                 .toList(growable: false);
     final selectedGameId = resolved.selectedGameId;
@@ -1820,6 +1991,22 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (pendingOpenLabel != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      pendingOpenLabel,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kPrimaryColor,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
                 child: Column(
@@ -1924,44 +2111,70 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               Expanded(
                 child:
                     eventView == _BoardEventRailView.standings
-                        ? TournamentStandingsView(
-                          tabId: activeTabId,
-                          tournamentId: standingsTourId,
-                          tournamentTitle: resolved.title,
-                          compact: true,
-                        )
+                        ? showTeamStandings
+                            ? DesktopCompactTeamStandingsView(
+                              tabId: activeTabId,
+                              tournamentId: standingsTourId,
+                              tournamentTitle: resolved.title,
+                            )
+                            : TournamentStandingsView(
+                              tabId: activeTabId,
+                              tournamentId: standingsTourId,
+                              tournamentTitle: resolved.title,
+                              compact: true,
+                            )
                         : resolved.kind == _GameListKind.database
-                        ? _DatabaseGamesList(
-                          controller: _scrollController,
-                          games: orderedGames,
-                          copyScopeGames: railActivationGames,
-                          selectedGameId: selectedGameId,
-                          selectedGameIds: _highlightedGameIds,
-                          highlightedGameId: _highlightedGameId,
-                          selectedRowKey:
-                              (_highlightedGameId ?? selectedGameId) == null
-                                  ? null
-                                  : _rowKeyFor(
-                                    _highlightedGameId ?? selectedGameId!,
-                                  ),
-                          tournamentTitle: resolved.title,
-                          activeArgs: effectiveArgs,
-                          isLoadingMoreDatabase: isLoadingMoreDatabase,
-                          databaseHasMore: databasePagination?.hasMore == true,
-                          databaseLoadError: databaseLoadError,
-                          activeContinuation: activeContinuation,
-                          isLoadingMoreContinuation: isLoadingMoreContinuation,
-                          continuationHasMore:
-                              continuationSnapshot?.hasMore == true,
-                          continuationLoadError: continuationLoadError,
-                          isLoading: resolved.isLoading,
-                          onHighlightGame: _highlightGame,
-                          onRangeHighlightGame:
-                              (game) => _highlightGameRange(
-                                orderedGames,
-                                game,
-                                fallbackAnchorGameId: selectedGameId,
+                        ? Column(
+                          children: [
+                            Expanded(
+                              child: NotificationListener<ScrollNotification>(
+                                onNotification: _onLocalPageScroll,
+                                child: _DatabaseGamesList(
+                                  controller: _scrollController,
+                                  games: orderedGames,
+                                  copyScopeGames: railActivationGames,
+                                  selectedGameId: selectedGameId,
+                                  selectedGameIds: _highlightedGameIds,
+                                  highlightedGameId: _highlightedGameId,
+                                  selectedRowKey:
+                                      (_highlightedGameId ?? selectedGameId) ==
+                                              null
+                                          ? null
+                                          : _rowKeyFor(
+                                            _highlightedGameId ??
+                                                selectedGameId!,
+                                          ),
+                                  tournamentTitle: resolved.title,
+                                  activeArgs: effectiveArgs,
+                                  isLoadingMoreDatabase: isLoadingMoreDatabase,
+                                  databaseHasMore:
+                                      databasePagination?.hasMore == true,
+                                  databaseLoadError: databaseLoadError,
+                                  activeContinuation: activeContinuation,
+                                  isLoadingMoreContinuation:
+                                      isLoadingMoreContinuation,
+                                  continuationHasMore:
+                                      continuationSnapshot?.hasMore == true,
+                                  continuationLoadError: continuationLoadError,
+                                  isLoading: resolved.isLoading,
+                                  onHighlightGame: _highlightGame,
+                                  onRangeHighlightGame:
+                                      (game) => _highlightGameRange(
+                                        orderedGames,
+                                        game,
+                                        fallbackAnchorGameId: selectedGameId,
+                                      ),
+                                ),
                               ),
+                            ),
+                            if (activeContinuation?.argument
+                                is LocalBoardGamesSource)
+                              _localPager(
+                                activeContinuation!.argument!
+                                    as LocalBoardGamesSource,
+                                selectedGameId,
+                              ),
+                          ],
                         )
                         : _buildRoundGroupsList(
                           roundGroups: roundGroups,
@@ -1982,6 +2195,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                           isEventRail: isEventRail,
                           expandedRoundScope: expandedRoundScope,
                           expandedRoundIds: expandedRoundIds,
+                          matchupExpansionState: matchupExpansionState,
                           eventWindow: eventPage,
                           hasEventRailPagination:
                               resolved.kind == _GameListKind.event &&
@@ -1999,13 +2213,242 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     );
   }
 
+  final _localPages =
+      <LocalBoardGamesSource, ({String? selection, int page})>{};
+
+  int _localPage(LocalBoardGamesSource source, String? selection) {
+    final saved = _localPages[source];
+    if (saved != null && saved.selection == selection) return saved.page;
+    return (source.rankOf(selection ?? '') ?? 0) ~/
+        LocalBoardGamesSource.pageSize;
+  }
+
+  ({LocalBoardGamesSource source, String? selection, int page})?
+  _localPagerScope;
+  int _localScrollBoundary = 0;
+  bool _localUserScrolling = false;
+  bool? _localPendingEntryBottom;
+
+  bool _onLocalPageScroll(ScrollNotification notification) {
+    final scope = _localPagerScope;
+    if (scope == null ||
+        notification.depth != 0 ||
+        notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
+    if (ref
+        .read(
+          localBoardGamesPageProvider((source: scope.source, page: scope.page)),
+        )
+        .isLoading) {
+      return false;
+    }
+    if (notification is UserScrollNotification) {
+      _localUserScrolling = notification.direction != ScrollDirection.idle;
+    } else if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      _localUserScrolling = true;
+    }
+    final metrics = notification.metrics;
+    final boundary =
+        metrics.maxScrollExtent - metrics.minScrollExtent <= 1
+            ? 0
+            : metrics.extentBefore <= 1
+            ? -1
+            : metrics.extentAfter <= 1
+            ? 1
+            : 0;
+    // Programmatic selection/restore can clear a stale hint, never create one.
+    final hint =
+        _localUserScrolling
+            ? boundary
+            : boundary == _localScrollBoundary
+            ? _localScrollBoundary
+            : 0;
+    if (hint != _localScrollBoundary) {
+      setState(() => _localScrollBoundary = hint);
+    }
+    if (notification is ScrollEndNotification) _localUserScrolling = false;
+    return false;
+  }
+
+  Widget _localPager(LocalBoardGamesSource source, String? selection) {
+    final page = _localPage(source, selection);
+    final provider = localBoardGamesPageProvider((source: source, page: page));
+    final value = ref.watch(provider);
+    final scope = (source: source, selection: selection, page: page);
+    if (_localPagerScope != scope) {
+      // A different source/selection is not a continuation of a pager click.
+      if (_localPagerScope?.source != source ||
+          _localPagerScope?.selection != selection) {
+        _localPendingEntryBottom = null;
+      }
+      _localPagerScope = scope;
+      _localScrollBoundary = 0;
+      _localUserScrolling = false;
+    }
+    if (!value.isLoading &&
+        !value.hasError &&
+        _localPendingEntryBottom != null) {
+      final bottom = _localPendingEntryBottom!;
+      _localPendingEntryBottom = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            _localPagerScope != scope ||
+            !_scrollController.hasClients) {
+          return;
+        }
+        final position = _scrollController.position;
+        _scrollController.jumpTo(
+          bottom ? position.maxScrollExtent : position.minScrollExtent,
+        );
+      });
+    }
+    void move(int target) {
+      // Guard the callback too: two clicks can arrive before the next frame.
+      if (_localPage(source, selection) != page ||
+          ref.read(provider).isLoading) {
+        return;
+      }
+      setState(() {
+        _localPendingEntryBottom =
+            target == page - 1 && _localScrollBoundary == -1;
+        _localScrollBoundary = 0;
+        _localUserScrolling = false;
+        _localPages[source] = (selection: selection, page: target);
+      });
+    }
+
+    Widget button(String label, int target, bool enabled, {IconData? icon}) =>
+        DesktopTooltip(
+          message: '$label page',
+          child: FButton.raw(
+            key: ValueKey('local-page-$label'),
+            style: FButtonStyle.ghost(),
+            onPress: enabled && !value.isLoading ? () => move(target) : null,
+            child: SizedBox(
+              height: 34,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                child: Center(
+                  child:
+                      icon != null
+                          ? Icon(icon, size: 16, semanticLabel: '$label page')
+                          : Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color:
+                                  enabled &&
+                                          !value.isLoading &&
+                                          ((label == 'Next' &&
+                                                  _localScrollBoundary == 1) ||
+                                              (label == 'Previous' &&
+                                                  _localScrollBoundary == -1))
+                                      ? kPrimaryColor
+                                      : null,
+                            ),
+                          ),
+                ),
+              ),
+            ),
+          ),
+        );
+    return Container(
+      key: const ValueKey('local-page-footer'),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: kDividerColor)),
+      ),
+      child: Column(
+        children: [
+          if (value.hasError)
+            FButton.raw(
+              style: FButtonStyle.ghost(),
+              onPress: () => ref.invalidate(provider),
+              child: const Padding(
+                padding: EdgeInsets.all(8),
+                child: Text(
+                  'Could not load page · Retry',
+                  style: TextStyle(fontSize: 11),
+                ),
+              ),
+            ),
+          Row(
+            children: [
+              button('First', 0, page > 0, icon: Icons.first_page),
+              button('Previous', page - 1, page > 0),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    value.isLoading
+                        ? 'Loading…'
+                        : 'Page ${page + 1} / ${source.lastPage + 1}',
+                    maxLines: 1,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ),
+              button('Next', page + 1, page < source.lastPage),
+              button(
+                'Last',
+                source.lastPage,
+                page < source.lastPage,
+                icon: Icons.last_page,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Keeps the user's scroll position when the rail's list identity changes.
+  ///
+  /// [streamedListIdentity] is the boolean in the rail [ListView]'s key. When
+  /// streaming pauses or resumes (window minimised/restored, Board tab hidden
+  /// or foregrounded, lifecycle change) the list is rebuilt under a new key,
+  /// its `ScrollPosition` is recreated at offset zero, and a user who was
+  /// reading board 300 of a long round is thrown back to the top. Capture the
+  /// offset while the outgoing list is still attached and restore it once the
+  /// replacement viewport exists — but only when the new list really did reset,
+  /// so a deliberate scroll or an already-preserved position is left alone.
+  void _preserveRailScrollAcrossIdentityFlip(bool streamedListIdentity) {
+    final previous = _railStreamedListIdentity;
+    _railStreamedListIdentity = streamedListIdentity;
+    if (previous == null || previous == streamedListIdentity) return;
+    if (!mounted || !_scrollController.hasClients) return;
+    final offset = _scrollController.offset;
+    if (offset <= 0.5) return;
+
+    final generation = ++_railOffsetRestoreGeneration;
+    _railOffsetAcrossIdentityFlip = offset;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _railOffsetRestoreGeneration) return;
+      final target = _railOffsetAcrossIdentityFlip;
+      _railOffsetAcrossIdentityFlip = null;
+      if (target == null || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (position.pixels > 0.5) return;
+      final clamped =
+          target
+              .clamp(position.minScrollExtent, position.maxScrollExtent)
+              .toDouble();
+      if (clamped <= 0.5) return;
+      _scrollController.jumpTo(clamped);
+    });
+  }
+
   /// Lazily renders the round-grouped rail (event/favorites kinds).
   ///
   /// Uses [ListView.builder] so a tournament round with an arbitrary number
   /// of boards (a big open can publish hundreds) only instantiates the
   /// round sections near the viewport instead of building every section up
-  /// front. Trailing pagination/loading affordances are appended after the
-  /// round sections.
+  /// front. Entries are built lazily, so a rebuild constructs widgets only for
+  /// the rows the viewport actually mounts. Trailing pagination/loading
+  /// affordances are appended after the round sections.
   Widget _buildRoundGroupsList({
     required List<_EventRoundGroup> roundGroups,
     required Map<String, _EventRoundExpansionKey> expansionKeys,
@@ -2022,6 +2465,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     required bool isEventRail,
     required String expandedRoundScope,
     required Set<String> expandedRoundIds,
+    required EventRailMatchupExpansionState matchupExpansionState,
     required _EventRailWindow? eventWindow,
     required bool hasEventRailPagination,
     required bool isLoadingMoreContinuation,
@@ -2032,61 +2476,169 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         (_highlightedGameId ?? selectedGameId) == null
             ? null
             : _rowKeyFor(_highlightedGameId ?? selectedGameId!);
-    final items = <Widget>[];
+    // Entries are cached across rebuilds and reused by CONTENT identity.
+    //
+    // This is the Flutter side of `memo(RoundGameRowImpl, railRowEqual)`: web
+    // holds the row handlers in refs because "the owner hands in fresh arrows on
+    // every render ... with unstable handlers the memo never held: one move
+    // repainted every mounted row" (RoundGamesList.tsx:396-409,
+    // RoundGameRow.tsx:294-312). Flutter cannot memoize a widget by hand, but an
+    // element whose incoming widget is IDENTICAL is not rebuilt at all
+    // (`Element.updateChild` short-circuits on `child.widget == newWidget`), so
+    // handing back the same widget instance while an entry's content is
+    // unchanged is the faithful equivalent — and it matters far more here than
+    // on the web: each rail chunk is an intrinsic-width [Table], so rebuilding
+    // one dirties its layout and re-measures every cell in it.
+    final entries = <_RailEntry>[];
+    final entryIds = <String>{};
+    _RailEntry entry({
+      required String id,
+      Object? signature,
+      required Widget Function() build,
+    }) {
+      entryIds.add(id);
+      final cached = signature == null ? null : _railEntryCache[id];
+      if (cached != null && cached.signature == signature) {
+        entries.add(cached);
+        return cached;
+      }
+      final created = _RailEntry(
+        key: ValueKey<String>(id),
+        signature: signature,
+        build: build,
+      );
+      if (signature == null) {
+        _railEntryCache.remove(id);
+      } else {
+        _railEntryCache[id] = created;
+      }
+      entries.add(created);
+      return created;
+    }
+
+    // Row callbacks read these AT INVOKE TIME, so a cached row widget never acts
+    // on the values it closed over. Same reason the web rail keeps
+    // `onSelectRef.current = onSelect` (RoundGamesList.tsx:403).
+    _railLatestOrderedGames = orderedGames;
+    _railLatestScopeGames = eventGames;
+    _railLatestArgs = effectiveArgs;
+    _railLatestKind = resolved.kind;
+    _railLatestTitle = resolved.title;
+    _railLatestLiveBatchKeys = liveBatchKeyByGameId;
     const rowChunkSize = 24;
+    final allMatchupIds = <String>[
+      for (final group in roundGroups)
+        for (final segment in group.segments ?? const <_EventRoundSegment>[])
+          _eventRailMatchupId(group, segment),
+    ];
+    final allMatchupsExpanded = allMatchupIds.every(
+      (id) => eventRailMatchupIsExpanded(
+        state: matchupExpansionState,
+        matchupId: id,
+      ),
+    );
     for (var groupIndex = 0; groupIndex < roundGroups.length; groupIndex++) {
       final group = roundGroups[groupIndex];
       final expansionKey = expansionKeys[group.id]!;
       final expanded = expandedByGroup[group.id] == true;
-      items.add(
-        _EventRoundHeaderItem(
-          group: group,
-          expanded: expanded,
-          liveFirst: liveFirst,
-          onLiveFirstToggle:
-              isEventRail && groupIndex == 0
-                  ? () =>
-                      ref
-                          .read(
-                            _eventRailLiveFirstProvider(widget.tabId).notifier,
-                          )
-                          .state = !liveFirst
-                  : null,
-          onToggle: () {
-            if (isEventRail) {
-              final nextExpandedRoundIds = <String>{...expandedRoundIds};
-              if (expanded) {
-                nextExpandedRoundIds.remove(group.id);
-              } else {
-                nextExpandedRoundIds.add(group.id);
-              }
-              ref
-                  .read(
-                    _eventRailExpandedRoundsProvider(
-                      expandedRoundScope,
-                    ).notifier,
-                  )
-                  .state = Set<String>.unmodifiable(nextExpandedRoundIds);
-              return;
-            }
-            ref.read(_eventRoundExpandedProvider(expansionKey).notifier).state =
-                !expanded;
-          },
-        ),
+      entry(
+        id: 'rail-header-${group.id}',
+        build:
+            () => _EventRoundHeaderItem(
+              group: group,
+              expanded: expanded,
+              allMatchupsExpanded: allMatchupsExpanded,
+              onToggleAllMatchups:
+                  isEventRail && groupIndex == 0 && allMatchupIds.isNotEmpty
+                      ? () {
+                        ref
+                            .read(
+                              _eventRailMatchupExpansionProvider(
+                                expandedRoundScope,
+                              ).notifier,
+                            )
+                            .state = eventRailMatchupStateAfterToggleAll(
+                          state: matchupExpansionState,
+                          matchupIds: allMatchupIds,
+                        );
+                      }
+                      : null,
+              liveFirst: liveFirst,
+              onLiveFirstToggle:
+                  isEventRail && groupIndex == 0
+                      ? () =>
+                          ref
+                              .read(
+                                _eventRailLiveFirstProvider(
+                                  widget.tabId,
+                                ).notifier,
+                              )
+                              .state = !liveFirst
+                      : null,
+              onToggle: () {
+                if (isEventRail) {
+                  final nextExpandedRoundIds = <String>{...expandedRoundIds};
+                  if (expanded) {
+                    nextExpandedRoundIds.remove(group.id);
+                  } else {
+                    nextExpandedRoundIds.add(group.id);
+                  }
+                  ref
+                      .read(
+                        _eventRailExpandedRoundsProvider(
+                          expandedRoundScope,
+                        ).notifier,
+                      )
+                      .state = Set<String>.unmodifiable(nextExpandedRoundIds);
+                  return;
+                }
+                ref
+                    .read(_eventRoundExpandedProvider(expansionKey).notifier)
+                    .state = !expanded;
+              },
+            ),
       );
       if (expanded) {
         for (final segment in group.displaySegments) {
+          final matchupId = _eventRailMatchupId(group, segment);
+          final segmentExpanded = eventRailMatchupIsExpanded(
+            state: matchupExpansionState,
+            matchupId: matchupId,
+          );
           if (segment.title != null) {
-            items.add(
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: _EventMatchupHeader(
-                  title: segment.title!,
-                  score: segment.score,
-                ),
-              ),
+            entry(
+              id: 'rail-label-$matchupId',
+              build:
+                  () => Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: _EventMatchupHeader(
+                      title: segment.title!,
+                      score: segment.score,
+                      expanded: segmentExpanded,
+                      onToggle: () {
+                        final nextExceptions = <String>{
+                          ...matchupExpansionState.exceptions,
+                        };
+                        if (!nextExceptions.add(matchupId)) {
+                          nextExceptions.remove(matchupId);
+                        }
+                        ref
+                            .read(
+                              _eventRailMatchupExpansionProvider(
+                                expandedRoundScope,
+                              ).notifier,
+                            )
+                            .state = (
+                          collapseNewMatchups:
+                              matchupExpansionState.collapseNewMatchups,
+                          exceptions: Set<String>.unmodifiable(nextExceptions),
+                        );
+                      },
+                    ),
+                  ),
             );
           }
+          if (!segmentExpanded) continue;
           final segmentGames = orderEventRailGamesForDisplay(
             segment.games,
             liveFirst: liveFirst,
@@ -2098,103 +2650,134 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           ) {
             final end = math.min(start + rowChunkSize, segmentGames.length);
             final chunk = segmentGames.sublist(start, end);
-            items.add(
-              Padding(
-                padding: EdgeInsets.only(top: start == 0 ? 5 : 0),
-                child: _EventRoundTable(
-                  games: chunk,
-                  copyScopeGames: eventGames,
-                  selectedGameId: selectedGameId,
-                  selectedGameIds: _highlightedGameIds,
-                  highlightedGameId: _highlightedGameId,
-                  selectedRowKey:
-                      chunk.any(
-                            (game) =>
-                                game.id ==
-                                (_highlightedGameId ?? selectedGameId),
-                          )
-                          ? selectedRowKey
-                          : null,
-                  liveBatchKeyByGameId: liveBatchKeyByGameId,
-                  showBoardColumn: showBoardColumn,
-                  onHighlightGame: _highlightGame,
-                  onRangeHighlightGame:
-                      (game) => _highlightGameRange(
-                        orderedGames,
-                        game,
-                        fallbackAnchorGameId: selectedGameId,
-                      ),
-                  onOpenGame: (
-                    game, {
-                    required bool inNewTab,
-                    bool inNewWindow = false,
-                  }) async {
-                    await _openEventGame(
-                      ref: ref,
-                      context: context,
-                      container: ProviderScope.containerOf(
-                        context,
-                        listen: false,
-                      ),
-                      kind: resolved.kind,
-                      game: _eventSummaryWithCurrentLiveUpdate(
-                        ref,
-                        game,
-                        liveBatchKeyByGameId[game.id],
-                      ),
-                      eventGames: eventGames,
-                      tournamentTitle: resolved.title,
-                      activeArgs: effectiveArgs,
-                      inNewTab: inNewTab,
-                      inNewWindow: inNewWindow,
-                    );
-                  },
-                  onInsertGame:
-                      (game) => _insertEventGame(
-                        ref: ref,
-                        game: game,
-                        tournamentTitle: resolved.title,
-                      ),
-                  onCopyGames:
-                      (games) => _copyEventGameSummariesAsPgn(
-                        context: context,
-                        ref: ref,
-                        games: games,
-                      ),
-                ),
+            entry(
+              id: 'rail-chunk-$matchupId-$start',
+              signature: _RailChunkSignature(
+                tabId: widget.tabId,
+                groupId: matchupId,
+                kind: resolved.kind,
+                start: start,
+                games: chunk,
+                streaming: liveBatchKeyByGameId.isNotEmpty,
+                showBoardColumn: showBoardColumn,
+                selectedGameId: selectedGameId,
+                highlightedGameId: _highlightedGameId,
+                highlightedGameIds: _highlightedGameIds,
               ),
+              build:
+                  () => Padding(
+                    padding: EdgeInsets.only(top: start == 0 ? 5 : 0),
+                    child: _EventRoundTable(
+                      games: chunk,
+                      copyScopeGamesOf: () => _railLatestScopeGames,
+                      selectedGameId: selectedGameId,
+                      selectedGameIds: _highlightedGameIds,
+                      highlightedGameId: _highlightedGameId,
+                      selectedRowKey:
+                          chunk.any(
+                                (game) =>
+                                    game.id ==
+                                    (_highlightedGameId ?? selectedGameId),
+                              )
+                              ? selectedRowKey
+                              : null,
+                      liveBatchKeyByGameId: liveBatchKeyByGameId,
+                      showBoardColumn: showBoardColumn,
+                      onHighlightGame: _highlightGame,
+                      onRangeHighlightGame:
+                          (game) => _highlightGameRange(
+                            _railLatestOrderedGames,
+                            game,
+                            fallbackAnchorGameId: selectedGameId,
+                          ),
+                      onOpenGame: (
+                        game, {
+                        required bool inNewTab,
+                        bool inNewWindow = false,
+                      }) async {
+                        await _openEventGame(
+                          ref: ref,
+                          context: context,
+                          container: ProviderScope.containerOf(
+                            context,
+                            listen: false,
+                          ),
+                          kind: _railLatestKind,
+                          game: _eventSummaryWithCurrentLiveUpdate(
+                            ref,
+                            game,
+                            _railLatestLiveBatchKeys[game.id],
+                          ),
+                          eventGames: _railLatestScopeGames,
+                          tournamentTitle: _railLatestTitle,
+                          activeArgs: _railLatestArgs,
+                          inNewTab: inNewTab,
+                          inNewWindow: inNewWindow,
+                        );
+                      },
+                      onInsertGame:
+                          (game) => _insertEventGame(
+                            ref: ref,
+                            game: game,
+                            tournamentTitle: _railLatestTitle,
+                            activeArgs: _railLatestArgs,
+                          ),
+                      onCopyGames:
+                          (games) => _copyEventGameSummariesAsPgn(
+                            context: context,
+                            ref: ref,
+                            games: games,
+                            activeArgs: _railLatestArgs,
+                          ),
+                    ),
+                  ),
             );
           }
         }
       }
-      items.add(const SizedBox(height: 8));
+      entry(id: 'rail-gap-${group.id}', build: () => const SizedBox(height: 8));
     }
 
-    items.addAll(<Widget>[
-      if ((activeContinuation != null || hasEventRailPagination) &&
-          (isLoadingMoreContinuation ||
-              continuationHasMore ||
-              continuationLoadError != null))
-        _GamesPaginationSection(
-          isLoading: isLoadingMoreContinuation,
-          error: continuationLoadError,
-        ),
-      if (resolved.isLoading) const _EventGamesLoadingSection(),
-    ]);
+    if ((activeContinuation != null || hasEventRailPagination) &&
+        (isLoadingMoreContinuation ||
+            continuationHasMore ||
+            continuationLoadError != null)) {
+      entry(
+        id: 'rail-pagination',
+        build:
+            () => _GamesPaginationSection(
+              isLoading: isLoadingMoreContinuation,
+              error: continuationLoadError,
+            ),
+      );
+    }
+    if (resolved.isLoading) {
+      entry(id: 'rail-loading', build: () => const _EventGamesLoadingSection());
+    }
+    // Entries whose round is no longer rendered drop out of the cache.
+    _railEntryCache.removeWhere((id, _) => !entryIds.contains(id));
+
+    // A lazy list can retain offscreen children across parent rebuilds. Give
+    // the streamed and non-streamed trees distinct identities so hiding the
+    // Board tab disposes every cached status-cell subscription, including
+    // rows outside the current viewport. Rebuilding the list under a new key
+    // also builds a fresh [ScrollPosition], and a controller's remembered
+    // offset is only restored from `PageStorage` (which needs a
+    // `PageStorageKey` this list does not have), so the user's position is
+    // carried across the identity change explicitly.
+    final streamedListIdentity = liveBatchKeyByGameId.isNotEmpty;
+    _preserveRailScrollAcrossIdentityFlip(streamedListIdentity);
 
     return ListView.builder(
-      // A lazy list can retain offscreen children across parent rebuilds. Give
-      // the streamed and non-streamed trees distinct identities so hiding the
-      // Board tab disposes every cached status-cell subscription, including
-      // rows outside the current viewport. The shared controller preserves
-      // the user's scroll position when the foreground tree is restored.
-      key: ValueKey<bool>(liveBatchKeyByGameId.isNotEmpty),
+      key: ValueKey<bool>(streamedListIdentity),
       controller: _scrollController,
       physics: const DesktopScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
-      itemCount: items.length,
+      itemCount: entries.length,
       itemBuilder: (context, index) {
-        return items[index];
+        // An entry hands back the SAME widget instance while its content is
+        // unchanged, and the delegate's element keeps it.
+        return entries[index].widget;
       },
     );
   }
@@ -2236,9 +2819,20 @@ Future<int> _copyEventGameSummariesAsPgn({
   required BuildContext context,
   required WidgetRef ref,
   required List<TournamentGameSummary> games,
+  required BoardTabGameArgs? activeArgs,
 }) async {
   if (games.isEmpty) {
     showDesktopToast(context, 'Nothing to copy.', error: true);
+    return 0;
+  }
+  // Denied => no PGN is resolved or fetched for any of the games.
+  if (!admitEventRailContentAction(
+    ProviderScope.containerOf(context, listen: false),
+    activeArgs: activeArgs,
+    games: games,
+    action: DesktopAction.copy,
+    surface: 'board_rail_copy',
+  )) {
     return 0;
   }
 
@@ -2259,7 +2853,9 @@ Future<int> _copyEventGameSummariesAsPgn({
     return 0;
   }
 
-  await Clipboard.setData(ClipboardData(text: pgns.join('\n\n')));
+  await Clipboard.setData(
+    ClipboardData(text: toExternalCompatiblePgn(pgns.join('\n\n'))),
+  );
   if (!context.mounted) return pgns.length;
   final count = pgns.length;
   final suffix = skipped > 0 ? ' ($skipped skipped without moves)' : '';
@@ -2348,6 +2944,7 @@ Future<void> navigateActiveEventGame(
       delta: delta,
       activeTabId: activeTabId,
       liveOnly: liveOnly,
+      isCurrentOwner: () => !leftOwner,
     );
   } finally {
     ownership.close();
@@ -2364,6 +2961,7 @@ Future<void> _navigateActiveEventGameNow(
   required int delta,
   required String activeTabId,
   required bool liveOnly,
+  bool Function()? isCurrentOwner,
 }) async {
   var activeArgs = _readNavigationBoardArgs(ref, activeTabId);
   var legacy = activeArgs == null ? ref.read(tournamentGamesProvider) : null;
@@ -2373,6 +2971,50 @@ Future<void> _navigateActiveEventGameNow(
   );
   var navigationRoundCatalog = const <EventRailRoundMetadata>[];
   if (resolved == null || resolved.games.isEmpty) return;
+
+  // A keyed event rail may still be publishing its initial bounded page.
+  final localSource = activeArgs?.databaseGamesContinuation?.argument;
+  if (resolved.kind == _GameListKind.database &&
+      localSource is LocalBoardGamesSource) {
+    final owner = ref.read(boardTabGameArgsByTabIdProvider)[activeTabId];
+    final rank = localSource.rankOf(activeArgs?.gameListSelectedId ?? '');
+    if (rank == null) return;
+    final next = rank + delta;
+    if (next < 0 || next >= localSource.totalCount) return;
+    try {
+      final games = await localSource.page(
+        ref.read(localChessDatabaseRepositoryProvider),
+        next ~/ LocalBoardGamesSource.pageSize,
+      );
+      if (!context.mounted ||
+          isCurrentOwner?.call() == false ||
+          ref.read(desktopTabsProvider).activeId != activeTabId ||
+          !identical(
+            ref.read(boardTabGameArgsByTabIdProvider)[activeTabId],
+            owner,
+          )) {
+        return;
+      }
+      await _openEventGame(
+        ref: ref,
+        context: context,
+        kind: _GameListKind.database,
+        game: games[next % LocalBoardGamesSource.pageSize],
+        eventGames: games,
+        tournamentTitle: resolved.title,
+        activeArgs: activeArgs,
+      );
+    } catch (_) {
+      if (context.mounted) {
+        showDesktopToast(
+          context,
+          'Could not load the next game. Reopen the database to refresh it.',
+          error: true,
+        );
+      }
+    }
+    return;
+  }
 
   // A keyed event rail may still be publishing its initial bounded page.
   // Await that provider only when the Event list is actually selected; Source
@@ -2489,7 +3131,8 @@ Future<void> _navigateActiveEventGameNow(
 
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
-      activeArgs?.viewSource == ChessboardView.playerProfile;
+      (activeArgs?.viewSource == ChessboardView.playerProfile ||
+          activeArgs?.eventPlayerScope != null);
 
   final nextGame = orderedGames[nextIdx];
 
@@ -2559,7 +3202,20 @@ BoardTabGameArgs? _readNavigationBoardArgs(WidgetRef ref, String activeTabId) {
 
   List<TournamentGameSummary>? eventGames;
   final eventKey = raw.eventGamesKey;
-  if (eventKey != null) {
+  final playerScope = raw.eventPlayerScope;
+  if (playerScope != null) {
+    eventGames = _mergeEventPlayerGames(
+      playerScope,
+      raw.eventGames,
+      ref
+          .read(
+            eventPlayerBoardGamesProvider(
+              eventPlayerBoardGamesKey(playerScope, activeTabId),
+            ),
+          )
+          .valueOrNull,
+    );
+  } else if (eventKey != null) {
     final fallbackRail = _resolveGameRail(raw, null);
     final selected =
         fallbackRail.isEmpty
@@ -2625,7 +3281,8 @@ _navigationOrdering(
 }) {
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
-      activeArgs?.viewSource == ChessboardView.playerProfile;
+      (activeArgs?.viewSource == ChessboardView.playerProfile ||
+          activeArgs?.eventPlayerScope != null);
   final groups = switch (resolved.kind) {
     _GameListKind.favorites => _buildDateGroups(resolved.games),
     // Player-profile event rails mirror the source list's own ordering.
@@ -2810,6 +3467,7 @@ String? _selectedGameIdForArgs(BoardTabGameArgs? args) {
 /// as a cross-event source list, so it must never be refreshed as though it
 /// were one tournament rail.
 String _eventTourIdForArgs(BoardTabGameArgs? args) {
+  if (args?.eventPlayerScope != null) return '';
   if (args == null ||
       args.viewSource == ChessboardView.favScorecard ||
       args.eventGames.isEmpty) {
@@ -2891,6 +3549,7 @@ List<TournamentGameSummary> _readContinuationProviderGames(
   BoardTabGamesContinuation continuation,
 ) {
   return switch (continuation.kind) {
+    BoardTabGamesContinuationKind.localPgn => const <TournamentGameSummary>[],
     BoardTabGamesContinuationKind.smartGames => () {
       final argument = continuation.argument;
       if (argument is! PremiumGamesType) {
@@ -3019,6 +3678,15 @@ List<TournamentGameSummary> _mergeFreshTournamentProviderGames(
     for (final game in freshGames) TournamentGameSummary.fromGame(game),
   ]);
 }
+
+List<TournamentGameSummary> _mergeEventPlayerGames(
+  EventPlayerBoardScope scope,
+  List<TournamentGameSummary> fallback,
+  List<TournamentGameSummary>? fresh,
+) => eventPlayerBoardGames(
+  scope,
+  fresh == null ? fallback : _mergeFreshEventGameSummaries(fallback, fresh),
+);
 
 List<TournamentGameSummary> _mergeFreshEventGameSummaries(
   List<TournamentGameSummary> fallbackGames,
@@ -3271,7 +3939,7 @@ class _EventRoundGroup {
   final List<_EventRoundSegment>? segments;
 
   List<_EventRoundSegment> get displaySegments =>
-      segments ?? [_EventRoundSegment(games: games)];
+      segments ?? [_EventRoundSegment(id: 'all', games: games)];
 }
 
 /// A slice of a round's rows rendered under an optional matchup header.
@@ -3279,8 +3947,14 @@ class _EventRoundGroup {
 /// by team matchup; knockout match rounds group by player pairing —
 /// mirroring the mobile Games tab's team / knockout match cards.
 class _EventRoundSegment {
-  const _EventRoundSegment({this.title, this.score, required this.games});
+  const _EventRoundSegment({
+    required this.id,
+    this.title,
+    this.score,
+    required this.games,
+  });
 
+  final String id;
   final String? title;
   final String? score;
   final List<TournamentGameSummary> games;
@@ -3688,6 +4362,36 @@ bool _isTeamEventRound(List<TournamentGameSummary> games) {
   );
 }
 
+/// Whether the in-game rail Standings tab should show team rows.
+///
+/// Official tour metadata wins. Otherwise the boards themselves: same
+/// half-tagged rule as the web rail (`isTeamRound`).
+@visibleForTesting
+bool eventRailShowsTeamStandings({
+  required bool officialTeamEvent,
+  required Iterable<TournamentGameSummary> games,
+}) {
+  return officialTeamEvent || eventRailGamesLookLikeTeamEvent(games);
+}
+
+/// True when at least half the boards carry distinct teams on both sides.
+@visibleForTesting
+bool eventRailGamesLookLikeTeamEvent(Iterable<TournamentGameSummary> games) {
+  var total = 0;
+  var tagged = 0;
+  for (final game in games) {
+    total++;
+    final white = game.whiteTeam.trim();
+    final black = game.blackTeam.trim();
+    if (white.isNotEmpty &&
+        black.isNotEmpty &&
+        white.toLowerCase() != black.toLowerCase()) {
+      tagged++;
+    }
+  }
+  return total > 0 && tagged * 2 >= total;
+}
+
 /// Summary-model port of `KnockoutMatchDetector.isKnockoutMatchFormat`:
 /// ≥4 games, ≥30% of round slugs look like `game-N` / `tiebreak`, more than
 /// one distinct matchup, and most matchups have 2+ games.
@@ -3729,6 +4433,7 @@ List<_EventRoundSegment> _matchupSegments(
   return [
     for (final entry in buckets.entries)
       _EventRoundSegment(
+        id: entry.key,
         title:
             compactLabels
                 ? '${_compactPlayerName(labels[entry.key]!.$1)} vs ${_compactPlayerName(labels[entry.key]!.$2)}'
@@ -3791,10 +4496,18 @@ String _matchupScoreDisplay(
   for (final game in games) {
     final leftIsWhite = isLeftSideWhite(game);
     if (!game.status.isFinished) continue;
-    final white = desktopGamePoints(game.status, isWhite: true,
-        customPoints: game.whiteCustomPoints)!;
-    final black = desktopGamePoints(game.status, isWhite: false,
-        customPoints: game.blackCustomPoints)!;
+    final white =
+        desktopGamePoints(
+          game.status,
+          isWhite: true,
+          customPoints: game.whiteCustomPoints,
+        )!;
+    final black =
+        desktopGamePoints(
+          game.status,
+          isWhite: false,
+          customPoints: game.blackCustomPoints,
+        )!;
     left += leftIsWhite ? white : black;
     right += leftIsWhite ? black : white;
     finished++;
@@ -4053,33 +4766,45 @@ class _EventGamePlayerLine extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        SizedBox(
-          key: Key(
-            'event-game-${game.id}-${isWhite ? 'white' : 'black'}-trailing',
-          ),
-          width: 64,
-          child:
-              result != null
-                  ? Text(
-                    desktopGamePointsLabel(game.status, isWhite: isWhite,
-                      customPoints: isWhite ? game.whiteCustomPoints : game.blackCustomPoints),
-                    textAlign: TextAlign.right,
-                    style: trailingStyle,
-                  )
-                  : Align(
-                    alignment: Alignment.centerRight,
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
+        // Web isolates this exact slot with `contain: layout paint` so "a clock
+        // tick cannot dirt the whole row" (.ce-cell in components.css,
+        // BoardCell.tsx:11). [RepaintBoundary] is Flutter's primitive for that:
+        // the 1 Hz digit repaints this slot, not the row chunk behind it.
+        RepaintBoundary(
+          child: SizedBox(
+            key: Key(
+              'event-game-${game.id}-${isWhite ? 'white' : 'black'}-trailing',
+            ),
+            width: 64,
+            child:
+                result != null
+                    ? Text(
+                      desktopGamePointsLabel(
+                        game.status,
+                        isWhite: isWhite,
+                        customPoints:
+                            isWhite
+                                ? game.whiteCustomPoints
+                                : game.blackCustomPoints,
+                      ),
+                      textAlign: TextAlign.right,
+                      style: trailingStyle,
+                    )
+                    : Align(
                       alignment: Alignment.centerRight,
-                      child: AtomicCountdownText(
-                        clockSeconds: clockSeconds,
-                        clockCentiseconds: 0,
-                        lastMoveTime: game.lastMoveTime,
-                        isActive: clockSeconds != null && clockActive,
-                        style: trailingStyle,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: AtomicCountdownText(
+                          clockSeconds: clockSeconds,
+                          clockCentiseconds: 0,
+                          lastMoveTime: game.lastMoveTime,
+                          isActive: clockSeconds != null && clockActive,
+                          style: trailingStyle,
+                        ),
                       ),
                     ),
-                  ),
+          ),
         ),
       ],
     );
@@ -4318,11 +5043,52 @@ bool _isActualLiveGame({
       timeSinceLastMove <= _kSidebarLiveActivityWindow;
 }
 
+/// Admits a content action ([DesktopAction.insertMove], [DesktopAction.copy])
+/// on rail [games] BEFORE any PGN is resolved or fetched.
+///
+/// Each game keeps the board's SOURCE provenance, never the ownership of the
+/// document on the board, and a Miniatures game is judged by its own date.
+/// Rows of a local PGN file are the user's own files and stay free. A denial
+/// presents once in this window; nothing is fetched.
+@visibleForTesting
+bool admitEventRailContentAction(
+  ProviderContainer container, {
+  required BoardTabGameArgs? activeArgs,
+  required Iterable<TournamentGameSummary> games,
+  required DesktopAction action,
+  required String surface,
+}) {
+  final args = activeArgs;
+  if (args == null) return true;
+  final source = args.sourceAccessContext;
+  for (final game in games) {
+    if (game.localPgnSource != null) continue;
+    final request = retargetMiniatureAccessContext(
+      source,
+      game.lastMoveTime,
+    ).copyWith(action: action, quota: DesktopQuota.none, additions: 0);
+    if (!admitDesktopAction(container, request, surface: surface)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 Future<void> _insertEventGame({
   required WidgetRef ref,
   required TournamentGameSummary game,
   required String tournamentTitle,
+  required BoardTabGameArgs? activeArgs,
 }) async {
+  if (!admitEventRailContentAction(
+    ProviderScope.containerOf(ref.context, listen: false),
+    activeArgs: activeArgs,
+    games: <TournamentGameSummary>[game],
+    action: DesktopAction.insertMove,
+    surface: 'board_rail_insert',
+  )) {
+    return;
+  }
   var pgn = game.pgn?.trim() ?? '';
   if (!pgnHasMoves(pgn) && game.id.trim().isNotEmpty) {
     pgn =
@@ -4564,6 +5330,43 @@ GameRepository? _tryReadGameRepositoryForEventOpen({
 
 final _railOpenRequestByContainer = Expando<Object>();
 
+/// Explicit recovery action offered when a local database row could not be
+/// opened: re-index the changed source from disk, then re-scan the Library node
+/// when one is mounted. It never opens the game by itself — the user retries
+/// the row, and by then the fresh cache carries verifiable coordinates.
+Future<void> _refreshLocalDatabaseSource({
+  required ProviderContainer container,
+  required TournamentGameSummary game,
+  required BuildContext context,
+}) async {
+  final sourcePath = game.localPgnSource?.sourcePath.trim() ?? '';
+  if (sourcePath.isEmpty) return;
+  try {
+    await container
+        .read(localChessDatabaseRepositoryProvider)
+        .reconcileLocalPgnCacheFromFile(databasePath: sourcePath);
+    await container
+        .read(localChessLibraryProvider.notifier)
+        .refreshSavedFile(sourcePath);
+    if (context.mounted) {
+      showDesktopToast(context, 'Database refreshed — open the game again.');
+    }
+  } catch (_) {
+    if (context.mounted) {
+      showDesktopToast(
+        context,
+        'Could not refresh the local database.',
+        error: true,
+      );
+    }
+  }
+}
+
+final _localRailOpenPendingProvider = StateProvider.autoDispose.family<
+  ({Object request, BoardTabGameArgs? ownerArgs, String label})?,
+  String
+>((ref, tabId) => null);
+
 Future<void> _openEventGame({
   required WidgetRef ref,
   BuildContext? context,
@@ -4614,6 +5417,26 @@ Future<void> _openEventGame({
             container: container,
           );
 
+  // The next game of a rail keeps the rail's SOURCE provenance; owning the
+  // current document never carries to it, and a Miniatures rail judges the
+  // next game by its own date. Denied => no replace prompt, no local hydrate,
+  // no open-seed fetch, and the active board is untouched.
+  final DesktopAccessContext? railAccess =
+      activeArgs == null
+          ? null
+          : retargetMiniatureAccessContext(
+            activeArgs.sourceAccessContext,
+            game.lastMoveTime,
+          );
+  if (railAccess != null &&
+      !(kind == _GameListKind.database && game.localPgnSource != null) &&
+      !admitBoardSourceOpen(
+        ownerContainer,
+        railAccess,
+        surface: 'board_rail_open',
+      )) {
+    return;
+  }
   if (!await _confirmReplaceActiveBoardGameIfNeeded(
     ref: ref,
     context: context,
@@ -4626,15 +5449,54 @@ Future<void> _openEventGame({
 
   TournamentGameSummary localGame = game;
   if (kind == _GameListKind.database && game.localPgnSource != null) {
+    final pendingProvider = _localRailOpenPendingProvider(
+      ownerTabs.activeId ?? '',
+    );
+    ownerContainer.read(pendingProvider.notifier).state = (
+      request: request,
+      ownerArgs: ownerArgs,
+      label: 'Opening ${game.whitePlayer} vs ${game.blackPlayer}…',
+    );
     try {
+      final source = activeArgs?.databaseGamesContinuation?.argument;
+      if (source is LocalBoardGamesSource) {
+        localGame = await source.prepareSelection(
+          ownerContainer.read(localChessDatabaseRepositoryProvider),
+          game,
+        );
+        if (!stillOwnsOpen()) return;
+      }
       localGame = await ownerContainer.read(retainedLocalPgnHydratorProvider)(
-        game,
+        localGame,
       );
     } catch (error) {
       if (stillOwnsOpen() && context != null && context.mounted) {
-        showDesktopToast(context, error.toString(), error: true);
+        final failedOpenContext = context;
+        final refreshable = error is LocalPgnGameUnavailableException;
+        showDesktopToast(
+          failedOpenContext,
+          localPgnOpenErrorMessage(error),
+          error: true,
+          actionLabel: refreshable ? 'Refresh' : null,
+          onAction:
+              refreshable
+                  ? () => _refreshLocalDatabaseSource(
+                    container: ownerContainer,
+                    game: game,
+                    context: failedOpenContext,
+                  )
+                  : null,
+        );
       }
       return; // Never fall back to the stale inline PGN or a remote id.
+    } finally {
+      // An older completion must not erase a newer request's feedback. Do not
+      // recreate an auto-disposed rail merely to clear its pending state.
+      if (ownerContext.mounted &&
+          ownerContainer.exists(pendingProvider) &&
+          identical(ownerContainer.read(pendingProvider)?.request, request)) {
+        ownerContainer.read(pendingProvider.notifier).state = null;
+      }
     }
     if (!stillOwnsOpen()) return;
   }
@@ -4664,7 +5526,9 @@ Future<void> _openEventGame({
               : openGame.id,
       pgn: pgn,
       label:
-          openGame.name.isEmpty
+          activeArgs?.eventPlayerScope != null
+              ? (activeArgs!.eventPlayerScope!).title
+              : openGame.name.isEmpty
               ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
               : openGame.name,
       whiteName: openGame.whitePlayer,
@@ -4692,6 +5556,7 @@ Future<void> _openEventGame({
           activeArgs?.hideLocalOpeningTreePicker ?? false,
       gameListSelectedId: openGame.id,
       librarySaveOrigin: localPgnSaveOrigin,
+      accessContext: railAccess,
     );
 
     if (inNewWindow) {
@@ -4719,7 +5584,9 @@ Future<void> _openEventGame({
       gameId: openGame.id,
       pgn: pgn,
       label:
-          openGame.name.isEmpty
+          activeArgs?.eventPlayerScope != null
+              ? (activeArgs!.eventPlayerScope!).title
+              : openGame.name.isEmpty
               ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
               : openGame.name,
       whiteName: openGame.whitePlayer,
@@ -4735,16 +5602,19 @@ Future<void> _openEventGame({
       fenSeed: openGame.fen,
       initialFen: activeArgs?.initialFen ?? openGame.fen,
       sourceGame: openSeed.sourceGame,
+      eventBroadcastId: activeArgs?.eventBroadcastId,
       viewSource: activeArgs?.viewSource ?? ChessboardView.tour,
       tournamentTitle: _eventTitleForGame(openGame, activeArgs),
       eventGames: eventSeed,
       eventGamesLoading: false,
       eventGamesKey: _eventGamesKeyForSummary(openGame, activeArgs),
       eventGamesContinuation: activeArgs?.eventGamesContinuation,
+      eventPlayerScope: activeArgs?.eventPlayerScope,
       routeTitle: tournamentTitle,
       routeGames: openEventGames,
       routeGamesContinuation: activeArgs?.routeGamesContinuation,
       gameListSelectedId: openGame.id,
+      accessContext: railAccess,
     );
 
     if (inNewWindow) {
@@ -4763,7 +5633,7 @@ Future<void> _openEventGame({
   }
 
   final pgn = openGame.pgn?.trim() ?? '';
-  if (!inNewTab && !inNewWindow) {
+  if (!inNewTab && !inNewWindow && activeArgs?.eventPlayerScope == null) {
     ref.read(tournamentGamesProvider.notifier).markActive(openGame.id);
   }
 
@@ -4771,7 +5641,9 @@ Future<void> _openEventGame({
     gameId: openGame.id,
     pgn: pgn,
     label:
-        openGame.name.isEmpty
+        activeArgs?.eventPlayerScope != null
+            ? (activeArgs!.eventPlayerScope!).title
+            : openGame.name.isEmpty
             ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
             : openGame.name,
     whiteName: openGame.whitePlayer,
@@ -4786,15 +5658,18 @@ Future<void> _openEventGame({
     blackFideId: openGame.blackFideId,
     fenSeed: openGame.fen,
     sourceGame: openSeed.sourceGame,
+    eventBroadcastId: activeArgs?.eventBroadcastId,
     viewSource: activeArgs?.viewSource ?? ChessboardView.tour,
     tournamentTitle: tournamentTitle,
     eventGames: openEventGames,
     eventGamesKey: _eventGamesKeyForSummary(openGame, activeArgs),
     eventGamesContinuation: activeArgs?.eventGamesContinuation,
+    eventPlayerScope: activeArgs?.eventPlayerScope,
     routeTitle: activeArgs?.routeTitle ?? '',
     routeGames: activeArgs?.routeGames ?? const <TournamentGameSummary>[],
     routeGamesContinuation: activeArgs?.routeGamesContinuation,
     gameListSelectedId: openGame.id,
+    accessContext: railAccess,
   );
 
   if (inNewWindow) {
@@ -4819,6 +5694,7 @@ BoardTabEventGamesKey? _eventGamesKeyForSummary(
       activeArgs?.routeGamesContinuation?.kind ==
       BoardTabGamesContinuationKind.smartGames;
   if (sourceOwnsSmartCollection ||
+      activeArgs?.eventPlayerScope != null ||
       activeArgs?.viewSource == ChessboardView.favScorecard) {
     return null;
   }
@@ -5078,6 +5954,7 @@ class _DatabaseGamesList extends ConsumerWidget {
                     ref: ref,
                     game: game,
                     tournamentTitle: tournamentTitle,
+                    activeArgs: activeArgs,
                   );
                 case _GameRowAction.copyPgn:
                   final copyGames = eventRailGamesForCopy(
@@ -5091,6 +5968,7 @@ class _DatabaseGamesList extends ConsumerWidget {
                     context: context,
                     ref: ref,
                     games: copyGames,
+                    activeArgs: activeArgs,
                   );
               }
             },
@@ -5216,27 +6094,33 @@ class _DatabaseGameRowState extends State<_DatabaseGameRow> {
               ),
               child: Row(
                 children: [
-                  Expanded(
-                    child: _PlayerCell(
-                      name: game.whitePlayer,
-                      federation: game.whiteFederation,
-                      fideId: game.whiteFideId,
-                      title: game.whiteTitle,
-                      rating: game.whiteRating,
-                      selected: selected,
+                  ...[
+                    Expanded(
+                      child: _PlayerCell(
+                        key: ValueKey('database-player-white-${game.id}'),
+                        databaseSide: 'White',
+                        name: game.whitePlayer,
+                        federation: game.whiteFederation,
+                        fideId: game.whiteFideId,
+                        title: game.whiteTitle,
+                        rating: game.whiteRating,
+                        selected: selected,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _PlayerCell(
-                      name: game.blackPlayer,
-                      federation: game.blackFederation,
-                      fideId: game.blackFideId,
-                      title: game.blackTitle,
-                      rating: game.blackRating,
-                      selected: selected,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _PlayerCell(
+                        key: ValueKey('database-player-black-${game.id}'),
+                        databaseSide: 'Black',
+                        name: game.blackPlayer,
+                        federation: game.blackFederation,
+                        fideId: game.blackFideId,
+                        title: game.blackTitle,
+                        rating: game.blackRating,
+                        selected: selected,
+                      ),
                     ),
-                  ),
+                  ],
                   const SizedBox(width: 8),
                   SizedBox(
                     width: 38,
@@ -5263,7 +6147,7 @@ class _DatabaseGameRowState extends State<_DatabaseGameRow> {
 class _EventRoundTable extends StatelessWidget {
   const _EventRoundTable({
     required this.games,
-    required this.copyScopeGames,
+    required this.copyScopeGamesOf,
     required this.selectedGameId,
     required this.selectedGameIds,
     required this.highlightedGameId,
@@ -5278,7 +6162,10 @@ class _EventRoundTable extends StatelessWidget {
   });
 
   final List<TournamentGameSummary> games;
-  final List<TournamentGameSummary> copyScopeGames;
+
+  /// Read at INVOKE time, not baked at build time: a cached row chunk outlives
+  /// the build that produced it, and the copy scope must stay the live one.
+  final List<TournamentGameSummary> Function() copyScopeGamesOf;
   final String? selectedGameId;
   final Set<String> selectedGameIds;
   final String? highlightedGameId;
@@ -5421,7 +6308,7 @@ class _EventRoundTable extends StatelessWidget {
                   await onInsertGame(game);
                 case _GameRowAction.copyPgn:
                   final copyGames = eventRailGamesForCopy(
-                    orderedGames: copyScopeGames,
+                    orderedGames: copyScopeGamesOf(),
                     selectedIds: selectedGameIds,
                     highlightedGameId: highlightedGameId,
                     selectedGameId: selectedGameId,
@@ -5618,6 +6505,8 @@ class _EventRoundHeaderItem extends StatelessWidget {
   const _EventRoundHeaderItem({
     required this.group,
     required this.expanded,
+    required this.allMatchupsExpanded,
+    this.onToggleAllMatchups,
     required this.liveFirst,
     this.onLiveFirstToggle,
     required this.onToggle,
@@ -5625,6 +6514,8 @@ class _EventRoundHeaderItem extends StatelessWidget {
 
   final _EventRoundGroup group;
   final bool expanded;
+  final bool allMatchupsExpanded;
+  final VoidCallback? onToggleAllMatchups;
   final bool liveFirst;
   final VoidCallback? onLiveFirstToggle;
   final VoidCallback onToggle;
@@ -5634,6 +6525,8 @@ class _EventRoundHeaderItem extends StatelessWidget {
     return _EventRoundHeader(
       group: group,
       expanded: expanded,
+      allMatchupsExpanded: allMatchupsExpanded,
+      onToggleAllMatchups: onToggleAllMatchups,
       liveFirst: liveFirst,
       onLiveFirstToggle: onLiveFirstToggle,
       onToggle: onToggle,
@@ -5725,6 +6618,107 @@ class _GamesPaginationSection extends StatelessWidget {
 }
 
 @immutable
+/// One lazily built, reusable entry in the rail's list.
+///
+/// Mirrors a keyed virtual item on the web (`getItemKey`, RoundGamesList.tsx:359)
+/// and lets an unchanged entry hand back the SAME widget instance. That identity
+/// is what stops Flutter rebuilding — and therefore re-laying-out — a mounted
+/// chunk: `Element.updateChild` returns the existing element untouched when the
+/// incoming widget is identical.
+class _RailEntry {
+  _RailEntry({
+    required this.key,
+    required this.signature,
+    required Widget Function() build,
+  }) : _build = build;
+
+  final ValueKey<String> key;
+
+  /// Content identity, compared exactly like the web's `railRowEqual`
+  /// (RoundGameRow.tsx:294). `null` means "rebuild me on every build" — headers
+  /// and one-off affordances, which are cheap.
+  final Object? signature;
+
+  final Widget Function() _build;
+
+  late final Widget widget = _countedBuild();
+
+  Widget _countedBuild() {
+    eventRailEntryBuilds++;
+    return _build();
+  }
+}
+
+/// Content identity of one rail chunk.
+///
+/// The fields are precisely what a `_EventRoundTable` renders or closes over —
+/// the Flutter counterpart of `railRowEqual`'s prop list. Games are compared by
+/// INSTANCE: summaries are immutable and shared between builds unless a fetch
+/// replaced that row, so identity equality means "this chunk shows the same
+/// data". A rebuild that merely appends rows at the end of the rail (the
+/// scroll-driven window growth) therefore reuses every mounted chunk verbatim
+/// and never re-runs [Table]'s intrinsic column measurement.
+@immutable
+class _RailChunkSignature {
+  const _RailChunkSignature({
+    required this.tabId,
+    required this.groupId,
+    required this.kind,
+    required this.start,
+    required this.games,
+    required this.streaming,
+    required this.showBoardColumn,
+    required this.selectedGameId,
+    required this.highlightedGameId,
+    required this.highlightedGameIds,
+  });
+
+  final String tabId;
+  final String groupId;
+  final _GameListKind kind;
+  final int start;
+  final List<TournamentGameSummary> games;
+  final bool streaming;
+  final bool showBoardColumn;
+  final String? selectedGameId;
+  final String? highlightedGameId;
+  final Set<String> highlightedGameIds;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! _RailChunkSignature) return false;
+    if (other.tabId != tabId ||
+        other.groupId != groupId ||
+        other.kind != kind ||
+        other.start != start ||
+        other.streaming != streaming ||
+        other.showBoardColumn != showBoardColumn ||
+        other.selectedGameId != selectedGameId ||
+        other.highlightedGameId != highlightedGameId ||
+        !identical(other.highlightedGameIds, highlightedGameIds) ||
+        other.games.length != games.length) {
+      return false;
+    }
+    for (var index = 0; index < games.length; index++) {
+      if (!identical(other.games[index], games[index])) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    tabId,
+    groupId,
+    kind,
+    start,
+    streaming,
+    selectedGameId,
+    highlightedGameId,
+    games.length,
+  );
+}
+
 class _EventRailWindow {
   const _EventRailWindow({required this.games, required this.hasMoreRows});
 
@@ -5831,6 +6825,8 @@ class _EventRoundHeader extends StatefulWidget {
   const _EventRoundHeader({
     required this.group,
     required this.expanded,
+    required this.allMatchupsExpanded,
+    this.onToggleAllMatchups,
     required this.liveFirst,
     this.onLiveFirstToggle,
     required this.onToggle,
@@ -5838,6 +6834,8 @@ class _EventRoundHeader extends StatefulWidget {
 
   final _EventRoundGroup group;
   final bool expanded;
+  final bool allMatchupsExpanded;
+  final VoidCallback? onToggleAllMatchups;
   final bool liveFirst;
   final VoidCallback? onLiveFirstToggle;
   final VoidCallback onToggle;
@@ -5849,6 +6847,7 @@ class _EventRoundHeader extends StatefulWidget {
 class _EventRoundHeaderState extends State<_EventRoundHeader> {
   bool _hovered = false;
   bool _pressed = false;
+  bool _toggleAllFocused = false;
 
   @override
   Widget build(BuildContext context) {
@@ -5919,6 +6918,82 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
                         color: kLightGreyColor,
                         fontSize: 9.5,
                         fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                  if (widget.onToggleAllMatchups != null) ...[
+                    const SizedBox(width: 6),
+                    DesktopTooltip(
+                      message:
+                          widget.allMatchupsExpanded
+                              ? 'Collapse all matchups'
+                              : 'Expand all matchups',
+                      child: Semantics(
+                        button: true,
+                        toggled: !widget.allMatchupsExpanded,
+                        label:
+                            widget.allMatchupsExpanded
+                                ? 'Collapse all matchups'
+                                : 'Expand all matchups',
+                        child: Focus(
+                          onFocusChange:
+                              (focused) =>
+                                  setState(() => _toggleAllFocused = focused),
+                          onKeyEvent: (node, event) {
+                            if (event is! KeyDownEvent) {
+                              return KeyEventResult.ignored;
+                            }
+                            if (event.logicalKey == LogicalKeyboardKey.enter ||
+                                event.logicalKey == LogicalKeyboardKey.space) {
+                              widget.onToggleAllMatchups?.call();
+                              return KeyEventResult.handled;
+                            }
+                            return KeyEventResult.ignored;
+                          },
+                          child: ClickCursor(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: widget.onToggleAllMatchups,
+                              child: Container(
+                                key: const Key(
+                                  'event-rail-toggle-all-matchups',
+                                ),
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  color:
+                                      widget.allMatchupsExpanded &&
+                                              !_toggleAllFocused
+                                          ? Colors.transparent
+                                          : kPrimaryColor.withValues(
+                                            alpha: 0.12,
+                                          ),
+                                  borderRadius: BorderRadius.circular(7),
+                                  border: Border.all(
+                                    color:
+                                        widget.allMatchupsExpanded &&
+                                                !_toggleAllFocused
+                                            ? kDividerColor
+                                            : kPrimaryColor.withValues(
+                                              alpha: 0.42,
+                                            ),
+                                  ),
+                                ),
+                                child: Icon(
+                                  widget.allMatchupsExpanded
+                                      ? Icons.unfold_less_rounded
+                                      : Icons.unfold_more_rounded,
+                                  size: 16,
+                                  color:
+                                      widget.allMatchupsExpanded &&
+                                              !_toggleAllFocused
+                                          ? kWhiteColor70
+                                          : kPrimaryColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -5998,46 +7073,117 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
 
 /// Slim matchup label above a segment of rows: `Team A vs Team B  2½–1½`
 /// for team rounds, `Player 1 vs Player 2  1½–½` for knockout matches.
-class _EventMatchupHeader extends StatelessWidget {
-  const _EventMatchupHeader({required this.title, this.score});
+class _EventMatchupHeader extends StatefulWidget {
+  const _EventMatchupHeader({
+    required this.title,
+    this.score,
+    required this.expanded,
+    required this.onToggle,
+  });
 
   final String title;
   final String? score;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  State<_EventMatchupHeader> createState() => _EventMatchupHeaderState();
+}
+
+class _EventMatchupHeaderState extends State<_EventMatchupHeader> {
+  bool _hovered = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
-    final scoreText = score?.trim() ?? '';
+    final scoreText = widget.score?.trim() ?? '';
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.2,
+      child: Semantics(
+        button: true,
+        expanded: widget.expanded,
+        label: widget.title,
+        child: Focus(
+          onFocusChange: (focused) => setState(() => _focused = focused),
+          onKeyEvent: (node, event) {
+            if (event is! KeyDownEvent) return KeyEventResult.ignored;
+            if (event.logicalKey == LogicalKeyboardKey.enter ||
+                event.logicalKey == LogicalKeyboardKey.space) {
+              widget.onToggle();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: ClickCursor(
+            child: MouseRegion(
+              onEnter: (_) => setState(() => _hovered = true),
+              onExit: (_) => setState(() => _hovered = false),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.onToggle,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 100),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color:
+                        _hovered || _focused
+                            ? kBlack3Color
+                            : Colors.transparent,
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Row(
+                    children: [
+                      SingleMotionBuilder(
+                        value: widget.expanded ? 1.0 : 0.0,
+                        motion: DesktopMotion.layout,
+                        builder:
+                            (context, t, child) => Transform.rotate(
+                              angle: t * 3.14159,
+                              child: child,
+                            ),
+                        child: const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: 15,
+                          color: kWhiteColor70,
+                        ),
+                      ),
+                      const SizedBox(width: 3),
+                      Expanded(
+                        child: Text(
+                          widget.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ),
+                      if (scoreText.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          scoreText,
+                          maxLines: 1,
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
-          if (scoreText.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            Text(
-              scoreText,
-              maxLines: 1,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w800,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -6091,6 +7237,8 @@ String _compactPlayerName(String name) {
 
 class _PlayerCell extends StatelessWidget {
   const _PlayerCell({
+    super.key,
+    this.databaseSide,
     required this.name,
     required this.federation,
     required this.fideId,
@@ -6099,6 +7247,7 @@ class _PlayerCell extends StatelessWidget {
     required this.selected,
   });
 
+  final String? databaseSide;
   final String name;
   final String federation;
   final int? fideId;
@@ -6108,7 +7257,10 @@ class _PlayerCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final playerName = _compactPlayerName(name);
+    final playerName =
+        databaseSide == null
+            ? _compactPlayerName(name)
+            : databaseGamePlayerLabel(name, databaseSide!);
     if (playerName.isEmpty) return const SizedBox.shrink();
     final titleText = title.trim();
     final ratingText = rating > 0 ? rating.toString() : '';
