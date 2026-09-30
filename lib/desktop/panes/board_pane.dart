@@ -5383,6 +5383,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                                     ? 'w'
                                     : 'b'),
                         onPlayUci: activeEvalTarget.canPlayPv ? playUci : null,
+                        pvPlayOwner: (activeTabId, chessGame.value),
                         game: chessGame.value,
                         headers: pgnHeaders.value,
                         activePly:

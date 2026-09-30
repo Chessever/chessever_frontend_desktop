@@ -65,6 +65,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     required this.fen,
     required this.sideToMove,
     this.onPlayUci,
+    this.pvPlayOwner,
     this.game,
     this.headers = const <String, String>{},
     this.activePly = 0,
@@ -95,6 +96,9 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// pane wires it to the same `playUci` it uses for opening-explorer
   /// taps so both surfaces share the legality + onMove path.
   final void Function(String uci)? onPlayUci;
+
+  /// Stable Board/tab/game identity; callback closures may change on rebuild.
+  final Object? pvPlayOwner;
 
   /// Loaded game snapshot used only by the session-scoped Report tab.
   final ChessGame? game;
@@ -225,6 +229,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     if (oldWidget.fen != widget.fen ||
         oldWidget.isForegroundTab != widget.isForegroundTab ||
         oldWidget.game?.gameId != widget.game?.gameId ||
+        oldWidget.pvPlayOwner != widget.pvPlayOwner ||
         _gameFingerprint != nextFingerprint) {
       _targetGeneration++;
     }
@@ -454,6 +459,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                   fen: _display.fen ?? widget.fen,
                   state: reading,
                   interactive: linesCurrent,
+                  playOwner: widget.pvPlayOwner ?? widget.game ?? this,
                   onPlayUci:
                       linesCurrent && widget.onPlayUci != null
                           ? playCurrent
@@ -654,6 +660,7 @@ class _EngineLinesSurface extends ConsumerWidget {
   const _EngineLinesSurface({
     required this.fen,
     required this.onPlayUci,
+    required this.playOwner,
     required this.state,
     required this.interactive,
   });
@@ -663,6 +670,7 @@ class _EngineLinesSurface extends ConsumerWidget {
 
   final String fen;
   final void Function(String uci)? onPlayUci;
+  final Object playOwner;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -693,6 +701,7 @@ class _EngineLinesSurface extends ConsumerWidget {
             pv: pvs[index],
             fen: fen,
             onPlayUci: onPlayUci,
+            playOwner: playOwner,
             interactive: interactive,
           ),
     );
@@ -1618,6 +1627,25 @@ class _GameReportClassificationIcon extends StatelessWidget {
 Color _classificationColor(GameMoveClassification classification) =>
     classificationColor(classification);
 
+/// Exercises the production row with a controllable worker completion.
+@visibleForTesting
+Widget enginePvLineForTesting({
+  required BoardPv pv,
+  required String fen,
+  void Function(String uci)? onPlayUci,
+  Object? playOwner,
+  bool interactive = true,
+  Future<List<String>> Function(Map<String, String>)? formatSan,
+}) => _PvLine(
+  rank: 1,
+  pv: pv,
+  fen: fen,
+  onPlayUci: onPlayUci,
+  playOwner: playOwner,
+  interactive: interactive,
+  formatSan: formatSan,
+);
+
 class _PvLine extends StatefulWidget {
   const _PvLine({
     required this.rank,
@@ -1625,6 +1653,8 @@ class _PvLine extends StatefulWidget {
     required this.pv,
     required this.fen,
     required this.onPlayUci,
+    this.playOwner,
+    this.formatSan,
   });
 
   final int rank;
@@ -1632,6 +1662,8 @@ class _PvLine extends StatefulWidget {
   final bool interactive;
   final String fen;
   final void Function(String uci)? onPlayUci;
+  final Object? playOwner;
+  final Future<List<String>> Function(Map<String, String>)? formatSan;
 
   @override
   State<_PvLine> createState() => _PvLineState();
@@ -1645,11 +1677,13 @@ class _PvLineState extends State<_PvLine> {
   String? _cachedFen;
   String? _cachedMoves;
   String? _cachedFirstUci;
+  BoardPv? _displayPv;
   String _cachedDisplayLine = '';
   List<_PvToken> _cachedTokens = const <_PvToken>[];
   Timer? _formatTimer;
   bool _formatInFlight = false;
   int _formatGeneration = 0;
+  int _playOwnerGeneration = 0;
 
   static final RegExp _pvWhitespace = RegExp(r'\s+');
 
@@ -1662,9 +1696,20 @@ class _PvLineState extends State<_PvLine> {
   @override
   void didUpdateWidget(covariant _PvLine oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.fen != widget.fen ||
+        oldWidget.playOwner != widget.playOwner ||
+        oldWidget.interactive != widget.interactive ||
+        (oldWidget.onPlayUci == null) != (widget.onPlayUci == null)) {
+      _playOwnerGeneration += 1;
+    }
+    if (_cachedFen == widget.fen && _displayPv?.moves == widget.pv.moves) {
+      _displayPv = widget.pv;
+    }
     if (oldWidget.fen != widget.fen || oldWidget.pv.moves != widget.pv.moves) {
       _refreshCachedLine();
-      _hoveredTokenIndex = null;
+      if (oldWidget.fen != widget.fen || _cachedTokens.isEmpty) {
+        _hoveredTokenIndex = null;
+      }
     } else if (_hoveredTokenIndex != null &&
         _hoveredTokenIndex! >= _cachedTokens.length) {
       _hoveredTokenIndex = null;
@@ -1675,11 +1720,16 @@ class _PvLineState extends State<_PvLine> {
     final moves = widget.pv.moves;
     final parts =
         moves.split(_pvWhitespace).where((s) => s.trim().isNotEmpty).toList();
+    // Retain one coherent formatted reading only within the same position.
+    // Never flash the incoming raw UCI while the isolate prepares its SAN.
+    if (_cachedFen != widget.fen || parts.isEmpty) {
+      _cachedTokens = const <_PvToken>[];
+      _cachedDisplayLine = 'Formatting…';
+      _displayPv = null;
+    }
     _cachedFen = widget.fen;
     _cachedMoves = moves;
     _cachedFirstUci = parts.isEmpty ? null : parts.first.trim();
-    _cachedTokens = const <_PvToken>[];
-    _cachedDisplayLine = moves;
     _formatGeneration += 1;
     if (parts.isNotEmpty) _scheduleFormat();
   }
@@ -1700,11 +1750,18 @@ class _PvLineState extends State<_PvLine> {
     final fen = _cachedFen!;
     final moves = _cachedMoves!;
     try {
-      final labels = await compute(formatEnginePvSanLine, {
-        'fen': fen,
-        'moves': moves,
-      });
+      final input = <String, String>{'fen': fen, 'moves': moves};
+      final labels =
+          await (widget.formatSan?.call(input) ??
+              compute(formatEnginePvSanLine, input));
       if (!mounted || generation != _formatGeneration) return;
+      // Invalid input/failed conversion must not expose a raw-coordinate line.
+      if (labels.isEmpty ||
+          labels.any(
+            (label) => RegExp(r'^[a-h][1-8][a-h][1-8][qrbn]?$').hasMatch(label),
+          )) {
+        return;
+      }
       final ucis = moves
           .split(_pvWhitespace)
           .where((move) => move.isNotEmpty)
@@ -1721,11 +1778,16 @@ class _PvLineState extends State<_PvLine> {
       }
       setState(() {
         _cachedTokens = tokens;
-        _cachedDisplayLine =
-            tokens.isEmpty ? moves : tokens.map((token) => token.san).join(' ');
+        _cachedDisplayLine = tokens.map((token) => token.san).join(' ');
+        _displayPv = BoardPv(
+          evaluation: widget.pv.evaluation,
+          mate: widget.pv.mate,
+          moves: tokens.map((token) => token.uci).join(' '),
+        );
+        _hoveredTokenIndex = null;
       });
     } catch (_) {
-      // Leave the raw UCI line visible if worker creation or parsing fails.
+      // Keep the last coherent SAN reading (or the initial placeholder).
     } finally {
       _formatInFlight = false;
       if (mounted &&
@@ -1740,30 +1802,7 @@ class _PvLineState extends State<_PvLine> {
   /// separated UCI string ("e2e4 e7e5 g1f3 …"); the first token is what
   /// gets played when the user clicks the row.
   String? get _firstUci {
-    if (_cachedFen != widget.fen || _cachedMoves != widget.pv.moves) {
-      _refreshCachedLine();
-    }
-    return _cachedFirstUci;
-  }
-
-  Future<String> _sanLineString() async {
-    if (_cachedFen != widget.fen || _cachedMoves != widget.pv.moves) {
-      _refreshCachedLine();
-    }
-    if (_cachedTokens.isEmpty && _cachedFirstUci != null) {
-      final fen = _cachedFen!;
-      final moves = _cachedMoves!;
-      try {
-        final labels = await compute(formatEnginePvSanLine, {
-          'fen': fen,
-          'moves': moves,
-        });
-        return labels.isEmpty ? moves : labels.join(' ');
-      } catch (_) {
-        return moves;
-      }
-    }
-    return _cachedDisplayLine;
+    return _cachedTokens.isEmpty ? null : _cachedTokens.first.uci;
   }
 
   @override
@@ -1773,9 +1812,13 @@ class _PvLineState extends State<_PvLine> {
   }
 
   Future<void> _showContextMenu(Offset globalPos) async {
+    if (_displayPv == null) return;
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     final firstUci = _firstUci;
-    final play = widget.onPlayUci;
+    final fen = widget.fen;
+    final ownerGeneration = _playOwnerGeneration;
+    final sanLine = _cachedDisplayLine;
+    final uciLine = _displayPv!.moves;
     final selected = await showMenu<_PvAction>(
       context: context,
       color: kBlack2Color,
@@ -1817,15 +1860,21 @@ class _PvLineState extends State<_PvLine> {
     if (!mounted || selected == null) return;
     switch (selected) {
       case _PvAction.play:
-        if (firstUci != null) play?.call(firstUci);
+        if (mounted &&
+            widget.interactive &&
+            widget.fen == fen &&
+            _playOwnerGeneration == ownerGeneration &&
+            firstUci != null) {
+          widget.onPlayUci?.call(firstUci);
+        }
       case _PvAction.copySan:
-        await Clipboard.setData(ClipboardData(text: await _sanLineString()));
+        await Clipboard.setData(ClipboardData(text: sanLine));
       case _PvAction.copyFirst:
         if (firstUci != null) {
           await Clipboard.setData(ClipboardData(text: firstUci));
         }
       case _PvAction.copyUci:
-        await Clipboard.setData(ClipboardData(text: widget.pv.moves));
+        await Clipboard.setData(ClipboardData(text: uciLine));
     }
   }
 
@@ -1837,15 +1886,28 @@ class _PvLineState extends State<_PvLine> {
 
   @override
   Widget build(BuildContext context) {
-    final score = _formatScore(widget.pv.evaluation, widget.pv.mate);
+    // A score-only update can be shown immediately when its moves are already
+    // formatted; otherwise the score remains paired with the visible old PV.
+    final displayPv =
+        _displayPv != null &&
+                _cachedFen == widget.fen &&
+                _displayPv!.moves == widget.pv.moves
+            ? widget.pv
+            : _displayPv;
+    final score =
+        displayPv == null
+            ? '—'
+            : _formatScore(displayPv.evaluation, displayPv.mate);
     final isAdvantage =
-        (widget.pv.mate ?? 0) > 0 || widget.pv.evaluation > 0.05;
+        (displayPv?.mate ?? 0) > 0 || (displayPv?.evaluation ?? 0) > 0.05;
     final scoreColor =
-        (widget.pv.mate ?? 0) != 0
+        (displayPv?.mate ?? 0) != 0
             ? kPrimaryColor
             : (isAdvantage
                 ? kWhiteColor
-                : (widget.pv.evaluation < -0.05 ? kRedColor : kWhiteColor70));
+                : ((displayPv?.evaluation ?? 0) < -0.05
+                    ? kRedColor
+                    : kWhiteColor70));
 
     if (_cachedFen != widget.fen || _cachedMoves != widget.pv.moves) {
       _refreshCachedLine();
@@ -1938,7 +2000,11 @@ class _PvLineState extends State<_PvLine> {
     final preview = MoveHoverPreview(
       startingFen: widget.fen,
       movesUpToHover: movesUpToHover,
-      enabled: widget.interactive && _hovered && _cachedTokens.isNotEmpty,
+      enabled:
+          widget.interactive &&
+          _hovered &&
+          _hoveredTokenIndex != null &&
+          _cachedTokens.isNotEmpty,
       placement: MoveHoverPreviewPlacement.engineLine,
       placementAnchorKey: _lineAnchorKey,
       child: body,
