@@ -35,6 +35,7 @@ Future<void> _show(
   String? fen,
   void Function(String)? play,
   Object? playOwner,
+  bool interactive = true,
 }) => tester.pumpWidget(
   ProviderScope(
     child: MaterialApp(
@@ -49,6 +50,7 @@ Future<void> _show(
               formatSan: worker.call,
               onPlayUci: play,
               playOwner: playOwner,
+              interactive: interactive,
             ),
           ),
         ),
@@ -343,6 +345,47 @@ void main() {
       _pv('e2e4 e7e5'),
       play: played.add,
       playOwner: owner,
+    );
+    await tester.tap(find.text('Play this move'));
+    await tester.pumpAndSettle();
+    expect(played, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('menu refuses play after retained rows become current again', (
+    tester,
+  ) async {
+    final worker = _Worker();
+    final played = <String>[];
+    final owner = Object();
+    await _show(
+      tester,
+      worker,
+      _pv('e2e4 e7e5'),
+      play: played.add,
+      playOwner: owner,
+    );
+    await _start(tester);
+    worker.complete(0);
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(_san('1.e4'), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await _show(
+      tester,
+      worker,
+      _pv('e2e4 e7e5'),
+      play: played.add,
+      playOwner: owner,
+      interactive: false,
+    );
+    await _show(
+      tester,
+      worker,
+      _pv('e2e4 e7e5'),
+      play: played.add,
+      playOwner: owner,
+      interactive: true,
     );
     await tester.tap(find.text('Play this move'));
     await tester.pumpAndSettle();

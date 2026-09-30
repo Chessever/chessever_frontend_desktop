@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/state/engine_display.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/state/desktop_account_identity.dart';
@@ -162,6 +163,8 @@ class EnginePanel extends ConsumerStatefulWidget {
 class _EnginePanelState extends ConsumerState<EnginePanel> {
   late final GameAnalysisReportController _reportController;
   late final bool _ownsReportController;
+  final _display = EngineDisplay();
+  int _targetGeneration = 0;
   bool _lastReportedRunning = false;
   GameAnalysisReport? _lastPublishedReport;
   String? _gameFingerprint;
@@ -222,6 +225,14 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       unawaited(_reportController.cancel());
     }
     final nextFingerprint = _fingerprint(widget.game);
+    if (oldWidget.game?.gameId != widget.game?.gameId) _display.clear();
+    if (oldWidget.fen != widget.fen ||
+        oldWidget.isForegroundTab != widget.isForegroundTab ||
+        oldWidget.game?.gameId != widget.game?.gameId ||
+        oldWidget.pvPlayOwner != widget.pvPlayOwner ||
+        _gameFingerprint != nextFingerprint) {
+      _targetGeneration++;
+    }
     if (oldWidget.reportResetRevision != widget.reportResetRevision ||
         _gameFingerprint != nextFingerprint) {
       _gameFingerprint = nextFingerprint;
@@ -393,16 +404,6 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         runLiveBoardAnalysis &&
         (engineReady || widget.fen.isNotEmpty);
 
-    final engineContent =
-        liveAnalysisPausedForReport
-            ? const _EnginePausedForReport()
-            : engineActive
-            ? _EngineLinesSurface(
-              fen: widget.fen,
-              onPlayUci: widget.onPlayUci,
-              playOwner: widget.pvPlayOwner ?? widget.game ?? this,
-            )
-            : const _EngineNotReady();
     final reportContent = GameReportView(
       state: reportState,
       progressController: _reportController,
@@ -414,55 +415,116 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       onJumpToPly: widget.onJumpToPly,
       requestNotice: _requestNotice,
     );
+    // Engine ticks do not rebuild the report or schedule automatic analysis.
+    return Consumer(
+      builder: (context, ref, _) {
+        final current =
+            engineActive
+                ? ref.watch(boardEvalProvider(widget.fen))
+                : const BoardEvalState(pvs: [], isEvaluating: false, depth: 0);
+        final reading = _display.update(
+          widget.fen,
+          current,
+          enabled: engineActive,
+        );
+        final linesCurrent = _display.isCurrent(widget.fen, current);
+        final targetFen = widget.fen;
+        final generation = _targetGeneration;
+        final sourceReading = reading;
+        void playCurrent(String uci) {
+          if (!mounted ||
+              !widget.isForegroundTab ||
+              widget.fen != targetFen ||
+              generation != _targetGeneration ||
+              !identical(_display.reading, sourceReading) ||
+              ref
+                      .read(engineSettingsProviderNew)
+                      .valueOrNull
+                      ?.showEngineAnalysis !=
+                  true ||
+              !identical(
+                ref.read(boardEvalProvider(targetFen)),
+                sourceReading,
+              )) {
+            return;
+          }
+          widget.onPlayUci?.call(uci);
+        }
 
-    final Widget? body =
-        engineOn && reportOn
-            ? ResizableSplitView(
-              axis: Axis.vertical,
-              storageKey: desktopEngineReportSplitStorageKey,
-              gutterThickness: desktopEngineReportGutterThickness,
-              gutterColor: kPrimaryColor,
-              children: [
-                SplitChild(
-                  minSize: 80,
-                  initialWeight: 0.40,
-                  label: 'Live engine',
-                  dismissible: false,
-                  child: engineContent,
-                ),
-                SplitChild(
-                  minSize: 140,
-                  initialWeight: 0.60,
-                  label: 'Game report',
-                  dismissible: false,
-                  child: reportContent,
-                ),
-              ],
-            )
-            : engineOn
-            ? engineContent
-            : reportOn
-            ? reportContent
-            : null;
+        final engineContent =
+            liveAnalysisPausedForReport
+                ? const _EnginePausedForReport()
+                : engineActive
+                ? _EngineLinesSurface(
+                  fen: _display.fen ?? widget.fen,
+                  state: reading,
+                  interactive: linesCurrent,
+                  playOwner: widget.pvPlayOwner ?? widget.game ?? this,
+                  onPlayUci:
+                      linesCurrent && widget.onPlayUci != null
+                          ? playCurrent
+                          : null,
+                )
+                : const _EngineNotReady();
 
-    // Engine lines and the report remain independently toggled; when both
-    // are visible, either can be resized without moving the notation boundary.
-    return Container(
-      color: kBlack2Color,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildHeader(engineOn: engineOn, engineActive: engineActive),
-          if (body != null) Expanded(child: body),
-        ],
-      ),
+        final Widget? body =
+            engineOn && reportOn
+                ? ResizableSplitView(
+                  axis: Axis.vertical,
+                  storageKey: desktopEngineReportSplitStorageKey,
+                  gutterThickness: desktopEngineReportGutterThickness,
+                  gutterColor: kPrimaryColor,
+                  children: [
+                    SplitChild(
+                      minSize: 80,
+                      initialWeight: 0.40,
+                      label: 'Live engine',
+                      dismissible: false,
+                      child: engineContent,
+                    ),
+                    SplitChild(
+                      minSize: 140,
+                      initialWeight: 0.60,
+                      label: 'Game report',
+                      dismissible: false,
+                      child: reportContent,
+                    ),
+                  ],
+                )
+                : engineOn
+                ? engineContent
+                : reportOn
+                ? reportContent
+                : null;
+
+        // Engine lines and the report remain independently toggled; when both
+        // are visible, either can be resized without moving the notation boundary.
+        return Container(
+          color: kBlack2Color,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildHeader(
+                engineOn: engineOn,
+                engineActive: engineActive,
+                reading: reading,
+              ),
+              if (body != null) Expanded(child: body),
+            ],
+          ),
+        );
+      },
     );
   }
 
   /// Persistent header carrying the engine toggle, optional PiP control,
   /// engine gear, and optional trailing chrome. The engine readout collapses
   /// away when the engine is off so the report can own the panel alone.
-  Widget _buildHeader({required bool engineOn, required bool engineActive}) {
+  Widget _buildHeader({
+    required bool engineOn,
+    required bool engineActive,
+    required BoardEvalState reading,
+  }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
       child: Row(
@@ -484,7 +546,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           ),
           if (engineActive) ...[
             const SizedBox(width: 8),
-            _EngineScoreDepthReadout(fen: widget.fen),
+            _EngineScoreDepthReadout(snapshot: reading),
           ],
           const SizedBox(width: 6),
           _EngineQuickToggle(enabled: engineOn),
@@ -528,23 +590,13 @@ class _EngineActivityIndicator extends ConsumerWidget {
   }
 }
 
-class _EngineScoreDepthReadout extends ConsumerWidget {
-  const _EngineScoreDepthReadout({required this.fen});
+class _EngineScoreDepthReadout extends StatelessWidget {
+  const _EngineScoreDepthReadout({required this.snapshot});
 
-  final String fen;
+  final BoardEvalState snapshot;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final snapshot = ref.watch(
-      boardEvalProvider(fen).select(
-        (state) => (
-          evaluation: state.evaluation,
-          mate: state.mate,
-          depth: state.depth,
-          isEvaluating: state.isEvaluating,
-        ),
-      ),
-    );
+  Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -609,7 +661,12 @@ class _EngineLinesSurface extends ConsumerWidget {
     required this.fen,
     required this.onPlayUci,
     required this.playOwner,
+    required this.state,
+    required this.interactive,
   });
+
+  final BoardEvalState state;
+  final bool interactive;
 
   final String fen;
   final void Function(String uci)? onPlayUci;
@@ -617,9 +674,7 @@ class _EngineLinesSurface extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final snapshot = ref.watch(
-      boardEvalProvider(fen).select(_EngineLinesSnapshot.fromState),
-    );
+    final snapshot = _EngineLinesSnapshot.fromState(state);
     final pvs = snapshot.pvs;
     if (pvs.isEmpty) {
       return Padding(
@@ -647,6 +702,7 @@ class _EngineLinesSurface extends ConsumerWidget {
             fen: fen,
             onPlayUci: onPlayUci,
             playOwner: playOwner,
+            interactive: interactive,
           ),
     );
   }
@@ -1578,6 +1634,7 @@ Widget enginePvLineForTesting({
   required String fen,
   void Function(String uci)? onPlayUci,
   Object? playOwner,
+  bool interactive = true,
   Future<List<String>> Function(Map<String, String>)? formatSan,
 }) => _PvLine(
   rank: 1,
@@ -1585,12 +1642,14 @@ Widget enginePvLineForTesting({
   fen: fen,
   onPlayUci: onPlayUci,
   playOwner: playOwner,
+  interactive: interactive,
   formatSan: formatSan,
 );
 
 class _PvLine extends StatefulWidget {
   const _PvLine({
     required this.rank,
+    this.interactive = true,
     required this.pv,
     required this.fen,
     required this.onPlayUci,
@@ -1600,6 +1659,7 @@ class _PvLine extends StatefulWidget {
 
   final int rank;
   final BoardPv pv;
+  final bool interactive;
   final String fen;
   final void Function(String uci)? onPlayUci;
   final Object? playOwner;
@@ -1638,6 +1698,7 @@ class _PvLineState extends State<_PvLine> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.fen != widget.fen ||
         oldWidget.playOwner != widget.playOwner ||
+        oldWidget.interactive != widget.interactive ||
         (oldWidget.onPlayUci == null) != (widget.onPlayUci == null)) {
       _playOwnerGeneration += 1;
     }
@@ -1796,10 +1857,11 @@ class _PvLineState extends State<_PvLine> {
         ),
       ],
     );
-    if (selected == null) return;
+    if (!mounted || selected == null) return;
     switch (selected) {
       case _PvAction.play:
         if (mounted &&
+            widget.interactive &&
             widget.fen == fen &&
             _playOwnerGeneration == ownerGeneration &&
             firstUci != null) {
@@ -1939,7 +2001,10 @@ class _PvLineState extends State<_PvLine> {
       startingFen: widget.fen,
       movesUpToHover: movesUpToHover,
       enabled:
-          _hovered && _hoveredTokenIndex != null && _cachedTokens.isNotEmpty,
+          widget.interactive &&
+          _hovered &&
+          _hoveredTokenIndex != null &&
+          _cachedTokens.isNotEmpty,
       placement: MoveHoverPreviewPlacement.engineLine,
       placementAnchorKey: _lineAnchorKey,
       child: body,
@@ -1951,39 +2016,42 @@ class _PvLineState extends State<_PvLine> {
     // toward it. We don't track press here — these rows update many
     // times a second, and a press-down spring would conflict with the
     // ongoing redraws.
-    return ClickCursor(
-      enabled: clickable,
-      child: MouseRegion(
-        onEnter:
-            (_) => setState(() {
-              _hovered = true;
-              _hoveredTokenIndex ??= _cachedTokens.isEmpty ? null : 0;
-            }),
-        onHover: (_) {
-          if (_hoveredTokenIndex == null && _cachedTokens.isNotEmpty) {
-            setState(() => _hoveredTokenIndex = 0);
-          }
-        },
-        onExit:
-            (_) => setState(() {
-              _hovered = false;
-              _hoveredTokenIndex = null;
-            }),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: clickable ? () => widget.onPlayUci!(_firstUci!) : null,
-          onSecondaryTapUp:
-              (details) => _showContextMenu(details.globalPosition),
-          child: SingleMotionBuilder(
-            value: clickable && _hovered ? 1.005 : 1.0,
-            motion: DesktopMotion.hover,
-            builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: preview,
+    return IgnorePointer(
+      ignoring: !widget.interactive,
+      child: ClickCursor(
+        enabled: clickable,
+        child: MouseRegion(
+          onEnter:
+              (_) => setState(() {
+                _hovered = true;
+                _hoveredTokenIndex ??= _cachedTokens.isEmpty ? null : 0;
+              }),
+          onHover: (_) {
+            if (_hoveredTokenIndex == null && _cachedTokens.isNotEmpty) {
+              setState(() => _hoveredTokenIndex = 0);
+            }
+          },
+          onExit:
+              (_) => setState(() {
+                _hovered = false;
+                _hoveredTokenIndex = null;
+              }),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: clickable ? () => widget.onPlayUci!(_firstUci!) : null,
+            onSecondaryTapUp:
+                (details) => _showContextMenu(details.globalPosition),
+            child: SingleMotionBuilder(
+              value: clickable && _hovered ? 1.005 : 1.0,
+              motion: DesktopMotion.hover,
+              builder:
+                  (context, scale, child) => Transform.scale(
+                    scale: scale,
+                    filterQuality: FilterQuality.medium,
+                    child: child,
+                  ),
+              child: preview,
+            ),
           ),
         ),
       ),
