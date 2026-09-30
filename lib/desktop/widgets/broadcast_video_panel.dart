@@ -13,6 +13,7 @@ import 'package:webview_all_wkwebview/webview_all_wkwebview.dart'
 import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/state/broadcast_video_streams_provider.dart';
+import 'package:chessever/desktop/state/broadcast_video_visibility_provider.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_player_retention.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_toolbar.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
@@ -55,8 +56,8 @@ class BroadcastVideoPanel extends ConsumerStatefulWidget {
   /// scope it has.
   final String? roundId;
 
-  /// Identity for the session preference slot (`ce-video.v1:<id>`), matching
-  /// the web's per-tournament sessionStorage key.
+  /// Stable owning event identity for session stream choice and durable
+  /// visibility, independent of the current round or inherited source.
   final String tournamentStorageId;
 
   @override
@@ -335,6 +336,17 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // A newer selection (or a stop) already claimed the slot in this frame.
       if (!mounted || _loadedEmbedUrl != key) return;
+      final visibility = ref.read(
+        broadcastVideoVisibilityProvider(widget.tournamentStorageId),
+      );
+      if (!widget.active ||
+          !ref.read(liveGameStreamingLifecycleProvider) ||
+          visibility.isLoading ||
+          visibility.hasError ||
+          visibility.valueOrNull != true) {
+        _loadedEmbedUrl = null;
+        return;
+      }
       unawaited(_ensureController().loadRequest(url));
     });
   }
@@ -378,6 +390,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   void _selectStream(BroadcastVideoStream stream) {
+    _setVisible(true);
     ref
         .read(broadcastVideoSessionPreferencesProvider.notifier)
         .write(
@@ -397,6 +410,24 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   void _setVisible(bool visible) {
+    if (!visible) {
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _cancelStopGrace();
+      _stopPlaybackNow();
+    }
+    unawaited(
+      ref
+          .read(
+            broadcastVideoVisibilityProvider(
+              widget.tournamentStorageId,
+            ).notifier,
+          )
+          .remember(visible)
+          .catchError((Object error) {
+            debugPrint('Could not persist video visibility: $error');
+          }),
+    );
     final preferences =
         ref.read(broadcastVideoSessionPreferencesProvider)[_storageKey] ??
         const BroadcastVideoPreference();
@@ -413,10 +444,13 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   void _toggleVisible() {
-    final preferences =
-        ref.read(broadcastVideoSessionPreferencesProvider)[_storageKey] ??
-        const BroadcastVideoPreference();
-    _setVisible(preferences.visible == false);
+    final visibility = ref.read(
+      broadcastVideoVisibilityProvider(widget.tournamentStorageId),
+    );
+    if (visibility.isLoading || visibility.hasError || !visibility.hasValue) {
+      return;
+    }
+    _setVisible(!visibility.requireValue);
   }
 
   void _togglePin(String streamId) {
@@ -468,7 +502,27 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
                   languageState.isLoading ? null : languageState.valueOrNull,
               countryCode: preferences.countryCode,
             );
-    final userHidden = preferences.visible == false;
+    final visibility = ref.watch(
+      broadcastVideoVisibilityProvider(widget.tournamentStorageId),
+    );
+    // Restore before creating a player; storage errors fail closed. Keep
+    // watching the streams above so restoration cannot trigger a refetch.
+    if (visibility.isLoading || visibility.hasError || !visibility.hasValue) {
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _cancelStopGrace();
+      _scheduleStopPlayback();
+      return const SizedBox.shrink();
+    }
+    final userHidden = !visibility.requireValue;
+    if (userHidden) {
+      // Explicit Hide also stops other mounted tabs of this owning event,
+      // without waiting for the background-player grace period.
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _cancelStopGrace();
+      _scheduleStopPlayback();
+    }
     final retention = resolveBroadcastVideoPlayerRetention(
       tabActive: widget.active,
       windowVisible: windowVisible,
