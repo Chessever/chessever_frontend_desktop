@@ -3901,6 +3901,10 @@ class _BoardPaneContent extends HookConsumerWidget {
       explorerPreviewLine.value,
       explorerPreviewLineStep.value,
     );
+    final showBoardMoveDecorations = shouldShowBoardMoveDecorations(
+      hasMovePreview: explorerPreview != null,
+      hasLinePreview: explorerLinePreview != null,
+    );
     final boardPosition =
         explorerLinePreview?.position ?? explorerPreview?.position ?? position;
     final activeEvalTarget = activeBoardEvalTarget(
@@ -4318,7 +4322,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     final showFinishedResult = shouldShowFinishedBoardResult(
       pointer.value,
       gameEndingPlyIndex: gameEndingPlyIndex,
-      isPreviewing: explorerPreview != null || explorerLinePreview != null,
+      isPreviewing: !showBoardMoveDecorations,
     );
     final isAtGameEndingPly = showFinishedResult && pointer.value.isNotEmpty;
     final gameEnding =
@@ -5124,11 +5128,11 @@ class _BoardPaneContent extends HookConsumerWidget {
                           onPromotionSelection: onPromotionSelection,
                           pgnHeaders: pgnHeaders.value,
                           pgnShapes:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? pgnShapes
                                   : const <cg.Shape>[],
                           onGraphicCommentaryChanged:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? (shapes) => setMoveGraphicCommentary(
                                     pointer.value,
                                     shapes,
@@ -5137,17 +5141,17 @@ class _BoardPaneContent extends HookConsumerWidget {
                           whiteClock: whiteClockRaw,
                           blackClock: blackClockRaw,
                           boardAnnotation:
-                              explorerPreview == null ? boardAnnotation : null,
+                              showBoardMoveDecorations ? boardAnnotation : null,
                           boardAnnotationGlyph:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? boardAnnotationGlyph
                                   : null,
                           boardAnnotationSquare:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? boardAnnotationSquare
                                   : null,
                           gameEnding:
-                              explorerPreview == null ? gameEnding : null,
+                              showBoardMoveDecorations ? gameEnding : null,
                           showFinishedResult: showFinishedResult,
                           onWheelStep: stepNotationHorizontally,
                           isLiveAtTip: isLiveAtTip,
@@ -6059,6 +6063,12 @@ bool shouldShowFinishedBoardResult(
       gameEndingPlyIndex != null &&
       pointer.first == gameEndingPlyIndex;
 }
+
+@visibleForTesting
+bool shouldShowBoardMoveDecorations({
+  required bool hasMovePreview,
+  required bool hasLinePreview,
+}) => !hasMovePreview && !hasLinePreview;
 
 bool _pointersEqual(ChessMovePointer a, ChessMovePointer b) {
   if (identical(a, b)) return true;
