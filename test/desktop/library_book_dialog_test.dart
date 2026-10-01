@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _Publisher implements LibraryBookPublisher {
   @override
@@ -15,7 +16,11 @@ class _Publisher implements LibraryBookPublisher {
 
   LibraryBookPublication publication = const LibraryBookPublication(
     status: 'unpublished',
-    metadata: LibraryBookMetadata(title: 'My study'),
+    metadata: LibraryBookMetadata(
+      title: 'My study',
+      author: 'Owner',
+      about: 'A chess study',
+    ),
   );
   final saves =
       <({LibraryBookMetadata metadata, bool publish, bool refreshGames})>[];
@@ -59,8 +64,23 @@ class _Publisher implements LibraryBookPublisher {
   }
 }
 
-Future<void> _pump(WidgetTester tester, _Publisher publisher) async {
-  await tester.binding.setSurfaceSize(const Size(1100, 900));
+LibraryFolder _folder() => LibraryFolder(
+  id: 'folder',
+  userId: 'owner',
+  name: 'My study',
+  color: '#000000',
+  icon: 'folder',
+  orderIndex: 0,
+  createdAt: DateTime(2026),
+  updatedAt: DateTime(2026),
+);
+
+Future<void> _pump(
+  WidgetTester tester,
+  _Publisher publisher, {
+  Size size = const Size(1100, 900),
+}) async {
+  await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
     ProviderScope(
@@ -68,20 +88,7 @@ Future<void> _pump(WidgetTester tester, _Publisher publisher) async {
       child: MaterialApp(
         home: FTheme(
           data: FThemes.zinc.dark,
-          child: Scaffold(
-            body: LibraryBookDialog(
-              folder: LibraryFolder(
-                id: 'folder',
-                userId: 'owner',
-                name: 'My study',
-                color: '#000000',
-                icon: 'folder',
-                orderIndex: 0,
-                createdAt: DateTime(2026),
-                updatedAt: DateTime(2026),
-              ),
-            ),
-          ),
+          child: Scaffold(body: LibraryBookDialog(folder: _folder())),
         ),
       ),
     ),
@@ -90,19 +97,33 @@ Future<void> _pump(WidgetTester tester, _Publisher publisher) async {
   await tester.pumpAndSettle();
 }
 
+/// Scroll an action/button into view before tapping it. The two-column dialog
+/// puts the form (including the action row) in a scroll view, so a button can
+/// sit below the fold on a short window. Target the FButton itself: tapping the
+/// bare label Text does not reliably hit the forui button's tap region.
+Future<void> _tap(WidgetTester tester, String text) async {
+  await tester.pump();
+  final target = find.widgetWithText(FButton, text).last;
+  await tester.ensureVisible(target);
+  await tester.pumpAndSettle();
+  await tester.tap(target, warnIfMissed: false);
+  await tester.pump(const Duration(milliseconds: 300));
+  await tester.pumpAndSettle();
+}
+
 // forui 0.16's input MergeSemantics hits a known debug framework assertion.
 // Match local_database_rename_dialog_test: these verify behavior, not semantics.
 // Screen-reader validation remains a reviewer/device check.
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets(
     'saving a private draft never publishes it',
     semanticsEnabled: false,
     (tester) async {
       final publisher = _Publisher();
       await _pump(tester, publisher);
-      await tester.tap(find.text('Save draft'));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
+      await _tap(tester, 'Save draft');
       expect(publisher.saves.single.publish, isFalse);
       expect(publisher.saves.single.refreshGames, isFalse);
       expect(find.text('Draft saved. This book is private.'), findsOneWidget);
@@ -117,17 +138,13 @@ void main() {
       final publisher = _Publisher()..fail = true;
       await _pump(tester, publisher);
       await tester.enterText(find.byType(EditableText).first, 'New book title');
-      await tester.tap(find.text('Publish book'));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
+      await _tap(tester, 'Publish book');
       expect(find.text('Offline. Retry when connected.'), findsOneWidget);
-      expect(find.text('New book title'), findsOneWidget);
+      expect(find.text('New book title'), findsWidgets);
       expect(publisher.saves.single.publish, isTrue);
       expect(publisher.saves.single.refreshGames, isTrue);
       publisher.fail = false;
-      await tester.tap(find.text('Publish book'));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
+      await _tap(tester, 'Publish book');
       expect(find.text('Your book is public in Collections.'), findsOneWidget);
       expect(publisher.saves.last.metadata.title, 'New book title');
       expect(tester.takeException(), isNull);
@@ -142,23 +159,20 @@ void main() {
           _Publisher()
             ..publication = const LibraryBookPublication(
               status: 'published',
-              metadata: LibraryBookMetadata(title: 'My book'),
+              metadata: LibraryBookMetadata(
+                title: 'My book',
+                author: 'Owner',
+                about: 'A chess study',
+              ),
               gameCount: 5,
             );
       await _pump(tester, publisher);
-      await tester.tap(find.text('Unpublish'));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
+      await _tap(tester, 'Unpublish');
       expect(publisher.unpublishCalls, 0);
-      await tester.tap(find.text('Unpublish book'));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
+      await _tap(tester, 'Unpublish book');
       expect(publisher.unpublishCalls, 1);
-      expect(find.text('My book'), findsOneWidget);
       expect(find.text('Publish book'), findsOneWidget);
-      await tester.tap(find.text('Publish book'));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
+      await _tap(tester, 'Publish book');
       expect(publisher.saves.single.publish, isTrue);
       expect(publisher.saves.single.refreshGames, isTrue);
       expect(publisher.saves.single.metadata.title, 'My book');
@@ -174,24 +188,193 @@ void main() {
           _Publisher()
             ..publication = const LibraryBookPublication(
               status: 'published',
-              metadata: LibraryBookMetadata(title: 'My book'),
+              metadata: LibraryBookMetadata(title: 'My book', author: 'Owner'),
               gameCount: 5,
             );
       await _pump(tester, publisher);
-      await tester.tap(find.text('Save details'));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
+      await _tap(tester, 'Save details');
       expect(publisher.saves.single.publish, isFalse);
       expect(publisher.saves.single.refreshGames, isFalse);
-      await tester.tap(find.text('Update games'));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
+      await _tap(tester, 'Update games');
       expect(publisher.saves.last.publish, isFalse);
       expect(publisher.saves.last.refreshGames, isTrue);
       expect(
         find.text('Published games updated from this folder.'),
         findsOneWidget,
       );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'foreword and publisher are not asked for but survive a save',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..publication = const LibraryBookPublication(
+              status: 'unpublished',
+              metadata: LibraryBookMetadata(
+                title: 'My study',
+                author: 'Owner',
+                about: 'A chess study',
+                foreword: 'Kept foreword',
+                publisher: 'ChessEver',
+              ),
+            );
+      await _pump(tester, publisher);
+      // Field labels for Foreword and Publisher are gone from the editor.
+      expect(find.text('Foreword'), findsNothing);
+      expect(find.text('Publisher'), findsNothing);
+      // Three optional fields: Subtitle, Year, Cover image link.
+      expect(find.text('Optional'), findsNWidgets(3));
+      await _tap(tester, 'Save draft');
+      expect(publisher.saves.single.metadata.foreword, 'Kept foreword');
+      expect(publisher.saves.single.metadata.publisher, 'ChessEver');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('preview follows what is typed', semanticsEnabled: false, (
+    tester,
+  ) async {
+    final publisher = _Publisher();
+    await _pump(tester, publisher);
+    final preview = find.byKey(const ValueKey('book_preview'));
+    // The list row credits the author it loaded.
+    expect(
+      find.descendant(of: preview, matching: find.text('by Owner')),
+      findsOneWidget,
+    );
+    // Typing the title updates the list row immediately.
+    await tester.enterText(find.byType(EditableText).first, 'Endgame Gems');
+    await tester.pump();
+    expect(
+      find.descendant(of: preview, matching: find.text('Endgame Gems')),
+      findsWidgets,
+    );
+    // Editing the subtitle (a page-only field) turns the preview to the page.
+    await tester.enterText(find.byType(EditableText).at(1), 'Forty wins');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('book_preview_page')), findsOneWidget);
+    expect(
+      find.descendant(of: preview, matching: find.text('Forty wins')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'author capitalizes every word, stays tidy and only allows letters',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      // Order: title, subtitle, author, year, about, cover.
+      final titleField = find.byType(TextField).at(0);
+      final authorField = find.byType(TextField).at(2);
+      expect(
+        tester.widget<TextField>(authorField).textCapitalization,
+        TextCapitalization.words,
+      );
+      await tester.enterText(authorField, '  Jason   Statham 42');
+      await tester.enterText(titleField, ' Endgame   Gems');
+      await tester.pump();
+      // Digits are rejected and spacing is collapsed/trimmed.
+      expect(
+        tester.widget<TextField>(authorField).controller!.text,
+        'Jason Statham ',
+      );
+      expect(
+        tester.widget<TextField>(titleField).controller!.text,
+        'Endgame Gems',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a saved author pre-fills the next fresh collection',
+    semanticsEnabled: false,
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'library_book.last_author': 'Jason Statham',
+      });
+      final publisher =
+          _Publisher()
+            ..publication = const LibraryBookPublication(
+              status: 'draft',
+              metadata: LibraryBookMetadata(title: 'Fresh'),
+            );
+      await _pump(tester, publisher);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(find.byType(TextField).at(2)).controller!.text,
+        'Jason Statham',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a successful save remembers the author for next time',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..publication = const LibraryBookPublication(
+              status: 'unpublished',
+              metadata: LibraryBookMetadata(title: 'My study'),
+            );
+      await _pump(tester, publisher);
+      await tester.enterText(find.byType(TextField).at(2), 'Garry Kasparov');
+      await tester.pump();
+      await _tap(tester, 'Save draft');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('library_book.last_author'), 'Garry Kasparov');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'unsubmitted edits are offered back on the next visit and clear on save',
+    semanticsEnabled: false,
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'library_book.draft.folder':
+            '{"title":"Half-done study","author":"Owner","about":"A chess study"}',
+      });
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      await tester.pumpAndSettle();
+      expect(find.text('Continue where you left off?'), findsOneWidget);
+      await _tap(tester, 'Continue');
+      expect(
+        tester
+            .widget<TextField>(find.byType(TextField).first)
+            .controller!
+            .text,
+        'Half-done study',
+      );
+      await _tap(tester, 'Save draft');
+      expect(publisher.saves.single.metadata.title, 'Half-done study');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('library_book.draft.folder'), isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'no resume prompt when the stored draft matches the saved details',
+    semanticsEnabled: false,
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'library_book.draft.folder':
+            '{"title":"My study","author":"Owner","about":"A chess study"}',
+      });
+      await _pump(tester, _Publisher());
+      await tester.pumpAndSettle();
+      expect(find.text('Continue where you left off?'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
