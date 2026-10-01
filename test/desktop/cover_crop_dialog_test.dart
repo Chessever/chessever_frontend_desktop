@@ -132,4 +132,95 @@ void main() {
     });
     expect(collectionCoverFits(const Size(1600, 800)), isFalse);
   });
+
+  testWidgets(
+    'the generalized cropper still frames a 2:3 cover from its defaults',
+    semanticsEnabled: false,
+    (tester) async {
+      // No aspect/min args passed: identical to the original cover behaviour.
+      final framed = await _open(tester, const Size(1800, 1200), () async {
+        await tester.tap(
+          find.byKey(const ValueKey('cover_crop_use')),
+          warnIfMissed: false,
+        );
+      });
+      expect(framed!.height, closeTo(1, 1e-6));
+      expect(framed.width, closeTo(800 / 1800, 1e-6));
+    },
+  );
+
+  testWidgets(
+    'a 1:1 crop frames a square and caps zoom at the 256 px floor',
+    semanticsEnabled: false,
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1100, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      Rect? framed = Rect.zero;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FTheme(
+            data: FThemes.zinc.dark,
+            child: Builder(
+              builder:
+                  (context) => TextButton(
+                    onPressed:
+                        () async =>
+                            framed = await showCoverCropDialog(
+                              context,
+                              bytes: _onePixelPng,
+                              // 1024-square source: zoom 1 shows 1024 px, so the
+                              // 256 floor is a 4× cap.
+                              photoSize: const Size(1024, 1024),
+                              aspectWidth: 1,
+                              aspectHeight: 1,
+                              minSourceWidth: authorPhotoMinSize,
+                              minSourceHeight: authorPhotoMinSize,
+                              title: 'Frame the author photo',
+                            ),
+                    child: const Text('open'),
+                  ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.text('Frame the author photo'), findsOneWidget);
+      final slider = tester.widget<Slider>(
+        find.byKey(const ValueKey('cover_crop_zoom')),
+      );
+      expect(slider.max, closeTo(4, 1e-6));
+      await tester.tap(
+        find.byKey(const ValueKey('cover_crop_use')),
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+      // The default centred square is the full 1024×1024 → the whole photo.
+      expect(framed!.width, closeTo(1, 1e-6));
+      expect(framed!.height, closeTo(1, 1e-6));
+    },
+  );
+
+  testWidgets('author photo renders an exact 512×512 square', (tester) async {
+    await tester.runAsync(() async {
+      final photo = await _photo(1200, 1200);
+      final out = await prepareAuthorPhoto(
+        photo,
+        crop: const Rect.fromLTWH(0, 0, 1, 1),
+      );
+      final codec = await ui.instantiateImageCodec(out);
+      final image = (await codec.getNextFrame()).image;
+      expect((image.width, image.height), (512, 512));
+    });
+    expect(authorPhotoFits(const Size(255, 400)), isFalse);
+    expect(authorPhotoFits(const Size(256, 256)), isTrue);
+    // Preparing an author photo never perturbs the cover output.
+    await tester.runAsync(() async {
+      final photo = await _photo(1800, 1200);
+      final cover = await prepareCollectionCover(photo);
+      final codec = await ui.instantiateImageCodec(cover);
+      final image = (await codec.getNextFrame()).image;
+      expect((image.width, image.height), (800, 1200));
+    });
+  });
 }

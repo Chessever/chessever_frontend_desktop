@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -105,9 +106,36 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   Uint8List? _coverPreview;
   bool _coverBusy = false;
 
+  // --- Author credit --------------------------------------------------------
+
+  /// Me or Someone else. Seeded from the loaded book (new books start on Me).
+  AuthorCredit _credit = AuthorCredit.self;
+
+  /// Whether the loaded book already carried the authorCredit key, so a save
+  /// keeps sending it even when the user leaves the credit on Me.
+  bool _hadCreditKey = false;
+
+  /// The credited author's own photo on the server. Uploaded as soon as it is
+  /// chosen, like the cover; empty when none is set.
+  String _authorPhotoUrl = '';
+  Uint8List? _authorPhotoPreview;
+  bool _authorPhotoBusy = false;
+
+  /// The signed-in account's profile photo, for the "Me" preview. Null when
+  /// there is none (then a neutral silhouette is shown).
+  String? _profilePhotoUrl;
+
+  // --- Author suggestions ---------------------------------------------------
+
+  Timer? _suggestTimer;
+  int _suggestSeq = 0;
+  List<AuthorSuggestion> _suggestions = const [];
+  AuthorSuggestion? _matched;
+
   @override
   void initState() {
     super.initState();
+    _profilePhotoUrl = _readProfilePhoto();
     for (final entry in _focus.entries) {
       entry.value.addListener(() => _onFocus(entry.key, entry.value));
     }
@@ -117,6 +145,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   @override
   void dispose() {
     _stashTimer?.cancel();
+    _suggestTimer?.cancel();
     // Leaving mid-edit still keeps the work.
     if (_dirty) _stashDraft();
     for (final field in _fields.values) {
@@ -156,13 +185,44 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     for (final entry in values.entries) {
       _fields[entry.key]!.text = entry.value;
     }
-    if (m.author.trim().isEmpty) _prefillRemembered();
+    // New books start on Me; a loaded book keeps whatever it was credited to.
+    _credit = m.authorCredit ?? AuthorCredit.self;
+    _hadCreditKey = value.hadAuthorCreditKey;
+    _authorPhotoUrl = m.authorPhotoUrl;
+    _authorPhotoPreview = null;
+    _suggestions = const [];
+    _matched = null;
+    // The remembered author only pre-fills a fresh "Me" collection.
+    if (m.author.trim().isEmpty && _credit == AuthorCredit.self) {
+      _prefillRemembered();
+    }
     setState(() {
       _publication = value;
       _coverUrl = m.coverUrl;
       _confirmUnpublish = false;
       _dirty = false;
     });
+  }
+
+  /// The signed-in account's profile photo for the "Me" preview: an https
+  /// `profile_avatar_url`, else https `avatar_url`, else null (silhouette).
+  String? _readProfilePhoto() {
+    try {
+      final metadata =
+          Supabase.instance.client.auth.currentUser?.userMetadata ??
+          const <String, dynamic>{};
+      for (final key in const ['profile_avatar_url', 'avatar_url']) {
+        final raw = metadata[key];
+        if (raw is! String) continue;
+        final uri = Uri.tryParse(raw.trim());
+        if (uri != null && uri.scheme == 'https' && uri.host.isNotEmpty) {
+          return uri.toString();
+        }
+      }
+    } catch (_) {
+      // No Supabase / no session: just no profile photo.
+    }
+    return null;
   }
 
   Future<void> _load() async {
@@ -197,6 +257,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
 
   Future<void> _stashDraft() async {
     final values = {for (final f in _Field.values) f.name: _text(f)};
+    // The draft remembers which side of the Me / Someone-else choice the work
+    // was on; the photo uploads immediately, so it is not in the draft.
+    values['authorCredit'] = _credit.wire;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_draftKey, jsonEncode(values));
@@ -235,10 +298,12 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     final resume = await _showResumeDialog();
     if (!mounted) return;
     if (resume == true) {
+      final restored = AuthorCredit.maybeParse(draft['authorCredit']);
       setState(() {
         for (final e in values.entries) {
           _fields[e.key]!.text = e.value;
         }
+        if (restored != null) _credit = restored;
         _dirty = true;
       });
     } else if (resume == false) {
@@ -336,6 +401,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   }
 
   Future<void> _remember(LibraryBookMetadata metadata) async {
+    // Only "Me" collections remember the author: a one-off credit to someone
+    // else must not pre-fill the next, unrelated collection.
+    if (_credit != AuthorCredit.self) return;
     final author = metadata.author.trim();
     if (author.isEmpty) return;
     try {
@@ -345,6 +413,16 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   }
 
   // --- Save -----------------------------------------------------------------
+
+  /// The authorCredit value to send, applying the spec's omit-vs-send rule:
+  /// send "other" when the user credited someone else; send "self" (which also
+  /// drops any credited photo) when a book that already carried the key is left
+  /// on Me; otherwise null, so the key is absent — the only safe body for an
+  /// old server that rejects unknown keys.
+  AuthorCredit? get _authorCreditToSend {
+    if (_credit == AuthorCredit.other) return AuthorCredit.other;
+    return _hadCreditKey ? AuthorCredit.self : null;
+  }
 
   LibraryBookMetadata get _metadata {
     final saved = _publication?.metadata;
@@ -359,6 +437,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       publishedYear: int.tryParse(_text(_Field.year).trim()),
       // Set by the cover upload, never typed; carried through on save.
       coverUrl: _coverUrl,
+      authorCredit: _authorCreditToSend,
+      // The server owns the photo URL; the save body never writes it.
+      authorPhotoUrl: _authorPhotoUrl,
     );
   }
 
@@ -515,6 +596,444 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     } finally {
       if (mounted) setState(() => _coverBusy = false);
     }
+  }
+
+  // --- Author credit: Me vs Someone else ------------------------------------
+
+  /// Switch the credit side. Changing to Me stops offering suggestions; the
+  /// author-photo removal only happens on the next save (self clears it
+  /// server-side), surfaced as an inline notice while a saved photo exists.
+  void _setCredit(AuthorCredit credit) {
+    if (_credit == credit || _busy || _authorPhotoBusy) return;
+    setState(() {
+      _credit = credit;
+      _dirty = true;
+      _suggestions = const [];
+      _matched = null;
+      _error = null;
+      _notice = null;
+    });
+    _suggestTimer?.cancel();
+    _scheduleStash();
+    if (credit == AuthorCredit.other) {
+      _refreshSuggestions(_text(_Field.author));
+    }
+  }
+
+  /// Whether a saved author photo would be dropped by switching back to Me.
+  bool get _switchToMeDropsPhoto =>
+      _credit == AuthorCredit.self && _authorPhotoUrl.trim().isNotEmpty;
+
+  /// Debounced author lookup. Each run bumps a sequence so a late response
+  /// from an earlier keystroke is ignored (stale-guard).
+  void _onAuthorChanged(String value) {
+    if (!_dirty) setState(() => _dirty = true);
+    _scheduleStash();
+    if (_credit != AuthorCredit.other) return;
+    _suggestTimer?.cancel();
+    final query = value.trim();
+    if (query.length < 2) {
+      setState(() {
+        _suggestions = const [];
+        _matched = null;
+      });
+      return;
+    }
+    _suggestTimer = Timer(
+      const Duration(milliseconds: 300),
+      () => _refreshSuggestions(value),
+    );
+  }
+
+  Future<void> _refreshSuggestions(String value) async {
+    final query = value.trim();
+    if (query.length < 2) {
+      if (mounted) setState(() => _suggestions = const []);
+      return;
+    }
+    final seq = ++_suggestSeq;
+    try {
+      final items = await ref
+          .read(libraryBookPublisherProvider)
+          .suggestAuthors(query);
+      // A newer keystroke already fired: this response is stale, drop it.
+      if (!mounted || seq != _suggestSeq) return;
+      setState(() {
+        _suggestions = items;
+        _matched = _matchFor(_text(_Field.author), items);
+      });
+    } catch (_) {
+      // suggestAuthors never throws, but stay safe: just no suggestions.
+    }
+  }
+
+  AuthorSuggestion? _matchFor(String name, List<AuthorSuggestion> items) {
+    final needle = name.trim().toLowerCase();
+    if (needle.isEmpty) return null;
+    for (final item in items) {
+      if (item.name.trim().toLowerCase() == needle) return item;
+    }
+    return null;
+  }
+
+  /// Tapping a suggestion fills the exact spelling, so the credit groups with
+  /// that existing author.
+  void _useSuggestion(AuthorSuggestion suggestion) {
+    final field = _fields[_Field.author]!;
+    field.text = suggestion.name;
+    field.selection = TextSelection.collapsed(offset: suggestion.name.length);
+    setState(() {
+      _matched = suggestion;
+      _dirty = true;
+    });
+    _scheduleStash();
+  }
+
+  /// A square author photo, uploaded as soon as it is chosen (like the cover).
+  /// Uploading sets the credit to Someone else, so stay there.
+  Future<void> _pickAuthorPhoto() async {
+    if (_busy || _authorPhotoBusy || _coverBusy) return;
+    final Uint8List? image;
+    try {
+      image = await ref.read(authorPhotoPickerProvider)(context);
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+      return;
+    }
+    if (image == null || !mounted) return;
+    final wasPublished = _publication?.isPublished ?? false;
+    setState(() {
+      _authorPhotoBusy = true;
+      _authorPhotoPreview = image;
+      _credit = AuthorCredit.other;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final publisher = ref.read(libraryBookPublisherProvider);
+      // The photo belongs to a saved book; save a private draft first when the
+      // book was never saved, exactly like the cover flow.
+      if (_publication?.bookId == null) {
+        _validateForPublish = false;
+        if (!(_form.currentState?.validate() ?? false)) {
+          throw const LibraryBookPublicationException(
+            'Add a title first. The author photo is saved with the book.',
+          );
+        }
+        final saved = await publisher.save(widget.folder, _metadata);
+        if (!mounted) return;
+        _setPublication(saved);
+        setState(() => _credit = AuthorCredit.other);
+        unawaited(_clearDraft());
+      }
+      final result = await publisher.uploadAuthorPhoto(widget.folder, image);
+      if (!mounted) return;
+      setState(() {
+        _publication = result;
+        _authorPhotoUrl = result.metadata.authorPhotoUrl;
+        _credit = result.metadata.authorCredit ?? AuthorCredit.other;
+        _hadCreditKey = _hadCreditKey || result.hadAuthorCreditKey;
+        _notice =
+            wasPublished
+                ? 'Author photo saved. ChessEver will review the change.'
+                : 'Author photo saved.';
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _authorPhotoPreview = null;
+          _error =
+              error is LibraryBookPublicationException
+                  ? error.message
+                  : 'Could not save the author photo. Retry when connected.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _authorPhotoBusy = false);
+    }
+  }
+
+  Future<void> _removeAuthorPhoto() async {
+    if (_busy || _authorPhotoBusy || _coverBusy) return;
+    setState(() {
+      _authorPhotoBusy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final result = await ref
+          .read(libraryBookPublisherProvider)
+          .removeAuthorPhoto(widget.folder);
+      if (!mounted) return;
+      setState(() {
+        _publication = result;
+        _authorPhotoUrl = result.metadata.authorPhotoUrl;
+        _authorPhotoPreview = null;
+        _notice = 'Author photo removed.';
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () =>
+              _error =
+                  error is LibraryBookPublicationException
+                      ? error.message
+                      : 'Could not remove the author photo. Retry when connected.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _authorPhotoBusy = false);
+    }
+  }
+
+  // --- Author section: credit toggle, name, suggestions, photo -------------
+
+  Widget _authorSection(bool published) {
+    final isOther = _credit == AuthorCredit.other;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(bottom: 8),
+          child: Text(
+            'Author',
+            style: TextStyle(
+              color: kWhiteColor,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        _CreditToggle(
+          credit: _credit,
+          busy: _busy || _authorPhotoBusy,
+          onChanged: _setCredit,
+        ),
+        const SizedBox(height: 12),
+        _field(
+          _Field.author,
+          label: 'Author name',
+          where:
+              isOther
+                  ? 'The person who wrote or compiled it. Pick a name below if '
+                      'they’re already on ChessEver so their collections stay together.'
+                  : 'Credited as “by …” in the list and on the page. The author '
+                      'picture is your ChessEver profile photo.',
+          hint: 'e.g. Magnus Carlsen',
+          limit: 60,
+          counter: false,
+        ),
+        if (isOther) ...[
+          _authorSuggestions(),
+          if (_matched != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                'Matches an existing ChessEver author.',
+                style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+              ),
+            ),
+          _authorPhotoTile(published),
+        ] else
+          _mePreviewRow(),
+        if (_switchToMeDropsPhoto)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              'The saved author photo will be removed when you save.',
+              style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// The "Me" author picture: the account's profile photo, else a silhouette.
+  Widget _mePreviewRow() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        children: [
+          _AuthorAvatar(
+            url: _profilePhotoUrl,
+            semanticsLabel: 'Your profile photo',
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Your ChessEver profile photo is shown with your name.',
+              style: TextStyle(
+                color: kWhiteColor70,
+                fontSize: 12,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _authorSuggestions() {
+    if (_suggestions.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        decoration: BoxDecoration(
+          color: kBlack2Color,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: kDividerColor),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final suggestion in _suggestions)
+              _SuggestionRow(
+                suggestion: suggestion,
+                onTap: _busy ? null : () => _useSuggestion(suggestion),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _authorPhotoTile(bool published) {
+    final uri = _httpsUri(_authorPhotoUrl);
+    final hasPhoto = _authorPhotoPreview != null || uri != null;
+    // When the author has no own photo yet but matches an existing ChessEver
+    // author who does, preview that one instead of an empty silhouette.
+    final matchedAvatar =
+        !hasPhoto ? _httpsUri(_matched?.avatarUrl ?? '') : null;
+    final enabled = !_busy && !_authorPhotoBusy && !_coverBusy;
+    final Widget thumb =
+        _authorPhotoPreview != null
+            ? Image.memory(_authorPhotoPreview!, fit: BoxFit.cover)
+            : uri != null
+            ? CachedNetworkImage(
+              imageUrl: uri.toString(),
+              fit: BoxFit.cover,
+              placeholder: (_, _) => const _Silhouette(),
+              errorWidget: (_, _, _) => const _Silhouette(),
+            )
+            : matchedAvatar != null
+            ? CachedNetworkImage(
+              imageUrl: matchedAvatar.toString(),
+              fit: BoxFit.cover,
+              placeholder: (_, _) => const _Silhouette(),
+              errorWidget: (_, _, _) => const _Silhouette(),
+            )
+            : const _Silhouette();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Author photo',
+                style: TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              SizedBox(width: 6),
+              Text(
+                'Optional',
+                style: TextStyle(color: kWhiteColor70, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'A square photo of the author, shown with their name in Collections. Not your profile photo.',
+            style: TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Semantics(
+                image: true,
+                label: hasPhoto ? 'Author photo' : 'No author photo yet',
+                child: ClipOval(
+                  child: SizedBox(
+                    width: 64,
+                    height: 64,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        thumb,
+                        if (_authorPhotoBusy)
+                          ColoredBox(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            child: const Center(
+                              child: SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: kWhiteColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        DesktopDialogButton(
+                          key: const ValueKey('author_photo_choose'),
+                          label:
+                              _authorPhotoBusy
+                                  ? 'Saving photo…'
+                                  : hasPhoto
+                                  ? 'Replace photo'
+                                  : 'Choose photo…',
+                          icon: Icons.person_outline,
+                          onPress: enabled ? _pickAuthorPhoto : null,
+                        ),
+                        if (hasPhoto && !_authorPhotoBusy)
+                          DesktopDialogButton(
+                            key: const ValueKey('author_photo_remove'),
+                            label: 'Remove photo',
+                            tone: DesktopDialogButtonTone.ghost,
+                            onPress: enabled ? _removeAuthorPhoto : null,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      matchedAvatar != null
+                          ? 'Using the photo already on ChessEver for this author.'
+                          : published
+                          ? 'JPEG, PNG or WebP, at least 256 × 256. A new photo goes to ChessEver for review.'
+                          : 'JPEG, PNG or WebP, at least 256 × 256.',
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _coverPicker(bool published) {
@@ -854,14 +1373,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             limit: 120,
             counter: true,
           ),
-          _field(
-            _Field.author,
-            label: 'Author',
-            where: 'Credited as “by …” in the list and on the page.',
-            hint: 'e.g. Magnus Carlsen',
-            limit: 60,
-            counter: false,
-          ),
+          _authorSection(published),
           _field(
             _Field.year,
             label: 'Year',
@@ -1097,7 +1609,11 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
           _Field.author => TextCapitalization.words,
           _ => TextCapitalization.sentences,
         },
-        onChange: (_) {
+        onChange: (value) {
+          if (field == _Field.author) {
+            _onAuthorChanged(value);
+            return;
+          }
           if (!_dirty) setState(() => _dirty = true);
           _scheduleStash();
         },
@@ -1122,6 +1638,204 @@ Uri? _coverUri(String raw) {
 }
 
 String _plural(int n, String one) => n == 1 ? '1 $one' : '$n ${one}s';
+
+/// Same https-only link check as the cover; reused for author photos and
+/// suggestion avatars.
+Uri? _httpsUri(String raw) => _coverUri(raw);
+
+/// The Me | Someone else choice above the author name, styled to the same
+/// segmented vocabulary as the preview switcher.
+class _CreditToggle extends StatelessWidget {
+  const _CreditToggle({
+    required this.credit,
+    required this.busy,
+    required this.onChanged,
+  });
+
+  final AuthorCredit credit;
+  final bool busy;
+  final ValueChanged<AuthorCredit> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Who to credit this collection to',
+      child: Container(
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          color: kBlack2Color,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kDividerColor),
+        ),
+        child: Row(
+          children: [
+            _segment('Me', AuthorCredit.self),
+            const SizedBox(width: 3),
+            _segment('Someone else', AuthorCredit.other),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _segment(String label, AuthorCredit value) {
+    final selected = credit == value;
+    return Expanded(
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: label,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: busy ? null : () => onChanged(value),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(vertical: 7),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color:
+                  selected
+                      ? kPrimaryColor.withValues(alpha: 0.16)
+                      : Colors.transparent,
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(
+                color:
+                    selected
+                        ? kPrimaryColor.withValues(alpha: 0.4)
+                        : Colors.transparent,
+              ),
+            ),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? kLightYellowColor : kWhiteColor70,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One existing-author match: avatar (or silhouette), exact name, collection
+/// count. Tapping fills the exact spelling.
+class _SuggestionRow extends StatelessWidget {
+  const _SuggestionRow({required this.suggestion, required this.onTap});
+
+  final AuthorSuggestion suggestion;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '${suggestion.name}, ${_plural(suggestion.bookCount, 'collection')}',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              _AuthorAvatar(
+                url: suggestion.avatarUrl,
+                size: 32,
+                semanticsLabel: null,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      suggestion.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kWhiteColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      _plural(suggestion.bookCount, 'collection'),
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A round author picture: an https image, else a neutral person silhouette —
+/// never initials, never a gradient.
+class _AuthorAvatar extends StatelessWidget {
+  const _AuthorAvatar({
+    required this.url,
+    this.size = 48,
+    this.semanticsLabel,
+  });
+
+  final String? url;
+  final double size;
+  final String? semanticsLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final uri = _httpsUri(url ?? '');
+    final Widget avatar = ClipOval(
+      child: SizedBox(
+        width: size,
+        height: size,
+        child:
+            uri == null
+                ? const _Silhouette()
+                : CachedNetworkImage(
+                  imageUrl: uri.toString(),
+                  fit: BoxFit.cover,
+                  placeholder: (_, _) => const _Silhouette(),
+                  errorWidget: (_, _, _) => const _Silhouette(),
+                ),
+      ),
+    );
+    if (semanticsLabel == null) return avatar;
+    return Semantics(image: true, label: semanticsLabel, child: avatar);
+  }
+}
+
+/// The neutral placeholder for a missing author picture: a quiet dark disc
+/// with a person glyph. Deliberately not initials and not a gradient.
+class _Silhouette extends StatelessWidget {
+  const _Silhouette();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(color: kBlack3Color),
+      child: Center(
+        child: Icon(
+          Icons.person,
+          size: 22,
+          color: kWhiteColor.withValues(alpha: 0.32),
+        ),
+      ),
+    );
+  }
+}
 
 /// Two-view switcher styled to the desktop dialog vocabulary.
 class _PreviewSwitcher extends StatelessWidget {
