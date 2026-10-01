@@ -8,6 +8,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:chessever/desktop/services/collection_cover.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
@@ -66,10 +67,10 @@ class _TidySpacesFormatter extends TextInputFormatter {
 /// page. Foreword and publisher are not edited here: the publisher is always
 /// ChessEver's own editor, and a foreword belongs to a printed book, not to a
 /// folder of games. Whatever the server already holds for them is kept.
-enum _Field { title, subtitle, author, year, about, cover }
+enum _Field { title, subtitle, author, year, about }
 
 /// Which preview a field is drawn in: the list row (0) or the page (1).
-const _listFields = {_Field.title, _Field.author, _Field.cover};
+const _listFields = {_Field.title, _Field.author};
 
 /// Edits catalog metadata separately from the private source folder. Nothing
 /// is public until the author chooses Publish book.
@@ -97,6 +98,12 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   /// 0: as it reads in the Collections list, 1: as its page opens.
   int _previewTab = 0;
   _Field? _focused;
+
+  /// The cover lives on the server: it is uploaded as soon as it is chosen,
+  /// and the saved link is carried through every details save.
+  String _coverUrl = '';
+  Uint8List? _coverPreview;
+  bool _coverBusy = false;
 
   @override
   void initState() {
@@ -145,7 +152,6 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       _Field.author: m.author,
       _Field.year: m.publishedYear?.toString() ?? '',
       _Field.about: m.about,
-      _Field.cover: m.coverUrl,
     };
     for (final entry in values.entries) {
       _fields[entry.key]!.text = entry.value;
@@ -153,6 +159,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     if (m.author.trim().isEmpty) _prefillRemembered();
     setState(() {
       _publication = value;
+      _coverUrl = m.coverUrl;
       _confirmUnpublish = false;
       _dirty = false;
     });
@@ -350,12 +357,13 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       foreword: saved?.foreword ?? '',
       publisher: saved?.publisher ?? '',
       publishedYear: int.tryParse(_text(_Field.year).trim()),
-      coverUrl: _text(_Field.cover).trim(),
+      // Set by the cover upload, never typed; carried through on save.
+      coverUrl: _coverUrl,
     );
   }
 
   Future<void> _save({bool publish = false, bool refreshGames = false}) async {
-    if (_busy) return;
+    if (_busy || _coverBusy) return;
     _validateForPublish = publish;
     if (!(_form.currentState?.validate() ?? false)) {
       setState(
@@ -413,6 +421,227 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     }
   }
 
+  // --- Cover: the collection's own image, not the profile photo. -----------
+
+  /// Choose an image, prepare the 2:3 cover and upload it straight away. A
+  /// cover belongs to a saved book, so a never-saved one is first saved as a
+  /// private draft with what is typed.
+  Future<void> _pickCover() async {
+    if (_busy || _coverBusy) return;
+    final Uint8List? image;
+    try {
+      image = await ref.read(collectionCoverPickerProvider)();
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+      return;
+    }
+    if (image == null || !mounted) return;
+    final wasPublished = _publication?.isPublished ?? false;
+    setState(() {
+      _coverBusy = true;
+      _coverPreview = image;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final publisher = ref.read(libraryBookPublisherProvider);
+      if (_publication?.bookId == null) {
+        _validateForPublish = false;
+        if (!(_form.currentState?.validate() ?? false)) {
+          throw const LibraryBookPublicationException(
+            'Add a title first. The cover is saved with the book.',
+          );
+        }
+        final saved = await publisher.save(widget.folder, _metadata);
+        if (!mounted) return;
+        _setPublication(saved);
+        unawaited(_clearDraft());
+        _remember(saved.metadata);
+      }
+      final result = await publisher.uploadCover(widget.folder, image);
+      if (!mounted) return;
+      setState(() {
+        _publication = result;
+        _coverUrl = result.metadata.coverUrl;
+        _notice =
+            wasPublished
+                ? 'Cover saved. ChessEver will review the change.'
+                : 'Cover saved.';
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _coverPreview = null;
+          _error =
+              error is LibraryBookPublicationException
+                  ? error.message
+                  : 'Could not save the cover. Retry when connected.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _coverBusy = false);
+    }
+  }
+
+  Future<void> _removeCover() async {
+    if (_busy || _coverBusy) return;
+    setState(() {
+      _coverBusy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final result = await ref
+          .read(libraryBookPublisherProvider)
+          .removeCover(widget.folder);
+      if (!mounted) return;
+      setState(() {
+        _publication = result;
+        _coverUrl = result.metadata.coverUrl;
+        _coverPreview = null;
+        _notice = 'Cover removed.';
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () =>
+              _error =
+                  error is LibraryBookPublicationException
+                      ? error.message
+                      : 'Could not remove the cover. Retry when connected.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _coverBusy = false);
+    }
+  }
+
+  Widget _coverPicker(bool published) {
+    final url = _coverUri(_coverUrl);
+    final hasCover = _coverPreview != null || url != null;
+    final enabled = !_busy && !_coverBusy;
+    final Widget thumb =
+        _coverPreview != null
+            ? Image.memory(_coverPreview!, fit: BoxFit.cover)
+            : url != null
+            ? CachedNetworkImage(
+              imageUrl: url.toString(),
+              fit: BoxFit.cover,
+              placeholder: (_, _) => const _DefaultPlate(),
+              errorWidget: (_, _, _) => const _DefaultPlate(),
+            )
+            : const _DefaultPlate();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Cover',
+                style: TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              SizedBox(width: 6),
+              Text(
+                'Optional',
+                style: TextStyle(color: kWhiteColor70, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Shown on the collection card and page. The centre of your image is cropped to a 2:3 portrait. Without one, the default plate is shown.',
+            style: TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Semantics(
+                image: true,
+                label: hasCover ? 'Collection cover' : 'No cover yet',
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: SizedBox(
+                    width: 64,
+                    height: 96,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        thumb,
+                        if (_coverBusy)
+                          ColoredBox(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            child: const Center(
+                              child: SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: kWhiteColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        DesktopDialogButton(
+                          key: const ValueKey('book_cover_choose'),
+                          label:
+                              _coverBusy
+                                  ? 'Saving cover…'
+                                  : hasCover
+                                  ? 'Replace image'
+                                  : 'Choose image…',
+                          icon: Icons.image_outlined,
+                          onPress: enabled ? _pickCover : null,
+                        ),
+                        if (hasCover && !_coverBusy)
+                          DesktopDialogButton(
+                            key: const ValueKey('book_cover_remove'),
+                            label: 'Remove cover',
+                            tone: DesktopDialogButtonTone.ghost,
+                            onPress: enabled ? _removeCover : null,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      published
+                          ? 'JPEG, PNG or WebP, at least 600 × 900. A new cover goes to ChessEver for review.'
+                          : 'JPEG, PNG or WebP, at least 600 × 900.',
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   String _errorText(Object error) =>
       error is LibraryBookPublicationException
           ? error.message
@@ -442,18 +671,13 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       case _Field.year:
         if (value.isEmpty) return null;
         final year = int.tryParse(value);
-        return year == null ||
-                year < 1000 ||
-                year > DateTime.now().year + 1
+        return year == null || year < 1000 || year > DateTime.now().year + 1
             ? 'Enter a four-digit year.'
             : null;
       case _Field.about:
         return _validateForPublish && value.isEmpty
             ? 'Describe this collection.'
             : null;
-      case _Field.cover:
-        if (value.isEmpty) return null;
-        return _coverUri(value) == null ? 'Enter a public HTTPS image URL.' : null;
     }
   }
 
@@ -581,10 +805,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          flex: 5,
-          child: SingleChildScrollView(child: form),
-        ),
+        Expanded(flex: 5, child: SingleChildScrollView(child: form)),
         const SizedBox(width: 24),
         // Sticky preview: does not scroll with the form.
         Expanded(flex: 4, child: preview),
@@ -659,16 +880,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             limit: 1500,
             counter: true,
           ),
-          _field(
-            _Field.cover,
-            label: 'Cover image link',
-            optional: true,
-            where:
-                'A portrait image works best. Without one, the default plate is shown.',
-            hint: 'https://…',
-            limit: 2048,
-            counter: true,
-          ),
+          _coverPicker(published),
           if (_error != null || _notice != null) ...[
             const SizedBox(height: 4),
             Semantics(
@@ -800,7 +1012,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                 author: _text(_Field.author).trim(),
                 year: _text(_Field.year).trim(),
                 about: _text(_Field.about).trim(),
-                cover: _coverUri(_text(_Field.cover)),
+                cover: _coverUri(_coverUrl),
+                coverBytes: _coverPreview,
+                coverLit: _coverBusy,
                 gameCount: publication.gameCount,
                 focused: _focused,
               ),
@@ -857,13 +1071,11 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                 : (context, current, max, focused) => const SizedBox.shrink(),
         keyboardType: switch (field) {
           _Field.year => TextInputType.number,
-          _Field.cover => TextInputType.url,
           _ when lines > 1 => TextInputType.multiline,
           _ => TextInputType.text,
         },
         inputFormatters: switch (field) {
           _Field.year => [FilteringTextInputFormatter.digitsOnly],
-          _Field.cover => [FilteringTextInputFormatter.deny(RegExp(r'\s'))],
           _Field.author => [
             // Names only: letters (any script), spaces and . ' - , &.
             FilteringTextInputFormatter.allow(
@@ -876,13 +1088,12 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
         },
         // Author is a proper name: every word starts upper-case.
         textCapitalization: switch (field) {
-          _Field.cover || _Field.year => TextCapitalization.none,
+          _Field.year => TextCapitalization.none,
           _Field.title ||
           _Field.subtitle ||
           _Field.author => TextCapitalization.words,
           _ => TextCapitalization.sentences,
         },
-        autocorrect: field != _Field.cover,
         onChange: (_) {
           if (!_dirty) setState(() => _dirty = true);
           _scheduleStash();
@@ -1020,6 +1231,8 @@ class _BookPreview extends StatelessWidget {
     required this.year,
     required this.about,
     required this.cover,
+    required this.coverBytes,
+    required this.coverLit,
     required this.gameCount,
     required this.focused,
   });
@@ -1031,12 +1244,16 @@ class _BookPreview extends StatelessWidget {
   final String year;
   final String about;
   final Uri? cover;
+  final Uint8List? coverBytes;
+  final bool coverLit;
   final int gameCount;
   final _Field? focused;
 
   Widget _plate(BoxFit fit) {
     final url = cover;
     const plate = _DefaultPlate();
+    // A just-chosen cover shows at once, before its upload completes.
+    if (coverBytes != null) return Image.memory(coverBytes!, fit: fit);
     if (url == null) return plate;
     return CachedNetworkImage(
       imageUrl: url.toString(),
@@ -1092,7 +1309,7 @@ class _BookPreview extends StatelessWidget {
           width: 260,
           height: 140,
           child: _Spot(
-            lit: focused == _Field.cover,
+            lit: coverLit,
             radius: 12,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(12),
@@ -1197,9 +1414,9 @@ class _BookPreview extends StatelessWidget {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (cover != null || focused == _Field.cover) ...[
+            if (cover != null || coverBytes != null || coverLit) ...[
               _Spot(
-                lit: focused == _Field.cover,
+                lit: coverLit,
                 radius: 6,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(6),
@@ -1346,10 +1563,12 @@ class _Spot extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       transform: Matrix4.translationValues(-4, 0, 0),
       decoration: BoxDecoration(
-        color: lit ? accent.withValues(alpha: 0.14) : accent.withValues(alpha: 0),
+        color:
+            lit ? accent.withValues(alpha: 0.14) : accent.withValues(alpha: 0),
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(
-          color: lit ? accent.withValues(alpha: 0.5) : accent.withValues(alpha: 0),
+          color:
+              lit ? accent.withValues(alpha: 0.5) : accent.withValues(alpha: 0),
         ),
       ),
       child: child,

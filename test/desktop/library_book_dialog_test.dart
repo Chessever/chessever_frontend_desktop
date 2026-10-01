@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:chessever/desktop/services/collection_cover.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/desktop/widgets/library/library_book_dialog.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
@@ -6,6 +10,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+Uint8List? pickedCover;
+
+/// A valid 1×1 PNG, so the instant preview can decode it.
+final _onePixelPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
 
 class _Publisher implements LibraryBookPublisher {
   @override
@@ -50,8 +61,38 @@ class _Publisher implements LibraryBookPublisher {
     return publication = LibraryBookPublication(
       status: publish || publication.isPublished ? 'published' : 'draft',
       metadata: metadata,
+      bookId: 'book-1',
       gameCount: 5,
     );
+  }
+
+  final covers = <Uint8List>[];
+  int coverRemovals = 0;
+  LibraryBookPublication _withCover(String coverUrl) =>
+      publication = LibraryBookPublication(
+        status: publication.status,
+        bookId: publication.bookId,
+        gameCount: publication.gameCount,
+        metadata: LibraryBookMetadata(
+          title: publication.metadata.title,
+          author: publication.metadata.author,
+          about: publication.metadata.about,
+          coverUrl: coverUrl,
+        ),
+      );
+  @override
+  Future<LibraryBookPublication> uploadCover(
+    LibraryFolder folder,
+    Uint8List image,
+  ) async {
+    covers.add(image);
+    return _withCover('https://media.example.invalid/cover.webp');
+  }
+
+  @override
+  Future<LibraryBookPublication> removeCover(LibraryFolder folder) async {
+    coverRemovals++;
+    return _withCover('');
   }
 
   @override
@@ -84,7 +125,12 @@ Future<void> _pump(
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [libraryBookPublisherProvider.overrideWithValue(publisher)],
+      overrides: [
+        libraryBookPublisherProvider.overrideWithValue(publisher),
+        collectionCoverPickerProvider.overrideWithValue(
+          () async => pickedCover,
+        ),
+      ],
       child: MaterialApp(
         home: FTheme(
           data: FThemes.zinc.dark,
@@ -350,10 +396,7 @@ void main() {
       expect(find.text('Continue where you left off?'), findsOneWidget);
       await _tap(tester, 'Continue');
       expect(
-        tester
-            .widget<TextField>(find.byType(TextField).first)
-            .controller!
-            .text,
+        tester.widget<TextField>(find.byType(TextField).first).controller!.text,
         'Half-done study',
       );
       await _tap(tester, 'Save draft');
@@ -376,6 +419,31 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Continue where you left off?'), findsNothing);
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a chosen cover is uploaded, never typed as a link',
+    semanticsEnabled: false,
+    (tester) async {
+      pickedCover = _onePixelPng;
+      addTearDown(() => pickedCover = null);
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      expect(find.text('Cover image link'), findsNothing);
+      await _tap(tester, 'Choose image…');
+      // Never saved: details are saved privately first, then the cover.
+      expect(publisher.saves.single.publish, isFalse);
+      expect(publisher.covers.single, pickedCover);
+      expect(find.text('Cover saved.'), findsOneWidget);
+      await _tap(tester, 'Save draft');
+      expect(
+        publisher.saves.last.metadata.coverUrl,
+        'https://media.example.invalid/cover.webp',
+      );
+      await _tap(tester, 'Remove cover');
+      expect(publisher.coverRemovals, 1);
+      expect(find.widgetWithText(FButton, 'Choose image…'), findsOneWidget);
     },
   );
 }
