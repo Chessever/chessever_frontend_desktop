@@ -406,4 +406,232 @@ void main() {
       dio.close();
     },
   );
+
+  // --- Author credit send rule ---------------------------------------------
+
+  test(
+    'authorCredit is omitted for a new "Me" book but sent for "other"',
+    () async {
+      final adapter = _Adapter();
+      final dio = Dio()..httpClientAdapter = adapter;
+      final publisher = GamebaseLibraryBookPublisher(
+        dio: dio,
+        supabaseUrl: _testAuthUrl,
+        baseUrl: 'https://example.test',
+        accessToken: () => 'session',
+      );
+      // Default (null) credit: the key must be absent, so an old server that
+      // 400s on unknown keys is never sent one.
+      await publisher.save(_folder(), const LibraryBookMetadata(title: 'A'));
+      expect(adapter.requests.last.data.containsKey('authorCredit'), isFalse);
+      // Explicit "self" (a book that already carried the key, switched to Me):
+      // sent verbatim so the server drops any credited photo.
+      await publisher.save(
+        _folder(),
+        const LibraryBookMetadata(title: 'A', authorCredit: AuthorCredit.self),
+      );
+      expect(adapter.requests.last.data['authorCredit'], 'self');
+      // "other": always sent.
+      await publisher.save(
+        _folder(),
+        const LibraryBookMetadata(title: 'A', authorCredit: AuthorCredit.other),
+      );
+      expect(adapter.requests.last.data['authorCredit'], 'other');
+      // authorPhotoUrl is never written through the save body.
+      expect(adapter.requests.last.data.containsKey('authorPhotoUrl'), isFalse);
+      dio.close();
+    },
+  );
+
+  test('a loaded book that carried authorCredit is remembered', () {
+    final withKey = LibraryBookPublication.fromJson({
+      'status': 'published',
+      'book': {'id': 'b', 'title': 'T', 'authorCredit': 'other'},
+    }, fallbackTitle: 'T');
+    expect(withKey.hadAuthorCreditKey, isTrue);
+    expect(withKey.metadata.authorCredit, AuthorCredit.other);
+    final withoutKey = LibraryBookPublication.fromJson({
+      'status': 'published',
+      'book': {'id': 'b', 'title': 'T'},
+    }, fallbackTitle: 'T');
+    expect(withoutKey.hadAuthorCreditKey, isFalse);
+    expect(withoutKey.metadata.authorCredit, isNull);
+  });
+
+  // --- Author photo upload path and error mapping ---------------------------
+
+  test('author photo upload and removal hit the author-photo path', () async {
+    final adapter = _Adapter();
+    final dio = Dio()..httpClientAdapter = adapter;
+    final publisher = GamebaseLibraryBookPublisher(
+      dio: dio,
+      supabaseUrl: _testAuthUrl,
+      baseUrl: 'https://example.test',
+      accessToken: () => 'session',
+    );
+    await publisher.uploadAuthorPhoto(_folder(), Uint8List.fromList([1, 2, 3]));
+    expect(
+      adapter.requests.last.uri.toString(),
+      'https://example.test/api/library/folders/folder-id/book/author-photo',
+    );
+    expect(adapter.requests.last.method, 'POST');
+    expect(adapter.requests.last.data['image'], base64Encode([1, 2, 3]));
+    await publisher.removeAuthorPhoto(_folder());
+    expect(adapter.requests.last.method, 'DELETE');
+    expect(
+      adapter.requests.last.uri.toString(),
+      'https://example.test/api/library/folders/folder-id/book/author-photo',
+    );
+    dio.close();
+  });
+
+  test('author photo error codes map to the spec copy', () async {
+    for (final (code, status, expected) in [
+      ('author_photo_type', 400, 'Use a JPEG, PNG or WebP image.'),
+      ('author_photo_animated', 400, 'Use a still image, not an animation.'),
+      ('author_photo_aspect', 400, 'Crop the photo to a square.'),
+      (
+        'author_photo_too_small',
+        400,
+        'Use an image at least 256 by 256 pixels.',
+      ),
+      (
+        'author_photo_unavailable',
+        400,
+        'Author photo uploads are not available here yet.',
+      ),
+      ('bad_base64', 400, 'This image could not be read. Choose another one.'),
+      ('too_large', 413, 'This image is too large. Choose one under 8 MB.'),
+      (
+        'publication_unavailable',
+        409,
+        'Save the collection details, then add the author photo.',
+      ),
+      // No code, bare HTTP status: 404/405 both read as "not available yet".
+      (null, 404, 'Author photo uploads are not available here yet.'),
+      (null, 405, 'Author photo uploads are not available here yet.'),
+    ]) {
+      final adapter =
+          _Adapter()
+            ..responseStatus = status
+            ..errorCode = code;
+      final dio = Dio()..httpClientAdapter = adapter;
+      final publisher = GamebaseLibraryBookPublisher(
+        dio: dio,
+        supabaseUrl: _testAuthUrl,
+        baseUrl: 'https://example.test',
+        accessToken: () => 'session',
+      );
+      await expectLater(
+        publisher.uploadAuthorPhoto(_folder(), Uint8List.fromList([0])),
+        throwsA(
+          isA<LibraryBookPublicationException>().having(
+            (error) => error.message,
+            'message',
+            expected,
+          ),
+        ),
+        reason: '$code / $status',
+      );
+      dio.close();
+    }
+  });
+
+  // --- Author suggestions ---------------------------------------------------
+
+  test('suggestions parse https avatars and ignore malformed rows', () async {
+    final adapter = _SuggestAdapter(
+      items: [
+        {
+          'id': 'credit:a',
+          'name': 'Magnus Carlsen',
+          'bookCount': 3,
+          'avatarUrl': 'https://media.example/mc.webp',
+        },
+        {
+          'id': 'credit:b',
+          'name': 'Hikaru',
+          'bookCount': 1,
+          'avatarUrl': 'http://insecure/h.png',
+        },
+        {'id': '', 'name': 'No id'},
+        {'id': 'credit:c', 'name': ''},
+      ],
+    );
+    final dio = Dio()..httpClientAdapter = adapter;
+    final publisher = GamebaseLibraryBookPublisher(
+      dio: dio,
+      supabaseUrl: _testAuthUrl,
+      baseUrl: 'https://example.test',
+      accessToken: () => 'session',
+    );
+    final results = await publisher.suggestAuthors('mag');
+    expect(results, hasLength(2));
+    expect(results.first.name, 'Magnus Carlsen');
+    expect(results.first.avatarUrl, 'https://media.example/mc.webp');
+    // Non-https avatar is dropped to null; the row still comes through.
+    expect(results[1].name, 'Hikaru');
+    expect(results[1].avatarUrl, isNull);
+    expect(
+      adapter.requests.last.uri.toString(),
+      'https://example.test/api/library/authors?name=mag&limit=6',
+    );
+    dio.close();
+  });
+
+  test('suggestions never throw: a failure yields an empty list', () async {
+    final adapter = _Adapter()..responseStatus = 404;
+    final dio = Dio()..httpClientAdapter = adapter;
+    final publisher = GamebaseLibraryBookPublisher(
+      dio: dio,
+      supabaseUrl: _testAuthUrl,
+      baseUrl: 'https://example.test',
+      accessToken: () => 'session',
+    );
+    expect(await publisher.suggestAuthors('anything'), isEmpty);
+    dio.close();
+  });
+
+  test('suggestions skip the network for empty or over-long queries', () async {
+    final adapter = _SuggestAdapter(items: const []);
+    final dio = Dio()..httpClientAdapter = adapter;
+    final publisher = GamebaseLibraryBookPublisher(
+      dio: dio,
+      supabaseUrl: _testAuthUrl,
+      baseUrl: 'https://example.test',
+      accessToken: () => 'session',
+    );
+    expect(await publisher.suggestAuthors('   '), isEmpty);
+    expect(await publisher.suggestAuthors('x' * 61), isEmpty);
+    expect(adapter.requests, isEmpty);
+    dio.close();
+  });
+}
+
+/// Returns a configurable authors payload for suggestion tests.
+class _SuggestAdapter implements HttpClientAdapter {
+  _SuggestAdapter({required this.items});
+  final List<Map<String, dynamic>> items;
+  final requests = <RequestOptions>[];
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    requests.add(options);
+    return ResponseBody.fromString(
+      jsonEncode({
+        'status': 'success',
+        'data': {'items': items},
+      }),
+      200,
+      headers: {
+        Headers.contentTypeHeader: [Headers.jsonContentType],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
 }

@@ -34,45 +34,125 @@ final collectionCoverPickerProvider = Provider<
   },
 );
 
+/// Choose an image, let the author frame it square, and return the prepared
+/// 512×512 author photo, or null when they cancel at either step. Reuses the
+/// generalized cropper with a 1:1 frame; the cover path is untouched.
+/// Overridden in tests.
+final authorPhotoPickerProvider = Provider<
+  Future<Uint8List?> Function(BuildContext context)
+>(
+  (ref) => (context) async {
+    final source = await ref.read(authorPhotoSourceProvider)();
+    if (source == null || !context.mounted) return null;
+    final size = await collectionCoverSourceSize(source);
+    if (!authorPhotoFits(size)) {
+      throw const FormatException(
+        'This image is too small for an author photo. Use one at least 256 × 256 pixels.',
+      );
+    }
+    if (!context.mounted) return null;
+    final crop = await showCoverCropDialog(
+      context,
+      bytes: source,
+      photoSize: size,
+      aspectWidth: 1,
+      aspectHeight: 1,
+      minSourceWidth: authorPhotoMinSize,
+      minSourceHeight: authorPhotoMinSize,
+      title: 'Frame the author photo',
+      instructions:
+          'Drag to move, scroll to zoom. The square frame is exactly what shows with the author’s name.',
+    );
+    if (crop == null) return null;
+    return prepareAuthorPhoto(source, crop: crop);
+  },
+);
+
 /// The framing step as a desktop card over the editor. Returns the framed
 /// window as fractions of the photo, or null on Cancel / Esc / outside click.
+///
+/// Defaults frame a 2:3 cover (the original behaviour, unchanged). Pass
+/// [aspectWidth]/[aspectHeight], [minSourceWidth]/[minSourceHeight] and a
+/// [title] to frame a different shape — the author photo uses a 1:1 / 256-min
+/// square. The zoom floor is whichever source dimension the output needs most.
 Future<Rect?> showCoverCropDialog(
   BuildContext context, {
   required Uint8List bytes,
   required Size photoSize,
+  int aspectWidth = 2,
+  int aspectHeight = 3,
+  int minSourceWidth = collectionCoverMinWidth,
+  int minSourceHeight = collectionCoverMinHeight,
+  String title = 'Frame your cover',
+  String instructions =
+      'Drag to move, scroll to zoom. The frame is exactly what the cover shows.',
 }) => showGeneralDialog<Rect>(
   context: context,
   barrierDismissible: true,
-  barrierLabel: 'Frame your cover',
+  barrierLabel: title,
   barrierColor: Colors.black.withValues(alpha: 0.6),
   transitionDuration: const Duration(milliseconds: 140),
   pageBuilder:
       (ctx, _, _) => FTheme(
         data: FThemes.zinc.dark,
-        child: Center(child: CoverCropCard(bytes: bytes, photoSize: photoSize)),
+        child: Center(
+          child: CoverCropCard(
+            bytes: bytes,
+            photoSize: photoSize,
+            aspectWidth: aspectWidth,
+            aspectHeight: aspectHeight,
+            minSourceWidth: minSourceWidth,
+            minSourceHeight: minSourceHeight,
+            title: title,
+            instructions: instructions,
+          ),
+        ),
       ),
 );
 
 /// The frame stays put; the image moves under it (drag) and scales (scroll,
 /// pinch on a trackpad, or the slider). Zoom stops before the framed window
-/// drops below the 600×900 pixels a cover needs, and the image always fills
+/// drops below the source pixels the output needs, and the image always fills
 /// the frame.
 class CoverCropCard extends StatefulWidget {
   const CoverCropCard({
     super.key,
     required this.bytes,
     required this.photoSize,
+    this.aspectWidth = 2,
+    this.aspectHeight = 3,
+    this.minSourceWidth = collectionCoverMinWidth,
+    this.minSourceHeight = collectionCoverMinHeight,
+    this.title = 'Frame your cover',
+    this.instructions =
+        'Drag to move, scroll to zoom. The frame is exactly what the cover shows.',
   });
 
   final Uint8List bytes;
   final Size photoSize;
+  final int aspectWidth;
+  final int aspectHeight;
+  final int minSourceWidth;
+  final int minSourceHeight;
+  final String title;
+  final String instructions;
 
   @override
   State<CoverCropCard> createState() => _CoverCropCardState();
 }
 
 class _CoverCropCardState extends State<CoverCropCard> {
-  static const _frame = Size(300, 450);
+  /// The on-screen frame, sized to the aspect with a stable long edge of 450
+  /// (so the cover's 300×450 is unchanged and a square comes out 450×450).
+  late final Size _frame = _frameFor(widget.aspectWidth, widget.aspectHeight);
+
+  static Size _frameFor(int aw, int ah) {
+    const long = 450.0;
+    return aw >= ah
+        ? Size(long, long * ah / aw)
+        : Size(long * aw / ah, long);
+  }
+
   final _transform = TransformationController();
 
   double get _cover => math.max(
@@ -80,8 +160,17 @@ class _CoverCropCardState extends State<CoverCropCard> {
     _frame.height / widget.photoSize.height,
   );
   Size get _child => widget.photoSize * _cover;
-  double get _maxZoom =>
-      math.max(1.0, _frame.width / _cover / collectionCoverMinWidth);
+
+  /// Zoom may grow until the framed window reaches the smaller of the two
+  /// source-pixel floors the output needs. The width floor governs when the
+  /// frame is wider than tall relative to the source and vice-versa; taking
+  /// the tighter cap keeps both dimensions above their minimum.
+  double get _maxZoom {
+    final widthCap = _frame.width / _cover / widget.minSourceWidth;
+    final heightCap = _frame.height / _cover / widget.minSourceHeight;
+    return math.max(1.0, math.min(widthCap, heightCap));
+  }
+
   double get _zoom => _transform.value.getMaxScaleOnAxis();
 
   @override
@@ -147,7 +236,7 @@ class _CoverCropCardState extends State<CoverCropCard> {
         child: Material(
           type: MaterialType.transparency,
           child: Container(
-            width: 380,
+            width: math.max(380, _frame.width + 40),
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
             decoration: BoxDecoration(
               color: kBlack2Color,
@@ -165,18 +254,18 @@ class _CoverCropCardState extends State<CoverCropCard> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text(
-                  'Frame your cover',
-                  style: TextStyle(
+                Text(
+                  widget.title,
+                  style: const TextStyle(
                     color: kWhiteColor,
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'Drag to move, scroll to zoom. The frame is exactly what the cover shows.',
-                  style: TextStyle(
+                Text(
+                  widget.instructions,
+                  style: const TextStyle(
                     color: kWhiteColor70,
                     fontSize: 12,
                     height: 1.4,
