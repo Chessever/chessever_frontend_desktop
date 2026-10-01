@@ -382,14 +382,15 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             publish: publish,
             refreshGames: refreshGames,
           ),
+      // Gamebase sends every submission, and every change to a live book,
+      // to ChessEver for review; nothing goes public from here directly.
       success:
-          publish
-              ? 'Your book is public in Collections.'
-              : refreshGames
-              ? 'Published games updated from this folder.'
-              : _publication?.isPublished == true
-              ? 'Public book details saved.'
-              : 'Draft saved. This book is private.',
+          (saved) =>
+              saved.isPublished
+                  ? 'Collection updated.'
+                  : publish
+                  ? 'Submitted for ChessEver approval. It appears in Collections once approved.'
+                  : 'Draft saved. This collection is private.',
       afterSuccess: (saved) {
         unawaited(_clearDraft());
         _remember(saved.metadata);
@@ -399,7 +400,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
 
   Future<void> _mutate(
     Future<LibraryBookPublication> Function() action, {
-    required String success,
+    required String Function(LibraryBookPublication saved) success,
     void Function(LibraryBookPublication saved)? afterSuccess,
   }) async {
     if (_busy) return;
@@ -413,7 +414,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       if (!mounted) return;
       _setPublication(value);
       afterSuccess?.call(value);
-      setState(() => _notice = success);
+      setState(() => _notice = success(value));
     } catch (error) {
       if (mounted) setState(() => _error = _errorText(error));
     } finally {
@@ -821,8 +822,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
         children: [
           Text(
             published
-                ? 'Public in Collections · ${publication.gameCount} games. Saving details updates the public book. Update games to replace its snapshot with the latest folder contents.'
-                : 'Private until you publish. Publishing makes this folder and its nested games available as a book in Collections. Include only content you have permission to share. A book can contain up to 1,000 games and 10 MB of PGN.',
+                ? 'Public in Collections · ${publication.gameCount} games. Changes go to ChessEver for review. Submit with latest games to replace its games with the folder’s current contents.'
+                : 'Private draft · only you can see it. Submitting sends this folder and its nested games to ChessEver, who reviews every collection before it appears in Collections. Include only content you have permission to share. Up to 1,000 games and 10 MB of PGN.',
             style: const TextStyle(
               color: kWhiteColor70,
               fontSize: 13,
@@ -945,7 +946,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                               .read(libraryBookPublisherProvider)
                               .unpublish(widget.folder),
                           success:
-                              'Book unpublished. Your private folder is unchanged.',
+                              (_) =>
+                                  'Book unpublished. Your private folder is unchanged.',
                         ),
               ),
             ],
@@ -965,19 +967,20 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             onPress:
                 _busy ? null : () => setState(() => _confirmUnpublish = true),
           ),
+        // A live book cannot keep a private edit: Gamebase returns any
+        // change to review, so published books always resubmit. Saving one
+        // without submitting would quietly take it out of Collections.
         DesktopDialogButton(
-          label: published ? 'Save details' : 'Save draft',
+          label: published ? 'Submit changes' : 'Save draft',
           tone: DesktopDialogButtonTone.ghost,
-          onPress: _busy ? null : () => _save(),
+          onPress: _busy ? null : () => _save(publish: published),
         ),
         DesktopDialogButton(
-          label: published ? 'Update games' : 'Publish book',
+          label: published ? 'Submit with latest games' : 'Submit for approval',
           icon: Icons.publish_rounded,
           tone: DesktopDialogButtonTone.primary,
           onPress:
-              _busy
-                  ? null
-                  : () => _save(publish: !published, refreshGames: true),
+              _busy ? null : () => _save(publish: true, refreshGames: true),
         ),
       ],
     );

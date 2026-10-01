@@ -59,7 +59,9 @@ class _Publisher implements LibraryBookPublisher {
       );
     }
     return publication = LibraryBookPublication(
-      status: publish || publication.isPublished ? 'published' : 'draft',
+      // As Gamebase does: a submission waits for review, and any change to
+      // a live book returns it to review.
+      status: 'draft',
       metadata: metadata,
       bookId: 'book-1',
       gameCount: 5,
@@ -172,7 +174,10 @@ void main() {
       await _tap(tester, 'Save draft');
       expect(publisher.saves.single.publish, isFalse);
       expect(publisher.saves.single.refreshGames, isFalse);
-      expect(find.text('Draft saved. This book is private.'), findsOneWidget);
+      expect(
+        find.text('Draft saved. This collection is private.'),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     },
   );
@@ -184,14 +189,19 @@ void main() {
       final publisher = _Publisher()..fail = true;
       await _pump(tester, publisher);
       await tester.enterText(find.byType(EditableText).first, 'New book title');
-      await _tap(tester, 'Publish book');
+      await _tap(tester, 'Submit for approval');
       expect(find.text('Offline. Retry when connected.'), findsOneWidget);
       expect(find.text('New book title'), findsWidgets);
       expect(publisher.saves.single.publish, isTrue);
       expect(publisher.saves.single.refreshGames, isTrue);
       publisher.fail = false;
-      await _tap(tester, 'Publish book');
-      expect(find.text('Your book is public in Collections.'), findsOneWidget);
+      await _tap(tester, 'Submit for approval');
+      expect(
+        find.text(
+          'Submitted for ChessEver approval. It appears in Collections once approved.',
+        ),
+        findsOneWidget,
+      );
       expect(publisher.saves.last.metadata.title, 'New book title');
       expect(tester.takeException(), isNull);
     },
@@ -217,8 +227,11 @@ void main() {
       expect(publisher.unpublishCalls, 0);
       await _tap(tester, 'Unpublish book');
       expect(publisher.unpublishCalls, 1);
-      expect(find.text('Publish book'), findsOneWidget);
-      await _tap(tester, 'Publish book');
+      expect(
+        find.widgetWithText(FButton, 'Submit for approval'),
+        findsOneWidget,
+      );
+      await _tap(tester, 'Submit for approval');
       expect(publisher.saves.single.publish, isTrue);
       expect(publisher.saves.single.refreshGames, isTrue);
       expect(publisher.saves.single.metadata.title, 'My book');
@@ -226,31 +239,40 @@ void main() {
     },
   );
 
-  testWidgets(
-    'published details save metadata and Update games only refreshes content',
-    semanticsEnabled: false,
-    (tester) async {
-      final publisher =
-          _Publisher()
-            ..publication = const LibraryBookPublication(
-              status: 'published',
-              metadata: LibraryBookMetadata(title: 'My book', author: 'Owner'),
-              gameCount: 5,
-            );
-      await _pump(tester, publisher);
-      await _tap(tester, 'Save details');
-      expect(publisher.saves.single.publish, isFalse);
-      expect(publisher.saves.single.refreshGames, isFalse);
-      await _tap(tester, 'Update games');
-      expect(publisher.saves.last.publish, isFalse);
-      expect(publisher.saves.last.refreshGames, isTrue);
-      expect(
-        find.text('Published games updated from this folder.'),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
+  for (final (label, refresh) in [
+    ('Submit changes', false),
+    ('Submit with latest games', true),
+  ]) {
+    testWidgets(
+      'a live book never saves privately: "$label" resubmits for review',
+      semanticsEnabled: false,
+      (tester) async {
+        final publisher =
+            _Publisher()
+              ..publication = const LibraryBookPublication(
+                status: 'published',
+                metadata: LibraryBookMetadata(
+                  title: 'My book',
+                  author: 'Owner',
+                  about: 'A chess study',
+                ),
+                gameCount: 5,
+              );
+        await _pump(tester, publisher);
+        expect(find.widgetWithText(FButton, 'Save draft'), findsNothing);
+        await _tap(tester, label);
+        expect(publisher.saves.single.publish, isTrue);
+        expect(publisher.saves.single.refreshGames, refresh);
+        expect(
+          find.text(
+            'Submitted for ChessEver approval. It appears in Collections once approved.',
+          ),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'foreword and publisher are not asked for but survive a save',
