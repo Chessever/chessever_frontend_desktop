@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:chessever/desktop/services/collection_cover.dart';
+import 'package:chessever/desktop/widgets/library/cover_crop_dialog.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/desktop/widgets/library/library_book_dialog.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
@@ -130,7 +130,7 @@ Future<void> _pump(
       overrides: [
         libraryBookPublisherProvider.overrideWithValue(publisher),
         collectionCoverPickerProvider.overrideWithValue(
-          () async => pickedCover,
+          (_) async => pickedCover,
         ),
       ],
       child: MaterialApp(

@@ -8,9 +8,9 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:chessever/desktop/services/collection_cover.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/library/cover_crop_dialog.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -431,7 +431,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     if (_busy || _coverBusy) return;
     final Uint8List? image;
     try {
-      image = await ref.read(collectionCoverPickerProvider)();
+      image = await ref.read(collectionCoverPickerProvider)(context);
     } on FormatException catch (error) {
       if (mounted) setState(() => _error = error.message);
       return;
@@ -557,7 +557,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Shown on the collection card and page. The centre of your image is cropped to a 2:3 portrait. Without one, the default plate is shown.',
+            'Shown on the collection card and page. You frame it as a 2:3 portrait after choosing. Without one, the default plate is shown.',
             style: TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
           ),
           const SizedBox(height: 10),
