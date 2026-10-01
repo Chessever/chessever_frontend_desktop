@@ -116,6 +116,14 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
   String? _enabledLocalPlayerTreeId;
   bool _localDatabaseTreeMode = false;
 
+  /// Local sources support extra speeds; the API accepts three categories.
+  List<TimeControl> get availableTimeControls =>
+      _localDatabaseTreeMode ||
+              (_enabledLocalPlayerTreeId != null &&
+                  _enabledLocalPlayerTreeId == _localTreePlayerId(state.filters))
+          ? TimeControl.values
+          : gamebaseExplorerApiTimeControls;
+
   /// Play SFX for a SAN move string if sound is enabled.
   void _playSfx(String san) {
     final boardSettings = ref.read(boardSettingsProviderNew).valueOrNull;
@@ -1237,6 +1245,8 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
     if (enabled) {
       _debounceTimer?.cancel();
       state = state.copyWith(isLoading: false, error: null);
+    } else {
+      _clearUnavailableTimeControls();
     }
   }
 
@@ -1288,7 +1298,21 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
   }
 
   void disableLocalPlayerTree() {
+    if (_enabledLocalPlayerTreeId == null) return;
     _enabledLocalPlayerTreeId = null;
+    _clearUnavailableTimeControls();
+  }
+
+  /// A speed selected on a local source cannot carry into the API explorer.
+  void _clearUnavailableTimeControls() {
+    final controls = state.filters.timeControls;
+    final available = availableTimeControls;
+    if (controls.every(available.contains)) return;
+    state = state.copyWith(
+      filters: state.filters.copyWith(
+        timeControls: controls.where(available.contains).toList(),
+      ),
+    );
   }
 
   bool isLocalPlayerTreeEnabledFor(String playerId) {

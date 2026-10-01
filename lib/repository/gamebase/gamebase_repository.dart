@@ -9,12 +9,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:dart_mappable/dart_mappable.dart';
-import 'package:dartchess/dartchess.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models_extra.dart';
 import 'package:chessever/repository/gamebase/memorial_player.dart';
+
+import 'explorer_query.dart';
 
 part 'gamebase_repository.mapper.dart';
 
@@ -547,22 +548,20 @@ Map<String, dynamic> buildGamebaseExplorerFilterFields({
   bool? isOnline,
   bool trimPlayerId = false,
 }) {
-  final resolvedPlayerId = trimPlayerId ? playerId?.trim() : playerId;
-  return <String, dynamic>{
-    if (resolvedPlayerId != null && resolvedPlayerId.isNotEmpty)
-      'playerId': resolvedPlayerId,
-    if (timeControl != null) 'timeControl': timeControl.name.toUpperCase(),
-    if (minRating != null) 'minRating': minRating,
-    if (maxRating != null) 'maxRating': maxRating,
-    if (color != null) 'color': color,
-    if (result != null) 'result': result,
-    if (yearFrom != null) 'yearFrom': yearFrom,
-    if (yearTo != null) 'yearTo': yearTo,
-    if (isOnline != null) 'isOnline': isOnline,
-  };
+  return gamebaseExplorerFilterFields(
+    timeControl: timeControl?.name,
+    playerId: playerId,
+    minRating: minRating,
+    maxRating: maxRating,
+    color: color,
+    result: result,
+    yearFrom: yearFrom,
+    yearTo: yearTo,
+    isOnline: isOnline,
+  );
 }
 
-/// POST `/api/game-position/aggregates/query` body after FEN/move normalize.
+/// POST `/api/game-position/aggregates/query` body with verified FEN/move context.
 @visibleForTesting
 Map<String, dynamic> buildMoveAggregatesQueryBody({
   required String fen,
@@ -577,9 +576,10 @@ Map<String, dynamic> buildMoveAggregatesQueryBody({
   int? yearTo,
   bool? isOnline,
 }) {
+  final position = GamebaseExplorerPosition.resolve(fen, moves);
   return <String, dynamic>{
-    'fen': fen,
-    'moves': moves,
+    'fen': position.fen,
+    'moves': position.moves,
     ...buildGamebaseExplorerFilterFields(
       timeControl: timeControl,
       playerId: playerId,
@@ -607,7 +607,7 @@ List<Map<String, String>>? _positionGamesOrderBy(
   ];
 }
 
-/// POST `/api/game-position/games/query` body after FEN/move normalize.
+/// POST `/api/game-position/games/query` body with verified FEN/move context.
 @visibleForTesting
 Map<String, dynamic> buildPositionGamesQueryBody({
   required String fen,
@@ -628,13 +628,18 @@ Map<String, dynamic> buildPositionGamesQueryBody({
   int pageSize = 20,
   int notationPlies = 0,
 }) {
+  final position = GamebaseExplorerPosition.resolve(fen, moves);
   final orderBy = _positionGamesOrderBy(sortBy, sortDirection);
+  final continuation = position.continuationUci(uci);
   return <String, dynamic>{
-    'fen': fen,
-    'moves': moves,
-    'pageNumber': pageNumber,
-    'pageSize': pageSize,
-    if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
+    'fen': position.fen,
+    'moves': position.moves,
+    ...gamebaseExplorerPageFields(
+      pageNumber: pageNumber,
+      pageSize: pageSize,
+      notationPlies: notationPlies,
+    ),
+    if (continuation != null) 'uci': continuation,
     ...buildGamebaseExplorerFilterFields(
       timeControl: timeControl,
       playerId: playerId,
@@ -650,11 +655,10 @@ Map<String, dynamic> buildPositionGamesQueryBody({
     if (orderBy != null) 'orderBy': orderBy,
     if (sortBy != null) 'sortBy': sortBy.name,
     if (sortDirection != null) 'sortDirection': sortDirection.name,
-    if (notationPlies > 0) 'notationPlies': notationPlies,
   };
 }
 
-/// GET `/api/game-position/games` query parameters after FEN normalize.
+/// GET `/api/game-position/games` query parameters with verified FEN.
 @visibleForTesting
 Map<String, dynamic> buildPositionGamesQueryParameters({
   required String fen,
@@ -674,11 +678,16 @@ Map<String, dynamic> buildPositionGamesQueryParameters({
   int pageSize = 20,
   int notationPlies = 0,
 }) {
+  final position = GamebaseExplorerPosition.resolve(fen, const []);
+  final continuation = position.continuationUci(uci);
   return <String, dynamic>{
-    'fen': fen,
-    'pageNumber': pageNumber,
-    'pageSize': pageSize,
-    if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
+    'fen': position.fen,
+    ...gamebaseExplorerPageFields(
+      pageNumber: pageNumber,
+      pageSize: pageSize,
+      notationPlies: notationPlies,
+    ),
+    if (continuation != null) 'uci': continuation,
     ...buildGamebaseExplorerFilterFields(
       timeControl: timeControl,
       playerId: playerId,
@@ -693,11 +702,10 @@ Map<String, dynamic> buildPositionGamesQueryParameters({
     ),
     if (sortBy != null) 'sortBy': sortBy.name,
     if (sortDirection != null) 'sortDirection': sortDirection.name,
-    if (notationPlies > 0) 'notationPlies': notationPlies,
   };
 }
 
-/// GET `/api/game-position/fen/games` query parameters after FEN normalize.
+/// GET `/api/game-position/fen/games` query parameters with verified FEN.
 @visibleForTesting
 Map<String, dynamic> buildFenPositionGamesQueryParameters({
   required String fen,
@@ -717,11 +725,16 @@ Map<String, dynamic> buildFenPositionGamesQueryParameters({
   int pageSize = 20,
   int notationPlies = 0,
 }) {
+  final position = GamebaseExplorerPosition.resolve(fen, const []);
+  final continuation = position.continuationUci(uci);
   return <String, dynamic>{
-    'fen': fen,
-    'pageNumber': pageNumber,
-    'pageSize': pageSize,
-    if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
+    'fen': position.fen,
+    ...gamebaseExplorerPageFields(
+      pageNumber: pageNumber,
+      pageSize: pageSize,
+      notationPlies: notationPlies,
+    ),
+    if (continuation != null) 'uci': continuation,
     ...buildGamebaseExplorerFilterFields(
       timeControl: timeControl,
       playerId: playerId,
@@ -736,7 +749,6 @@ Map<String, dynamic> buildFenPositionGamesQueryParameters({
     ),
     if (sortBy != null) 'sortBy': sortBy.name,
     if (sortDirection != null) 'sortDirection': sortDirection.name,
-    if (notationPlies > 0) 'notationPlies': notationPlies,
   };
 }
 
@@ -959,20 +971,9 @@ class GamebaseRepository {
     bool? isOnline,
   }) async {
     try {
-      final normalizedFen = _normalizeFenForLookup(fen);
-      final normalizedMoves = _sanitizeMovesForFen(normalizedFen, moves);
-
-      if (kDebugMode &&
-          moves.isNotEmpty &&
-          normalizedMoves.length != moves.length) {
-        debugPrint(
-          '[GamebaseRepository] Dropping mismatched move path for aggregates query',
-        );
-      }
-
       final body = buildMoveAggregatesQueryBody(
-        fen: normalizedFen,
-        moves: normalizedMoves,
+        fen: fen,
+        moves: moves,
         playerId: playerId,
         timeControl: timeControl,
         minRating: minRating,
@@ -1052,115 +1053,6 @@ class GamebaseRepository {
     } catch (e) {
       throw Exception('Failed to load gamebase stats: $e');
     }
-  }
-
-  /// Canonicalize FEN for Gamebase lookups.
-  ///
-  /// The API expects a standard 6-field FEN. Some callers may provide only the
-  /// first 4 fields (piece placement, side to move, castling rights, en
-  /// passant). In that case, append halfmove/fullmove counters.
-  ///
-  /// When counters are present, preserve them. Some backends index/look up
-  /// positions using the full FEN string; clamping counters can cause misses
-  /// for progressed positions.
-  static String _normalizeFenForLookup(String fen) {
-    final parts = fen.trim().split(RegExp(r'\s+'));
-    if (parts.length < 4) return fen.trim();
-
-    if (parts.length == 4) return '${parts.join(' ')} 0 1';
-    return parts.take(6).join(' ');
-  }
-
-  static String _positionKey(String fen) =>
-      fen.trim().split(RegExp(r'\s+')).take(4).join(' ');
-
-  static NormalMove? _normalMoveFromUci(String uci) {
-    if (uci.length < 4) return null;
-
-    final from = Square.fromName(uci.substring(0, 2));
-    final to = Square.fromName(uci.substring(2, 4));
-
-    Role? promotion;
-    if (uci.length > 4) {
-      promotion = Role.fromChar(uci[4]);
-      if (promotion == null) return null;
-    }
-
-    return NormalMove(from: from, to: to, promotion: promotion);
-  }
-
-  static List<String> _sanitizeMovesForFen(String fen, List<String> moves) {
-    if (moves.isEmpty) return const [];
-
-    final normalizedMoves = moves
-        .map((m) => m.trim().toLowerCase())
-        .where((m) => RegExp(r'^[a-h][1-8][a-h][1-8][qrbn]?$').hasMatch(m))
-        .toList(growable: false);
-
-    if (normalizedMoves.isEmpty) return const [];
-
-    try {
-      Position position = Chess.initial;
-      final replayed = <String>[];
-      for (final uci in normalizedMoves) {
-        final move = _normalMoveFromUci(uci);
-        if (move == null || !position.isLegal(move)) {
-          return const [];
-        }
-        // dartchess encodes castling king-to-rook (e1h1), but the backend
-        // (chess.js) only accepts the standard king-to-g/c UCI. Emit the
-        // standard form so deep-path queries (ply > indexed boundary) can
-        // replay the move line server-side.
-        replayed.add(_toStandardCastlingUci(position, move));
-        position = position.play(move);
-      }
-
-      // Only require the replayed position to match the target FEN (first 4
-      // fields — piece placement / turn / castling / en passant). Do NOT
-      // compare move count against _pliesFromFen: variation paths that
-      // replace a mainline move result in a move list shorter than the FEN's
-      // fullmove-derived ply count, and the old strict equality silently
-      // dropped the whole line at depth ≥ 21, collapsing the backend to the
-      // position-only path which returns empty past the indexed boundary.
-      return _positionKey(position.fen) == _positionKey(fen)
-          ? List<String>.unmodifiable(replayed)
-          : const [];
-    } catch (_) {
-      return const [];
-    }
-  }
-
-  /// Returns the standard king-to-target UCI for a castling move, or the
-  /// original [move]'s UCI for any non-castling move.
-  ///
-  /// dartchess normalizes castling to the Chess960 king-to-rook form (e.g.
-  /// `e1h1`), but the Gamebase backend uses chess.js which only recognizes the
-  /// classical king-to-g/c form (`e1g1`, `e1c1`, `e8g8`, `e8c8`). Without this
-  /// rewrite, any move line containing a castle fails server-side replay and
-  /// deep-path queries return empty aggregates.
-  static String _toStandardCastlingUci(Position position, NormalMove move) {
-    final piece = position.board.pieceAt(move.from);
-    if (piece == null || piece.role != Role.king) return move.uci;
-
-    final fromFile = move.from.file;
-    final toFile = move.to.file;
-    final fileDelta = (fromFile - toFile).abs();
-
-    final targetPiece = position.board.pieceAt(move.to);
-    final capturesOwnRook =
-        targetPiece != null &&
-        targetPiece.role == Role.rook &&
-        targetPiece.color == piece.color;
-
-    // File delta of 2+ (standard e1→g1/c1) or capturing own rook (Chess960
-    // form e1→h1/a1) both indicate castling. For everything else (e1→f1,
-    // e1→e2, etc.) fall through to the original UCI.
-    if (fileDelta < 2 && !capturesOwnRook) return move.uci;
-
-    final isKingSide = toFile > fromFile;
-    final targetFile = isKingSide ? File.g : File.c;
-    final targetSquare = Square.fromCoords(targetFile, move.from.rank);
-    return move.from.name + targetSquare.name;
   }
 
   /// Search players by name.
@@ -2188,14 +2080,14 @@ class GamebaseRepository {
     int pageSize = 20,
     int notationPlies = 0,
   }) {
-    final normalizedFen = _normalizeFenForLookup(fen);
-    final normalizedMoves = _sanitizeMovesForFen(normalizedFen, moves);
+    final position = GamebaseExplorerPosition.resolve(fen, moves);
+    final normalizedMoves = position.moves;
     if (normalizedMoves.isNotEmpty) {
       return GamebaseWireRequest(
         method: 'POST',
         url: '$_baseUrl/api/game-position/games/query',
         payload: buildPositionGamesQueryBody(
-          fen: normalizedFen,
+          fen: position.fen,
           moves: normalizedMoves,
           uci: uci,
           timeControl: timeControl,
@@ -2219,7 +2111,7 @@ class GamebaseRepository {
       method: 'GET',
       url: '$_baseUrl/api/game-position/games',
       payload: buildPositionGamesQueryParameters(
-        fen: normalizedFen,
+        fen: position.fen,
         uci: uci,
         timeControl: timeControl,
         playerId: playerId,
@@ -2262,7 +2154,7 @@ class GamebaseRepository {
       method: 'GET',
       url: '$_baseUrl/api/game-position/fen/games',
       payload: buildFenPositionGamesQueryParameters(
-        fen: _normalizeFenForLookup(fen),
+        fen: fen,
         uci: uci,
         timeControl: timeControl,
         playerId: playerId,

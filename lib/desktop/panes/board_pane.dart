@@ -5384,6 +5384,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                                     ? 'w'
                                     : 'b'),
                         onPlayUci: activeEvalTarget.canPlayPv ? playUci : null,
+                        pvPlayOwner: (activeTabId, chessGame.value),
                         game: chessGame.value,
                         headers: pgnHeaders.value,
                         activePly:
@@ -8934,6 +8935,7 @@ class _BoardEvalBarSurface extends ConsumerWidget {
       mate: snapshot.mate,
       isEvaluating: snapshot.isEvaluating,
       positionKey: _fenPositionKey(fen),
+      retainWhileRetargeting: true,
     );
   }
 }

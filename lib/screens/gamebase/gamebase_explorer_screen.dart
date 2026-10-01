@@ -1348,7 +1348,10 @@ class _FilterSheetState extends ConsumerState<_FilterSheet> {
                 Wrap(
                   spacing: 8.sp,
                   children:
-                      TimeControl.values.map((tc) {
+                      ref
+                          .read(gamebaseExplorerProvider.notifier)
+                          .availableTimeControls
+                          .map((tc) {
                         final isSelected = filters.timeControls.contains(tc);
                         return FilterChip(
                           label: Text(tc.displayName),

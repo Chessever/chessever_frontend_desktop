@@ -293,8 +293,8 @@ void main() {
       );
       final described = repo.fenPositionGamesRequest(
         fen: _fen.split(' ').take(4).join(' '),
-        uci: ' c1g5 ',
-        playerId: ' p1 ',
+        uci: ' d7d6 ',
+        playerId: ' 00000000-0000-4000-8000-000000000001 ',
         timeControl: TimeControl.blitz,
         pageNumber: 1,
         pageSize: 25,
@@ -302,8 +302,8 @@ void main() {
       );
       await repo.getFenPositionGames(
         fen: _fen.split(' ').take(4).join(' '),
-        uci: ' c1g5 ',
-        playerId: ' p1 ',
+        uci: ' d7d6 ',
+        playerId: ' 00000000-0000-4000-8000-000000000001 ',
         timeControl: TimeControl.blitz,
         pageNumber: 1,
         pageSize: 25,
@@ -316,14 +316,17 @@ void main() {
         'fen',
         'pageNumber',
         'pageSize',
+        'notationPlies',
         'uci',
         'playerId',
         'timeControl',
-        'notationPlies',
       ]);
       expect(described.payload['fen'], endsWith(' 0 1'));
-      expect(described.payload['uci'], 'c1g5');
-      expect(described.payload['playerId'], 'p1');
+      expect(described.payload['uci'], 'd7d6');
+      expect(
+        described.payload['playerId'],
+        '00000000-0000-4000-8000-000000000001',
+      );
     });
 
     test('identity ignores the order fields were built in', () {
@@ -504,11 +507,11 @@ void main() {
         currentUserId: () => 'u',
         memoryPages: 3,
       );
-      for (final uci in ['a2a3', 'a2a4', 'b2b3', 'b2b4']) {
+      for (final uci in ['d7d6', 'd7d5', 'a7a6', 'a7a5']) {
         await cache.fetch(_query(uci: uci));
       }
-      expect(cache.peek(_query(uci: 'a2a3')), isNull);
-      for (final uci in ['a2a4', 'b2b3', 'b2b4']) {
+      expect(cache.peek(_query(uci: 'd7d6')), isNull);
+      for (final uci in ['d7d5', 'a7a6', 'a7a5']) {
         expect(cache.peek(_query(uci: uci)), isNotNull);
       }
     });
@@ -538,10 +541,12 @@ void main() {
 
         final first = _query();
         await container.read(positionGamesProvider(first).future);
-        // Stepping through 60 other positions within the window.
+        // Sixty other filtered first pages within the window.
         for (var i = 0; i < 60; i++) {
           await container.read(
-            positionGamesProvider(_query(uci: 'a2a3-$i')).future,
+            positionGamesProvider(
+              _query(filters: GamebaseFilters(minRating: 2000 + i)),
+            ).future,
           );
           now = now.add(const Duration(milliseconds: 500));
         }
@@ -857,7 +862,7 @@ void main() {
       expect(snapshot?.source, ExplorerGamesSource.disk);
       // Its own fetches never touch the folder.
       final filesBefore = await dir.list().length;
-      await detached.fetch(_query(uci: 'e7e5'));
+      await detached.fetch(_query(uci: 'a7a6'));
       await detached.debugDiskIdle();
       expect(await dir.list().length, filesBefore);
     });
