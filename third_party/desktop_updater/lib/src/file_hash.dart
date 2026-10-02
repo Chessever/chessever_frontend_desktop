@@ -133,9 +133,19 @@ List<FileHashModel> _decodeHashes(String source) {
       .toList(growable: false);
 }
 
+/// The uninstaller the Windows installer writes next to the app
+/// (`unins000.exe`, `unins000.dat`, `unins000.msg`). It is never part of a
+/// release archive, so without this an in-app update would list it as a
+/// removed file and delete it, and "Uninstall" would stop working.
+final RegExp _installerOwnedFile = RegExp(
+  r"^unins\d{3}\.(exe|dat|msg)$",
+  caseSensitive: false,
+);
+
 bool _shouldSkipHash(String relativePath) {
   return relativePath == "hashes.json" ||
       relativePath == ".DS_Store" ||
       relativePath == ".desktop_updater_manifest.json" ||
-      relativePath.startsWith("update/");
+      relativePath.startsWith("update/") ||
+      _installerOwnedFile.hasMatch(relativePath);
 }

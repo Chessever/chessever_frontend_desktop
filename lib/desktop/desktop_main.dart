@@ -38,6 +38,7 @@ import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_ui_stall_monitor.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
+import 'package:chessever/desktop/services/desktop_updater_startup.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/window_state_persistence.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -349,22 +350,7 @@ Future<void> _desktopBoot({
   // the window appearing. The chip in the top bar appears only after a
   // verified update is staged.
   if (DesktopBuildIdentity.current.updatesEnabled) {
-    ForegroundTaskScheduler.schedule(
-      key: 'desktop_startup_desktop_updater',
-      delay: kStartupWarmupDelay + const Duration(seconds: 2),
-      task: () async {
-        try {
-          await DesktopUpdaterService.instance.initialize();
-        } catch (e, stack) {
-          print('[desktop] ⚠️ auto-updater init failed');
-          ErrorReporter.report(
-            e,
-            stackTrace: stack,
-            tag: 'desktop.updater_init',
-          );
-        }
-      },
-    );
+    _updaterStartup.schedule();
   } else {
     print('[desktop] production updater disabled for development build');
   }
@@ -933,3 +919,17 @@ List<String> _pathExtensions(Iterable<String> paths) {
   final sorted = extensions.toList()..sort();
   return sorted;
 }
+
+/// Kept for the life of the process: it listens for the app coming back to
+/// the foreground until the updater has started.
+final DesktopUpdaterStartup _updaterStartup = DesktopUpdaterStartup(
+  firstDelay: kStartupWarmupDelay + const Duration(seconds: 2),
+  start: () async {
+    try {
+      await DesktopUpdaterService.instance.initialize();
+    } catch (e, stack) {
+      print('[desktop] ⚠️ auto-updater init failed');
+      ErrorReporter.report(e, stackTrace: stack, tag: 'desktop.updater_init');
+    }
+  },
+);
