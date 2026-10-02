@@ -14,6 +14,7 @@ enum DesktopPane {
   board,
   tournaments,
   library,
+  collections,
   favorites,
   players,
   rankings,
@@ -34,6 +35,8 @@ TabKind tabKindForPane(DesktopPane pane) {
       return TabKind.tournaments;
     case DesktopPane.library:
       return TabKind.library;
+    case DesktopPane.collections:
+      return TabKind.collections;
     case DesktopPane.favorites:
       return TabKind.favorites;
     case DesktopPane.players:
@@ -71,6 +74,10 @@ DesktopPane? paneForTabKind(TabKind kind) {
     case TabKind.library:
     case TabKind.databaseWorkspace:
       return DesktopPane.library;
+    case TabKind.collections:
+    case TabKind.collectionWorkspace:
+      // An opened collection is a deeper view of Collections.
+      return DesktopPane.collections;
     case TabKind.favorites:
       return DesktopPane.favorites;
     case TabKind.players:

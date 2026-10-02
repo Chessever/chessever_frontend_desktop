@@ -61,6 +61,14 @@ enum TabKind {
   /// performance sharing. The team and its event live per tab in
   /// `teamScoreCardByTabIdProvider`.
   teamScoreCard,
+
+  /// The published collections catalog: annotated books and game sets that
+  /// readers browse. Spawned from the sidebar's Collections entry.
+  collections,
+
+  /// One opened collection: its About, games and players. The collection
+  /// lives per tab in `collectionWorkspaceArgsByTabIdProvider`.
+  collectionWorkspace,
 }
 
 extension TabKindLabel on TabKind {
@@ -110,6 +118,10 @@ extension TabKindLabel on TabKind {
         return 'Database';
       case TabKind.teamScoreCard:
         return 'Team';
+      case TabKind.collections:
+        return 'Collections';
+      case TabKind.collectionWorkspace:
+        return 'Collection';
     }
   }
 }
