@@ -4,6 +4,15 @@ import "dart:io";
 import "package:http/http.dart" as http;
 import "package:path/path.dart" as path;
 
+/// How long a request may wait for the server's first answer.
+const Duration remoteConnectTimeout = Duration(seconds: 30);
+
+/// How long a transfer may go without receiving a single byte. A slow
+/// connection keeps sending and never trips this; a dead socket (sleep, a
+/// dropped Wi-Fi) does, and the caller gets an error it can retry instead of
+/// a download that never ends.
+const Duration remoteIdleTimeout = Duration(seconds: 60);
+
 String normalizeArchivePath(String filePath) {
   final normalized = filePath.replaceAll("\\", "/");
   final segments = normalized
@@ -59,11 +68,15 @@ Future<void> downloadUriToFile(
   String source,
   File destination, {
   void Function(int receivedBytes, int? totalBytes)? onProgress,
+  Duration connectTimeout = remoteConnectTimeout,
+  Duration idleTimeout = remoteIdleTimeout,
 }) async {
   await _writeUriToFile(
     resolveSourceUri(source),
     destination,
     onProgress: onProgress,
+    connectTimeout: connectTimeout,
+    idleTimeout: idleTimeout,
   );
 }
 
@@ -84,6 +97,8 @@ Future<void> _writeUriToFile(
   Uri uri,
   File destination, {
   void Function(int receivedBytes, int? totalBytes)? onProgress,
+  Duration connectTimeout = remoteConnectTimeout,
+  Duration idleTimeout = remoteIdleTimeout,
 }) async {
   await destination.parent.create(recursive: true);
   final partial = File("${destination.path}.part");
@@ -94,7 +109,13 @@ Future<void> _writeUriToFile(
 
   try {
     if (uri.scheme == "http" || uri.scheme == "https") {
-      await _downloadHttpUri(uri, partial, onProgress: onProgress);
+      await _downloadHttpUri(
+        uri,
+        partial,
+        onProgress: onProgress,
+        connectTimeout: connectTimeout,
+        idleTimeout: idleTimeout,
+      );
     } else if (uri.scheme == "file") {
       await _copyLocalFile(
         File(uri.toFilePath(windows: Platform.isWindows)),
@@ -121,12 +142,15 @@ Future<void> _downloadHttpUri(
   Uri uri,
   File destination, {
   void Function(int receivedBytes, int? totalBytes)? onProgress,
+  Duration connectTimeout = remoteConnectTimeout,
+  Duration idleTimeout = remoteIdleTimeout,
 }) async {
   final client = http.Client();
 
   try {
     final request = http.Request("GET", uri);
-    final response = await client.send(request);
+    // Closing the client in `finally` aborts whatever a timeout left open.
+    final response = await client.send(request).timeout(connectTimeout);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw HttpException(
@@ -136,7 +160,7 @@ Future<void> _downloadHttpUri(
     }
 
     await _writeStream(
-      response.stream,
+      response.stream.timeout(idleTimeout),
       destination,
       totalBytes: response.contentLength,
       onProgress: onProgress,
