@@ -1516,5 +1516,8 @@ IconData _iconFor(TabKind kind) {
       return Icons.tune_outlined;
     case TabKind.play:
       return Icons.sports_esports_outlined;
+    case TabKind.collections:
+    case TabKind.collectionWorkspace:
+      return Icons.auto_stories_outlined;
   }
 }

@@ -8686,12 +8686,22 @@ BoardTabGameArgs _boardArgsForAnalysis(
 }
 
 List<TournamentGameSummary> _summariesFromAnalyses(
-  List<SavedAnalysis> analyses,
-) {
-  return [for (final analysis in analyses) _summaryFromAnalysis(analysis)];
+  List<SavedAnalysis> analyses, {
+  Map<String, String> sourcePgnById = const <String, String>{},
+}) {
+  return [
+    for (final analysis in analyses)
+      _summaryFromAnalysis(analysis, sourcePgn: sourcePgnById[analysis.id]),
+  ];
 }
 
-TournamentGameSummary _summaryFromAnalysis(SavedAnalysis analysis) {
+/// [sourcePgn] is the game's text as it was published, for rows that have
+/// one: the board then replays that text rather than a re-export of the
+/// parsed game.
+TournamentGameSummary _summaryFromAnalysis(
+  SavedAnalysis analysis, {
+  String? sourcePgn,
+}) {
   final game = analysis.chessGame;
   final md = game.metadata;
   String s(String key) => (md[key]?.toString() ?? '').trim();
@@ -8710,7 +8720,7 @@ TournamentGameSummary _summaryFromAnalysis(SavedAnalysis analysis) {
           ? 'Game ${analysis.id}'
           : '${whiteName.isEmpty ? 'White' : whiteName} vs '
               '${blackName.isEmpty ? 'Black' : blackName}';
-  final pgn = exportGameToPgn(game).trim();
+  final pgn = (sourcePgn ?? exportGameToPgn(game)).trim();
   final lastFen =
       game.mainline.isNotEmpty ? game.mainline.last.fen : game.startingFen;
   return TournamentGameSummary(
@@ -9339,11 +9349,15 @@ class _LibraryEmpty extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.message,
+    this.action,
   });
 
   final IconData icon;
   final String title;
   final String message;
+
+  /// What the reader can do about it (a retry, say), under the message.
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -9388,6 +9402,7 @@ class _LibraryEmpty extends StatelessWidget {
                   height: 1.45,
                 ),
               ),
+              if (action != null) ...[const SizedBox(height: 16), action!],
             ],
           ),
         ),
@@ -13875,15 +13890,21 @@ class LibraryEmptyState extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.message,
+    this.action,
   });
 
   final IconData icon;
   final String title;
   final String message;
+  final Widget? action;
 
   @override
-  Widget build(BuildContext context) =>
-      _LibraryEmpty(icon: icon, title: title, message: message);
+  Widget build(BuildContext context) => _LibraryEmpty(
+    icon: icon,
+    title: title,
+    message: message,
+    action: action,
+  );
 }
 
 /// The 48px bar at the top of Library Home, as a frame for its controls.
@@ -13958,6 +13979,55 @@ class LibraryWorkspaceToolbar extends StatelessWidget {
     onSearchChanged: onSearchChanged,
     onSearchClear: onSearchClear,
     trailing: trailing,
+  );
+}
+
+/// Board arguments for a row of a read-only source (a published collection).
+///
+/// Built like a cloud database row's, with two differences. The board gets
+/// [sourcePgnById]'s text for each game, exactly as published, instead of a
+/// re-export of the parsed game. And there is no library save origin: the
+/// row is not the reader's record, so Save can never write back to it.
+/// [displayed] is the list the board steps through, in the order the table
+/// showed it.
+BoardTabGameArgs libraryReadOnlyBoardArgs(
+  SavedAnalysis row, {
+  required String databaseTitle,
+  required List<SavedAnalysis> displayed,
+  required Map<String, String> sourcePgnById,
+  required DesktopAccessContext accessContext,
+  String? initialFen,
+}) {
+  final pgn = (sourcePgnById[row.id] ?? exportGameToPgn(row.chessGame)).trim();
+  final args = _boardArgsForAnalysis(
+    row,
+    pgn: pgn,
+    databaseTitle: databaseTitle,
+    initialFen: initialFen,
+    accessContext: accessContext,
+  );
+  return BoardTabGameArgs(
+    pgn: args.pgn,
+    label: args.label,
+    whiteName: args.whiteName,
+    blackName: args.blackName,
+    whiteFederation: args.whiteFederation,
+    blackFederation: args.blackFederation,
+    whiteTitle: args.whiteTitle,
+    blackTitle: args.blackTitle,
+    whiteRating: args.whiteRating,
+    blackRating: args.blackRating,
+    whiteFideId: args.whiteFideId,
+    blackFideId: args.blackFideId,
+    fenSeed: args.fenSeed,
+    initialFen: args.initialFen,
+    databaseTitle: databaseTitle,
+    databaseGames: _summariesFromAnalyses(
+      displayed.isEmpty ? <SavedAnalysis>[row] : displayed,
+      sourcePgnById: sourcePgnById,
+    ),
+    gameListSelectedId: row.id,
+    accessContext: accessContext,
   );
 }
 
