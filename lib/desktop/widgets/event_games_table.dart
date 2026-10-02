@@ -2902,6 +2902,10 @@ Future<int> _copyEventGameSummariesAsPgn({
     showDesktopToast(context, 'Nothing to copy.', error: true);
     return 0;
   }
+  if (activeArgs?.accessContext?.isCollectionContent ?? false) {
+    showDesktopToast(context, "Games in a collection can't be copied.");
+    return 0;
+  }
   // Denied => no PGN is resolved or fetched for any of the games.
   if (!admitEventRailContentAction(
     ProviderScope.containerOf(context, listen: false),
@@ -5138,6 +5142,10 @@ bool admitEventRailContentAction(
   final args = activeArgs;
   if (args == null) return true;
   final source = args.sourceAccessContext;
+  // A published collection's games are read on the board and never taken
+  // from it: copying one, or inserting one into another game, is refused for
+  // every reader. Not a purchase prompt: nothing unlocks it.
+  if (source.isCollectionContent) return false;
   for (final game in games) {
     if (game.localPgnSource != null) continue;
     final request = retargetMiniatureAccessContext(

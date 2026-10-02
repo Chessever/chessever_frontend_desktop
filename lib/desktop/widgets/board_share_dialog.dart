@@ -46,6 +46,7 @@ class BoardShareDialog extends ConsumerStatefulWidget {
     this.showEvalBar = _defaultBoardShareShowEvalBar,
     this.liveBoardPngBytes,
     this.shareUrl,
+    this.allowPgnCopy = true,
     this.whiteFideId,
     this.blackFideId,
     this.whitePhotoUrl,
@@ -68,6 +69,10 @@ class BoardShareDialog extends ConsumerStatefulWidget {
   /// simplified share card.
   final Uint8List? liveBoardPngBytes;
   final String? shareUrl;
+
+  /// Whether the dialog offers "Copy PGN". False for a game read from a
+  /// published collection, which is shared as an image and never as text.
+  final bool allowPgnCopy;
   final int? whiteFideId;
   final int? blackFideId;
   final String? whitePhotoUrl;
@@ -789,7 +794,8 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                                   copyImage: _copyImage,
                                   generateGif: _generateGif,
                                   downloadImage: _downloadImage,
-                                  copyPgn: _copyPgn,
+                                  copyPgn:
+                                      widget.allowPgnCopy ? _copyPgn : null,
                                 )
                                 : boardShareGeneratedGifActionDescriptors(
                                   downloadGif: _saveGeneratedGif,
@@ -858,7 +864,7 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
   required VoidCallback copyImage,
   required VoidCallback generateGif,
   required VoidCallback downloadImage,
-  required VoidCallback copyPgn,
+  required VoidCallback? copyPgn,
 }) {
   return [
     BoardShareActionDescriptor(
@@ -876,11 +882,12 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
       label: 'Download PNG',
       onTap: downloadImage,
     ),
-    BoardShareActionDescriptor(
-      icon: Icons.copy_rounded,
-      label: 'Copy PGN',
-      onTap: copyPgn,
-    ),
+    if (copyPgn != null)
+      BoardShareActionDescriptor(
+        icon: Icons.copy_rounded,
+        label: 'Copy PGN',
+        onTap: copyPgn,
+      ),
   ];
 }
 
@@ -1012,6 +1019,7 @@ Future<void> showBoardShareDialog(
   int? blackFideId,
   String? whitePhotoUrl,
   String? blackPhotoUrl,
+  bool allowPgnCopy = true,
 }) {
   return showDesktopDialog<void>(
     context,
@@ -1029,6 +1037,7 @@ Future<void> showBoardShareDialog(
           showEvalBar: showEvalBar,
           liveBoardPngBytes: liveBoardPngBytes,
           shareUrl: shareUrl,
+          allowPgnCopy: allowPgnCopy,
           whiteFideId: whiteFideId,
           blackFideId: blackFideId,
           whitePhotoUrl: whitePhotoUrl,

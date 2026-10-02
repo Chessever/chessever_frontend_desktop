@@ -214,6 +214,11 @@ class DesktopAccessContext {
   /// an in-place update; N for a bulk save where every destination copy counts.
   final int additions;
 
+  /// The content came from a published collection: the author's work, read
+  /// on the board and never copied, saved or exported from it. This is not a
+  /// Premium gate (nothing unlocks it); it holds for every reader.
+  bool get isCollectionContent => origin == DesktopDiscoveryOrigin.collection;
+
   /// Whether ownership of a retained row covers this request.
   bool get ownershipCovers =>
       ownedDocument &&
