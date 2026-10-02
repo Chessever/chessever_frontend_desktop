@@ -470,7 +470,7 @@ class _AboutFact extends StatelessWidget {
       child: Text(
         text,
         style: const TextStyle(
-          color: kLightGreyColor,
+          color: kWhiteColor70,
           fontSize: 12,
           fontWeight: FontWeight.w600,
           fontFeatures: [FontFeature.tabularFigures()],

@@ -349,6 +349,39 @@ void main() {
       expect(find.text('All games'), findsOneWidget);
     });
 
+    testWidgets('a round narrows the games and All games restores them', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        const CollectionWorkspacePane(tabId: 't1'),
+        reader: FakeCollectionsReader(),
+        overrides: opened('candidates-1962', 'Candidates Tournament 1962'),
+      );
+      expect(find.text('2'), findsOneWidget, reason: 'two games are listed');
+
+      await tester.tap(find.text('All games'));
+      await _settle(tester);
+      await tester.tap(find.text('Round 2').last);
+      await _settle(tester);
+
+      expect(
+        find.widgetWithText(DesktopToolbarPillButton, 'Round 2'),
+        findsOneWidget,
+      );
+      expect(find.text('2'), findsNothing, reason: 'one game is left');
+      expect(find.text('Tal, M.'), findsOneWidget);
+
+      await tester.tap(
+        find.widgetWithText(DesktopToolbarPillButton, 'Round 2'),
+      );
+      await _settle(tester);
+      await tester.tap(find.text('All games').last);
+      await _settle(tester);
+
+      expect(find.text('2'), findsOneWidget);
+    });
+
     testWidgets('About shows the credits, the prose and the bound events', (
       tester,
     ) async {
