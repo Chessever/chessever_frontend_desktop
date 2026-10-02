@@ -151,11 +151,8 @@ final collectionAuthorsProvider = StateNotifierProvider.autoDispose<
 >((ref) {
   final reader = ref.watch(collectionsReaderProvider);
   return CollectionCatalogNotifier<CollectionAuthor>(
-    (offset) => reader.searchAuthors(
-      const CollectionSearchQuery(),
-      offset,
-      limit: 100,
-    ),
+    (offset) =>
+        reader.searchAuthors(const CollectionSearchQuery(), offset, limit: 100),
     idOf: (author) => author.id,
   );
 });

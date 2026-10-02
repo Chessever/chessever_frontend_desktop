@@ -104,7 +104,9 @@ Map<String, dynamic> collectionGameMetadata(
   final day = card.playedOn;
   if (day != null) {
     final current = tag('Date');
-    if (current.isEmpty || current.startsWith('?')) tags['Date'] = _pgnDate(day);
+    if (current.isEmpty || current.startsWith('?')) {
+      tags['Date'] = _pgnDate(day);
+    }
   }
   final result = tag('Result');
   if ((result.isEmpty || result == '*') && card.result.trim().isNotEmpty) {
@@ -214,7 +216,8 @@ class CollectionsReader {
     CollectionSearchQuery query,
     int offset, {
     int limit = catalogPageSize,
-  }) => _api.searchCollectionAuthors(search: query, offset: offset, limit: limit);
+  }) =>
+      _api.searchCollectionAuthors(search: query, offset: offset, limit: limit);
 
   /// One collection with its About text, section tree, bound events and, for
   /// a Premium one, the server's verdict for this viewer.
@@ -485,6 +488,21 @@ bool collectionIsStarred(Iterable<FavoriteEvent> favorites, String slug) {
         (e.metadata['kind'] == 'collection' && e.metadata['slug'] == slug),
   );
 }
+
+/// The slugs of every collection this account starred.
+final favoriteCollectionSlugsProvider = Provider<Set<String>>((ref) {
+  final favorites = ref.watch(favoriteEventsProvider).valueOrNull;
+  if (favorites == null) return const <String>{};
+  const prefix = 'collection:';
+  return {
+    for (final favorite in favorites)
+      if (favorite.eventId.startsWith(prefix))
+        favorite.eventId.substring(prefix.length)
+      else if (favorite.metadata['kind'] == 'collection' &&
+          favorite.metadata['slug'] is String)
+        favorite.metadata['slug'] as String,
+  };
+});
 
 /// Whether this account starred the collection with [slug].
 final collectionStarredProvider = Provider.family<bool, String>((ref, slug) {
