@@ -276,28 +276,11 @@ class CollectionCatalogRow extends ConsumerWidget {
               coverUrl: collection.coverUrl,
               kind: collection.kind,
             ),
-            name: Row(
-              children: [
-                Flexible(
-                  child: Text(
-                    collection.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: libraryCatalogTitleStyle(selected: selected),
-                  ),
-                ),
-                if (locked) ...[
-                  const SizedBox(width: 7),
-                  const DesktopLockGlyph(
-                    reason: 'Premium collection',
-                    size: 12,
-                  ),
-                ],
-                if (caption != null) ...[
-                  const SizedBox(width: 10),
-                  Expanded(child: LibraryCatalogMutedCell(caption)),
-                ],
-              ],
+            name: CollectionTitleLine(
+              title: collection.title,
+              caption: caption,
+              selected: selected,
+              locked: locked,
             ),
             author: LibraryCatalogMutedCell(credit ?? ''),
             games: LibraryCatalogMutedCell(games),
@@ -306,6 +289,56 @@ class CollectionCatalogRow extends ConsumerWidget {
             ),
             trailing: CollectionStarButton(collection: collection),
           ),
+    );
+  }
+}
+
+/// A row's title with what follows it on the same line: the Premium lock,
+/// then a quiet caption. One text, so the title takes the room it needs and
+/// the caption the rest, and the whole line ends in one ellipsis.
+class CollectionTitleLine extends StatelessWidget {
+  const CollectionTitleLine({
+    super.key,
+    required this.title,
+    this.caption,
+    this.selected = false,
+    this.locked = false,
+  });
+
+  final String title;
+  final String? caption;
+  final bool selected;
+  final bool locked;
+
+  @override
+  Widget build(BuildContext context) {
+    final note = caption?.trim() ?? '';
+    return Text.rich(
+      TextSpan(
+        style: libraryCatalogTitleStyle(selected: selected),
+        children: [
+          TextSpan(text: title),
+          if (locked)
+            const WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: Padding(
+                padding: EdgeInsets.only(left: 7),
+                child: DesktopLockGlyph(reason: 'Premium collection', size: 12),
+              ),
+            ),
+          if (note.isNotEmpty)
+            TextSpan(
+              text: '   $note',
+              style: const TextStyle(
+                color: kLightGreyColor,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+        ],
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
   }
 }

@@ -355,18 +355,8 @@ class CollectionAboutView extends ConsumerWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            collection.title,
-                            style: const TextStyle(
-                              color: kWhiteColor,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                              height: 1.2,
-                            ),
-                          ),
                           if (collection.subtitle?.trim().isNotEmpty ??
                               false) ...[
-                            const SizedBox(height: 4),
                             Text(
                               collection.subtitle!.trim(),
                               style: const TextStyle(
@@ -376,7 +366,8 @@ class CollectionAboutView extends ConsumerWidget {
                               ),
                             ),
                           ],
-                          const SizedBox(height: 8),
+                          if (collection.subtitle?.trim().isNotEmpty ?? false)
+                            const SizedBox(height: 6),
                           if (author.isNotEmpty)
                             _CreditLink(
                               label: 'by $author',
@@ -623,7 +614,7 @@ class _BoundEventRow extends ConsumerWidget {
       if (collectionDateRange(event.dateStart, event.dateEnd) case final d?) d,
       if (event.note?.trim().isNotEmpty ?? false) event.note!.trim(),
     ].join(' · ');
-    Widget cells(bool selected) => Row(
+    Widget cells() => Row(
       children: [
         const Icon(
           Icons.emoji_events_outlined,
@@ -631,24 +622,17 @@ class _BoundEventRow extends ConsumerWidget {
           color: kLightGreyColor,
         ),
         const SizedBox(width: 10),
-        Flexible(
-          child: Text(
-            event.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: libraryCatalogTitleStyle(selected: selected),
-          ),
+        Expanded(
+          child: CollectionTitleLine(title: event.title, caption: detail),
         ),
-        if (detail.isNotEmpty) ...[
-          const SizedBox(width: 10),
-          Expanded(child: LibraryCatalogMutedCell(detail)),
-        ],
-        if (opens)
+        if (opens) ...[
+          const SizedBox(width: 8),
           const Icon(
             Icons.chevron_right_rounded,
             size: 16,
             color: kLightGreyColor,
           ),
+        ],
       ],
     );
     if (!opens) {
@@ -660,7 +644,7 @@ class _BoundEventRow extends ConsumerWidget {
             bottom: BorderSide(color: kDividerColor.withValues(alpha: 0.72)),
           ),
         ),
-        child: cells(false),
+        child: cells(),
       );
     }
     void open() => unawaited(openCollectionEvent(context, ref, event));
@@ -671,7 +655,7 @@ class _BoundEventRow extends ConsumerWidget {
       // A link, not a selection: one click follows it.
       onSelect: open,
       onOpen: open,
-      builder: (context, hovered) => cells(false),
+      builder: (context, hovered) => cells(),
     );
   }
 }
