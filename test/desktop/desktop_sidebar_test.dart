@@ -111,6 +111,40 @@ void main() {
     );
   });
 
+  test('Collections sits under Library and takes 0, renumbering nothing', () {
+    final labels = debugDesktopSidebarLabelsInOrder();
+
+    expect(labels[labels.indexOf('Library') + 1], 'Collections');
+    expect(
+      debugDesktopSidebarPaneForLabel('Collections'),
+      DesktopPane.collections,
+    );
+    expect(
+      debugDesktopSidebarShortcutForLabel('Collections', isMacOS: false),
+      'Ctrl+0',
+    );
+    expect(
+      debugDesktopSidebarShortcutForLabel('Collections', isMacOS: true),
+      '⌘0',
+    );
+    // The route right after it keeps the number it always had.
+    expect(
+      debugDesktopSidebarShortcutForLabel('Favorites', isMacOS: false),
+      'Ctrl+3',
+    );
+  });
+
+  test('an opened collection keeps Collections highlighted', () {
+    expect(
+      sidebarPaneForActiveTabKind(TabKind.collections),
+      DesktopPane.collections,
+    );
+    expect(
+      sidebarPaneForActiveTabKind(TabKind.collectionWorkspace),
+      DesktopPane.collections,
+    );
+  });
+
   test('numbered route bindings include Rankings and shift later routes', () {
     final bindings = desktopMainRouteShortcutBindings().toList();
 
@@ -124,6 +158,7 @@ void main() {
       DesktopPane.countrymen,
       DesktopPane.board,
       DesktopPane.play,
+      DesktopPane.collections,
     ]);
     expect(bindings.map((binding) => binding.key), [
       LogicalKeyboardKey.digit1,
@@ -135,6 +170,7 @@ void main() {
       LogicalKeyboardKey.digit7,
       LogicalKeyboardKey.digit8,
       LogicalKeyboardKey.digit9,
+      LogicalKeyboardKey.digit0,
     ]);
   });
 

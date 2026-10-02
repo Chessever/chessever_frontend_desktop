@@ -31,8 +31,14 @@ List<DesktopUnsavedBoard> collectDesktopUnsavedBoards({
   required Map<String, ({Object? seed, BoardPaneSession session}) Function()>
   liveReaders,
   required Map<String, String> titlesByTabId,
+  Set<String> excludedTabIds = const <String>{},
 }) {
-  final tabIds = <String>{...retainedSessions.keys, ...liveReaders.keys};
+  // [excludedTabIds] are boards whose game may not leave the app (a game
+  // read from a published collection): analysis on them is not exported.
+  final tabIds = <String>{
+    ...retainedSessions.keys,
+    ...liveReaders.keys,
+  }.difference(excludedTabIds);
   final result = <DesktopUnsavedBoard>[];
   for (final tabId in tabIds) {
     BoardPaneSession? session;

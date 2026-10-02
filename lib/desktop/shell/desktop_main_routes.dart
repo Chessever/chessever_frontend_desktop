@@ -38,6 +38,13 @@ const List<DesktopMainRoute> desktopMainRoutes = [
     icon: Icons.menu_book_outlined,
   ),
   DesktopMainRoute(
+    pane: DesktopPane.collections,
+    label: 'Collections',
+    paletteTitle: 'Open Collections',
+    paletteSubtitle: 'Annotated game collections by their authors',
+    icon: Icons.auto_stories_outlined,
+  ),
+  DesktopMainRoute(
     pane: DesktopPane.favorites,
     label: 'Favorites',
     paletteTitle: 'Open Favorites',
@@ -95,6 +102,17 @@ const List<LogicalKeyboardKey> desktopMainRouteShortcutKeys = [
   LogicalKeyboardKey.digit7,
   LogicalKeyboardKey.digit8,
   LogicalKeyboardKey.digit9,
+  LogicalKeyboardKey.digit0,
+];
+
+/// The routes in the order they take the number shortcuts. Collections
+/// joined the sidebar after the first nine had been learned, so it takes the
+/// tenth key (0) instead of renumbering every route below it.
+List<DesktopMainRoute> get _routesInShortcutOrder => [
+  for (final route in desktopMainRoutes)
+    if (route.pane != DesktopPane.collections) route,
+  for (final route in desktopMainRoutes)
+    if (route.pane == DesktopPane.collections) route,
 ];
 
 String desktopPrimaryShortcutLabel(String key, {bool? isMacOS}) {
@@ -102,10 +120,13 @@ String desktopPrimaryShortcutLabel(String key, {bool? isMacOS}) {
   return usesMacOS ? '⌘$key' : 'Ctrl+$key';
 }
 
+/// The digit [pane]'s shortcut uses: 1 to 9, then 0 for the tenth route.
 int? desktopMainRouteShortcutNumber(DesktopPane pane) {
-  final index = desktopMainRoutes.indexWhere((route) => route.pane == pane);
+  final index = _routesInShortcutOrder.indexWhere(
+    (route) => route.pane == pane,
+  );
   if (index < 0 || index >= desktopMainRouteShortcutKeys.length) return null;
-  return index + 1;
+  return (index + 1) % 10;
 }
 
 String? desktopMainRouteShortcutLabel(DesktopPane pane, {bool? isMacOS}) {
@@ -116,11 +137,9 @@ String? desktopMainRouteShortcutLabel(DesktopPane pane, {bool? isMacOS}) {
 
 Iterable<({LogicalKeyboardKey key, DesktopPane pane})>
 desktopMainRouteShortcutBindings() sync* {
-  for (var i = 0; i < desktopMainRoutes.length; i++) {
+  final routes = _routesInShortcutOrder;
+  for (var i = 0; i < routes.length; i++) {
     if (i >= desktopMainRouteShortcutKeys.length) break;
-    yield (
-      key: desktopMainRouteShortcutKeys[i],
-      pane: desktopMainRoutes[i].pane,
-    );
+    yield (key: desktopMainRouteShortcutKeys[i], pane: routes[i].pane);
   }
 }

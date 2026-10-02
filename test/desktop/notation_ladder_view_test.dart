@@ -68,6 +68,27 @@ void main() {
     expect(find.byIcon(Icons.trending_flat_rounded), findsNothing);
   });
 
+  testWidgets('a notation that may not hand out its PGN offers no Copy PGN', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGame(),
+        onJump: (_) {},
+        width: 900,
+        allowPgnCopy: false,
+      ),
+    );
+
+    final move = find.text('Nf3', findRichText: true);
+    await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Copy PGN'), findsNothing);
+    // The position is not the author's text: it can still be copied.
+    expect(find.text('Copy FEN'), findsOneWidget);
+  });
+
   testWidgets('Tr marker jumps to the next occurrence of the same position', (
     tester,
   ) async {
@@ -1299,6 +1320,7 @@ Widget _host({
   ValueNotifier<NotationLayoutMode>? layoutModeController,
   NotationVariationCollapseController? variationCollapseController,
   Set<String> positionArrowKeys = const <String>{},
+  bool allowPgnCopy = true,
 }) {
   final notation = NotationLadderView(
     game: game,
@@ -1326,7 +1348,14 @@ Widget _host({
 
   return MaterialApp(
     home: Scaffold(
-      body: SizedBox(width: width, height: height, child: notation),
+      body: SizedBox(
+        width: width,
+        height: height,
+        child:
+            allowPgnCopy
+                ? notation
+                : NotationExportScope(allowPgnCopy: false, child: notation),
+      ),
     ),
   );
 }

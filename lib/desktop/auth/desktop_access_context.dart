@@ -30,6 +30,12 @@ enum DesktopFeature {
   sharedBook,
   openingTree,
   purchase,
+
+  /// A published collection read in Collections. Who may read it is the
+  /// server's call (a Premium collection answers only an entitled account),
+  /// so nothing here gates it a second time; the value records where a board
+  /// tab's game came from, which is what keeps it from being exported.
+  collection,
 }
 
 /// Where the user discovered the content a request acts on.
@@ -53,6 +59,10 @@ enum DesktopDiscoveryOrigin {
   localFile,
   sharedBook,
   deepLink,
+
+  /// A published collection. Its games are the author's work: they are read
+  /// on the board and never copied, saved or exported from it.
+  collection,
 }
 
 /// What the request wants to do.
@@ -203,6 +213,11 @@ class DesktopAccessContext {
   /// New records this request would create against [effectiveQuota]. Zero for
   /// an in-place update; N for a bulk save where every destination copy counts.
   final int additions;
+
+  /// The content came from a published collection: the author's work, read
+  /// on the board and never copied, saved or exported from it. This is not a
+  /// Premium gate (nothing unlocks it); it holds for every reader.
+  bool get isCollectionContent => origin == DesktopDiscoveryOrigin.collection;
 
   /// Whether ownership of a retained row covers this request.
   bool get ownershipCovers =>

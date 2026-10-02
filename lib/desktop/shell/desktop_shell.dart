@@ -15,7 +15,9 @@ import 'package:chessever/desktop/panes/opening_explorer_pane.dart';
 import 'package:chessever/desktop/panes/countrymen_pane.dart';
 import 'package:chessever/desktop/panes/favorites_pane.dart';
 import 'package:chessever/desktop/panes/board_settings_pane.dart';
+import 'package:chessever/desktop/panes/collections_pane.dart';
 import 'package:chessever/desktop/panes/library_pane.dart';
+import 'package:chessever/desktop/widgets/collections/collection_actions.dart';
 import 'package:chessever/desktop/panes/placeholder_pane.dart';
 import 'package:chessever/desktop/panes/player_profile_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
@@ -256,6 +258,10 @@ class DesktopShell extends HookConsumerWidget {
             if (!m.containsKey(t.id)) return m;
             final next = <String, dynamic>{...m}..remove(t.id);
             return Map<String, DatabaseWorkspaceArgs>.from(next);
+          });
+          ref.read(collectionWorkspaceArgsByTabIdProvider.notifier).update((m) {
+            if (!m.containsKey(t.id)) return m;
+            return <String, CollectionWorkspaceArgs>{...m}..remove(t.id);
           });
           final treePlayerByTab = ref.read(
             playerOpeningTreePlayerByTabIdProvider,
@@ -1068,6 +1074,10 @@ Widget resolveDesktopTabContent(
       return const BoardSettingsPane();
     case TabKind.play:
       return PlayPane(tabId: tab.id);
+    case TabKind.collections:
+      return const CollectionsPane();
+    case TabKind.collectionWorkspace:
+      return CollectionWorkspacePane(tabId: tab.id);
   }
 }
 

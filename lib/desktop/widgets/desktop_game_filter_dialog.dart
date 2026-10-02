@@ -13,10 +13,26 @@ import 'package:chessever/utils/responsive_helper.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:chessever/widgets/game_filter/wheel_range_filter.dart';
 
+/// The sections of the game filter dialog, in the order it shows them.
+enum DesktopGameFilterSection {
+  timeControl,
+  rating,
+  eco,
+  finish,
+  result,
+  year,
+  color,
+  format,
+}
+
+/// [sections] limits the dialog to the filters a surface can actually apply
+/// (a published collection searches by opening, year and result only); null
+/// shows them all.
 Future<GameFilter?> showDesktopGameFilterDialog({
   required BuildContext context,
   required GameFilter currentFilter,
   bool showFormatFilter = false,
+  Set<DesktopGameFilterSection>? sections,
 }) {
   return showGeneralDialog<GameFilter>(
     context: context,
@@ -30,6 +46,7 @@ Future<GameFilter?> showDesktopGameFilterDialog({
           child: _DesktopGameFilterDialog(
             initialFilter: currentFilter,
             showFormatFilter: showFormatFilter,
+            sections: sections,
           ),
         ),
     transitionBuilder: (ctx, anim, _, child) {
@@ -125,10 +142,12 @@ class _DesktopGameFilterDialog extends StatefulWidget {
   const _DesktopGameFilterDialog({
     required this.initialFilter,
     required this.showFormatFilter,
+    this.sections,
   });
 
   final GameFilter initialFilter;
   final bool showFormatFilter;
+  final Set<DesktopGameFilterSection>? sections;
 
   @override
   State<_DesktopGameFilterDialog> createState() =>
@@ -167,6 +186,22 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
     super.dispose();
   }
 
+  bool _shows(DesktopGameFilterSection section) {
+    if ((section == DesktopGameFilterSection.color ||
+            section == DesktopGameFilterSection.format) &&
+        !widget.showFormatFilter) {
+      return false;
+    }
+    return widget.sections?.contains(section) ?? true;
+  }
+
+  /// A section is spaced from the one above it, when there is one.
+  bool _gapBefore(DesktopGameFilterSection section) =>
+      _shows(section) &&
+      DesktopGameFilterSection.values
+          .takeWhile((other) => other != section)
+          .any(_shows);
+
   @override
   Widget build(BuildContext context) {
     return Focus(
@@ -197,115 +232,132 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _FilterSection(
-                          title: 'Time control',
-                          child: _OptionGrid<GameTimeControlFilter>(
-                            value: _timeControl,
-                            values: GameTimeControlFilter.values,
-                            label:
-                                (v) =>
-                                    v == GameTimeControlFilter.all
-                                        ? 'Any'
-                                        : v.displayText,
-                            icon: _timeControlIcon,
-                            onChanged: (v) => setState(() => _timeControl = v),
+                        if (_shows(DesktopGameFilterSection.timeControl))
+                          _FilterSection(
+                            title: 'Time control',
+                            child: _OptionGrid<GameTimeControlFilter>(
+                              value: _timeControl,
+                              values: GameTimeControlFilter.values,
+                              label:
+                                  (v) =>
+                                      v == GameTimeControlFilter.all
+                                          ? 'Any'
+                                          : v.displayText,
+                              icon: _timeControlIcon,
+                              onChanged:
+                                  (v) => setState(() => _timeControl = v),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        _FilterSection(
-                          title: 'Avg. Rating',
-                          child: _RatingPresetGrid(
-                            selectedMinRating: _selectedMinRating,
-                            onChanged:
-                                (value) =>
-                                    setState(() => _selectedMinRating = value),
+                        if (_gapBefore(DesktopGameFilterSection.rating))
+                          const SizedBox(height: 16),
+                        if (_shows(DesktopGameFilterSection.rating))
+                          _FilterSection(
+                            title: 'Avg. Rating',
+                            child: _RatingPresetGrid(
+                              selectedMinRating: _selectedMinRating,
+                              onChanged:
+                                  (value) => setState(
+                                    () => _selectedMinRating = value,
+                                  ),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        _FilterSection(
-                          title: 'ECO / Opening',
-                          child: _ecoEditor(),
-                        ),
-                        const SizedBox(height: 16),
-                        _FilterSection(
-                          title: 'Finish',
-                          child: _OptionGrid<GameFinishFilter>(
-                            value: _finish,
-                            values: GameFinishFilter.values,
-                            label:
-                                (v) =>
-                                    v == GameFinishFilter.all
-                                        ? 'Any'
-                                        : v.displayText,
-                            icon: _finishIcon,
-                            onChanged: (v) => setState(() => _finish = v),
+                        if (_gapBefore(DesktopGameFilterSection.eco))
+                          const SizedBox(height: 16),
+                        if (_shows(DesktopGameFilterSection.eco))
+                          _FilterSection(
+                            title: 'ECO / Opening',
+                            child: _ecoEditor(),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        _FilterSection(
-                          title: 'Result',
-                          child: _OptionGrid<GameResultFilter>(
-                            value: _result,
-                            values: GameResultFilter.values,
-                            label:
-                                (v) =>
-                                    v == GameResultFilter.all
-                                        ? 'Any'
-                                        : v.displayText,
-                            icon: _resultIcon,
-                            onChanged: (v) => setState(() => _result = v),
+                        if (_gapBefore(DesktopGameFilterSection.finish))
+                          const SizedBox(height: 16),
+                        if (_shows(DesktopGameFilterSection.finish))
+                          _FilterSection(
+                            title: 'Finish',
+                            child: _OptionGrid<GameFinishFilter>(
+                              value: _finish,
+                              values: GameFinishFilter.values,
+                              label:
+                                  (v) =>
+                                      v == GameFinishFilter.all
+                                          ? 'Any'
+                                          : v.displayText,
+                              icon: _finishIcon,
+                              onChanged: (v) => setState(() => _finish = v),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        _FilterSection(
-                          title: 'Year range',
-                          subtitle: _yearRangeSubtitle(_minYear, _maxYear),
-                          child: _YearRange(
-                            yearFrom: _minYear,
-                            yearTo: _maxYear,
-                            onChanged:
-                                (from, to) => setState(() {
-                                  _minYear = from;
-                                  _maxYear = to;
-                                }),
+                        if (_gapBefore(DesktopGameFilterSection.result))
+                          const SizedBox(height: 16),
+                        if (_shows(DesktopGameFilterSection.result))
+                          _FilterSection(
+                            title: 'Result',
+                            child: _OptionGrid<GameResultFilter>(
+                              value: _result,
+                              values: GameResultFilter.values,
+                              label:
+                                  (v) =>
+                                      v == GameResultFilter.all
+                                          ? 'Any'
+                                          : v.displayText,
+                              icon: _resultIcon,
+                              onChanged: (v) => setState(() => _result = v),
+                            ),
                           ),
-                        ),
+                        if (_gapBefore(DesktopGameFilterSection.year))
+                          const SizedBox(height: 16),
+                        if (_shows(DesktopGameFilterSection.year))
+                          _FilterSection(
+                            title: 'Year range',
+                            subtitle: _yearRangeSubtitle(_minYear, _maxYear),
+                            child: _YearRange(
+                              yearFrom: _minYear,
+                              yearTo: _maxYear,
+                              onChanged:
+                                  (from, to) => setState(() {
+                                    _minYear = from;
+                                    _maxYear = to;
+                                  }),
+                            ),
+                          ),
                         if (widget.showFormatFilter) ...[
-                          const SizedBox(height: 16),
-                          _FilterSection(
-                            title: 'Color',
-                            child: _OptionGrid<GameColorFilter>(
-                              value: _color,
-                              values: GameColorFilter.values,
-                              label:
-                                  (v) =>
-                                      v == GameColorFilter.all
-                                          ? 'Any'
-                                          : v.displayText,
-                              icon: _colorIcon,
-                              iconColor:
-                                  (v) =>
-                                      v == GameColorFilter.white
-                                          ? kWhiteColor
-                                          : null,
-                              onChanged: (v) => setState(() => _color = v),
+                          if (_gapBefore(DesktopGameFilterSection.color))
+                            const SizedBox(height: 16),
+                          if (_shows(DesktopGameFilterSection.color))
+                            _FilterSection(
+                              title: 'Color',
+                              child: _OptionGrid<GameColorFilter>(
+                                value: _color,
+                                values: GameColorFilter.values,
+                                label:
+                                    (v) =>
+                                        v == GameColorFilter.all
+                                            ? 'Any'
+                                            : v.displayText,
+                                icon: _colorIcon,
+                                iconColor:
+                                    (v) =>
+                                        v == GameColorFilter.white
+                                            ? kWhiteColor
+                                            : null,
+                                onChanged: (v) => setState(() => _color = v),
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 16),
-                          _FilterSection(
-                            title: 'Format',
-                            child: _OptionGrid<GameOnlineFilter>(
-                              value: _online,
-                              values: GameOnlineFilter.values,
-                              label:
-                                  (v) =>
-                                      v == GameOnlineFilter.all
-                                          ? 'Any'
-                                          : v.displayText,
-                              icon: _onlineIcon,
-                              onChanged: (v) => setState(() => _online = v),
+                          if (_gapBefore(DesktopGameFilterSection.format))
+                            const SizedBox(height: 16),
+                          if (_shows(DesktopGameFilterSection.format))
+                            _FilterSection(
+                              title: 'Format',
+                              child: _OptionGrid<GameOnlineFilter>(
+                                value: _online,
+                                values: GameOnlineFilter.values,
+                                label:
+                                    (v) =>
+                                        v == GameOnlineFilter.all
+                                            ? 'Any'
+                                            : v.displayText,
+                                icon: _onlineIcon,
+                                onChanged: (v) => setState(() => _online = v),
+                              ),
                             ),
-                          ),
                         ],
                       ],
                     ),

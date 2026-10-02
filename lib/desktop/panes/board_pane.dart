@@ -2765,6 +2765,16 @@ class _BoardPaneContent extends HookConsumerWidget {
       showDesktopToast(context, message, error: error);
     }
 
+    // A game read from a published collection is the author's work: it is
+    // replayed and analysed here, and never copied or saved out of the app.
+    // Same rule as the phone, and it holds for every reader.
+    final collectionGame = boardArgs?.accessContext?.isCollectionContent ?? false;
+    bool refuseCollectionExport() {
+      if (!collectionGame) return false;
+      showToast("Games in a collection can't be copied or saved.");
+      return true;
+    }
+
     // Tab id used as the key for per-tab annotation/NAG state. Declared
     // here so the undo action below can reference it (the post-build
     // `hasShapes` / `hasUserNags` watches still read it further down).
@@ -2917,6 +2927,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     Future<void> copyPgnAction() async {
+      if (refuseCollectionExport()) return;
       if (!gameHasMainline()) {
         showToast('No PGN to copy yet — load a game first.');
         return;
@@ -3197,6 +3208,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
     }
     Future<void> saveGameToLibraryAction() => runBoardSave(() async {
+      if (refuseCollectionExport()) return;
       final sourceOrigin = boardArgs?.librarySaveOrigin;
       final sourcePath = sourceOrigin?.kind ==
               BoardTabLibrarySaveOriginKind.localPgnFile
@@ -3219,7 +3231,10 @@ class _BoardPaneContent extends HookConsumerWidget {
     });
     Future<void> saveSourceDatabaseToCloud() =>
         runBoardSave(saveSourceDatabaseToCloudImpl);
-    Future<void> savePgnAction() => runBoardSave(savePgnActionImpl);
+    Future<void> savePgnAction() async {
+      if (refuseCollectionExport()) return;
+      await runBoardSave(savePgnActionImpl);
+    }
 
     void setMoveComment(ChessMovePointer target, String? comment) {
       if (target.isEmpty) return;
@@ -3838,6 +3853,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           showEvalBar: shouldShowDesktopBoardEvalBar(engineSettings),
           liveBoardPngBytes: liveBoardPngBytes,
           shareUrl: shareUrl,
+          allowPgnCopy: !collectionGame,
           whiteFideId:
               boardArgs?.sourceGame?.whitePlayer.fideId ??
               boardArgs?.whiteFideId,
@@ -4967,7 +4983,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                 )
                 ? () => unawaited(resetEditsAction())
                 : null,
-        canCopyOrSavePgn: chessGame.value.mainline.isNotEmpty,
+        canCopyOrSavePgn:
+            chessGame.value.mainline.isNotEmpty && !collectionGame,
         boardFocusMode: boardFocusMode,
         showBoardFocusAction: !pictureInPictureMode,
         onPlayFromHere: openPlayFromHereDialog,
@@ -5275,11 +5292,14 @@ class _BoardPaneContent extends HookConsumerWidget {
                           boardArgs?.enableLocalOpeningTreePicker ?? false,
                       hideLocalOpeningTreePicker:
                           boardArgs?.hideLocalOpeningTreePicker ?? false,
-                      notationChild: buildNotationLadder(
-                        scrollController: notationScrollController,
-                        activePointer: pointer.value,
-                        onJump: jumpToPointer,
-                        layoutModeController: notationLayoutController,
+                      notationChild: NotationExportScope(
+                        allowPgnCopy: !collectionGame,
+                        child: buildNotationLadder(
+                          scrollController: notationScrollController,
+                          activePointer: pointer.value,
+                          onJump: jumpToPointer,
+                          layoutModeController: notationLayoutController,
+                        ),
                       ),
                       currentFen: position.fen,
                       startingFen: chessGame.value.startingFen,

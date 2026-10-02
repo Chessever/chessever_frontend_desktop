@@ -364,7 +364,10 @@ _Requirement _requirementFor(DesktopAccessContext context, DateTime now) {
     case DesktopFeature.botvinnik:
     case DesktopFeature.purchase:
     case DesktopFeature.likes:
-      // Free surfaces. Favourites and reports spend quota (resolved after
+    case DesktopFeature.collection:
+      // Free surfaces. A Premium collection is kept by the server, which
+      // answers its games only to an entitled account; there is nothing left
+      // for the client to gate once a game is on screen. Favourites and reports spend quota (resolved after
       // this). Botvinnik and purchase were resolved before this switch, and
       // likes above it. Content keeps the gate of wherever it was found.
       return _provenanceRequirement(context, now);
