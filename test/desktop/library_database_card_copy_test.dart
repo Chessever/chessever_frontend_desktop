@@ -79,7 +79,16 @@ void main() {
     expect(clipboardOpenFlow, contains('DatabaseWorkspaceArgs.local('));
     expect(clipboardOpenFlow, contains("title: 'Clipboard PGN'"));
     expect(clipboardOpenFlow, isNot(contains('libraryImportBufferProvider')));
-    expect(rowLayout, contains('onSecondaryTapUp:'));
+    // The row's click, double click and right click live in the frame it
+    // shares with every other catalog list.
+    final rowFrame =
+        File(
+          'lib/desktop/widgets/library/library_catalog_row.dart',
+        ).readAsStringSync();
+    expect(rowLayout, contains('LibraryCatalogRowFrame('));
+    expect(rowLayout, contains('onContextMenu: widget.onContextMenu'));
+    expect(rowFrame, contains('onSecondaryTapUp:'));
+    expect(rowFrame, isNot(contains('onSecondaryTapDown:')));
     expect(rowLayout, isNot(contains('onSecondaryTapDown:')));
     expect(rowLayout, isNot(contains('MotionCard(')));
     expect(rowLayout, contains('Draggable<String>'));
