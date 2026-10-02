@@ -161,6 +161,32 @@ NotationHeaderMetadata notationHeaderMetadataFromPgn(
   );
 }
 
+/// Whether the notation under this scope may hand out the game's PGN.
+///
+/// A game read from a published collection is the author's work: it is
+/// replayed and never copied out, so its notation (in the Collections
+/// preview and on the board) offers "Copy FEN" but not "Copy PGN". Without a
+/// scope the notation behaves as it always has.
+class NotationExportScope extends InheritedWidget {
+  const NotationExportScope({
+    super.key,
+    required this.allowPgnCopy,
+    required super.child,
+  });
+
+  final bool allowPgnCopy;
+
+  static bool allowsPgnCopy(BuildContext context) =>
+      context
+          .getInheritedWidgetOfExactType<NotationExportScope>()
+          ?.allowPgnCopy ??
+      true;
+
+  @override
+  bool updateShouldNotify(NotationExportScope oldWidget) =>
+      oldWidget.allowPgnCopy != allowPgnCopy;
+}
+
 /// Vertical ladder rendering of a [ChessGame] tree with arbitrary-depth
 /// expand/collapse — the same mental model the mobile token-builder uses
 /// (`shouldCollapseByDefault` + `_collapsedVariationIds` /
@@ -3569,11 +3595,12 @@ class _LadderChipState extends State<_LadderChip>
                     ? 'Unfold all'
                     : 'Fold all',
           ),
-        const DesktopContextMenuItem<Object>(
-          value: _LadderAction.copyPgn,
-          icon: Icons.copy_all_rounded,
-          label: 'Copy PGN',
-        ),
+        if (NotationExportScope.allowsPgnCopy(context))
+          const DesktopContextMenuItem<Object>(
+            value: _LadderAction.copyPgn,
+            icon: Icons.copy_all_rounded,
+            label: 'Copy PGN',
+          ),
         const DesktopContextMenuItem<Object>(
           value: _LadderAction.copyFen,
           icon: Icons.format_quote_rounded,
@@ -3717,6 +3744,9 @@ class _LadderChipState extends State<_LadderChip>
       case _LadderAction.toggleAllVariations:
         notationState?._toggleAllVariationsFromMenu();
       case _LadderAction.copyPgn:
+        if (!context.mounted || !NotationExportScope.allowsPgnCopy(context)) {
+          return;
+        }
         await notationState?._copyPgnToClipboard();
       case _LadderAction.copyFen:
         if (widget.fen.isNotEmpty) {

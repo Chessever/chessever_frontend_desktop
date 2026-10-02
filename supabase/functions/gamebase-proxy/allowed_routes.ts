@@ -21,6 +21,9 @@ export type AllowedRoute = {
 // A folder id as the library stores it.
 const FOLDER = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
+// A published collection's slug, or its id.
+const COLLECTION = "[A-Za-z0-9][A-Za-z0-9_-]{0,159}";
+
 const allowedRoutes: AllowedRoute[] = [
   { method: "GET", pattern: /^\/api\/player\/memorial$/ },
   {
@@ -75,29 +78,56 @@ const allowedRoutes: AllowedRoute[] = [
     member: true,
   })),
 
-  // Published collections, as readers browse them. Read-only apart from the
-  // two engagement counters. The catalog, the bindings and the opening index
-  // are the same for everyone; the named routes come first so "catalog",
-  // "for-event" and the rest are never read as a slug.
-  { method: "GET", pattern: /^\/api\/collections$/ },
+  // Published collections, as readers browse them: only the routes the app
+  // calls. Read-only apart from the two engagement counters. The catalog and
+  // the books bound to an event are the same for everyone; they come first so
+  // "catalog" and "for-event" are never read as a slug.
   { method: "GET", pattern: /^\/api\/collections\/catalog\/(?:books|authors)$/ },
-  {
-    method: "GET",
-    pattern: /^\/api\/collections\/(?:for-event|for-opening|openings)$/,
-  },
-  { method: "GET", pattern: /^\/api\/collections\/[^/]+\/openings$/ },
+  { method: "GET", pattern: /^\/api\/collections\/for-event$/ },
   // A collection, its games and its players: a Premium collection opens only
   // for an entitled account, so these carry the viewer.
-  { method: "GET", pattern: /^\/api\/collections\/[^/]+$/, viewer: true },
   {
     method: "GET",
-    pattern: /^\/api\/collections\/[^/]+\/(?:games|players)$/,
+    pattern: new RegExp(`^/api/collections/${COLLECTION}$`),
+    viewer: true,
+  },
+  {
+    method: "GET",
+    pattern: new RegExp(`^/api/collections/${COLLECTION}/(?:games|players)$`),
     viewer: true,
   },
   // A read is counted per anonymous reader id; a star belongs to an account.
-  { method: "POST", pattern: /^\/api\/collections\/[^/]+\/view$/ },
-  { method: "PUT", pattern: /^\/api\/collections\/[^/]+\/star$/, member: true },
+  {
+    method: "POST",
+    pattern: new RegExp(`^/api/collections/${COLLECTION}/view$`),
+  },
+  {
+    method: "PUT",
+    pattern: new RegExp(`^/api/collections/${COLLECTION}/star$`),
+    member: true,
+  },
 ];
+
+/**
+ * Whether [authorization] is a bearer token that names an account.
+ *
+ * The app's public key is a token too, with a role and no subject. Sending
+ * it upstream as "the viewer" would ask Gamebase to judge nobody, so a viewer
+ * route forwards only a token that says who is asking. The function's own
+ * verification has already checked the signature; this only reads the claim.
+ */
+export function bearerNamesAccount(authorization: string): boolean {
+  const match = /^Bearer [\w-]+\.([\w-]+)\.[\w-]+$/.exec(authorization);
+  if (!match) return false;
+  try {
+    const base64 = match[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    const subject = JSON.parse(atob(padded))?.sub;
+    return typeof subject === "string" && subject.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 const METHODS: readonly string[] = ["GET", "POST", "PUT", "DELETE"];
 

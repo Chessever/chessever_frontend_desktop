@@ -138,24 +138,33 @@ final collectionConfirmingProvider = StateProvider<Set<String>>(
 /// read asking it to judge anew. True once it is open (the games and players
 /// are then re-read too); false when every wait passed and it is still
 /// locked.
+///
+/// Runs on the container, not on the pressed button's ref: the loop outlives
+/// the button, which the page swaps for a "Confirming" line on the first
+/// read, and it holds the collection itself so a page that scrolls away
+/// between two reads does not drop it.
 Future<bool> confirmCollectionPremium(
-  WidgetRef ref,
+  ProviderContainer container,
   String slug, {
   List<Duration> waits = kCollectionPremiumConfirmWaits,
 }) async {
-  final reader = ref.read(collectionsReaderProvider);
-  final confirming = ref.read(collectionConfirmingProvider.notifier);
+  final reader = container.read(collectionsReaderProvider);
+  final confirming = container.read(collectionConfirmingProvider.notifier);
   confirming.update((current) => {...current, slug});
+  ProviderSubscription<AsyncValue<Collection>>? held;
   try {
     for (final wait in waits) {
       if (wait > Duration.zero) await Future<void>.delayed(wait);
       final release = reader.holdFreshAccess(slug);
       try {
-        ref.invalidate(collectionDetailProvider(slug));
-        final detail = await ref.read(collectionDetailProvider(slug).future);
+        container.invalidate(collectionDetailProvider(slug));
+        held ??= container.listen(collectionDetailProvider(slug), (_, _) {});
+        final detail = await container.read(
+          collectionDetailProvider(slug).future,
+        );
         if (!(detail.contentLocked ?? false)) {
-          ref.invalidate(collectionGamesProvider(slug));
-          ref.invalidate(collectionPlayersProvider(slug));
+          container.invalidate(collectionGamesProvider(slug));
+          container.invalidate(collectionPlayersProvider(slug));
           return true;
         }
       } catch (_) {
@@ -166,6 +175,7 @@ Future<bool> confirmCollectionPremium(
     }
     return false;
   } finally {
+    held?.close();
     confirming.update((current) => {...current}..remove(slug));
   }
 }
@@ -174,9 +184,9 @@ Future<bool> confirmCollectionPremium(
 /// confirm loop once it reports Premium.
 Future<void> unlockCollection(
   BuildContext context,
-  WidgetRef ref,
   Collection collection,
 ) async {
+  final container = ProviderScope.containerOf(context, listen: false);
   final premium = await showDesktopPremiumPaywall(
     context,
     surface: switch (collection.kind) {
@@ -186,14 +196,14 @@ Future<void> unlockCollection(
     },
   );
   if (!premium || !context.mounted) return;
-  final opened = await confirmCollectionPremium(ref, collection.slug);
+  final opened = await confirmCollectionPremium(container, collection.slug);
   if (opened || !context.mounted) return;
   showDesktopToast(
     context,
     "Couldn't confirm your Premium just now.",
     error: true,
     actionLabel: 'Try again',
-    onAction: () => unawaited(unlockCollection(context, ref, collection)),
+    onAction: () => unawaited(unlockCollection(context, collection)),
   );
 }
 

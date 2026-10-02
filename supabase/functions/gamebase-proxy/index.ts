@@ -1,5 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { matchGamebaseProxyRoute } from "./allowed_routes.ts";
+import {
+  bearerNamesAccount,
+  matchGamebaseProxyRoute,
+} from "./allowed_routes.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -95,7 +98,7 @@ Deno.serve(async (req: Request) => {
   // other route stays anonymous behind the server key, exactly as before.
   if (route.member) headers.set("Authorization", authorization);
   if (route.viewer) {
-    if (/^Bearer \S+$/.test(authorization)) {
+    if (bearerNamesAccount(authorization)) {
       headers.set("Authorization", authorization);
     }
     // "Judge my Premium again", sent right after a purchase.

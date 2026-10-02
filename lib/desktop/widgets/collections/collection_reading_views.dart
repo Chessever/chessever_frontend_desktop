@@ -120,7 +120,7 @@ class CollectionUnlockButton extends ConsumerWidget {
       label: collectionUnlockLabel(collection),
       icon: Icons.lock_open_rounded,
       tone: DesktopDialogButtonTone.primary,
-      onPress: () => unawaited(unlockCollection(context, ref, collection)),
+      onPress: () => unawaited(unlockCollection(context, collection)),
     );
   }
 }
@@ -135,7 +135,7 @@ class CollectionLockedContents extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    void unlock() => unawaited(unlockCollection(context, ref, collection));
+    void unlock() => unawaited(unlockCollection(context, collection));
     final rows = <Widget>[];
     void addSection(CollectionSection section, {required bool child}) {
       final isPart =

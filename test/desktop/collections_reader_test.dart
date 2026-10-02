@@ -1,10 +1,14 @@
+import 'dart:async';
 import 'dart:math';
 
+import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/services/collections_reader.dart';
 import 'package:chessever/desktop/state/collections_catalog.dart';
 import 'package:chessever/desktop/widgets/collections/collection_text.dart';
 import 'package:chessever/repository/favorites/models/favorite_event.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'support/collections_fakes.dart';
 
@@ -299,6 +303,32 @@ void main() {
       expect(notifier.state.items, isEmpty);
     });
 
+    test('no page is asked for while the list is read from the top', () async {
+      final asked = <int>[];
+      Completer<void>? gate;
+      final notifier = CollectionCatalogNotifier<Collection>((offset) async {
+        asked.add(offset);
+        await gate?.future;
+        return (items: const [freeBook, premiumBook], total: 3);
+      }, idOf: (c) => c.id);
+      addTearDown(notifier.dispose);
+      await Future<void>.delayed(Duration.zero);
+      expect(notifier.state.hasMore, isTrue);
+
+      // A refresh keeps the rows on screen, so nothing else says "busy".
+      gate = Completer<void>();
+      final refresh = notifier.refresh();
+      expect(notifier.state.isLoading, isFalse);
+      await notifier.loadMore();
+      expect(asked, [0, 0], reason: 'the offset would belong to the old list');
+
+      gate.complete();
+      await refresh;
+      gate = null;
+      await notifier.loadMore();
+      expect(asked, [0, 0, 2]);
+    });
+
     test(
       'a page that adds nothing ends the list whatever the total says',
       () async {
@@ -315,6 +345,45 @@ void main() {
         expect(notifier.state.hasMore, isFalse);
       },
     );
+  });
+
+  group('whose answer it is', () {
+    test('another account reads the collection again', () async {
+      final reader = FakeCollectionsReader();
+      final account = StateProvider<String?>((_) => 'account-a');
+      final container = ProviderContainer(
+        overrides: [
+          collectionsReaderProvider.overrideWithValue(reader),
+          desktopEntitlementProvider.overrideWith(
+            (ref) => DesktopEntitlementSnapshot(accountId: ref.watch(account)),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final detail = collectionDetailProvider('zurich-1953');
+      final games = collectionGamesProvider('my-60-memorable-games');
+      container.listen(detail, (_, _) {});
+      container.listen(games, (_, _) {});
+      await container.read(detail.future);
+      await container.read(games.future);
+      expect(reader.detailReads, ['zurich-1953']);
+      expect(reader.gameReads, ['my-60-memorable-games']);
+
+      // The next account is entitled; the previous answer is not theirs.
+      reader.lockedSlugs = {};
+      container.read(account.notifier).state = 'account-b';
+      final opened = await container.read(detail.future);
+      await container.read(games.future);
+
+      expect(reader.detailReads, ['zurich-1953', 'zurich-1953']);
+      expect(reader.gameReads.length, 2);
+      expect(opened.contentLocked, isFalse);
+
+      // Signing out reads again too.
+      container.read(account.notifier).state = null;
+      await container.read(detail.future);
+      expect(reader.detailReads.length, 3);
+    });
   });
 
   group('the words for a collection', () {

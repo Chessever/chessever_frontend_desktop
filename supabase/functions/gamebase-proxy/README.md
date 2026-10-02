@@ -45,13 +45,15 @@ superadmin console is not reachable through this function.
 
 ## Viewer routes
 
-Published collections are read through `/api/collections/...`. The catalog,
-the author list, the event bindings and the opening index are anonymous reads
-like the rest. A collection itself, its games and its players are *viewer*
-routes: a Premium collection opens only for an entitled account, so the
-function forwards the caller's bearer when there is one, passes a
-`Cache-Control: no-cache` re-check along (sent right after a purchase), and
-answers `private, no-store`. Counting a read (`POST .../view`) is anonymous;
+Published collections are read through `/api/collections/...`, and only the
+routes the app calls are open. The catalog, the author list and the books
+bound to an event are anonymous reads like the rest. A collection itself, its
+games and its players are *viewer* routes: a Premium collection opens only
+for an entitled account, so the function forwards the caller's bearer when it
+names an account (a token with a `sub`; the app's public key is not a
+viewer), passes a `Cache-Control: no-cache` re-check along (sent right after
+a purchase), and answers `private, no-store`. A slug is letters, digits,
+dashes and underscores. Counting a read (`POST .../view`) is anonymous;
 starring (`PUT .../star`) is a member route.
 
 No route here writes a collection: publishing is the member routes above, and

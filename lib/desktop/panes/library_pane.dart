@@ -7726,6 +7726,7 @@ class _GamesTableHeader extends StatelessWidget {
     this.columnOrder = _defaultGamesTableColumns,
     this.onColumnFlexesChanged,
     this.onColumnOrderChanged,
+    this.leadingInset = 0,
   });
 
   final _SortConfig sort;
@@ -7734,6 +7735,10 @@ class _GamesTableHeader extends StatelessWidget {
   final List<_GamesTableColumn> columnOrder;
   final ValueChanged<_GamesTableColumnFlexes>? onColumnFlexesChanged;
   final ValueChanged<List<_GamesTableColumn>>? onColumnOrderChanged;
+
+  /// Extra room before the first label, for a table that sets its header
+  /// exactly over rows that start after their selection bar.
+  final double leadingInset;
 
   @override
   Widget build(BuildContext context) {
@@ -7861,7 +7866,7 @@ class _GamesTableHeader extends StatelessWidget {
         columnOrder.isEmpty ? _defaultGamesTableColumns : columnOrder;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
+      padding: EdgeInsets.fromLTRB(8 + leadingInset, 10, 14, 10),
       color: kBlack3Color.withValues(alpha: 0.4),
       child: Row(
         children: [
@@ -12553,7 +12558,14 @@ class _DatabaseSavedGamesTable extends HookWidget {
     this.onContextMenuSelect,
     this.onGameAction,
     this.columns = _defaultGamesTableColumns,
+    this.fitToWidth = false,
   });
+
+  /// Fits the columns to the table's width: the least needed ones are left
+  /// out as it narrows and the player columns take up the slack, so a table
+  /// beside a board never runs off its edge. It stops once the user sizes,
+  /// hides or moves a column by hand; from then on the layout is theirs.
+  final bool fitToWidth;
 
   /// The columns this table opens with, in order. A surface whose rows were
   /// never saved by the user leaves "Saved" out.
@@ -12586,6 +12598,7 @@ class _DatabaseSavedGamesTable extends HookWidget {
   Widget build(BuildContext context) {
     final columnFlexes = useState(const _GamesTableColumnFlexes());
     final columnOrder = useState(columns);
+    final userArranged = useState(false);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 10, 20),
       child: Container(
@@ -12595,15 +12608,34 @@ class _DatabaseSavedGamesTable extends HookWidget {
           border: Border.all(color: kDividerColor),
         ),
         clipBehavior: Clip.antiAlias,
-        child: Column(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final fitted =
+                fitToWidth && !userArranged.value
+                    ? _fitGamesTableColumns(columns, constraints.maxWidth)
+                    : null;
+            final flexes = fitted?.flexes ?? columnFlexes.value;
+            final order = fitted?.order ?? columnOrder.value;
+            // The first change by hand starts from what is on screen.
+            void arrange({
+              _GamesTableColumnFlexes? nextFlexes,
+              List<_GamesTableColumn>? nextOrder,
+            }) {
+              columnFlexes.value = nextFlexes ?? flexes;
+              columnOrder.value = nextOrder ?? order;
+              userArranged.value = true;
+            }
+
+            return Column(
           children: [
             _GamesTableHeader(
               sort: sort,
               onSortChange: onSortChange,
-              columnFlexes: columnFlexes.value,
-              columnOrder: columnOrder.value,
-              onColumnFlexesChanged: (next) => columnFlexes.value = next,
-              onColumnOrderChanged: (next) => columnOrder.value = next,
+              columnFlexes: flexes,
+              columnOrder: order,
+              leadingInset: fitToWidth ? _kGamesTableRowBarWidth : 0,
+              onColumnFlexesChanged: (next) => arrange(nextFlexes: next),
+              onColumnOrderChanged: (next) => arrange(nextOrder: next),
             ),
             const Divider(height: 1, color: kDividerColor),
             Expanded(
@@ -12621,8 +12653,8 @@ class _DatabaseSavedGamesTable extends HookWidget {
                       selected:
                           (selectedIds?.contains(rows[i].id) ?? false) ||
                           rows[i].id == selectedId,
-                      columnFlexes: columnFlexes.value,
-                      columnOrder: columnOrder.value,
+                      columnFlexes: flexes,
+                      columnOrder: order,
                       onRangeSelect:
                           onRangeSelect == null
                               ? null
@@ -12642,10 +12674,80 @@ class _DatabaseSavedGamesTable extends HookWidget {
               ),
             ),
           ],
+            );
+          },
         ),
       ),
     );
   }
+}
+
+/// The selection bar every row starts with.
+const _kGamesTableRowBarWidth = 3.0;
+
+/// A row's side padding and selection bar, and the gap after each column.
+const _kGamesTableChromeWidth = 22.0 + _kGamesTableRowBarWidth;
+const _kGamesTableColumnGap = 10.0;
+
+/// A player column narrower than this drops a lesser column instead.
+const _kGamesTableFitPlayerWidth = 104.0;
+
+/// What a narrowing table gives up, first to last. Number, players and
+/// result always stay.
+const _gamesTableFitDropOrder = <List<_GamesTableColumn>>[
+  [_GamesTableColumn.event],
+  [_GamesTableColumn.whiteElo, _GamesTableColumn.blackElo],
+  [_GamesTableColumn.saved],
+  [_GamesTableColumn.date],
+  [_GamesTableColumn.eco],
+];
+
+/// [columns] as they fit into [width]: which stay, and how wide the two
+/// player columns are so the row ends at the table's edge.
+({List<_GamesTableColumn> order, _GamesTableColumnFlexes flexes})
+_fitGamesTableColumns(List<_GamesTableColumn> columns, double width) {
+  const base = _GamesTableColumnFlexes();
+  bool isPlayer(_GamesTableColumn column) =>
+      column == _GamesTableColumn.white || column == _GamesTableColumn.black;
+  // Everything but the player columns, which are sized last.
+  double fixedWidth(List<_GamesTableColumn> order) {
+    var total = _kGamesTableChromeWidth;
+    for (final column in order) {
+      total += _kGamesTableColumnGap;
+      if (!isPlayer(column)) total += base.widthFor(column);
+    }
+    return total;
+  }
+
+  final order = List<_GamesTableColumn>.of(columns);
+  int players() => order.where(isPlayer).length;
+  for (final dropped in _gamesTableFitDropOrder) {
+    if (fixedWidth(order) + players() * _kGamesTableFitPlayerWidth <= width) {
+      break;
+    }
+    order.removeWhere(dropped.contains);
+  }
+  final count = players();
+  if (count == 0 || !width.isFinite) return (order: order, flexes: base);
+  final playerWidth = (width - fixedWidth(order)) / count;
+  return (
+    order: order,
+    // copyWith keeps a player column between its own limits.
+    flexes: base.copyWith(white: playerWidth, black: playerWidth),
+  );
+}
+
+/// The fit rule, for tests: the column names that stay at [width] and the
+/// width each player column gets.
+@visibleForTesting
+({List<String> columns, double playerWidth}) libraryReadOnlyGamesFit(
+  double width,
+) {
+  final fit = _fitGamesTableColumns(_readOnlyGamesTableColumns, width);
+  return (
+    columns: [for (final column in fit.order) column.name],
+    playerWidth: fit.flexes.white,
+  );
 }
 
 class _DatabaseSavedGameRow extends StatefulWidget {
@@ -14198,7 +14300,7 @@ class LibraryReadOnlyGamesPreview extends HookConsumerWidget {
         children: [
           SplitChild(
             minSize: 390,
-            initialWeight: 0.52,
+            initialWeight: 0.56,
             label: 'Games',
             child: _DatabaseSavedGamesTable(
               rows: sorted,
@@ -14206,6 +14308,7 @@ class LibraryReadOnlyGamesPreview extends HookConsumerWidget {
               selectedId: selectedId.value,
               scrollController: scrollController,
               columns: _readOnlyGamesTableColumns,
+              fitToWidth: true,
               onSortChange:
                   (next) => _gateCloudSort(
                     context,
@@ -14222,16 +14325,21 @@ class LibraryReadOnlyGamesPreview extends HookConsumerWidget {
           ),
           SplitChild(
             minSize: 380,
-            initialWeight: 0.48,
+            initialWeight: 0.44,
             label: 'Preview',
-            child: _SavedAnalysisPreviewPanel(
-              analysis: selected,
-              plyIndex: plyIndex.value,
-              onPlyChanged: setPly,
-              onOpen:
-                  selected == null
-                      ? null
-                      : () => open(selected, fromPreview: true),
+            // Read, not taken: the notation of a read-only source never
+            // hands out its PGN.
+            child: NotationExportScope(
+              allowPgnCopy: false,
+              child: _SavedAnalysisPreviewPanel(
+                analysis: selected,
+                plyIndex: plyIndex.value,
+                onPlyChanged: setPly,
+                onOpen:
+                    selected == null
+                        ? null
+                        : () => open(selected, fromPreview: true),
+              ),
             ),
           ),
         ],

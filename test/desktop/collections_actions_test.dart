@@ -1,6 +1,9 @@
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
+import 'package:chessever/desktop/services/auth/desktop_guest_unsaved_work.dart';
+import 'package:chessever/desktop/state/board_pane_session.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/desktop/services/collections_reader.dart';
 import 'package:chessever/desktop/shell/desktop_main_routes.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
@@ -68,10 +71,14 @@ void main() {
     ) async {
       final reader = FakeCollectionsReader();
       final favorites = FakeFavoriteEvents();
-      final (ref, _) = await _ref(tester, reader: reader, favorites: favorites);
+      final (_, container) = await _ref(
+        tester,
+        reader: reader,
+        favorites: favorites,
+      );
 
       final outcome = await toggleCollectionStar(
-        ref,
+        container,
         freeBook,
         hasPermanentAccount: () => false,
       );
@@ -86,14 +93,14 @@ void main() {
     ) async {
       final reader = FakeCollectionsReader();
       final favorites = FakeFavoriteEvents();
-      final (ref, container) = await _ref(
+      final (_, container) = await _ref(
         tester,
         reader: reader,
         favorites: favorites,
       );
 
       final starred = await toggleCollectionStar(
-        ref,
+        container,
         freeBook,
         hasPermanentAccount: () => true,
       );
@@ -117,7 +124,7 @@ void main() {
       );
 
       final unstarred = await toggleCollectionStar(
-        ref,
+        container,
         freeBook,
         hasPermanentAccount: () => true,
       );
@@ -137,12 +144,12 @@ void main() {
       tester,
     ) async {
       final reader = FakeCollectionsReader();
-      final (ref, container) = await _ref(tester, reader: reader);
+      final (_, container) = await _ref(tester, reader: reader);
       var reads = 0;
       // The purchase reaches the server on the third look.
       final confirmed = () async {
         final future = confirmCollectionPremium(
-          ref,
+          container,
           'zurich-1953',
           waits: const [Duration.zero, Duration.zero, Duration.zero],
         );
@@ -164,11 +171,11 @@ void main() {
       tester,
     ) async {
       final reader = FakeCollectionsReader();
-      final (ref, container) = await _ref(tester, reader: reader);
+      final (_, container) = await _ref(tester, reader: reader);
 
       final confirmed = await tester.runAsync(
         () => confirmCollectionPremium(
-          ref,
+          container,
           'zurich-1953',
           waits: const [Duration.zero, Duration.zero],
         ),
@@ -256,6 +263,36 @@ void main() {
           );
         }
       }
+    });
+
+    test('analysis on it is not offered for export when a guest signs up', () {
+      BoardPaneSession edited(String id) => BoardPaneSession(
+        game: ChessGame.fromPgn(id, '1. d4 d5 *'),
+        pointer: const [],
+        pgnHeaders: const {},
+        flipped: false,
+        loadedFrom: null,
+        lastAppliedPgn: null,
+        lastAppliedGameId: null,
+        lastAppliedInitialFenKey: null,
+        dirtySinceLoad: true,
+        hasUnseenMoves: false,
+        undoStack: const [],
+      );
+      final sessions = {'own': edited('own'), 'book': edited('book')};
+
+      List<String> offered({Set<String> excluded = const {}}) => [
+        for (final board in collectDesktopUnsavedBoards(
+          retainedSessions: sessions,
+          liveReaders: {'book': () => (seed: null, session: sessions['book']!)},
+          titlesByTabId: const {'own': 'My analysis', 'book': 'Zurich 1953'},
+          excludedTabIds: excluded,
+        ))
+          board.tabId,
+      ];
+
+      expect(offered(), unorderedEquals(['own', 'book']));
+      expect(offered(excluded: {'book'}), ['own']);
     });
 
     test('the share dialog offers the image and the GIF, never the PGN', () {

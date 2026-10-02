@@ -118,6 +118,22 @@ String _useDebounced(String value, Duration delay) {
   return settled.value;
 }
 
+/// [chosen] as the catalog knows them: the entry with the same id, or with
+/// the same name when the credit carried no catalog id.
+@visibleForTesting
+CollectionAuthor? resolveCollectionAuthor(
+  CollectionAuthor? chosen,
+  List<CollectionAuthor> known,
+) {
+  if (chosen == null) return null;
+  final name = chosen.name.trim().toLowerCase();
+  return known.firstWhereOrNull((author) => author.id == chosen.id) ??
+      known.firstWhereOrNull(
+        (author) => author.name.trim().toLowerCase() == name,
+      ) ??
+      chosen;
+}
+
 class CollectionsPane extends HookConsumerWidget {
   const CollectionsPane({super.key});
 
@@ -143,10 +159,17 @@ class CollectionsPane extends HookConsumerWidget {
       return null;
     }, [requested]);
 
+    // A credit only knows the author's name and id. The catalog's own entry
+    // has the photo, the description and the counts.
+    final knownAuthors = ref.watch(
+      collectionAuthorsProvider.select((state) => state.items),
+    );
+    final shownAuthor = resolveCollectionAuthor(author.value, knownAuthors);
+
     final query = collectionQueryFor(
       text: text,
       filter: filter.value,
-      author: author.value,
+      author: shownAuthor,
     );
     final catalog = ref.watch(collectionCatalogProvider(query));
     final favorites = ref.watch(favoriteCollectionSlugsProvider);
@@ -196,7 +219,7 @@ class CollectionsPane extends HookConsumerWidget {
               label: 'Collections',
               collapsedIcon: Icons.view_sidebar_outlined,
               child: _CollectionsRail(
-                selectedAuthor: author.value,
+                selectedAuthor: shownAuthor,
                 onSelectAuthor: selectAuthor,
                 onCollapse: () => splitController.collapse(0),
               ),
@@ -210,7 +233,7 @@ class CollectionsPane extends HookConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _CollectionsBar(
-                    author: author.value,
+                    author: shownAuthor,
                     onBack: () => selectAuthor(null),
                     searchController: searchController,
                     onQueryChanged: (value) => typed.value = value,
@@ -269,8 +292,11 @@ class CollectionsPane extends HookConsumerWidget {
                                     key: ValueKey(selected.slug),
                                     collection: selected,
                                   )
-                                  : author.value != null
-                                  ? _AuthorAbout(author: author.value!)
+                                  : shownAuthor != null
+                                  ? _AuthorAbout(
+                                    author: shownAuthor,
+                                    listed: catalog.total,
+                                  )
                                   : const LibraryEmptyState(
                                     icon: Icons.auto_stories_outlined,
                                     title: 'About collections',
@@ -590,10 +616,14 @@ class _CatalogList extends HookConsumerWidget {
 
     // The next page is asked for as the list nears its end, and also when a
     // short first page does not fill the pane at all.
+    // The listener outlives a rebuild, so it calls whichever callback the
+    // latest build was given: a new search has its own next page.
+    final loadMore = useRef(onLoadMore);
+    loadMore.value = onLoadMore;
     useEffect(() {
       void maybeLoadMore() {
         if (!scrollController.hasClients) return;
-        if (scrollController.position.extentAfter < 600) onLoadMore();
+        if (scrollController.position.extentAfter < 600) loadMore.value();
       }
 
       scrollController.addListener(maybeLoadMore);
@@ -624,7 +654,7 @@ class _CatalogList extends HookConsumerWidget {
         case _CollectionRowAction.open:
           onOpen(collection);
         case _CollectionRowAction.star:
-          unawaited(pressCollectionStar(context, ref, collection));
+          unawaited(pressCollectionStar(context, collection));
         case null:
           break;
       }
@@ -744,8 +774,11 @@ class _CollectionPreview extends ConsumerWidget {
       collection: detail,
       // The lock is the server's to call: wait for its verdict on a Premium
       // collection instead of asking for games it would refuse.
+      // Only the first read waits: a re-read (confirming a purchase) keeps
+      // what is on screen, and with it the button that started it.
       awaitingVerdict:
           detailAsync.isLoading &&
+          !detailAsync.hasValue &&
           collection.access == CollectionAccess.premium,
       splitStorageKey: 'collections_pane.preview.wide',
       emptyMessage: 'Open the collection to read about it.',
@@ -764,7 +797,7 @@ class _CollectionGames extends ConsumerWidget {
     this.awaitingVerdict = false,
     this.query = const CollectionSearchQuery(),
     this.player,
-    this.sectionId,
+    this.section,
   });
 
   final Collection collection;
@@ -778,8 +811,8 @@ class _CollectionGames extends ConsumerWidget {
   /// Only this player's games.
   final CollectionPlayer? player;
 
-  /// Only this chapter's or round's games.
-  final String? sectionId;
+  /// Only this chapter's or round's games. A part stands for its chapters.
+  final CollectionSection? section;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -822,7 +855,8 @@ class _CollectionGames extends ConsumerWidget {
         );
       },
       data: (games) {
-        final scoped = _scopeGames(games, player: player, sectionId: sectionId);
+        final sectionId = section?.id;
+        final scoped = _scopeGames(games, player: player, section: section);
         if (scoped.isEmpty) {
           return LibraryEmptyState(
             icon:
@@ -866,20 +900,34 @@ class _CollectionGames extends ConsumerWidget {
   }
 }
 
-/// [games] narrowed to one player and to one section. A part stands for its
-/// chapters too.
+/// [games] narrowed to one player and to one section. A part holds no games
+/// of its own, so it stands for every chapter under it.
+@visibleForTesting
+List<CollectionGame> scopeCollectionGames(
+  List<CollectionGame> games, {
+  CollectionPlayer? player,
+  CollectionSection? section,
+}) => _scopeGames(games, player: player, section: section);
+
 List<CollectionGame> _scopeGames(
   List<CollectionGame> games, {
   CollectionPlayer? player,
-  String? sectionId,
+  CollectionSection? section,
 }) {
-  if (player == null && sectionId == null) return games;
+  if (player == null && section == null) return games;
   final keys =
       player == null ? const <String>{} : {player.key, ...player.aliasKeys};
+  final sectionIds =
+      section == null
+          ? const <String>{}
+          : {
+            section.id,
+            for (final below in _flatSections(section.children)) below.id,
+          };
   return [
     for (final game in games)
       if ((player == null || keys.any(game.card.involves)) &&
-          (sectionId == null || game.sectionId == sectionId))
+          (section == null || sectionIds.contains(game.sectionId)))
         game,
   ];
 }
@@ -887,14 +935,19 @@ List<CollectionGame> _scopeGames(
 /// An author's photo and description, shown while their collections are
 /// listed and none is selected.
 class _AuthorAbout extends StatelessWidget {
-  const _AuthorAbout({required this.author});
+  const _AuthorAbout({required this.author, required this.listed});
 
   final CollectionAuthor author;
+
+  /// How many of their collections the catalog lists right now: the count
+  /// for an author the catalog has no entry for.
+  final int listed;
 
   @override
   Widget build(BuildContext context) {
     final paragraphs = collectionParagraphs(author.about);
     final hasPhoto = author.avatarUrl?.trim().isNotEmpty ?? false;
+    final count = author.bookCount > 0 ? author.bookCount : listed;
     return ListView(
       physics: const DesktopScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
@@ -927,9 +980,10 @@ class _AuthorAbout extends StatelessWidget {
                           const SizedBox(height: 3),
                           Text(
                             [
-                              author.bookCount == 1
-                                  ? '1 collection'
-                                  : '${author.bookCount} collections',
+                              if (count == 1)
+                                '1 collection'
+                              else if (count > 1)
+                                '$count collections',
                               if (author.gameCount > 0)
                                 collectionGamesLabel(author.gameCount),
                             ].join(' · '),
@@ -1027,7 +1081,12 @@ class _CollectionWorkspace extends HookConsumerWidget {
     useEffect(() {
       if (detail == null || counted.value) return null;
       counted.value = true;
-      unawaited(trackCollectionRead(ref, detail));
+      unawaited(
+        trackCollectionRead(
+          ProviderScope.containerOf(context, listen: false),
+          detail,
+        ),
+      );
       return null;
     }, [detail?.slug]);
 
@@ -1207,7 +1266,7 @@ class _CollectionWorkspace extends HookConsumerWidget {
               emptyMessage: 'Its games will appear here once it has some.',
               query: query,
               player: player.value,
-              sectionId: sectionId.value,
+              section: section,
             ),
             _CollectionTab.players => _CollectionPlayers(
               collection: detail,

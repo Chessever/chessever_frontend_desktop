@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/services/auth/desktop_guest_unsaved_work.dart';
 import 'package:chessever/desktop/services/auth/desktop_guest_upgrade.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
+import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -135,6 +136,11 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
       retainedSessions: ref.read(boardPaneSessionByTabIdProvider),
       liveReaders: ref.read(boardPaneSnapshotReadersProvider),
       titlesByTabId: {for (final tab in tabs) tab.id: tab.title},
+      excludedTabIds: {
+        for (final entry in ref.read(boardTabGameArgsByTabIdProvider).entries)
+          if (entry.value.accessContext?.isCollectionContent ?? false)
+            entry.key,
+      },
     );
   }
 

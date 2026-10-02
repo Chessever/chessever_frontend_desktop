@@ -1,5 +1,6 @@
 import { assertEquals } from "jsr:@std/assert@1/equals";
 import {
+  bearerNamesAccount,
   isAllowedGamebaseProxyRoute,
   matchGamebaseProxyRoute,
 } from "./allowed_routes.ts";
@@ -114,13 +115,9 @@ Deno.test("book publishing: nothing here approves, and nothing else opens", () =
 
 Deno.test("collections: the catalog is the same for everyone", () => {
   const open = [
-    "/api/collections",
     "/api/collections/catalog/books",
     "/api/collections/catalog/authors",
     "/api/collections/for-event",
-    "/api/collections/for-opening",
-    "/api/collections/openings",
-    "/api/collections/my-60-memorable-games/openings",
   ];
   for (const path of open) {
     const route = matchGamebaseProxyRoute("GET", path);
@@ -171,8 +168,37 @@ Deno.test("collections: nothing here writes a collection", () => {
     ["GET", "/api/collections/endgames/games/"],
     ["GET", "/api/collections/"],
     ["GET", "/api/collections/a/b/c"],
+    // Routes the app never calls stay closed.
+    ["GET", "/api/collections"],
+    ["GET", "/api/collections/endgames/openings"],
+    // A slug is letters, digits, dashes and underscores, nothing else.
+    ["GET", "/api/collections/..%2Fadmin"],
+    ["GET", "/api/collections/end%20games"],
+    ["GET", "/api/collections/end.games/games"],
+    ["GET", "/api/collections/-endgames"],
+    ["POST", "/api/collections/end;games/view"],
+    ["PUT", `/api/collections/${"a".repeat(161)}/star`],
   ];
   for (const [method, path] of refused) {
     assertEquals(isAllowedGamebaseProxyRoute(method, path), false, `${method} ${path}`);
   }
+});
+
+function token(payload: Record<string, unknown>): string {
+  const part = (value: unknown) =>
+    btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_")
+      .replace(/=+$/, "");
+  return `Bearer ${part({ alg: "HS256", typ: "JWT" })}.${part(payload)}.sig`;
+}
+
+Deno.test("collections: only a token that names an account is the viewer", () => {
+  assertEquals(bearerNamesAccount(token({ sub: "user-1", role: "authenticated" })), true);
+  // The app's public key: a role, nobody behind it.
+  assertEquals(bearerNamesAccount(token({ role: "anon", iss: "supabase" })), false);
+  assertEquals(bearerNamesAccount(token({ sub: "" })), false);
+  assertEquals(bearerNamesAccount(token({ sub: 7 })), false);
+  assertEquals(bearerNamesAccount("Bearer not-a-token"), false);
+  assertEquals(bearerNamesAccount("Bearer a.%%%.c"), false);
+  assertEquals(bearerNamesAccount("Basic abc"), false);
+  assertEquals(bearerNamesAccount(""), false);
 });

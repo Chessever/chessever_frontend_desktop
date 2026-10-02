@@ -15,6 +15,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/providers/favorite_events_provider.dart';
 import 'package:chessever/repository/favorites/models/favorite_event.dart';
 import 'package:chessever/repository/gamebase/collections/collection_search_query.dart';
@@ -329,34 +330,47 @@ final collectionsReaderProvider = Provider<CollectionsReader>(
   (ref) => CollectionsReader(ref.watch(gamebaseRepositoryProvider)),
 );
 
+/// The account these reads are made for. What is locked depends on who
+/// asks, so a sign-in, a sign-out or a switch of account reads again instead
+/// of showing the previous account's answer.
+final _collectionViewerProvider = Provider<String?>(
+  (ref) => ref.watch(
+    desktopEntitlementProvider.select((entitlement) => entitlement.accountId),
+  ),
+);
+
 /// One collection by slug, with its About text and section tree.
 final collectionDetailProvider = FutureProvider.autoDispose
-    .family<Collection, String>(
-      (ref, slug) => ref.watch(collectionsReaderProvider).fetchCollection(slug),
-    );
+    .family<Collection, String>((ref, slug) {
+      ref.watch(_collectionViewerProvider);
+      return ref.watch(collectionsReaderProvider).fetchCollection(slug);
+    });
 
 /// One collection's games (with PGN), by slug.
 final collectionGamesProvider = FutureProvider.autoDispose
-    .family<List<CollectionGame>, String>(
-      (ref, slug) => ref.watch(collectionsReaderProvider).fetchGames(slug),
-    );
+    .family<List<CollectionGame>, String>((ref, slug) {
+      ref.watch(_collectionViewerProvider);
+      return ref.watch(collectionsReaderProvider).fetchGames(slug);
+    });
 
 /// The games of one collection a search or one player narrows it to.
 typedef CollectionGamesFilter =
     ({String slug, CollectionSearchQuery query, String? player});
 
 final collectionFilteredGamesProvider = FutureProvider.autoDispose
-    .family<List<CollectionGame>, CollectionGamesFilter>(
-      (ref, key) => ref
+    .family<List<CollectionGame>, CollectionGamesFilter>((ref, key) {
+      ref.watch(_collectionViewerProvider);
+      return ref
           .watch(collectionsReaderProvider)
-          .searchGames(key.slug, search: key.query, playerKey: key.player),
-    );
+          .searchGames(key.slug, search: key.query, playerKey: key.player);
+    });
 
 /// One collection's players, by slug.
 final collectionPlayersProvider = FutureProvider.autoDispose
-    .family<List<CollectionPlayer>, String>(
-      (ref, slug) => ref.watch(collectionsReaderProvider).fetchPlayers(slug),
-    );
+    .family<List<CollectionPlayer>, String>((ref, slug) {
+      ref.watch(_collectionViewerProvider);
+      return ref.watch(collectionsReaderProvider).fetchPlayers(slug);
+    });
 
 /// The published books bound to one event page. An event with no books, or a
 /// request that fails, is an empty list: the books are a companion to the
@@ -460,14 +474,20 @@ String newCollectionReaderId(Random random) {
 
 /// Counts opening [collection] as a read. Books only, as on the phone;
 /// counts never interrupt reading.
-Future<void> trackCollectionRead(WidgetRef ref, Collection collection) async {
+///
+/// Takes the container, not a widget's ref: the page that asked may be gone
+/// by the time the server answers, and the count still belongs in the store.
+Future<void> trackCollectionRead(
+  ProviderContainer container,
+  Collection collection,
+) async {
   if (collection.kind != CollectionKind.book) return;
   try {
-    final id = await ref.read(_collectionReaderIdProvider.future);
-    final counts = await ref
+    final id = await container.read(_collectionReaderIdProvider.future);
+    final counts = await container
         .read(collectionsReaderProvider)
         .recordView(collection.slug, id);
-    ref
+    container
         .read(collectionEngagementCountsProvider(collection.slug).notifier)
         .state = counts;
   } catch (_) {
@@ -524,17 +544,29 @@ bool _hasPermanentAccount() {
   }
 }
 
+/// Whether a permanent account is signed in: a star belongs to one. A
+/// provider so a test can stand in for the session.
+final collectionStarAccountProvider = Provider<bool Function()>(
+  (_) => _hasPermanentAccount,
+);
+
 /// Stars or unstars [collection]: the same favorite row and the same counter
 /// call as the phone app, so the star follows the account.
+///
+/// Takes the container, not a widget's ref: starring moves the row to the
+/// top of the catalog, which rebuilds it, and the public count still has to
+/// be sent after that.
 Future<CollectionStarOutcome> toggleCollectionStar(
-  WidgetRef ref,
+  ProviderContainer container,
   Collection collection, {
-  bool Function() hasPermanentAccount = _hasPermanentAccount,
+  bool Function()? hasPermanentAccount,
 }) async {
-  if (!hasPermanentAccount()) return CollectionStarOutcome.needsAccount;
+  final bool Function() signedIn =
+      hasPermanentAccount ?? container.read(collectionStarAccountProvider);
+  if (!signedIn()) return CollectionStarOutcome.needsAccount;
   final bool starred;
   try {
-    starred = await ref
+    starred = await container
         .read(favoriteEventsProvider.notifier)
         .toggleFavorite(
           eventId: collectionFavoriteId(collection.slug),
@@ -550,10 +582,10 @@ Future<CollectionStarOutcome> toggleCollectionStar(
     return CollectionStarOutcome.failed;
   }
   try {
-    final counts = await ref
+    final counts = await container
         .read(collectionsReaderProvider)
         .recordStar(collection.slug, starred);
-    ref
+    container
         .read(collectionEngagementCountsProvider(collection.slug).notifier)
         .state = counts;
   } catch (_) {

@@ -93,8 +93,7 @@ class CollectionStarButton extends ConsumerWidget {
           selectedIcon: Icons.star_rounded,
           selected: starred,
           tooltip: starred ? 'Unstar collection' : 'Star collection',
-          onPress:
-              () => unawaited(pressCollectionStar(context, ref, collection)),
+          onPress: () => unawaited(pressCollectionStar(context, collection)),
         ),
       ],
     );
@@ -102,12 +101,15 @@ class CollectionStarButton extends ConsumerWidget {
 }
 
 /// The star press behind every collection star, with its feedback.
+///
+/// The container is taken before the first wait: a starred row moves to the
+/// top of the catalog, and the widget that was pressed is gone by then.
 Future<void> pressCollectionStar(
   BuildContext context,
-  WidgetRef ref,
   Collection collection,
 ) async {
-  final outcome = await toggleCollectionStar(ref, collection);
+  final container = ProviderScope.containerOf(context, listen: false);
+  final outcome = await toggleCollectionStar(container, collection);
   if (!context.mounted) return;
   switch (outcome) {
     case CollectionStarOutcome.needsAccount:

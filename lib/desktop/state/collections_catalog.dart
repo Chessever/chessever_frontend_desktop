@@ -73,9 +73,14 @@ class CollectionCatalogNotifier<T>
   /// Counts reads, so a refresh started while a page was loading wins.
   int _generation = 0;
 
+  /// A read from the top is on its way. No further page is asked for until
+  /// it lands: its offset would belong to the list being replaced.
+  bool _refreshing = false;
+
   /// Reads the catalog again from the top.
   Future<void> refresh() async {
     final generation = ++_generation;
+    _refreshing = true;
     state = state.copyWith(
       isLoading: state.items.isEmpty,
       isLoadingMore: false,
@@ -85,6 +90,7 @@ class CollectionCatalogNotifier<T>
     try {
       final page = await _fetch(0);
       if (!mounted || generation != _generation) return;
+      _refreshing = false;
       state = CollectionCatalogState<T>(
         items: _distinct(const [], page.items),
         total: page.total,
@@ -92,6 +98,7 @@ class CollectionCatalogNotifier<T>
       );
     } catch (error) {
       if (!mounted || generation != _generation) return;
+      _refreshing = false;
       state = CollectionCatalogState<T>(isLoading: false, error: error);
     }
   }
@@ -99,7 +106,12 @@ class CollectionCatalogNotifier<T>
   /// Reads the next page, or tries the one that failed again. The rows
   /// already listed stay whatever happens.
   Future<void> loadMore() async {
-    if (state.isLoading || state.isLoadingMore || !state.hasMore) return;
+    if (_refreshing ||
+        state.isLoading ||
+        state.isLoadingMore ||
+        !state.hasMore) {
+      return;
+    }
     final generation = _generation;
     final offset = state.items.length;
     state = state.copyWith(isLoadingMore: true, clearMoreError: true);

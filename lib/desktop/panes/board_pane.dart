@@ -5292,11 +5292,14 @@ class _BoardPaneContent extends HookConsumerWidget {
                           boardArgs?.enableLocalOpeningTreePicker ?? false,
                       hideLocalOpeningTreePicker:
                           boardArgs?.hideLocalOpeningTreePicker ?? false,
-                      notationChild: buildNotationLadder(
-                        scrollController: notationScrollController,
-                        activePointer: pointer.value,
-                        onJump: jumpToPointer,
-                        layoutModeController: notationLayoutController,
+                      notationChild: NotationExportScope(
+                        allowPgnCopy: !collectionGame,
+                        child: buildNotationLadder(
+                          scrollController: notationScrollController,
+                          activePointer: pointer.value,
+                          onJump: jumpToPointer,
+                          layoutModeController: notationLayoutController,
+                        ),
                       ),
                       currentFen: position.fen,
                       startingFen: chessGame.value.startingFen,
