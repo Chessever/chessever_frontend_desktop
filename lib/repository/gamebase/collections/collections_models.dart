@@ -85,6 +85,10 @@ enum CollectionSectionKind {
 /// accept: none was sent, or it was spent or refused.
 const String kCollectionLockAuthRequired = 'auth_required';
 
+/// The error code for a server that cannot serve collections to this app
+/// yet: the proxy function in front of it predates the reader routes.
+const String kCollectionsNotAvailable = 'collections_not_available';
+
 /// A collections request gamebase refused, carrying its own `error.message`.
 ///
 /// [toString] keeps the HTTP status (" (HTTP 404)") so `userFacingError`
@@ -112,6 +116,10 @@ class CollectionsRequestException implements Exception {
   /// The server could not reach the entitlement check just now. The viewer
   /// may well be entitled, so this is a retry, not a paywall.
   bool get isAccessCheckUnavailable => code == 'access_check_unavailable';
+
+  /// Collections cannot be read through this server at all yet. Not a
+  /// failure to retry: the app says so and offers nothing to open.
+  bool get isNotAvailable => code == kCollectionsNotAvailable;
 
   @override
   String toString() =>
@@ -308,9 +316,10 @@ class Collection {
     final sections = _maps(
       json['sections'],
     ).map(CollectionSection.fromJson).toList(growable: false);
-    final events = [
-      for (final e in _maps(json['events'])) ?CollectionEventRef.fromJson(e),
-    ];
+    final events = _maps(json['events'])
+        .map(CollectionEventRef.fromJson)
+        .whereType<CollectionEventRef>()
+        .toList(growable: false);
     final locked = json['contentLocked'];
     return Collection(
       id: id,

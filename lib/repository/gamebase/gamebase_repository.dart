@@ -14,6 +14,8 @@ import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models_extra.dart';
 import 'package:chessever/repository/gamebase/memorial_player.dart';
+import 'package:chessever/repository/gamebase/collections/collection_search_query.dart';
+import 'package:chessever/repository/gamebase/collections/collections_models.dart';
 
 import 'explorer_query.dart';
 
@@ -1279,6 +1281,213 @@ class GamebaseRepository {
       throw Exception(
         'Failed to load miniature players: '
         '${e.response?.statusCode ?? 'network error'}',
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Published collections, as readers browse them (`/api/collections...`).
+  // Same calls as the phone app; here they go through the proxy, which adds
+  // the server key and forwards this account's token on the gated reads.
+  // ---------------------------------------------------------------------
+
+  /// One page of the published books a search matches
+  /// (`GET /api/collections/catalog/books`), in the team's order.
+  Future<CollectionsPage> searchCollectionBooks({
+    CollectionSearchQuery search = const CollectionSearchQuery(),
+    int limit = 40,
+    int offset = 0,
+  }) async => CollectionsPage.fromJson(
+    await _getCollectionsData(
+      '/api/collections/catalog/books',
+      what: 'collection search',
+      queryParameters: {...search.parameters, 'limit': limit, 'offset': offset},
+    ),
+  );
+
+  /// One page of the authors a search matches
+  /// (`GET /api/collections/catalog/authors`).
+  Future<({List<CollectionAuthor> items, int total})> searchCollectionAuthors({
+    CollectionSearchQuery search = const CollectionSearchQuery(),
+    int offset = 0,
+    int limit = 40,
+  }) async {
+    final data = await _getCollectionsData(
+      '/api/collections/catalog/authors',
+      what: 'collection authors',
+      queryParameters: {...search.parameters, 'offset': offset, 'limit': limit},
+    );
+    if (data is! Map || data['items'] is! List || data['total'] is! num) {
+      throw const FormatException('Invalid collection authors response');
+    }
+    return (
+      items: [
+        for (final item in data['items'] as List)
+          if (item is Map)
+            CollectionAuthor.fromJson(Map<String, dynamic>.from(item)),
+      ],
+      total: (data['total'] as num).toInt(),
+    );
+  }
+
+  /// A published collection with its About text, section tree and bound
+  /// events (`GET /api/collections/:slug`; an id works too). For a Premium
+  /// collection the answer carries the server's verdict for this account.
+  /// [fresh] asks it to judge anew (right after a purchase).
+  Future<Collection> getCollection(String slug, {bool fresh = false}) async {
+    final data = await _getCollectionsData(
+      '/api/collections/${Uri.encodeComponent(slug)}',
+      what: 'collection',
+      fresh: fresh,
+    );
+    if (data is! Map) {
+      throw const FormatException('Unexpected collection response format');
+    }
+    return Collection.fromJson(Map<String, dynamic>.from(data));
+  }
+
+  /// One page of a collection's games in section-tree order
+  /// (`GET /api/collections/:slug/games`). [includePgn] adds each game's
+  /// whole PGN. A Premium collection answers only an entitled account;
+  /// anyone else gets a [CollectionsRequestException] whose
+  /// [CollectionsRequestException.isPremiumGate] is true.
+  Future<CollectionGamesPage> getCollectionGames(
+    String slug, {
+    String? section,
+    String? playerKey,
+    String? eco,
+    CollectionSearchQuery search = const CollectionSearchQuery(),
+    bool includePgn = false,
+    int limit = 100,
+    int offset = 0,
+    bool fresh = false,
+  }) async {
+    final data = await _getCollectionsData(
+      '/api/collections/${Uri.encodeComponent(slug)}/games',
+      what: 'collection games',
+      fresh: fresh,
+      queryParameters: {
+        ...search.parameters,
+        if (section != null && section.isNotEmpty) 'section': section,
+        if (playerKey != null && playerKey.isNotEmpty) 'player': playerKey,
+        if (eco != null && eco.isNotEmpty) 'eco': eco,
+        if (includePgn) 'include': 'pgn',
+        'limit': limit,
+        'offset': offset,
+      },
+    );
+    return CollectionGamesPage.fromJson(data);
+  }
+
+  /// Everyone who played in a collection, most games first
+  /// (`GET /api/collections/:slug/players`). Gated like the games.
+  Future<List<CollectionPlayer>> getCollectionPlayers(
+    String slug, {
+    bool fresh = false,
+  }) async {
+    final data = await _getCollectionsData(
+      '/api/collections/${Uri.encodeComponent(slug)}/players',
+      what: 'collection players',
+      fresh: fresh,
+    );
+    return CollectionPlayer.listFromJson(data);
+  }
+
+  /// The published collections (books unless [kind] says otherwise) bound
+  /// to the event [anchors] name (`GET /api/collections/for-event`).
+  Future<List<Collection>> getCollectionsForEvent(
+    CollectionEventAnchors anchors, {
+    CollectionKind kind = CollectionKind.book,
+  }) async {
+    if (anchors.isEmpty) return const [];
+    final data = await _getCollectionsData(
+      '/api/collections/for-event',
+      what: 'event collections',
+      queryParameters: anchors.toQuery(kind: kind),
+    );
+    return collectionsForEventFromJson(data);
+  }
+
+  /// Counts a read (`POST .../view` with `{viewerId}`) or sets this
+  /// account's star (`PUT .../star` with `{starred}`). Answers the
+  /// collection's current counts.
+  Future<Map<String, dynamic>> recordCollectionEngagement(
+    String slug,
+    Map<String, dynamic> body, {
+    bool star = false,
+  }) async {
+    try {
+      final response = await _dio.request(
+        '$_baseUrl/api/collections/${Uri.encodeComponent(slug)}/${star ? 'star' : 'view'}',
+        data: body,
+        options: Options(method: star ? 'PUT' : 'POST', headers: _headers),
+      );
+      return Map<String, dynamic>.from(
+        unwrapCollectionsEnvelope(
+              response.data,
+              statusCode: response.statusCode,
+            )
+            as Map,
+      );
+    } on DioException catch (e) {
+      _throwCollectionsRefusal(e);
+      rethrow;
+    }
+  }
+
+  /// GETs a collections endpoint and returns its envelope's `data`. List
+  /// values in [queryParameters] repeat their key (`?tour=a&tour=b`).
+  /// [fresh] sends `Cache-Control: no-cache`, which Gamebase takes as
+  /// "check my Premium again".
+  Future<Object?> _getCollectionsData(
+    String path, {
+    required String what,
+    Map<String, dynamic>? queryParameters,
+    bool fresh = false,
+  }) async {
+    try {
+      final response = await _dio.get(
+        '$_baseUrl$path',
+        queryParameters: queryParameters,
+        options: Options(
+          headers: {
+            ..._headers,
+            if (fresh) ...{'Cache-Control': 'no-cache', 'Pragma': 'no-cache'},
+          },
+          listFormat: ListFormat.multi,
+        ),
+      );
+      return unwrapCollectionsEnvelope(
+        response.data,
+        statusCode: response.statusCode,
+      );
+    } on DioException catch (e) {
+      _throwCollectionsRefusal(e);
+      throw CollectionsRequestException(
+        'Failed to load $what',
+        statusCode: e.response?.statusCode,
+      );
+    }
+  }
+
+  /// Throws what a refused collections request means, when its body says:
+  /// Gamebase's own `{status: "error"}` envelope (a 404 slug, a 400 search,
+  /// the Premium gate), or the proxy's "this route is not allowed here",
+  /// which is a function deployed before collections were readable.
+  void _throwCollectionsRefusal(DioException e) {
+    final body = e.response?.data;
+    if (body is! Map) return;
+    final status = e.response?.statusCode;
+    if (body['status'] == 'error') {
+      unwrapCollectionsEnvelope(body, statusCode: status);
+    }
+    final proxyError = body['error'];
+    if (proxyError == 'route_not_allowed' ||
+        proxyError == 'method_not_allowed') {
+      throw CollectionsRequestException(
+        'Collections are not available here yet',
+        statusCode: status,
+        code: kCollectionsNotAvailable,
       );
     }
   }
