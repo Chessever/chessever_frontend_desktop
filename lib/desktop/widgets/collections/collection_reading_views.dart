@@ -418,7 +418,11 @@ class CollectionAboutView extends ConsumerWidget {
                   ),
                 ],
                 if (collection.kind == CollectionKind.event)
-                  _BooksAboutEvent(collectionId: collection.id),
+                  CollectionsBoundToEvent(
+                    anchors: CollectionEventAnchors(
+                      collections: [collection.id],
+                    ),
+                  ),
               ],
             ),
           ),
@@ -660,38 +664,50 @@ class _BoundEventRow extends ConsumerWidget {
   }
 }
 
-/// The published collections about an event collection, with the team's note
-/// for each. Nothing is drawn while they load or when there are none.
-class _BooksAboutEvent extends ConsumerWidget {
-  const _BooksAboutEvent({required this.collectionId});
+/// The published collections bound to an event, with the team's note for
+/// each: under an event collection's About, and under a tournament's. Nothing
+/// is drawn while they load, when there are none, or when the read fails, so
+/// an event without collections looks exactly as it did before.
+class CollectionsBoundToEvent extends ConsumerWidget {
+  const CollectionsBoundToEvent({
+    super.key,
+    required this.anchors,
+    this.topGap = 22,
+  });
 
-  final String collectionId;
+  final CollectionEventAnchors anchors;
+
+  /// Space above the heading: part of the section, so an event with no
+  /// collections leaves no gap behind.
+  final double topGap;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (anchors.isEmpty) return const SizedBox.shrink();
     final books =
-        ref
-            .watch(
-              collectionBooksForEventProvider(
-                CollectionEventAnchors(collections: [collectionId]),
-              ),
-            )
-            .valueOrNull ??
+        ref.watch(collectionBooksForEventProvider(anchors)).valueOrNull ??
         const <Collection>[];
     if (books.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(top: 22),
+      padding: EdgeInsets.only(top: topGap),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _AboutHeading(books.length == 1 ? 'Collection' : 'Collections'),
+          Semantics(
+            header: true,
+            child: _AboutHeading(
+              books.length == 1 ? 'Collection' : 'Collections',
+            ),
+          ),
           const SizedBox(height: 8),
           _BoundList(
             children: [
               for (final book in books)
                 CollectionCatalogRow(
+                  key: ValueKey('event-collection-${book.id}'),
                   collection: book,
                   selected: false,
+                  // A link, not a selection: one click follows it.
                   onSelect: () => openCollectionTab(ref, book),
                   onOpen: () => openCollectionTab(ref, book),
                 ),
