@@ -93,6 +93,7 @@ import 'package:chessever/desktop/widgets/library/library_game_context_menu.dart
 import 'package:chessever/desktop/widgets/library/library_game_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_database_drag_payload.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
+import 'package:chessever/desktop/widgets/library/library_catalog_row.dart';
 import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 export 'package:chessever/desktop/widgets/library/library_table_row_style.dart'
     show librarySelectedRowDecoration;
@@ -771,9 +772,10 @@ Widget buildLibraryFolderRailForTest({
 }
 
 class _RailHeader extends StatelessWidget {
-  const _RailHeader({required this.onCollapse});
+  const _RailHeader({required this.onCollapse, this.title = 'Cloud Library'});
 
   final VoidCallback onCollapse;
+  final String title;
 
   @override
   Widget build(BuildContext context) {
@@ -791,11 +793,11 @@ class _RailHeader extends StatelessWidget {
             size: 16,
           ),
           const SizedBox(width: 8),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Cloud Library',
+              title,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: const TextStyle(
                 color: kWhiteColor70,
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
@@ -827,11 +829,19 @@ class _PinnedSystemFolderRow extends StatefulWidget {
     required this.onOpen,
     this.trailingIcon,
     this.trailingTooltip,
+    this.leading,
+    this.trailingLabel,
   });
   final String label;
   final IconData icon;
   final IconData? trailingIcon;
   final String? trailingTooltip;
+
+  /// Drawn in place of [icon] (an author's photo, say).
+  final Widget? leading;
+
+  /// A quiet count at the row's end.
+  final String? trailingLabel;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onOpen;
@@ -895,7 +905,7 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
                         Transform.translate(offset: Offset(x, 0), child: child),
                 child: Row(
                   children: [
-                    Icon(widget.icon, size: 14, color: fg),
+                    widget.leading ?? Icon(widget.icon, size: 14, color: fg),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -911,6 +921,18 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
                         ),
                       ),
                     ),
+                    if (widget.trailingLabel != null) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.trailingLabel!,
+                        style: TextStyle(
+                          color: kLightGreyColor.withValues(alpha: 0.85),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ],
                     if (widget.trailingIcon != null)
                       DesktopTooltip(
                         message: widget.trailingTooltip ?? '',
@@ -1905,13 +1927,7 @@ class _MyDatabasesHeader extends StatelessWidget {
       onNavigate(null);
     }
 
-    return Container(
-      height: 48,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: const BoxDecoration(
-        color: kBlack2Color,
-        border: Border(bottom: BorderSide(color: kDividerColor)),
-      ),
+    return LibraryHomeBar(
       child: LayoutBuilder(
         builder: (context, constraints) {
           final showActionLabels = constraints.maxWidth >= 1050;
@@ -4504,19 +4520,8 @@ class _DatabaseBoardListHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const style = TextStyle(
-      color: kLightGreyColor,
-      fontSize: 10.5,
-      fontWeight: FontWeight.w700,
-      letterSpacing: 0.25,
-    );
-    return Container(
-      height: 29,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        color: kBlack3Color.withValues(alpha: 0.52),
-        border: const Border(bottom: BorderSide(color: kDividerColor)),
-      ),
+    const style = kLibraryCatalogHeaderStyle;
+    return LibraryCatalogHeaderStrip(
       child: _DatabaseBoardColumnsLayout(
         columns: columns,
         leading: const SizedBox.shrink(),
@@ -4618,23 +4623,8 @@ class _DatabaseBoardSectionLabel extends StatelessWidget {
   final String label;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 25,
-      alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      color: kBlackColor.withValues(alpha: 0.34),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: kWhiteColor.withValues(alpha: 0.52),
-          fontSize: 10.5,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.2,
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      LibraryCatalogSectionLabel(label: label);
 }
 
 @visibleForTesting
@@ -4698,190 +4688,115 @@ class _DatabaseBoardRow extends StatefulWidget {
   State<_DatabaseBoardRow> createState() => _DatabaseBoardRowState();
 }
 
-class _DatabaseBoardRowState extends State<_DatabaseBoardRow>
-    with DeferredPointerStateMixin<_DatabaseBoardRow> {
-  final FocusNode _focusNode = FocusNode(debugLabel: 'library-database-row');
-  bool _hovered = false;
-
-  @override
-  void dispose() {
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  void _select() {
-    _focusNode.requestFocus();
-    widget.onSelect();
-  }
-
-  void _open() {
-    _focusNode.requestFocus();
-    widget.onOpen();
-  }
-
+class _DatabaseBoardRowState extends State<_DatabaseBoardRow> {
   @override
   Widget build(BuildContext context) {
     final chrome = _LibraryKindChrome.forKind(widget.iconKind);
     final isFolder = widget.iconKind == _DatabaseBoardIconKind.folder;
-    final titleColor = widget.selected ? kPrimaryColor : kWhiteColor;
-    final row = Semantics(
-      button: true,
+    final row = LibraryCatalogRowFrame(
       selected: widget.selected,
-      label:
+      semanticsLabel:
           '${widget.title}, ${widget.details}, ${widget.source}, '
           '${widget.lastOpened}',
-      child: Focus(
-        focusNode: _focusNode,
-        canRequestFocus: true,
-        onKeyEvent: (_, event) {
-          if (event is! KeyDownEvent) return KeyEventResult.ignored;
-          if (event.logicalKey == LogicalKeyboardKey.enter ||
-              event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-            _open();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: ClickCursor(
-          child: MouseRegion(
-            onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
-            onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _select,
-              onDoubleTap: _open,
-              onSecondaryTapUp:
-                  widget.onContextMenu == null
-                      ? null
-                      : (details) {
-                        _select();
-                        widget.onContextMenu!(details.globalPosition);
-                      },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 100),
-                height: 42,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color:
-                      widget.selected
-                          ? kPrimaryColor.withValues(alpha: 0.075)
-                          : (_hovered
-                              ? kBlack3Color.withValues(alpha: 0.72)
-                              : Colors.transparent),
-                  border: Border(
-                    left: BorderSide(
-                      color:
-                          widget.selected ? kPrimaryColor : Colors.transparent,
-                      width: 2,
+      focusDebugLabel: 'library-database-row',
+      onSelect: widget.onSelect,
+      onOpen: widget.onOpen,
+      onContextMenu: widget.onContextMenu,
+      builder:
+          (context, hovered) => _DatabaseBoardColumnsLayout(
+            columns: widget.columns,
+            leading: Stack(
+              alignment: Alignment.center,
+              children: [
+                AnimatedOpacity(
+                  duration: const Duration(milliseconds: 90),
+                  opacity: hovered && widget.reorderKey != null ? 0 : 1,
+                  child: Container(
+                    width: 27,
+                    height: 27,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: chrome.wellFill,
+                      borderRadius: BorderRadius.circular(
+                        isFolder ? 6 : 8,
+                      ),
+                      border: Border.all(color: chrome.wellBorder),
                     ),
-                    bottom: BorderSide(
-                      color: kDividerColor.withValues(alpha: 0.72),
+                    child: _DatabaseBoardIcon(
+                      kind: widget.iconKind,
+                      color: chrome.accent,
+                      size: 15,
                     ),
                   ),
                 ),
-                child: _DatabaseBoardColumnsLayout(
-                  columns: widget.columns,
-                  leading: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      AnimatedOpacity(
-                        duration: const Duration(milliseconds: 90),
-                        opacity: _hovered && widget.reorderKey != null ? 0 : 1,
-                        child: Container(
+                if (hovered && widget.reorderKey != null)
+                  Draggable<String>(
+                    data: widget.reorderKey!,
+                    feedback: const Material(
+                      color: Colors.transparent,
+                      child: Icon(
+                        Icons.drag_indicator_rounded,
+                        size: 18,
+                        color: kPrimaryColor,
+                      ),
+                    ),
+                    childWhenDragging: const SizedBox(
+                      width: 27,
+                      height: 27,
+                    ),
+                    child: DesktopTooltip(
+                      message: 'Drag to reorder',
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.grab,
+                        child: const SizedBox(
+                          key: ValueKey<String>(
+                            'library-home-reorder-handle',
+                          ),
                           width: 27,
                           height: 27,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: chrome.wellFill,
-                            borderRadius: BorderRadius.circular(
-                              isFolder ? 6 : 8,
-                            ),
-                            border: Border.all(color: chrome.wellBorder),
-                          ),
-                          child: _DatabaseBoardIcon(
-                            kind: widget.iconKind,
-                            color: chrome.accent,
-                            size: 15,
+                          child: Icon(
+                            Icons.drag_indicator_rounded,
+                            size: 17,
+                            color: kWhiteColor70,
                           ),
                         ),
                       ),
-                      if (_hovered && widget.reorderKey != null)
-                        Draggable<String>(
-                          data: widget.reorderKey!,
-                          feedback: const Material(
-                            color: Colors.transparent,
-                            child: Icon(
-                              Icons.drag_indicator_rounded,
-                              size: 18,
-                              color: kPrimaryColor,
-                            ),
-                          ),
-                          childWhenDragging: const SizedBox(
-                            width: 27,
-                            height: 27,
-                          ),
-                          child: DesktopTooltip(
-                            message: 'Drag to reorder',
-                            child: MouseRegion(
-                              cursor: SystemMouseCursors.grab,
-                              child: const SizedBox(
-                                key: ValueKey<String>(
-                                  'library-home-reorder-handle',
-                                ),
-                                width: 27,
-                                height: 27,
-                                child: Icon(
-                                  Icons.drag_indicator_rounded,
-                                  size: 17,
-                                  color: kWhiteColor70,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  name: Text(
-                    widget.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: titleColor,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  details: _DatabaseBoardMutedCell(widget.details),
-                  source: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        widget.source == 'Cloud'
-                            ? Icons.cloud_outlined
-                            : Icons.computer_rounded,
-                        size: 12.5,
-                        color: kLightGreyColor,
-                      ),
-                      const SizedBox(width: 5),
-                      Flexible(child: _DatabaseBoardMutedCell(widget.source)),
-                    ],
-                  ),
-                  lastOpened: _DatabaseBoardMutedCell(widget.lastOpened),
-                  trailing: Icon(
-                    widget.pinned
-                        ? Icons.push_pin_rounded
-                        : isFolder
-                        ? Icons.chevron_right_rounded
-                        : Icons.more_horiz_rounded,
-                    size: 16,
-                    color: widget.pinned ? chrome.accent : kLightGreyColor,
-                  ),
+              ],
+            ),
+            name: Text(
+              widget.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: libraryCatalogTitleStyle(selected: widget.selected),
+            ),
+            details: _DatabaseBoardMutedCell(widget.details),
+            source: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  widget.source == 'Cloud'
+                      ? Icons.cloud_outlined
+                      : Icons.computer_rounded,
+                  size: 12.5,
+                  color: kLightGreyColor,
                 ),
-              ),
+                const SizedBox(width: 5),
+                Flexible(child: _DatabaseBoardMutedCell(widget.source)),
+              ],
+            ),
+            lastOpened: _DatabaseBoardMutedCell(widget.lastOpened),
+            trailing: Icon(
+              widget.pinned
+                  ? Icons.push_pin_rounded
+                  : isFolder
+                  ? Icons.chevron_right_rounded
+                  : Icons.more_horiz_rounded,
+              size: 16,
+              color: widget.pinned ? chrome.accent : kLightGreyColor,
             ),
           ),
-        ),
-      ),
     );
     final reorderKey = widget.reorderKey;
     final onMoveBefore = widget.onMoveBefore;
@@ -4975,19 +4890,7 @@ class _DatabaseBoardMutedCell extends StatelessWidget {
   final String value;
 
   @override
-  Widget build(BuildContext context) {
-    return Text(
-      value,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
-        color: kLightGreyColor,
-        fontSize: 11.5,
-        fontWeight: FontWeight.w600,
-        fontFeatures: [FontFeature.tabularFigures()],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => LibraryCatalogMutedCell(value);
 }
 
 class _CloudDatabaseMiniPreview extends HookConsumerWidget {
@@ -9854,9 +9757,10 @@ class _TwicContentView extends HookConsumerWidget {
 void _gateCloudSort(
   BuildContext context,
   _SortConfig next,
-  VoidCallback apply,
-) {
-  if (next.key == _SortKey.saved && next.dir == _SortDir.desc) {
+  VoidCallback apply, {
+  _SortConfig free = const _SortConfig(_SortKey.saved, _SortDir.desc),
+}) {
+  if (next.key == free.key && next.dir == free.dir) {
     apply();
     return;
   }
@@ -12486,12 +12390,14 @@ class _DatabaseWorkspaceHeader extends StatelessWidget {
     required this.subtitle,
     required this.badge,
     this.trailing,
+    this.icon = Icons.table_chart_outlined,
   });
 
   final String title;
   final String subtitle;
   final String badge;
   final Widget? trailing;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
@@ -12508,11 +12414,7 @@ class _DatabaseWorkspaceHeader extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: kPrimaryColor.withValues(alpha: 0.35)),
             ),
-            child: const Icon(
-              Icons.table_chart_outlined,
-              color: kPrimaryColor,
-              size: 18,
-            ),
+            child: Icon(icon, color: kPrimaryColor, size: 18),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -12558,6 +12460,8 @@ class _DatabaseWorkspaceHeader extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: kLightGreyColor, fontSize: 12),
                 ),
               ],
@@ -12633,7 +12537,12 @@ class _DatabaseSavedGamesTable extends HookWidget {
     this.canWrite = false,
     this.onContextMenuSelect,
     this.onGameAction,
+    this.columns = _defaultGamesTableColumns,
   });
+
+  /// The columns this table opens with, in order. A surface whose rows were
+  /// never saved by the user leaves "Saved" out.
+  final List<_GamesTableColumn> columns;
 
   final List<SavedAnalysis> rows;
   final _SortConfig sort;
@@ -12661,7 +12570,7 @@ class _DatabaseSavedGamesTable extends HookWidget {
   @override
   Widget build(BuildContext context) {
     final columnFlexes = useState(const _GamesTableColumnFlexes());
-    final columnOrder = useState(_defaultGamesTableColumns);
+    final columnOrder = useState(columns);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 10, 20),
       child: Container(
@@ -13875,6 +13784,390 @@ String libraryMyDatabasesBreadcrumbText({
     );
   }
   return segments.join(' › ');
+}
+
+// =====================================================================
+// Shared with other panes
+//
+// Collections is a read-only library of published books. It is drawn with
+// the Library's own rail, headers, games table and board preview, so these
+// open them to it instead of a second implementation growing beside this
+// one. Each is the Library widget itself, not a look-alike.
+// =====================================================================
+
+/// The 42px header of the Library rail, with its collapse button.
+class LibraryRailHeader extends StatelessWidget {
+  const LibraryRailHeader({
+    super.key,
+    required this.title,
+    required this.onCollapse,
+  });
+
+  final String title;
+  final VoidCallback onCollapse;
+
+  @override
+  Widget build(BuildContext context) =>
+      _RailHeader(title: title, onCollapse: onCollapse);
+}
+
+/// A rail group caption with its count ("AUTHORS 12").
+class LibraryRailGroupHeader extends StatelessWidget {
+  const LibraryRailGroupHeader({
+    super.key,
+    required this.label,
+    required this.count,
+  });
+
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) =>
+      _RailGroupHeader(label: label, count: count);
+}
+
+/// One destination in the rail: a click selects it, a double click opens it.
+class LibraryRailRow extends StatelessWidget {
+  const LibraryRailRow({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+    VoidCallback? onOpen,
+    this.leading,
+    this.trailingLabel,
+  }) : onOpen = onOpen ?? onTap;
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onOpen;
+  final Widget? leading;
+  final String? trailingLabel;
+
+  @override
+  Widget build(BuildContext context) => _PinnedSystemFolderRow(
+    label: label,
+    icon: icon,
+    selected: selected,
+    onTap: onTap,
+    onOpen: onOpen,
+    leading: leading,
+    trailingLabel: trailingLabel,
+  );
+}
+
+/// The rail's small centred spinner.
+class LibraryRailLoading extends StatelessWidget {
+  const LibraryRailLoading({super.key});
+
+  @override
+  Widget build(BuildContext context) => const _RailLoading();
+}
+
+/// The Library's centred empty state: an icon in a ring, a title, a line.
+class LibraryEmptyState extends StatelessWidget {
+  const LibraryEmptyState({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) =>
+      _LibraryEmpty(icon: icon, title: title, message: message);
+}
+
+/// The 48px bar at the top of Library Home, as a frame for its controls.
+class LibraryHomeBar extends StatelessWidget {
+  const LibraryHomeBar({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: const BoxDecoration(
+        color: kBlack2Color,
+        border: Border(bottom: BorderSide(color: kDividerColor)),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// The header of a database workspace tab: icon well, title, badge, a line
+/// of facts and an optional trailing control.
+class LibraryWorkspaceHeader extends StatelessWidget {
+  const LibraryWorkspaceHeader({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.badge,
+    this.icon = Icons.table_chart_outlined,
+    this.trailing,
+  });
+
+  final String title;
+  final String subtitle;
+  final String badge;
+  final IconData icon;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) => _DatabaseWorkspaceHeader(
+    title: title,
+    subtitle: subtitle,
+    badge: badge,
+    icon: icon,
+    trailing: trailing,
+  );
+}
+
+/// The search row of a database workspace tab.
+class LibraryWorkspaceToolbar extends StatelessWidget {
+  const LibraryWorkspaceToolbar({
+    super.key,
+    required this.controller,
+    required this.hintText,
+    required this.onSearchChanged,
+    required this.onSearchClear,
+    this.trailing,
+  });
+
+  final TextEditingController controller;
+  final String hintText;
+  final ValueChanged<String> onSearchChanged;
+  final VoidCallback onSearchClear;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) => _DatabaseWorkspaceToolbar(
+    controller: controller,
+    hintText: hintText,
+    onSearchChanged: onSearchChanged,
+    onSearchClear: onSearchClear,
+    trailing: trailing,
+  );
+}
+
+/// Opening a row of [LibraryReadOnlyGamesPreview]: the row, the rows as the
+/// table shows them right now (what the board steps through), and the
+/// position the preview was on, if the reader had moved off the start.
+typedef LibraryReadOnlyGameOpen =
+    void Function(
+      SavedAnalysis row,
+      List<SavedAnalysis> displayed,
+      String? initialFen,
+    );
+
+/// The columns of a read-only games table: everything but "Saved", which
+/// only means something for games the user saved.
+const _readOnlyGamesTableColumns = <_GamesTableColumn>[
+  _GamesTableColumn.number,
+  _GamesTableColumn.white,
+  _GamesTableColumn.whiteElo,
+  _GamesTableColumn.result,
+  _GamesTableColumn.black,
+  _GamesTableColumn.blackElo,
+  _GamesTableColumn.event,
+  _GamesTableColumn.eco,
+  _GamesTableColumn.date,
+];
+
+const _readOnlyGamesSort = _SortConfig(_SortKey.number, _SortDir.asc);
+
+/// The Library's games table beside its board-and-notation preview, over
+/// [rows] that are already loaded and that the reader cannot change.
+///
+/// Same table, same preview and same keys as a cloud database previewed on
+/// Library Home (up and down move the row, left and right step the game,
+/// Enter opens it), minus everything that writes or copies. [rows] arrive in
+/// their own order, which the "#" column keeps; sorting by another column is
+/// gated exactly as it is for a cloud database.
+class LibraryReadOnlyGamesPreview extends HookConsumerWidget {
+  const LibraryReadOnlyGamesPreview({
+    super.key,
+    required this.scopeId,
+    required this.rows,
+    required this.onOpen,
+    this.splitStorageKey = 'library_pane.readonly.wide',
+  });
+
+  /// What these rows are (a collection's slug, say). A new scope starts on
+  /// its first row again.
+  final String scopeId;
+  final List<SavedAnalysis> rows;
+  final LibraryReadOnlyGameOpen onOpen;
+
+  /// Where the table/preview split remembers its sizes.
+  final String splitStorageKey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selectedId = useState<String?>(null);
+    final plyIndex = useState<int>(0);
+    final sort = useState(_readOnlyGamesSort);
+    final scrollController = useScrollController();
+    final shortcutsFocusNode = useFocusNode(
+      debugLabel: 'library-readonly-games-$scopeId',
+    );
+    useEffect(() {
+      _requestDatabaseWorkspaceFocusAfterFrame(shortcutsFocusNode);
+      return null;
+    }, [scopeId]);
+
+    final sorted = useMemoized<List<SavedAnalysis>>(() {
+      final copy = List<SavedAnalysis>.of(rows);
+      _sortAnalyses(copy, sort.value);
+      return copy;
+    }, [rows, sort.value]);
+
+    useEffect(() {
+      if (sorted.isEmpty) {
+        selectedId.value = null;
+      } else if (selectedId.value == null ||
+          !sorted.any((row) => row.id == selectedId.value)) {
+        selectedId.value = sorted.first.id;
+      }
+      return null;
+    }, [sorted, scopeId]);
+
+    final selected = sorted.firstWhereOrNull(
+      (row) => row.id == selectedId.value,
+    );
+    final selectedPlyCount = selected?.chessGame.mainline.length ?? 0;
+
+    // A preview opens on the starting position; right then plays the game.
+    useEffect(() {
+      plyIndex.value = 0;
+      return null;
+    }, [selectedId.value, selectedPlyCount]);
+
+    bool setPly(int next) {
+      final clamped = _clampLibraryPreviewPly(selected?.chessGame, next);
+      if (clamped == plyIndex.value) return true;
+      plyIndex.value = clamped;
+      _playLibraryPreviewSfxForPly(ref, selected?.chessGame, clamped);
+      _requestDatabaseWorkspaceFocus(shortcutsFocusNode);
+      return true;
+    }
+
+    bool selectRow(int index) {
+      if (sorted.isEmpty) return false;
+      final next = index.clamp(0, sorted.length - 1).toInt();
+      selectedId.value = sorted[next].id;
+      _requestDatabaseWorkspaceFocus(shortcutsFocusNode);
+      _scrollDatabaseWorkspaceListToIndex(
+        scrollController,
+        next,
+        _kDatabaseWorkspaceSavedRowExtent,
+      );
+      return true;
+    }
+
+    bool moveRow(int delta) {
+      if (sorted.isEmpty) return false;
+      final current = sorted.indexWhere((row) => row.id == selectedId.value);
+      return selectRow((current < 0 ? 0 : current) + delta);
+    }
+
+    void open(SavedAnalysis row, {bool fromPreview = false}) {
+      onOpen(
+        row,
+        sorted,
+        fromPreview && plyIndex.value > 0
+            ? _initialFenForPreviewPly(row.chessGame, plyIndex.value)
+            : null,
+      );
+    }
+
+    bool openSelected() {
+      final current = selected;
+      if (current == null) return false;
+      open(current, fromPreview: true);
+      return true;
+    }
+
+    return Focus(
+      focusNode: shortcutsFocusNode,
+      canRequestFocus: true,
+      onKeyEvent:
+          (_, event) => _handleDatabaseWorkspaceTableKey(
+            event,
+            {
+              LogicalKeyboardKey.arrowDown: () => moveRow(1),
+              LogicalKeyboardKey.arrowUp: () => moveRow(-1),
+              LogicalKeyboardKey.arrowLeft:
+                  () => selected != null && setPly(plyIndex.value - 1),
+              LogicalKeyboardKey.arrowRight:
+                  () => selected != null && setPly(plyIndex.value + 1),
+              LogicalKeyboardKey.home: () => selectRow(0),
+              LogicalKeyboardKey.end: () => selectRow(sorted.length - 1),
+              LogicalKeyboardKey.enter: openSelected,
+              LogicalKeyboardKey.numpadEnter: openSelected,
+            },
+            shiftActions: {
+              LogicalKeyboardKey.arrowLeft: () => setPly(0),
+              LogicalKeyboardKey.arrowRight: () => setPly(selectedPlyCount),
+            },
+          ),
+      child: ResizableSplitView(
+        axis: Axis.horizontal,
+        storageKey: splitStorageKey,
+        children: [
+          SplitChild(
+            minSize: 390,
+            initialWeight: 0.52,
+            label: 'Games',
+            child: _DatabaseSavedGamesTable(
+              rows: sorted,
+              sort: sort.value,
+              selectedId: selectedId.value,
+              scrollController: scrollController,
+              columns: _readOnlyGamesTableColumns,
+              onSortChange:
+                  (next) => _gateCloudSort(
+                    context,
+                    next,
+                    () => sort.value = next,
+                    free: _readOnlyGamesSort,
+                  ),
+              onSelect: (row) {
+                final index = sorted.indexWhere((r) => r.id == row.id);
+                if (index >= 0) selectRow(index);
+              },
+              onOpen: open,
+            ),
+          ),
+          SplitChild(
+            minSize: 380,
+            initialWeight: 0.48,
+            label: 'Preview',
+            child: _SavedAnalysisPreviewPanel(
+              analysis: selected,
+              plyIndex: plyIndex.value,
+              onPlyChanged: setPly,
+              onOpen:
+                  selected == null
+                      ? null
+                      : () => open(selected, fromPreview: true),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // =====================================================================
