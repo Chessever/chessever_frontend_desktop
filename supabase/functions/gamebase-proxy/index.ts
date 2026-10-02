@@ -4,7 +4,7 @@ import { matchGamebaseProxyRoute } from "./allowed_routes.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, if-none-match",
+    "authorization, x-client-info, apikey, content-type, if-none-match, cache-control, pragma",
   "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
   "Access-Control-Expose-Headers":
     "X-Game-Count, X-PGN-Cache, X-PGN-Snapshot, X-PGN-Warm-Job, Retry-After, ETag, Content-Disposition",
@@ -91,9 +91,19 @@ Deno.serve(async (req: Request) => {
   if (ifNoneMatch) headers.set("If-None-Match", ifNoneMatch);
   const contentType = req.headers.get("content-type");
   if (contentType) headers.set("Content-Type", contentType);
-  // Only member routes carry the caller's token upstream; every other route
-  // stays anonymous behind the server key, exactly as before.
+  // Only member and viewer routes carry the caller's token upstream; every
+  // other route stays anonymous behind the server key, exactly as before.
   if (route.member) headers.set("Authorization", authorization);
+  if (route.viewer) {
+    if (/^Bearer \S+$/.test(authorization)) {
+      headers.set("Authorization", authorization);
+    }
+    // "Judge my Premium again", sent right after a purchase.
+    if (/\bno-cache\b/i.test(req.headers.get("cache-control") ?? "")) {
+      headers.set("Cache-Control", "no-cache");
+      headers.set("Pragma", "no-cache");
+    }
+  }
 
   let body: BodyInit | undefined;
   if (req.method === "POST" || req.method === "PUT") {
@@ -132,8 +142,9 @@ Deno.serve(async (req: Request) => {
     if (etag) responseHeaders.set("ETag", etag);
     const disposition = upstream.headers.get("content-disposition");
     if (disposition) responseHeaders.set("Content-Disposition", disposition);
-    // One member's publication is never another's cached answer.
-    if (route.member) {
+    // One member's publication, or one viewer's access, is never another's
+    // cached answer.
+    if (route.member || route.viewer) {
       responseHeaders.set("Cache-Control", "private, no-store");
       responseHeaders.set("Vary", "Authorization");
     }

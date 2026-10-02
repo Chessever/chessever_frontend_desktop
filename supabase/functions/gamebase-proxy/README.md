@@ -43,6 +43,20 @@ None of these routes can publish. Gamebase keeps every submission a private
 draft until a ChessEver superadmin approves it from chessever.com/account; the
 superadmin console is not reachable through this function.
 
+## Viewer routes
+
+Published collections are read through `/api/collections/...`. The catalog,
+the author list, the event bindings and the opening index are anonymous reads
+like the rest. A collection itself, its games and its players are *viewer*
+routes: a Premium collection opens only for an entitled account, so the
+function forwards the caller's bearer when there is one, passes a
+`Cache-Control: no-cache` re-check along (sent right after a purchase), and
+answers `private, no-store`. Counting a read (`POST .../view`) is anonymous;
+starring (`PUT .../star`) is a member route.
+
+No route here writes a collection: publishing is the member routes above, and
+approval is the superadmin console.
+
 A function deployed before these routes existed answers `route_not_allowed`
 (or `method_not_allowed` for PUT and DELETE). The desktop app reads that as
 "publishing is not available here yet" and still lets a folder be deleted.

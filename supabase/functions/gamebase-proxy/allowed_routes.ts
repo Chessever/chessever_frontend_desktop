@@ -9,6 +9,13 @@ export type AllowedRoute = {
    * theirs), and the answer is never cached.
    */
   member?: true;
+  /**
+   * The answer depends on who is asking: the caller's Supabase token is
+   * forwarded upstream when they sent one (Gamebase judges their Premium
+   * from it), a `Cache-Control: no-cache` re-check is passed along, and the
+   * answer is never cached. Nobody has to be signed in.
+   */
+  viewer?: true;
 };
 
 // A folder id as the library stores it.
@@ -67,6 +74,29 @@ const allowedRoutes: AllowedRoute[] = [
     ),
     member: true,
   })),
+
+  // Published collections, as readers browse them. Read-only apart from the
+  // two engagement counters. The catalog, the bindings and the opening index
+  // are the same for everyone; the named routes come first so "catalog",
+  // "for-event" and the rest are never read as a slug.
+  { method: "GET", pattern: /^\/api\/collections$/ },
+  { method: "GET", pattern: /^\/api\/collections\/catalog\/(?:books|authors)$/ },
+  {
+    method: "GET",
+    pattern: /^\/api\/collections\/(?:for-event|for-opening|openings)$/,
+  },
+  { method: "GET", pattern: /^\/api\/collections\/[^/]+\/openings$/ },
+  // A collection, its games and its players: a Premium collection opens only
+  // for an entitled account, so these carry the viewer.
+  { method: "GET", pattern: /^\/api\/collections\/[^/]+$/, viewer: true },
+  {
+    method: "GET",
+    pattern: /^\/api\/collections\/[^/]+\/(?:games|players)$/,
+    viewer: true,
+  },
+  // A read is counted per anonymous reader id; a star belongs to an account.
+  { method: "POST", pattern: /^\/api\/collections\/[^/]+\/view$/ },
+  { method: "PUT", pattern: /^\/api\/collections\/[^/]+\/star$/, member: true },
 ];
 
 const METHODS: readonly string[] = ["GET", "POST", "PUT", "DELETE"];

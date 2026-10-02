@@ -111,3 +111,68 @@ Deno.test("book publishing: nothing here approves, and nothing else opens", () =
     assertEquals(isAllowedGamebaseProxyRoute(method, path), false, `${method} ${path}`);
   }
 });
+
+Deno.test("collections: the catalog is the same for everyone", () => {
+  const open = [
+    "/api/collections",
+    "/api/collections/catalog/books",
+    "/api/collections/catalog/authors",
+    "/api/collections/for-event",
+    "/api/collections/for-opening",
+    "/api/collections/openings",
+    "/api/collections/my-60-memorable-games/openings",
+  ];
+  for (const path of open) {
+    const route = matchGamebaseProxyRoute("GET", path);
+    assertEquals(route !== null, true, path);
+    assertEquals(route?.viewer, undefined, path);
+    assertEquals(route?.member, undefined, path);
+  }
+});
+
+Deno.test("collections: a book, its games and its players carry the viewer", () => {
+  for (
+    const path of [
+      "/api/collections/my-60-memorable-games",
+      "/api/collections/my-60-memorable-games/games",
+      "/api/collections/my-60-memorable-games/players",
+    ]
+  ) {
+    const route = matchGamebaseProxyRoute("GET", path);
+    assertEquals(route?.viewer, true, path);
+    // Reading never needs an account.
+    assertEquals(route?.member, undefined, path);
+  }
+});
+
+Deno.test("collections: a view is anonymous, a star is the member's", () => {
+  const view = matchGamebaseProxyRoute("POST", "/api/collections/endgames/view");
+  assertEquals(view !== null, true);
+  assertEquals(view?.member, undefined);
+  assertEquals(
+    matchGamebaseProxyRoute("PUT", "/api/collections/endgames/star")?.member,
+    true,
+  );
+});
+
+Deno.test("collections: nothing here writes a collection", () => {
+  const refused: [string, string][] = [
+    ["POST", "/api/collections"],
+    ["PUT", "/api/collections/endgames"],
+    ["DELETE", "/api/collections/endgames"],
+    ["POST", "/api/collections/endgames/games"],
+    ["DELETE", "/api/collections/endgames/star"],
+    ["GET", "/api/collections/endgames/view"],
+    ["GET", "/api/collections/endgames/star"],
+    // A profile photo is changed in the phone app and on the website.
+    ["POST", "/api/collections/account/avatar"],
+    // Single-game PGN export is not something a reader's app asks for.
+    ["GET", "/api/collections/endgames/games/g1/pgn"],
+    ["GET", "/api/collections/endgames/games/"],
+    ["GET", "/api/collections/"],
+    ["GET", "/api/collections/a/b/c"],
+  ];
+  for (const [method, path] of refused) {
+    assertEquals(isAllowedGamebaseProxyRoute(method, path), false, `${method} ${path}`);
+  }
+});
