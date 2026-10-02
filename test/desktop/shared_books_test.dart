@@ -55,7 +55,7 @@ Future<List<String>> _menuLabels(
   final labels = <String>[
     for (final label in [
       'Share database...',
-      'Publish / edit book...',
+      'Publish / edit collection...',
       'Export as PGN...',
       'Remove from my library',
       'Rename...',
@@ -155,7 +155,7 @@ void main() {
         _folder(parentId: 'parent'),
         canShare: false,
       );
-      expect(labels, contains('Publish / edit book...'));
+      expect(labels, contains('Publish / edit collection...'));
       expect(labels, isNot(contains('Share database...')));
     });
 
@@ -172,7 +172,7 @@ void main() {
     testWidgets('an owned root database offers sharing', (tester) async {
       final labels = await _menuLabels(tester, _folder(), canShare: true);
       expect(labels, contains('Share database...'));
-      expect(labels, contains('Publish / edit book...'));
+      expect(labels, contains('Publish / edit collection...'));
       expect(labels, contains('Export as PGN...'));
       expect(labels, isNot(contains('Remove from my library')));
     });

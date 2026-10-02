@@ -1,11 +1,12 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:chessever/desktop/widgets/library/cover_crop_dialog.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/desktop/widgets/library/library_book_dialog.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -103,10 +104,7 @@ class _Publisher implements LibraryBookPublisher {
   List<AuthorSuggestion> suggestions = const [];
   final suggestQueries = <String>[];
 
-  LibraryBookPublication _withAuthorPhoto(
-    String url, {
-    AuthorCredit? credit,
-  }) =>
+  LibraryBookPublication _withAuthorPhoto(String url, {AuthorCredit? credit}) =>
       publication = LibraryBookPublication(
         status: publication.status,
         bookId: publication.bookId,
@@ -283,7 +281,7 @@ void main() {
       await _pump(tester, publisher);
       await _tap(tester, 'Unpublish');
       expect(publisher.unpublishCalls, 0);
-      await _tap(tester, 'Unpublish book');
+      await _tap(tester, 'Unpublish collection');
       expect(publisher.unpublishCalls, 1);
       expect(
         find.widgetWithText(FButton, 'Submit for approval'),
@@ -714,6 +712,580 @@ void main() {
       // The book already carried the key, so Me sends "self" to drop the photo.
       await _tap(tester, 'Submit changes');
       expect(publisher.saves.last.metadata.authorCredit, AuthorCredit.self);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // --- Where the collection stands -------------------------------------------
+
+  LibraryBookPublication staged(
+    String status, {
+    LibraryBookReview review = LibraryBookReview.none,
+  }) => LibraryBookPublication(
+    status: status,
+    bookId: 'book-1',
+    gameCount: 5,
+    review: review,
+    metadata: const LibraryBookMetadata(
+      title: 'My book',
+      author: 'Owner',
+      about: 'A chess study',
+    ),
+  );
+
+  testWidgets(
+    'a plain draft shows no band, the draft actions and where it is on the road',
+    semanticsEnabled: false,
+    (tester) async {
+      await _pump(tester, _Publisher()..publication = staged('draft'));
+      expect(find.text('Publish collection'), findsOneWidget);
+      expect(find.byKey(const ValueKey('book_stage_inReview')), findsNothing);
+      expect(find.byKey(const ValueKey('book_stage_track')), findsOneWidget);
+      for (final label in [
+        'Private draft',
+        'In review',
+        'Live in Collections',
+      ]) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.widgetWithText(FButton, 'Save draft'), findsOneWidget);
+      expect(
+        find.widgetWithText(FButton, 'Submit for approval'),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(FButton, 'Withdraw from review'),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a submission says it is in review and can be withdrawn without losing edits',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..publication = staged(
+              'draft',
+              review: LibraryBookReview(
+                state: LibraryBookReviewState.pending,
+                submittedAt: DateTime(2026, 10, 2),
+              ),
+            );
+      await _pump(tester, publisher);
+      expect(find.text('Collection in review'), findsOneWidget);
+      expect(find.byKey(const ValueKey('book_stage_inReview')), findsOneWidget);
+      // A draft is not offered while staff are looking at it.
+      expect(find.widgetWithText(FButton, 'Save draft'), findsNothing);
+      expect(find.widgetWithText(FButton, 'Submit for approval'), findsNothing);
+      expect(find.widgetWithText(FButton, 'Submit changes'), findsOneWidget);
+
+      // Something typed and not yet saved survives the withdrawal.
+      await tester.enterText(find.byType(TextField).at(1), 'Unsaved subtitle');
+      await tester.pump();
+      await _tap(tester, 'Withdraw from review');
+      expect(publisher.unpublishCalls, 1);
+      expect(
+        find.text('Withdrawn from review. This collection is a private draft.'),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField).at(1)).controller!.text,
+        'Unsaved subtitle',
+      );
+      // Back to a plain draft.
+      expect(find.text('Publish collection'), findsOneWidget);
+      expect(
+        find.widgetWithText(FButton, 'Submit for approval'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a submission sent back shows what ChessEver asked for and resubmits',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..publication = staged(
+              'draft',
+              review: LibraryBookReview(
+                state: LibraryBookReviewState.changesRequested,
+                note: 'Replace the cover, then resubmit.',
+                decidedAt: DateTime(2026, 10, 3),
+              ),
+            );
+      await _pump(tester, publisher);
+      expect(find.text('Changes requested'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('book_stage_changesRequested')),
+        findsOneWidget,
+      );
+      expect(find.text('Replace the cover, then resubmit.'), findsOneWidget);
+      await _tap(tester, 'Resubmit for approval');
+      expect(publisher.saves.single.publish, isTrue);
+      expect(publisher.saves.single.refreshGames, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a live collection warns that a change takes it out of Collections',
+    semanticsEnabled: false,
+    (tester) async {
+      await _pump(tester, _Publisher()..publication = staged('published'));
+      expect(find.text('Edit collection'), findsOneWidget);
+      expect(find.byKey(const ValueKey('book_stage_live')), findsOneWidget);
+      expect(
+        find.textContaining(
+          'takes it out of Collections until ChessEver approves',
+          findRichText: true,
+        ),
+        findsOneWidget,
+      );
+      // Nothing to tick off: it already met the requirements once.
+      expect(find.byKey(const ValueKey('book_requirements')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'unpublishing keeps what was typed and not yet saved',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher = _Publisher()..publication = staged('published');
+      await _pump(tester, publisher);
+      await tester.enterText(find.byType(TextField).at(1), 'Unsaved subtitle');
+      await tester.pump();
+      await _tap(tester, 'Unpublish');
+      await _tap(tester, 'Unpublish collection');
+      expect(publisher.unpublishCalls, 1);
+      expect(
+        tester.widget<TextField>(find.byType(TextField).at(1)).controller!.text,
+        'Unsaved subtitle',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a collection ChessEver took down offers nothing to change',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher = _Publisher()..publication = staged('archived');
+      await _pump(tester, publisher);
+      expect(find.text('Collection taken down'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('book_stage_takenDown')),
+        findsOneWidget,
+      );
+      for (final label in [
+        'Save draft',
+        'Submit for approval',
+        'Submit changes',
+        'Unpublish',
+      ]) {
+        expect(find.widgetWithText(FButton, label), findsNothing);
+      }
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).enabled,
+        isFalse,
+      );
+      expect(publisher.saves, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // --- What a submission still needs ------------------------------------------
+
+  testWidgets(
+    'the checklist follows the form and takes the cursor to what is missing',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..publication = const LibraryBookPublication(
+              status: 'unpublished',
+              metadata: LibraryBookMetadata(title: 'My study'),
+            );
+      await _pump(tester, publisher);
+      final list = find.byKey(const ValueKey('book_requirements'));
+      expect(list, findsOneWidget);
+      // Title is there; author credit and description are not.
+      expect(find.text('2 details left'), findsOneWidget);
+
+      // Choosing a missing item puts the cursor in its field.
+      await tester.ensureVisible(
+        find.descendant(of: list, matching: find.text('Description')),
+      );
+      await tester.tap(
+        find.descendant(of: list, matching: find.text('Description')),
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(find.byType(TextField).at(4))
+            .focusNode!
+            .hasFocus,
+        isTrue,
+      );
+
+      await tester.enterText(find.byType(TextField).at(4), 'Annotated wins.');
+      await tester.pump();
+      expect(find.text('1 detail left'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).at(2), 'Garry Kasparov');
+      await tester.pump();
+      expect(find.text('Ready to submit'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // --- Author credit, as the phone app behaves --------------------------------
+
+  testWidgets(
+    'crediting someone else clears a name that was only pre-filled',
+    semanticsEnabled: false,
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'library_book.last_author': 'Jason Statham',
+      });
+      final publisher =
+          _Publisher()
+            ..publication = const LibraryBookPublication(
+              status: 'draft',
+              metadata: LibraryBookMetadata(title: 'Fresh'),
+            );
+      await _pump(tester, publisher);
+      String author() =>
+          tester
+              .widget<TextField>(find.byType(TextField).at(2))
+              .controller!
+              .text;
+      expect(author(), 'Jason Statham');
+
+      // The publisher's own name must not become someone else's credit.
+      await _tapSegment(tester, 'Someone else');
+      expect(author(), isEmpty);
+
+      // Going back to Me fills it in again.
+      await _tapSegment(tester, 'Me');
+      await tester.pumpAndSettle();
+      expect(author(), 'Jason Statham');
+
+      // A name the user typed is theirs to keep across the switch.
+      await tester.enterText(find.byType(TextField).at(2), 'Judit Polgar');
+      await tester.pump();
+      await _tapSegment(tester, 'Someone else');
+      expect(author(), 'Judit Polgar');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'suggestions give way to the match, and the match follows the name',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..suggestions = const [
+              AuthorSuggestion(
+                id: 'credit:1',
+                name: 'Magnus Carlsen',
+                bookCount: 3,
+              ),
+            ];
+      await _pump(tester, publisher);
+      await _tapSegment(tester, 'Someone else');
+      await tester.enterText(find.byType(TextField).at(2), 'magnus');
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+      expect(find.text('Already on ChessEver'), findsOneWidget);
+      expect(find.text('3 collections'), findsOneWidget);
+
+      await tester.tap(find.text('Magnus Carlsen').last);
+      await tester.pumpAndSettle();
+      // Matched: the list has done its job and steps aside.
+      expect(find.text('Already on ChessEver'), findsNothing);
+      expect(
+        find.text('Matches an existing ChessEver author.'),
+        findsOneWidget,
+      );
+
+      // Typing on is no longer that author: the match goes at once, without
+      // waiting for the next lookup.
+      await tester.enterText(find.byType(TextField).at(2), 'Magnus Carlsen Jr');
+      await tester.pump();
+      expect(find.text('Matches an existing ChessEver author.'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a draft that only changed who is credited is still offered back',
+    semanticsEnabled: false,
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'library_book.draft.folder': jsonEncode({
+          'title': 'My study',
+          'subtitle': '',
+          'author': 'Owner',
+          'year': '',
+          'about': 'A chess study',
+          'authorCredit': 'other',
+        }),
+      });
+      await _pump(tester, _Publisher());
+      expect(find.text('Continue where you left off?'), findsOneWidget);
+      await _tap(tester, 'Continue');
+      // Someone else is chosen again: its photo picker is back.
+      expect(find.text('Author photo'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // --- The preview is the real Collections row --------------------------------
+
+  testWidgets(
+    'the list preview is the Collections row: cover frame, credit, tally',
+    semanticsEnabled: false,
+    (tester) async {
+      await _pump(tester, _Publisher()..publication = staged('draft'));
+      final row = find.byKey(const ValueKey('book_preview_list'));
+      expect(row, findsOneWidget);
+      expect(
+        find.descendant(of: row, matching: find.text('My book')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: row, matching: find.text('by Owner')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: row, matching: find.text('5 games')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: row,
+          matching: find.byIcon(Icons.star_border_rounded),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'the two-way choices are keyboard reachable: Enter chooses',
+    semanticsEnabled: false,
+    (tester) async {
+      await _pump(tester, _Publisher()..publication = staged('draft'));
+      // Focus the "Collection page" segment and choose it from the keyboard.
+      final segment = find.ancestor(
+        of: find.text('Collection page'),
+        matching: find.byType(FocusableActionDetector),
+      );
+      Focus.of(tester.element(find.text('Collection page'))).requestFocus();
+      await tester.pump();
+      expect(segment, findsWidgets);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('book_preview_page')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // --- As the app really opens it -------------------------------------------
+
+  /// Opens the dialog the way the app does: straight over the navigator, with
+  /// no Scaffold or Material beneath it, at a real window size.
+  Future<void> open(
+    WidgetTester tester,
+    _Publisher publisher, {
+    Size size = const Size(1280, 860),
+  }) async {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          libraryBookPublisherProvider.overrideWithValue(publisher),
+          collectionCoverPickerProvider.overrideWithValue((_) async => null),
+          authorPhotoPickerProvider.overrideWithValue((_) async => null),
+        ],
+        child: MaterialApp(
+          home: Builder(
+            builder:
+                (context) => Center(
+                  child: GestureDetector(
+                    onTap:
+                        () => showLibraryBookDialog(context, folder: _folder()),
+                    child: const Text('open'),
+                  ),
+                ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'suggestions work in the real dialog, which has no Material beneath it',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..suggestions = const [
+              AuthorSuggestion(
+                id: 'credit:1',
+                name: 'Magnus Carlsen',
+                bookCount: 3,
+              ),
+            ];
+      await open(tester, publisher);
+      await _tapSegment(tester, 'Someone else');
+      await tester.enterText(find.byType(TextField).at(2), 'magnus');
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+      final row = find.byKey(
+        const ValueKey('book_author_suggestion_Magnus Carlsen'),
+      );
+      expect(row, findsOneWidget);
+      // Hovering and pressing a row must not need an ink surface.
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await tester.ensureVisible(row);
+      await tester.pumpAndSettle();
+      await mouse.moveTo(tester.getCenter(row));
+      await tester.pump();
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(find.byType(TextField).at(2)).controller!.text,
+        'Magnus Carlsen',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final size in const [Size(1024, 720), Size(1280, 860)]) {
+    testWidgets(
+      'every stage lays out side by side at ${size.width.toInt()}×${size.height.toInt()}',
+      semanticsEnabled: false,
+      (tester) async {
+        final stages = [
+          staged('draft'),
+          staged(
+            'draft',
+            review: LibraryBookReview(
+              state: LibraryBookReviewState.pending,
+              submittedAt: DateTime(2026, 10, 2),
+            ),
+          ),
+          // The longest note staff can send.
+          staged(
+            'draft',
+            review: LibraryBookReview(
+              state: LibraryBookReviewState.changesRequested,
+              note: List.filled(125, 'Replace').join(' '),
+              decidedAt: DateTime(2026, 10, 3),
+            ),
+          ),
+          staged('published'),
+          staged('archived'),
+        ];
+        for (final publication in stages) {
+          await open(
+            tester,
+            _Publisher()..publication = publication,
+            size: size,
+          );
+          // Form and preview share the row: the preview is not stacked above.
+          final preview = tester.getTopLeft(
+            find.byKey(const ValueKey('book_preview')),
+          );
+          final title = tester.getTopLeft(find.byType(TextField).first);
+          expect(
+            preview.dx,
+            greaterThan(title.dx),
+            reason: publication.stage.name,
+          );
+          // The form keeps a usable height under the longest note.
+          expect(
+            tester.getSize(find.byType(Form)).height,
+            greaterThan(200),
+            reason: publication.stage.name,
+          );
+          expect(
+            tester.takeException(),
+            isNull,
+            reason: publication.stage.name,
+          );
+          Navigator.of(tester.element(find.byType(LibraryBookDialog))).pop();
+          await tester.pumpAndSettle();
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'putting the cursor in a field is not an edit',
+    semanticsEnabled: false,
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'library_book.last_author': 'Jason Statham',
+      });
+      final publisher =
+          _Publisher()
+            ..publication = const LibraryBookPublication(
+              status: 'draft',
+              metadata: LibraryBookMetadata(title: 'Fresh'),
+            );
+      await _pump(tester, publisher);
+      // Click into the pre-filled author and move the caret, typing nothing.
+      await tester.ensureVisible(find.byType(TextField).at(2));
+      await tester.tap(find.byType(TextField).at(2));
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pump(const Duration(milliseconds: 700));
+      // Still only pre-filled: crediting someone else clears it, and no
+      // lookup was made for the publisher's own name.
+      await _tapSegment(tester, 'Someone else');
+      expect(
+        tester.widget<TextField>(find.byType(TextField).at(2)).controller!.text,
+        isEmpty,
+      );
+      expect(publisher.suggestQueries, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'looking without typing leaves no draft behind',
+    semanticsEnabled: false,
+    (tester) async {
+      await _pump(tester, _Publisher());
+      for (final index in [0, 1, 4]) {
+        await tester.ensureVisible(find.byType(TextField).at(index));
+        await tester.tap(find.byType(TextField).at(index));
+        await tester.pump();
+      }
+      // Past the stash debounce, then close the dialog.
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('library_book.draft.folder'), isNull);
       expect(tester.takeException(), isNull);
     },
   );

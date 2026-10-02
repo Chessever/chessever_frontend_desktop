@@ -79,7 +79,8 @@ void main() {
         ('https://example.test?token=secret', _testAuthUrl),
         ('https://example.test#fragment', _testAuthUrl),
         ('http://example.test', _testAuthUrl),
-        ('https://example.test', 'https://oelbsuggrzyqwzmvidju.supabase.co'),
+        // (A production account is not in this list: it publishes through
+        // its own project's proxy and never uses a test base. See below.)
         ('http://localhost:3000', 'https://unknown.supabase.co'),
         ('https://example.test', '$_testAuthUrl?project=another'),
         ('https://example.test', null),
@@ -606,6 +607,297 @@ void main() {
     expect(adapter.requests, isEmpty);
     dio.close();
   });
+
+  // --- Review round ---------------------------------------------------------
+
+  LibraryBookPublication parse(String status, Object? review) =>
+      LibraryBookPublication.fromJson({
+        'status': status,
+        'book': {'id': 'book-id', 'title': 'T', 'review': review},
+      }, fallbackTitle: 'T');
+
+  test('a draft says where its review stands', () {
+    final pending = parse('draft', {
+      'state': 'pending',
+      'submittedAt': '2026-10-02T14:20:00Z',
+      'note': 'a stale note',
+    });
+    expect(pending.stage, LibraryBookStage.inReview);
+    expect(pending.review.submittedAt, isNotNull);
+    expect(pending.review.note, isEmpty);
+
+    final sentBack = parse('draft', {
+      'state': 'changes_requested',
+      'note': ' Replace the cover. ',
+      'decidedAt': '2026-10-03T09:05:00Z',
+    });
+    expect(sentBack.stage, LibraryBookStage.changesRequested);
+    expect(sentBack.review.note, 'Replace the cover.');
+    expect(sentBack.review.decidedAt, isNotNull);
+  });
+
+  test('anything else is a plain draft, live, or taken down', () {
+    // A server that predates reviews sends none; an unknown state, a note-less
+    // send-back and a malformed value all read as no review.
+    for (final review in <Object?>[
+      null,
+      'pending',
+      {'state': 'approved'},
+      {'state': 'changes_requested', 'note': '  '},
+      {'state': 'none'},
+    ]) {
+      expect(parse('draft', review).stage, LibraryBookStage.draft);
+    }
+    expect(parse('unpublished', null).stage, LibraryBookStage.draft);
+    // Only a draft can be in review, whatever a stale answer carries.
+    final stale = {'state': 'pending', 'submittedAt': '2026-10-02T14:20:00Z'};
+    expect(parse('published', stale).stage, LibraryBookStage.live);
+    expect(parse('published', stale).review.state, LibraryBookReviewState.none);
+    expect(parse('archived', stale).stage, LibraryBookStage.takenDown);
+  });
+
+  // --- Production transport -------------------------------------------------
+
+  const productionAuthUrl = 'https://oelbsuggrzyqwzmvidju.supabase.co';
+  const productionProxy = '$productionAuthUrl/functions/v1/gamebase-proxy';
+
+  test(
+    'a production account publishes through the gamebase proxy, as itself',
+    () async {
+      final adapter = _Adapter();
+      final publisher = GamebaseLibraryBookPublisher(
+        dio: Dio()..httpClientAdapter = adapter,
+        // A test proxy left configured is never used by a production account.
+        baseUrl: 'https://example.test',
+        productionBaseUrl: '$productionProxy/',
+        supabaseUrl: productionAuthUrl,
+        accessToken: () => 'member-session',
+        anonKey: 'anon',
+      );
+      expect(publisher.isConfigured, isTrue);
+      await publisher.save(
+        _folder(),
+        const LibraryBookMetadata(title: 'Sicilian studies'),
+        publish: true,
+      );
+      await publisher.suggestAuthors('Carlsen');
+      expect(adapter.requests.map((r) => r.uri.toString()), [
+        '$productionProxy/api/library/folders/folder-id/book',
+        '$productionProxy/api/library/authors?name=Carlsen&limit=6',
+      ]);
+      for (final request in adapter.requests) {
+        expect(request.headers['Authorization'], 'Bearer member-session');
+        expect(request.headers['apikey'], 'anon');
+      }
+    },
+  );
+
+  test(
+    'a production token only ever goes to the project or chessever.com',
+    () async {
+      // A configured proxy on any other host is passed over for the project's
+      // own function: the token never reaches it, and publishing (and with it
+      // folder deletion) still works.
+      for (final base in [
+        'https://example.test/functions/v1/gamebase-proxy',
+        'https://odmekzlfunfocvedqusl.supabase.co/functions/v1/gamebase-proxy',
+        'http://oelbsuggrzyqwzmvidju.supabase.co/functions/v1/gamebase-proxy',
+        'https://user:pw@oelbsuggrzyqwzmvidju.supabase.co/functions/v1/x',
+        '$productionProxy?token=secret',
+        'https://chessever.com.evil.test/proxy',
+        null,
+        '',
+      ]) {
+        final adapter = _Adapter();
+        final publisher = GamebaseLibraryBookPublisher(
+          dio: Dio()..httpClientAdapter = adapter,
+          baseUrl: null,
+          productionBaseUrl: base,
+          supabaseUrl: productionAuthUrl,
+          accessToken: () => 'member-session',
+        );
+        expect(publisher.isConfigured, isTrue, reason: '$base');
+        await publisher.load(_folder());
+        await publisher.suggestAuthors('Carlsen');
+        expect(adapter.requests, hasLength(2), reason: '$base');
+        for (final request in adapter.requests) {
+          expect(
+            request.uri.toString(),
+            startsWith('$productionProxy/api/library/'),
+            reason: '$base',
+          );
+        }
+      }
+
+      // A chessever.com host is the one other place it may go.
+      final adapter = _Adapter();
+      final allowed = GamebaseLibraryBookPublisher(
+        dio: Dio()..httpClientAdapter = adapter,
+        baseUrl: null,
+        productionBaseUrl: 'https://service.chessever.com',
+        supabaseUrl: productionAuthUrl,
+        accessToken: () => 'member-session',
+      );
+      await allowed.load(_folder());
+      expect(adapter.requests.single.uri.host, 'service.chessever.com');
+    },
+  );
+
+  test('a test account never uses the production proxy', () async {
+    final adapter = _Adapter();
+    final publisher = GamebaseLibraryBookPublisher(
+      dio: Dio()..httpClientAdapter = adapter,
+      baseUrl: 'https://example.test',
+      productionBaseUrl: productionProxy,
+      supabaseUrl: _testAuthUrl,
+      accessToken: () => 'test-session',
+    );
+    await publisher.load(_folder());
+    expect(adapter.requests.single.uri.host, 'example.test');
+  });
+
+  test(
+    'a proxy deployed before publishing existed does not block folder deletion',
+    () async {
+      for (final refusal in ['route_not_allowed', 'method_not_allowed']) {
+        GamebaseLibraryBookPublisher publisher(String auth) =>
+            GamebaseLibraryBookPublisher(
+              dio:
+                  Dio()
+                    ..httpClientAdapter = _RawAdapter(
+                      refusal == 'route_not_allowed' ? 403 : 405,
+                      {'error': refusal},
+                    ),
+              baseUrl: 'https://example.test',
+              productionBaseUrl: productionProxy,
+              supabaseUrl: auth,
+              accessToken: () => 'session',
+            );
+
+        // Production: nothing could have been published from here, so the
+        // folder is deleted as it always was.
+        var deleted = false;
+        await deleteLibraryFolderWithPublications(
+          supabaseUrl: productionAuthUrl,
+          folder: _folder(),
+          publisher: publisher(productionAuthUrl),
+          deleteFolder: (_) async => deleted = true,
+        );
+        expect(deleted, isTrue, reason: refusal);
+
+        // The editor says so in words rather than "no permission".
+        await expectLater(
+          publisher(productionAuthUrl).load(_folder()),
+          throwsA(
+            isA<LibraryBookPublishingUnavailable>().having(
+              (e) => e.message,
+              'message',
+              'Book publishing is not available here yet.',
+            ),
+          ),
+        );
+
+        // A test proxy stays strict: an unreachable withdrawal keeps the folder.
+        var deletedInTest = false;
+        await expectLater(
+          deleteLibraryFolderWithPublications(
+            supabaseUrl: _testAuthUrl,
+            folder: _folder(),
+            publisher: publisher(_testAuthUrl),
+            deleteFolder: (_) async => deletedInTest = true,
+          ),
+          throwsA(isA<LibraryBookPublishingUnavailable>()),
+        );
+        expect(deletedInTest, isFalse);
+      }
+    },
+  );
+
+  test('a folder that can never be a book is deleted without asking', () async {
+    final adapter = _Adapter();
+    final publisher = GamebaseLibraryBookPublisher(
+      dio: Dio()..httpClientAdapter = adapter,
+      baseUrl: 'https://example.test',
+      supabaseUrl: _testAuthUrl,
+      accessToken: () => 'session',
+    );
+    for (final folder in [_folder(subscribed: true), _folder(liked: true)]) {
+      var deleted = false;
+      await deleteLibraryFolderWithPublications(
+        supabaseUrl: _testAuthUrl,
+        folder: folder,
+        publisher: publisher,
+        deleteFolder: (_) async => deleted = true,
+      );
+      expect(deleted, isTrue);
+    }
+    expect(adapter.requests, isEmpty);
+  });
+
+  test(
+    'the server\'s refusals read as something the author can act on',
+    () async {
+      Future<String> refusal(int status, Map<String, dynamic>? error) async {
+        final publisher = GamebaseLibraryBookPublisher(
+          dio:
+              Dio()
+                ..httpClientAdapter = _RawAdapter(status, {
+                  'status': 'error',
+                  if (error != null) 'error': error,
+                }),
+          baseUrl: 'https://example.test',
+          supabaseUrl: _testAuthUrl,
+          accessToken: () => 'session',
+        );
+        try {
+          await publisher.save(
+            _folder(),
+            const LibraryBookMetadata(
+              title: 'Sicilian studies',
+              authorCredit: AuthorCredit.other,
+            ),
+            publish: true,
+          );
+          return 'no error';
+        } on LibraryBookPublicationException catch (e) {
+          return e.message;
+        }
+      }
+
+      expect(
+        await refusal(403, {'code': 'taken_down', 'message': 'x'}),
+        'ChessEver took this collection down. Ask ChessEver to restore it.',
+      );
+      expect(
+        await refusal(409, {'code': 'empty_collection'}),
+        'Add at least one game to this folder before submitting.',
+      );
+      expect(
+        await refusal(422, {'code': 'forbidden_field'}),
+        'Add an author credit and a description before submitting.',
+      );
+      // Why this account may not publish is said as the server says it.
+      expect(
+        await refusal(403, {
+          'code': 'forbidden',
+          'message': 'Verify your email before creating a book.',
+        }),
+        'Verify your email before creating a book.',
+      );
+      // An over-long or missing reason falls back to the status copy.
+      expect(
+        await refusal(403, {'code': 'forbidden', 'message': 'x' * 200}),
+        'You do not have permission to publish this folder.',
+      );
+      // An older server refuses the unknown credit key with a bare 400.
+      expect(
+        await refusal(400, {
+          'message': 'Check the book details and try again.',
+        }),
+        'Crediting someone else is not available here yet. Choose Me for now; your details are still here.',
+      );
+    },
+  );
 }
 
 /// Returns a configurable authors payload for suggestion tests.
@@ -631,6 +923,30 @@ class _SuggestAdapter implements HttpClientAdapter {
       },
     );
   }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+/// Answers every request with one status and body, as an upstream or the
+/// proxy in front of it would.
+class _RawAdapter implements HttpClientAdapter {
+  _RawAdapter(this.status, this.body);
+  final int status;
+  final Map<String, dynamic> body;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async => ResponseBody.fromString(
+    jsonEncode(body),
+    status,
+    headers: {
+      Headers.contentTypeHeader: [Headers.jsonContentType],
+    },
+  );
 
   @override
   void close({bool force = false}) {}
