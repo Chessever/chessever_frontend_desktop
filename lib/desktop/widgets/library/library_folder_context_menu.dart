@@ -186,7 +186,7 @@ Future<void> _showFolderMenu({
         const DesktopContextMenuItem(
           value: LibraryFolderAction.publishBook,
           icon: Icons.publish_rounded,
-          label: 'Publish / edit book...',
+          label: 'Publish / edit collection...',
         ),
       if (canShare && !isSubscribed) ...[
         const DesktopContextMenuItem(

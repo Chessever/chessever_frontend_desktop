@@ -30,3 +30,19 @@ supabase functions deploy gamebase-proxy --use-api
 
 JWT verification stays enabled. Clients call the function with the app's
 Supabase anon/user token headers.
+
+## Member routes
+
+Most routes are anonymous reads behind the server key. The book-publishing
+routes (`/api/library/authors`, `/api/library/folders/{id}/book`, its `cover`
+and `author-photo`) act for one signed-in member: the function forwards the
+caller's own Supabase bearer upstream, Gamebase verifies it and checks that the
+folder is theirs, and the answer is `private, no-store`.
+
+None of these routes can publish. Gamebase keeps every submission a private
+draft until a ChessEver superadmin approves it from chessever.com/account; the
+superadmin console is not reachable through this function.
+
+A function deployed before these routes existed answers `route_not_allowed`
+(or `method_not_allowed` for PUT and DELETE). The desktop app reads that as
+"publishing is not available here yet" and still lets a folder be deleted.

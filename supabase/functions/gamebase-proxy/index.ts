@@ -1,11 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { isAllowedGamebaseProxyRoute } from "./allowed_routes.ts";
+import { matchGamebaseProxyRoute } from "./allowed_routes.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, if-none-match",
-  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
   "Access-Control-Expose-Headers":
     "X-Game-Count, X-PGN-Cache, X-PGN-Snapshot, X-PGN-Warm-Job, Retry-After, ETag, Content-Disposition",
 };
@@ -45,7 +45,7 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  if (req.method !== "GET" && req.method !== "POST") {
+  if (!["GET", "POST", "PUT", "DELETE"].includes(req.method)) {
     return jsonResponse({ error: "method_not_allowed" }, 405);
   }
 
@@ -57,8 +57,17 @@ Deno.serve(async (req: Request) => {
 
   const requestUrl = new URL(req.url);
   const apiPath = upstreamApiPath(requestUrl);
-  if (!apiPath || !isAllowedGamebaseProxyRoute(req.method, apiPath)) {
+  const route = apiPath ? matchGamebaseProxyRoute(req.method, apiPath) : null;
+  if (!apiPath || !route) {
     return jsonResponse({ error: "route_not_allowed" }, 403);
+  }
+
+  // A member route acts for one account. The function's JWT verification has
+  // already checked the token; Gamebase verifies it again and decides what
+  // that account may do. Without a member's bearer there is nobody to act for.
+  const authorization = req.headers.get("authorization") ?? "";
+  if (route.member && !/^Bearer \S+$/.test(authorization)) {
+    return jsonResponse({ error: "unauthorized" }, 401);
   }
 
   const apiKey = Deno.env.get("GAMEBASE_API_KEY")?.trim();
@@ -82,9 +91,12 @@ Deno.serve(async (req: Request) => {
   if (ifNoneMatch) headers.set("If-None-Match", ifNoneMatch);
   const contentType = req.headers.get("content-type");
   if (contentType) headers.set("Content-Type", contentType);
+  // Only member routes carry the caller's token upstream; every other route
+  // stays anonymous behind the server key, exactly as before.
+  if (route.member) headers.set("Authorization", authorization);
 
   let body: BodyInit | undefined;
-  if (req.method === "POST") {
+  if (req.method === "POST" || req.method === "PUT") {
     body = await req.text();
   }
 
@@ -120,6 +132,11 @@ Deno.serve(async (req: Request) => {
     if (etag) responseHeaders.set("ETag", etag);
     const disposition = upstream.headers.get("content-disposition");
     if (disposition) responseHeaders.set("Content-Disposition", disposition);
+    // One member's publication is never another's cached answer.
+    if (route.member) {
+      responseHeaders.set("Cache-Control", "private, no-store");
+      responseHeaders.set("Vary", "Authorization");
+    }
     return new Response(upstream.body, {
       status: upstream.status,
       headers: responseHeaders,

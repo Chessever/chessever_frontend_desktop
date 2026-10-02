@@ -2958,7 +2958,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             const DesktopContextMenuItem(
               value: _CloudDatabaseBoardAction.publishBook,
               icon: Icons.publish_rounded,
-              label: 'Publish / edit book...',
+              label: 'Publish / edit collection...',
             ),
           if (canShare)
             const DesktopContextMenuItem(
@@ -6848,7 +6848,7 @@ class _FolderHeader extends StatelessWidget {
             const SizedBox(width: 4),
             DesktopDialogIconButton(
               icon: Icons.publish_rounded,
-              tooltip: 'Publish / edit book',
+              tooltip: 'Publish / edit collection',
               onPress: () => onAction!(LibraryFolderAction.publishBook),
             ),
           ],
@@ -12070,7 +12070,7 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
                           libraryFolderCanPublish(publicationFolder)
                       ? DesktopDialogIconButton(
                         icon: Icons.publish_rounded,
-                        tooltip: 'Publish / edit book',
+                        tooltip: 'Publish / edit collection',
                         onPress: () => showLibraryBookDialog(
                           context,
                           folder: publicationFolder,

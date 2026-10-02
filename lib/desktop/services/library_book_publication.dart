@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -11,6 +12,81 @@ import 'package:chessever/screens/library/providers/library_folders_provider.dar
     show kTwicBookId;
 
 const _testSupabaseHost = 'odmekzlfunfocvedqusl.supabase.co';
+const _productionSupabaseHost = 'oelbsuggrzyqwzmvidju.supabase.co';
+
+/// Where a draft stands with ChessEver staff. A submission is not a status:
+/// the book stays a draft, [pending] while it waits and [changesRequested]
+/// once staff send it back with a note.
+enum LibraryBookReviewState { none, pending, changesRequested }
+
+/// The review round of a draft, as the server answers it. Servers that
+/// predate reviews omit it; that reads as [none].
+class LibraryBookReview {
+  const LibraryBookReview({
+    this.state = LibraryBookReviewState.none,
+    this.submittedAt,
+    this.note = '',
+    this.decidedAt,
+  });
+
+  static const none = LibraryBookReview();
+
+  final LibraryBookReviewState state;
+
+  /// When it was last submitted; null unless it is pending.
+  final DateTime? submittedAt;
+
+  /// What staff asked to change; empty unless it was sent back.
+  final String note;
+
+  /// When staff sent it back; null unless it was sent back.
+  final DateTime? decidedAt;
+
+  factory LibraryBookReview.fromJson(Object? raw) {
+    if (raw is! Map) return none;
+    DateTime? when(Object? value) =>
+        value is String ? DateTime.tryParse(value)?.toLocal() : null;
+    final note = raw['note'];
+    return switch (raw['state']) {
+      'pending' => LibraryBookReview(
+        state: LibraryBookReviewState.pending,
+        submittedAt: when(raw['submittedAt']),
+      ),
+      // Sent back without a note is not a state the author could act on.
+      'changes_requested' when note is String && note.trim().isNotEmpty =>
+        LibraryBookReview(
+          state: LibraryBookReviewState.changesRequested,
+          // The server caps a note at 1,000 characters; never trust that
+          // with the dialog's layout.
+          note:
+              note.trim().length > 1000
+                  ? '${note.trim().substring(0, 1000)}…'
+                  : note.trim(),
+          decidedAt: when(raw['decidedAt']),
+        ),
+      _ => none,
+    };
+  }
+}
+
+/// Where a collection is on its way to readers. Derived, never stored: the
+/// publication status plus, for a draft, its review round.
+enum LibraryBookStage {
+  /// Private, and not waiting on anyone.
+  draft,
+
+  /// Private, waiting for a ChessEver decision.
+  inReview,
+
+  /// Private again: staff sent it back with a note.
+  changesRequested,
+
+  /// Public in Collections.
+  live,
+
+  /// Archived by ChessEver; the owner cannot change it.
+  takenDown,
+}
 
 /// Who a collection is credited to. [self] is the publishing account (the
 /// server shows that account's profile photo); [other] credits a named author
@@ -165,6 +241,7 @@ class LibraryBookPublication {
     this.bookId,
     this.gameCount = 0,
     this.hadAuthorCreditKey = false,
+    this.review = LibraryBookReview.none,
   });
 
   final String status;
@@ -176,7 +253,21 @@ class LibraryBookPublication {
   /// value, even one this client does not recognise). Once a book has the key,
   /// a save must keep sending it, so the editor seeds its send rule from this.
   final bool hadAuthorCreditKey;
+
+  /// The draft's review round. Only a draft can be in review.
+  final LibraryBookReview review;
   bool get isPublished => status == 'published';
+
+  LibraryBookStage get stage => switch (status) {
+    'published' => LibraryBookStage.live,
+    'archived' => LibraryBookStage.takenDown,
+    _ => switch (review.state) {
+      LibraryBookReviewState.pending => LibraryBookStage.inReview,
+      LibraryBookReviewState.changesRequested =>
+        LibraryBookStage.changesRequested,
+      LibraryBookReviewState.none => LibraryBookStage.draft,
+    },
+  };
 
   factory LibraryBookPublication.fromJson(
     Map<String, dynamic> json, {
@@ -202,6 +293,11 @@ class LibraryBookPublication {
       bookId: book?['id'] as String?,
       gameCount: (book?['gameCount'] as num?)?.toInt() ?? 0,
       hadAuthorCreditKey: book?.containsKey('authorCredit') ?? false,
+      // A stale review on anything but a draft is ignored, as the server does.
+      review:
+          status == 'draft'
+              ? LibraryBookReview.fromJson(book?['review'])
+              : LibraryBookReview.none,
     );
   }
 }
@@ -249,8 +345,23 @@ class LibraryBookPublicationException implements Exception {
   final String message;
 }
 
-/// Uses the configured authenticated proxy. Upstream API keys stay on the
-/// server; there is no fallback endpoint or anonymous publication request.
+/// The proxy in front of gamebase does not carry book publishing yet: an edge
+/// function deployed before these routes existed answers `route_not_allowed`
+/// (or `method_not_allowed` for PUT and DELETE) instead of forwarding.
+class LibraryBookPublishingUnavailable extends LibraryBookPublicationException {
+  const LibraryBookPublishingUnavailable()
+    : super('Book publishing is not available here yet.');
+}
+
+/// Uses an authenticated proxy. Upstream API keys stay on the server; there
+/// is no fallback endpoint or anonymous publication request.
+///
+/// Which proxy depends on the account's project, and the two never mix:
+/// - a production account goes through [productionBaseUrl], the gamebase
+///   proxy edge function, which injects the upstream key and forwards the
+///   member's own token so the server can tell whose folder it is;
+/// - a test account goes through [baseUrl], an explicitly configured test
+///   proxy that may never point at production.
 class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
   GamebaseLibraryBookPublisher({
     required Dio dio,
@@ -258,22 +369,82 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
     required String? supabaseUrl,
     required String? Function() accessToken,
     String? anonKey,
+    String? productionBaseUrl,
   }) : _dio = dio,
        _baseUrl = baseUrl?.trim().replaceFirst(RegExp(r'/+$'), ''),
+       _productionBaseUrl = productionBaseUrl?.trim().replaceFirst(
+         RegExp(r'/+$'),
+         '',
+       ),
        _supabaseUrl = supabaseUrl,
        _accessToken = accessToken,
        _anonKey = anonKey;
 
   final Dio _dio;
   final String? _baseUrl;
+  final String? _productionBaseUrl;
   final String? _supabaseUrl;
   final String? Function() _accessToken;
   final String? _anonKey;
 
   @override
   // Keep invalid-but-present configuration enabled for deletion checks: an
-  // unsafe endpoint must block withdrawal, never silently skip it.
-  bool get isConfigured => _baseUrl != null && _baseUrl.isNotEmpty;
+  // unsafe test endpoint must block withdrawal, never silently skip it. A
+  // production account always has a proxy it may use (its own project's).
+  bool get isConfigured =>
+      _isProductionAccount || (_baseUrl != null && _baseUrl.isNotEmpty);
+
+  /// Signed in to the production project, over a plain https origin.
+  bool get _isProductionAccount => _isProjectOrigin(_productionSupabaseHost);
+
+  bool _isProjectOrigin(String host) {
+    final auth = Uri.tryParse(_supabaseUrl?.trim() ?? '');
+    return auth != null &&
+        auth.scheme == 'https' &&
+        auth.host == host &&
+        auth.port == 443 &&
+        (auth.path.isEmpty || auth.path == '/') &&
+        auth.userInfo.isEmpty &&
+        !auth.hasQuery &&
+        !auth.hasFragment;
+  }
+
+  /// A production proxy carries a member's production token, so it is only
+  /// ever the project's own functions host or a chessever.com host, over
+  /// https, with nothing smuggled into the URL.
+  static bool _mayCarryProductionToken(String? base) {
+    final endpoint = Uri.tryParse(base ?? '');
+    if (endpoint == null ||
+        endpoint.scheme != 'https' ||
+        endpoint.host.isEmpty ||
+        endpoint.userInfo.isNotEmpty ||
+        endpoint.hasQuery ||
+        endpoint.hasFragment) {
+      return false;
+    }
+    final host = endpoint.host.toLowerCase().replaceFirst(RegExp(r'\.+$'), '');
+    return host == _productionSupabaseHost ||
+        host == 'chessever.com' ||
+        host.endsWith('.chessever.com');
+  }
+
+  /// Where a production account publishes. A configured proxy on any other
+  /// host is passed over for the project's own function, which is always
+  /// allowed: refusing instead would make every folder delete fail on a build
+  /// whose read proxy happens to live elsewhere.
+  String get _productionBase {
+    final configured = _productionBaseUrl;
+    if (configured != null && _mayCarryProductionToken(configured)) {
+      return configured;
+    }
+    return 'https://$_productionSupabaseHost/functions/v1/gamebase-proxy';
+  }
+
+  /// The endpoint requests go to, or null when this build must not publish.
+  String? get _safeBase {
+    if (_isProductionAccount) return _productionBase;
+    return _hasSafeTestConfiguration ? _baseUrl : null;
+  }
 
   bool get _hasSafeTestConfiguration {
     final auth = Uri.tryParse(_supabaseUrl?.trim() ?? '');
@@ -334,7 +505,22 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
 
   @override
   Future<void> unpublishTree(LibraryFolder folder) async {
-    await _request(folder, 'DELETE', query: {'includeDescendants': true});
+    try {
+      // Deleting a folder waits on this, with nothing on screen but the
+      // folder: a minute is long enough to withdraw and short enough to say
+      // so when the server is not answering.
+      await _request(
+        folder,
+        'DELETE',
+        query: {'includeDescendants': true},
+        receiveTimeout: const Duration(seconds: 60),
+      );
+    } on LibraryBookPublishingUnavailable {
+      // A production proxy that cannot publish cannot have published from
+      // this app either, and deleting a folder worked before publishing
+      // existed here: do not start refusing it. A test proxy stays strict.
+      if (!_isProductionAccount) rethrow;
+    }
   }
 
   @override
@@ -372,17 +558,13 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
     final query = name.trim();
     // The directory expects 1–60 chars; anything outside that, an unconfigured
     // or unsafe environment, or no session simply yields no suggestions.
-    final base = _baseUrl;
-    final token = _accessToken();
-    if (query.isEmpty ||
-        query.length > 60 ||
-        base == null ||
-        base.isEmpty ||
-        !_hasSafeTestConfiguration ||
-        token == null ||
-        token.isEmpty) {
+    final base = _safeBase;
+    // The session is only read once there is a safe place to send it.
+    if (query.isEmpty || query.length > 60 || base == null || base.isEmpty) {
       return const [];
     }
+    final token = _accessToken();
+    if (token == null || token.isEmpty) return const [];
     try {
       final response = await _dio.get<Map<String, dynamic>>(
         '$base/api/library/authors',
@@ -401,7 +583,9 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
       if (items is! List) return const [];
       return items
           .whereType<Map>()
-          .map((raw) => AuthorSuggestion.fromJson(Map<String, dynamic>.from(raw)))
+          .map(
+            (raw) => AuthorSuggestion.fromJson(Map<String, dynamic>.from(raw)),
+          )
           .where((author) => author.id.isNotEmpty && author.name.isNotEmpty)
           .toList(growable: false);
     } catch (_) {
@@ -417,19 +601,20 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
     Map<String, dynamic>? body,
     Map<String, dynamic>? query,
     String resource = 'book',
+    Duration? receiveTimeout,
   }) async {
     if (!libraryFolderCanPublish(folder)) {
       throw const LibraryBookPublicationException(
         'Only your own folders and databases can become books.',
       );
     }
-    final base = _baseUrl;
-    if (base == null || base.isEmpty) {
+    if (!isConfigured) {
       throw const LibraryBookPublicationException(
         'Book publishing is not configured for this app.',
       );
     }
-    if (!_hasSafeTestConfiguration) {
+    final base = _safeBase;
+    if (base == null) {
       throw const LibraryBookPublicationException(
         'Book publishing requires the test account environment and a safe test proxy URL.',
       );
@@ -447,6 +632,7 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
           method: method,
           followRedirects: false,
           maxRedirects: 0,
+          receiveTimeout: receiveTimeout,
           headers: {
             'Authorization': 'Bearer $token',
             if (_anonKey != null && _anonKey.isNotEmpty) 'apikey': _anonKey,
@@ -463,6 +649,9 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
     } on DioException catch (error) {
       final payload = error.response?.data;
       final details = payload is Map ? payload['error'] : null;
+      if (details == 'route_not_allowed' || details == 'method_not_allowed') {
+        throw const LibraryBookPublishingUnavailable();
+      }
       if (resource == 'book/cover') {
         throw LibraryBookPublicationException(switch (details is Map
             ? details['code']
@@ -509,16 +698,49 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
             403 => 'You do not have permission to change this author photo.',
             409 => 'Save the collection details, then add the author photo.',
             413 => 'This image is too large. Choose one under 8 MB.',
-            404 || 405 => 'Author photo uploads are not available here yet.',
+            404 ||
+            405 ||
+            503 => 'Author photo uploads are not available here yet.',
             _ => 'Could not save the author photo. Retry when connected.',
           },
         });
+      }
+      // An older server refuses the unknown credit key with a bare 400.
+      if (resource == 'book' &&
+          method == 'PUT' &&
+          body?['authorCredit'] == 'other' &&
+          error.response?.statusCode == 400 &&
+          (details is! Map || details['code'] == null)) {
+        throw const LibraryBookPublicationException(
+          'Crediting someone else is not available here yet. Choose Me for now; your details are still here.',
+        );
       }
       if (details is Map && details['code'] == 'publication_deleting') {
         throw const LibraryBookPublicationException(
           'This folder has a pending deletion. Retry deleting it to finish.',
         );
       }
+      final code = details is Map ? details['code'] : null;
+      // Why the server refused, when it said so in words an author can act on.
+      final said = details is Map ? details['message'] : null;
+      final refusal =
+          code == 'forbidden' &&
+                  said is String &&
+                  said.trim().isNotEmpty &&
+                  said.length <= 160
+              ? said.trim()
+              : null;
+      final named = switch (code) {
+        'taken_down' =>
+          'ChessEver took this collection down. Ask ChessEver to restore it.',
+        'empty_collection' =>
+          'Add at least one game to this folder before submitting.',
+        // The server's code for missing details on a submission.
+        'forbidden_field' =>
+          'Add an author credit and a description before submitting.',
+        _ => refusal,
+      };
+      if (named != null) throw LibraryBookPublicationException(named);
       final message = switch (error.response?.statusCode) {
         401 => 'Your session expired. Sign in again to continue.',
         403 => 'You do not have permission to publish this folder.',
@@ -552,7 +774,10 @@ Future<void> deleteLibraryFolderWithPublications({
   // withdraw even when this installation has no publishing endpoint configured.
   final testAccount =
       Uri.tryParse(supabaseUrl?.trim() ?? '')?.host == _testSupabaseHost;
-  if (publisher.isConfigured || testAccount) {
+  // A folder that can never become a book (subscribed, liked games) has no
+  // publication to withdraw, and asking would refuse the delete.
+  if (libraryFolderCanPublish(folder) &&
+      (publisher.isConfigured || testAccount)) {
     await publisher.unpublishTree(folder);
   }
   await deleteFolder(folder.id);
@@ -566,9 +791,20 @@ final libraryBookPublisherProvider = Provider<LibraryBookPublisher>((ref) {
     ),
   );
   ref.onDispose(() => dio.close());
+  final supabaseUrl = DesktopEnv.maybeGet('SUPABASE_URL')?.trim() ?? '';
+  final proxy = DesktopEnv.maybeGet('GAMEBASE_PROXY_BASE')?.trim() ?? '';
   return GamebaseLibraryBookPublisher(
     dio: dio,
     baseUrl: DesktopEnv.maybeGet('LIBRARY_BOOK_PUBLISHING_BASE'),
+    // Production reaches gamebase the way every other desktop call does: the
+    // proxy edge function, which holds the upstream key (see
+    // supabase/functions/gamebase-proxy). Only a production account uses it.
+    productionBaseUrl:
+        proxy.isNotEmpty
+            ? proxy
+            : supabaseUrl.isEmpty
+            ? null
+            : '${supabaseUrl.replaceFirst(RegExp(r'/+$'), '')}/functions/v1/gamebase-proxy',
     supabaseUrl: DesktopEnv.maybeGet('SUPABASE_URL'),
     accessToken:
         () => Supabase.instance.client.auth.currentSession?.accessToken,
