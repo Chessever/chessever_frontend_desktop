@@ -10,12 +10,30 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/library_book_publication.dart';
+import 'package:chessever/desktop/services/local_chess_drop_zone.dart'
+    show chessFileDropHolds;
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/library/image_drop_zone.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/library/cover_crop_dialog.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 Future<void> showLibraryBookDialog(
+  BuildContext context, {
+  required LibraryFolder folder,
+}) async {
+  // The picture slots take file drops of their own: the chess-file zones
+  // under the dialog stay quiet while it is open.
+  chessFileDropHolds.value++;
+  try {
+    await _showLibraryBookDialog(context, folder: folder);
+  } finally {
+    chessFileDropHolds.value--;
+  }
+}
+
+Future<void> _showLibraryBookDialog(
   BuildContext context, {
   required LibraryFolder folder,
 }) => showGeneralDialog<void>(
@@ -154,6 +172,16 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   Uint8List? _authorPhotoPreview;
   bool _authorPhotoBusy = false;
 
+  /// Everyone credited after the first author, in the order they are shown.
+  final List<_CoAuthor> _coAuthors = [];
+
+  /// Whether the saved collection lists more than one author, so a save that
+  /// removes them still tells the server.
+  bool _hadAuthorList = false;
+
+  bool get _anyPhotoBusy =>
+      _authorPhotoBusy || _coAuthors.any((row) => row.busy);
+
   /// The signed-in account's profile photo, for the "Me" preview. Null when
   /// there is none (then a neutral silhouette is shown).
   String? _profilePhotoUrl;
@@ -196,6 +224,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     for (final node in _focus.values) {
       node.dispose();
     }
+    for (final row in _coAuthors) {
+      row.dispose();
+    }
     super.dispose();
   }
 
@@ -232,6 +263,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     _hadCreditKey = value.hadAuthorCreditKey;
     _authorPhotoUrl = m.authorPhotoUrl;
     _authorPhotoPreview = null;
+    _syncCoAuthors(m.coAuthors);
+    _hadAuthorList = m.sendAuthorList;
     _suggestions = const [];
     _suggestionsFor = '';
     _authorPrefilled = false;
@@ -299,10 +332,13 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   }
 
   Future<void> _stashDraft() async {
-    final values = {for (final f in _Field.values) f.name: _text(f)};
+    final values = <String, Object>{
+      for (final f in _Field.values) f.name: _text(f),
+    };
     // The draft remembers which side of the Me / Someone-else choice the work
     // was on; the photo uploads immediately, so it is not in the draft.
     values['authorCredit'] = _credit.wire;
+    values['coAuthors'] = _coAuthorNames;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_draftKey, jsonEncode(values));
@@ -333,8 +369,19 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     };
     final draftCredit =
         AuthorCredit.maybeParse(draft['authorCredit']) ?? _credit;
+    // A draft from before co-authors existed says nothing about them.
+    final rawCoAuthors = draft['coAuthors'];
+    final draftCoAuthors =
+        rawCoAuthors is List
+            ? [
+              for (final name in rawCoAuthors)
+                if (name is String && name.trim().isNotEmpty) name.trim(),
+            ]
+            : null;
     final differs =
         draftCredit != _credit ||
+        (draftCoAuthors != null &&
+            draftCoAuthors.join('\n') != _coAuthorNames.join('\n')) ||
         values.entries.any((e) => e.value.trim() != _text(e.key).trim());
     if (!differs) {
       await _clearDraft();
@@ -348,6 +395,12 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
           _write(e.key, e.value);
         }
         _credit = draftCredit;
+        if (draftCoAuthors != null) {
+          _syncCoAuthors([
+            for (final name in draftCoAuthors)
+              BookAuthor(name: name, photoUrl: _rowNamed(name)?.photoUrl ?? ''),
+          ]);
+        }
         _authorPrefilled = false;
         _dirty = true;
       });
@@ -494,13 +547,19 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       authorCredit: _authorCreditToSend,
       // The server owns the photo URL; the save body never writes it.
       authorPhotoUrl: _authorPhotoUrl,
+      coAuthors: [
+        for (final row in _coAuthors)
+          if (row.text.isNotEmpty)
+            BookAuthor(name: row.text, photoUrl: row.photoUrl),
+      ],
+      sendAuthorList: _hadAuthorList || _coAuthorNames.isNotEmpty,
     );
   }
 
   Future<void> _save({bool publish = false, bool refreshGames = false}) async {
-    if (_busy || _coverBusy) return;
+    if (_busy || _coverBusy || _anyPhotoBusy) return;
     _validateForPublish = publish;
-    if (!(_form.currentState?.validate() ?? false)) {
+    if (!_validateForm()) {
       setState(
         () =>
             _error = 'Check the highlighted collection details before saving.',
@@ -566,8 +625,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
         setState(() {
           _publication = value;
           _coverUrl = value.metadata.coverUrl;
-          _authorPhotoUrl = value.metadata.authorPhotoUrl;
+          _takeAuthorPhotos(value.metadata);
           _hadCreditKey = value.hadAuthorCreditKey;
+          _hadAuthorList = value.metadata.sendAuthorList;
           _confirmUnpublish = false;
         });
       } else {
@@ -587,11 +647,17 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   /// Choose an image, prepare the 2:3 cover and upload it straight away. A
   /// cover belongs to a saved book, so a never-saved one is first saved as a
   /// private draft with what is typed.
-  Future<void> _pickCover() async {
+  ///
+  /// [dropped] is an image dropped on the cover slot; without it the file
+  /// dialog opens. Either way the author frames it before it is uploaded.
+  Future<void> _pickCover({Uint8List? dropped}) async {
     if (_busy || _coverBusy) return;
     final Uint8List? image;
     try {
-      image = await ref.read(collectionCoverPickerProvider)(context);
+      image =
+          dropped == null
+              ? await ref.read(collectionCoverPickerProvider)(context)
+              : await ref.read(collectionCoverFramerProvider)(context, dropped);
     } on FormatException catch (error) {
       if (mounted) setState(() => _error = error.message);
       return;
@@ -608,7 +674,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       final publisher = ref.read(libraryBookPublisherProvider);
       if (_publication?.bookId == null) {
         _validateForPublish = false;
-        if (!(_form.currentState?.validate() ?? false)) {
+        if (!_validateForm()) {
           throw const LibraryBookPublicationException(
             'Add a title first. The cover is saved with the collection.',
           );
@@ -786,11 +852,14 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
 
   /// A square author photo, uploaded as soon as it is chosen (like the cover).
   /// Uploading sets the credit to Someone else, so stay there.
-  Future<void> _pickAuthorPhoto() async {
-    if (_busy || _authorPhotoBusy || _coverBusy) return;
+  Future<void> _pickAuthorPhoto({Uint8List? dropped}) async {
+    if (_busy || _anyPhotoBusy || _coverBusy) return;
     final Uint8List? image;
     try {
-      image = await ref.read(authorPhotoPickerProvider)(context);
+      image =
+          dropped == null
+              ? await ref.read(authorPhotoPickerProvider)(context)
+              : await ref.read(authorPhotoFramerProvider)(context, dropped);
     } on FormatException catch (error) {
       if (mounted) setState(() => _error = error.message);
       return;
@@ -810,7 +879,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       // book was never saved, exactly like the cover flow.
       if (_publication?.bookId == null) {
         _validateForPublish = false;
-        if (!(_form.currentState?.validate() ?? false)) {
+        if (!_validateForm()) {
           throw const LibraryBookPublicationException(
             'Add a title first. The author photo is saved with the collection.',
           );
@@ -825,7 +894,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       if (!mounted) return;
       setState(() {
         _publication = result;
-        _authorPhotoUrl = result.metadata.authorPhotoUrl;
+        _takeAuthorPhotos(result.metadata);
         _credit = result.metadata.authorCredit ?? AuthorCredit.other;
         _hadCreditKey = _hadCreditKey || result.hadAuthorCreditKey;
         _notice =
@@ -881,6 +950,443 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     }
   }
 
+  // --- More authors: everyone credited after the first ----------------------
+
+  List<String> get _coAuthorNames => [
+    for (final row in _coAuthors)
+      if (row.text.isNotEmpty) row.text,
+  ];
+
+  _CoAuthor? _rowNamed(String name) {
+    final wanted = name.trim().toLowerCase();
+    for (final row in _coAuthors) {
+      if (row.text.toLowerCase() == wanted) return row;
+    }
+    return null;
+  }
+
+  /// Takes [saved] as the list, keeping the row (its field, its photo preview)
+  /// of every author who is still credited.
+  void _syncCoAuthors(List<BookAuthor> saved) {
+    final kept = <_CoAuthor>[];
+    for (final author in saved) {
+      final at = _coAuthors.indexWhere(
+        (row) => row.text.toLowerCase() == author.name.toLowerCase(),
+      );
+      final row =
+          at < 0 ? _CoAuthor(name: author.name) : _coAuthors.removeAt(at);
+      row.photoUrl = author.photoUrl;
+      kept.add(row);
+    }
+    final gone = List.of(_coAuthors);
+    _coAuthors
+      ..clear()
+      ..addAll(kept);
+    // Their fields are still on screen until the next frame.
+    if (gone.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        for (final row in gone) {
+          row.dispose();
+        }
+      });
+    }
+  }
+
+  /// What the server holds for every author's photo, after any upload.
+  void _takeAuthorPhotos(LibraryBookMetadata saved) {
+    _authorPhotoUrl = saved.authorPhotoUrl;
+    for (final author in saved.coAuthors) {
+      _rowNamed(author.name)?.photoUrl = author.photoUrl;
+    }
+  }
+
+  /// Where [name] sits in the saved author list, the place its photo is
+  /// stored against. -1 when the saved collection does not credit them yet.
+  int _savedAuthorIndex(String name) {
+    final wanted = name.trim().toLowerCase();
+    final saved = _publication?.metadata.authors ?? const <BookAuthor>[];
+    return saved.indexWhere((author) => author.name.toLowerCase() == wanted);
+  }
+
+  void _addCoAuthor() {
+    if (_busy || _coAuthors.length + 1 >= libraryBookMaxAuthors) return;
+    final row = _CoAuthor();
+    setState(() {
+      _coAuthors.add(row);
+      _error = null;
+      _notice = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _coAuthors.contains(row)) row.focus.requestFocus();
+    });
+  }
+
+  void _removeCoAuthor(_CoAuthor row) {
+    if (_busy || row.busy) return;
+    final credited = row.text.isNotEmpty;
+    setState(() {
+      _coAuthors.remove(row);
+      if (credited) _dirty = true;
+      _error = null;
+      _notice = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => row.dispose());
+    if (credited) _scheduleStash();
+  }
+
+  void _onCoAuthorChanged(_CoAuthor row, String value) {
+    // Not an edit: a caret move, a focus change, or a write of ours.
+    if (value == row.seen) return;
+    row.seen = value;
+    setState(() {
+      _dirty = true;
+      row.error = null;
+    });
+    _scheduleStash();
+  }
+
+  /// The form's own fields and the co-author rows, all checked (never only
+  /// the first that fails), so every problem is marked at once.
+  bool _validateForm() {
+    final fields = _form.currentState?.validate() ?? false;
+    var rows = true;
+    setState(() {
+      for (final row in _coAuthors) {
+        row.error = _validateCoAuthor(row);
+        if (row.error != null) rows = false;
+      }
+    });
+    return fields && rows;
+  }
+
+  String? _validateCoAuthor(_CoAuthor row) {
+    final value = row.text;
+    // A row left empty credits nobody and is dropped on save.
+    if (value.isEmpty) return null;
+    if (!_authorNamed(value)) return 'Enter the author’s name.';
+    final lower = value.toLowerCase();
+    final above = [
+      _authorTerm.toLowerCase(),
+      for (final other in _coAuthors.takeWhile((other) => other != row))
+        other.text.toLowerCase(),
+    ];
+    return above.contains(lower) ? 'Already credited above.' : null;
+  }
+
+  /// A co-author's square photo. It is stored against their place in the
+  /// saved author list, so details that changed since the last save are
+  /// saved first (as a private draft when the book was never saved).
+  Future<void> _pickCoAuthorPhoto(_CoAuthor row, {Uint8List? dropped}) async {
+    if (_busy || _anyPhotoBusy || _coverBusy) return;
+    final name = row.text;
+    if (name.isEmpty) {
+      setState(() {
+        _notice = null;
+        _error = 'Add this author’s name first, then their photo.';
+      });
+      row.focus.requestFocus();
+      return;
+    }
+    final Uint8List? image;
+    try {
+      image =
+          dropped == null
+              ? await ref.read(authorPhotoPickerProvider)(context)
+              : await ref.read(authorPhotoFramerProvider)(context, dropped);
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+      return;
+    }
+    if (image == null || !mounted) return;
+    final wasPublished = _publication?.isPublished ?? false;
+    setState(() {
+      row.busy = true;
+      row.preview = image;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final publisher = ref.read(libraryBookPublisherProvider);
+      if (_publication?.bookId == null || _savedAuthorIndex(name) < 0) {
+        _validateForPublish = false;
+        if (!_validateForm()) {
+          throw const LibraryBookPublicationException(
+            'Check the highlighted details first. The photo is saved with the collection.',
+          );
+        }
+        final saved = await publisher.save(widget.folder, _metadata);
+        if (!mounted) return;
+        _setPublication(saved);
+        unawaited(_clearDraft());
+      }
+      final index = _savedAuthorIndex(name);
+      if (index < 0) {
+        throw const LibraryBookPublicationException(
+          'Save the collection details, then add this author’s photo.',
+        );
+      }
+      final result = await publisher.uploadAuthorPhoto(
+        widget.folder,
+        image,
+        index: index,
+      );
+      if (!mounted) return;
+      setState(() {
+        _publication = result;
+        _takeAuthorPhotos(result.metadata);
+        _notice =
+            wasPublished
+                ? 'Author photo saved. The collection is back in review until ChessEver approves it.'
+                : 'Author photo saved.';
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _rowNamed(name)?.preview = null;
+          _error =
+              error is LibraryBookPublicationException
+                  ? error.message
+                  : 'Could not save the author photo. Retry when connected.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _rowNamed(name)?.busy = false);
+    }
+  }
+
+  Future<void> _removeCoAuthorPhoto(_CoAuthor row) async {
+    if (_busy || _anyPhotoBusy || _coverBusy) return;
+    final name = row.text;
+    final index = _savedAuthorIndex(name);
+    if (index < 0) {
+      // Renamed since the last save: the server drops the photo with the name.
+      setState(() {
+        row.photoUrl = '';
+        row.preview = null;
+        _dirty = true;
+      });
+      return;
+    }
+    setState(() {
+      row.busy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final result = await ref
+          .read(libraryBookPublisherProvider)
+          .removeAuthorPhoto(widget.folder, index: index);
+      if (!mounted) return;
+      setState(() {
+        _publication = result;
+        row.preview = null;
+        row.photoUrl = '';
+        _takeAuthorPhotos(result.metadata);
+        _notice = 'Author photo removed.';
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () =>
+              _error =
+                  error is LibraryBookPublicationException
+                      ? error.message
+                      : 'Could not remove the author photo. Retry when connected.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => row.busy = false);
+    }
+  }
+
+  /// The authors after the first: a name and an optional photo each, and one
+  /// more row for as long as there is room.
+  Widget _coAuthorsSection(LibraryBookStage stage) {
+    final enabled = !_busy && !_frozen(stage);
+    final room = _coAuthors.length + 1 < libraryBookMaxAuthors;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _OptionalLabel('More authors'),
+          const SizedBox(height: 4),
+          const Text(
+            'Credited after the first author, in this order. Each can have a photo.',
+            style: _noteStyle,
+          ),
+          const SizedBox(height: 6),
+          for (final row in _coAuthors)
+            _coAuthorRow(row, stage: stage, enabled: enabled),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child:
+                room
+                    ? DesktopDialogButton(
+                      key: const ValueKey('book_author_add'),
+                      label: 'Add an author',
+                      icon: Icons.add_rounded,
+                      onPress: enabled ? _addCoAuthor : null,
+                    )
+                    : const Text(
+                      'A collection credits up to $libraryBookMaxAuthors authors.',
+                      style: _noteStyle,
+                    ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _coAuthorRow(
+    _CoAuthor row, {
+    required LibraryBookStage stage,
+    required bool enabled,
+  }) {
+    final at = _coAuthors.indexOf(row);
+    final uri = _httpsUri(row.photoUrl);
+    final hasPhoto = row.preview != null || uri != null;
+    final canPhoto = enabled && !_anyPhotoBusy && !_coverBusy;
+    final Widget face =
+        row.preview != null
+            ? Image.memory(row.preview!, fit: BoxFit.cover)
+            : uri != null
+            ? CachedNetworkImage(
+              imageUrl: uri.toString(),
+              fit: BoxFit.cover,
+              placeholder: (_, _) => const _Silhouette(),
+              errorWidget: (_, _, _) => const _Silhouette(),
+            )
+            : const _Silhouette();
+    return ImageDropZone(
+      key: ObjectKey(row),
+      enabled: canPhoto,
+      // Only the photo itself opens the file dialog; the rest of the row is
+      // a name field. A dropped image lands anywhere on the row.
+      tapToChoose: false,
+      restingEdge: false,
+      // The row keeps the form's left and right edges; the accent edge that
+      // shows while a file is held over it is drawn just outside them.
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      edgeOutset: 10,
+      semanticsLabel: 'Author ${at + 2}',
+      onChoose: () => _pickCoAuthorPhoto(row),
+      onDropped: (bytes) => _pickCoAuthorPhoto(row, dropped: bytes),
+      onRefused: (reason) => setState(() => _error = reason),
+      builder:
+          (context, phase) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Centred on each other by the row itself, whatever height the
+              // field has; what follows the name sits under the field.
+              Row(
+                children: [
+                  _PhotoButton(
+                    key: ValueKey('book_coauthor_photo_$at'),
+                    tooltip:
+                        phase == ImageDropPhase.dragging
+                            ? 'Drop to use this photo'
+                            : hasPhoto
+                            ? 'Replace photo'
+                            : 'Choose photo',
+                    onPress: canPhoto ? () => _pickCoAuthorPhoto(row) : null,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [face, if (row.busy) const _Uploading()],
+                    ),
+                  ),
+                  const SizedBox(width: _coAuthorGap),
+                  Expanded(
+                    child: FTextField(
+                      key: ValueKey('book_coauthor_name_$at'),
+                      controller: row.name,
+                      focusNode: row.focus,
+                      enabled: enabled,
+                      hint: 'e.g. Judit Polgar',
+                      maxLength: 60,
+                      maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                      counterBuilder:
+                          (context, current, max, focused) =>
+                              const SizedBox.shrink(),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                          RegExp(r"[\p{L}\p{M} .'’\-,&]", unicode: true),
+                        ),
+                        const _TidySpacesFormatter(),
+                      ],
+                      textCapitalization: TextCapitalization.words,
+                      onChange: (value) => _onCoAuthorChanged(row, value),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  DesktopDialogIconButton(
+                    key: ValueKey('book_coauthor_remove_$at'),
+                    icon: Icons.close_rounded,
+                    tooltip: 'Remove this author',
+                    onPress:
+                        enabled && !row.busy
+                            ? () => _removeCoAuthor(row)
+                            : null,
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.only(
+                  left: _coAuthorPhoto + _coAuthorGap,
+                  top: 6,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (row.error != null)
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          row.error!,
+                          style: const TextStyle(
+                            color: kRedColor,
+                            fontSize: 12,
+                            height: 16 / 12,
+                          ),
+                        ),
+                      ),
+                    Wrap(
+                      spacing: 14,
+                      children: [
+                        _QuietAction(
+                          key: ValueKey('book_coauthor_choose_$at'),
+                          label:
+                              row.busy
+                                  ? 'Saving photo…'
+                                  : phase == ImageDropPhase.dragging
+                                  ? 'Drop to use this photo'
+                                  : hasPhoto
+                                  ? 'Replace photo'
+                                  : 'Drop a photo here, or choose one…',
+                          lit: phase == ImageDropPhase.dragging,
+                          onPress:
+                              canPhoto ? () => _pickCoAuthorPhoto(row) : null,
+                        ),
+                        if (hasPhoto && !row.busy)
+                          _QuietAction(
+                            key: ValueKey('book_coauthor_photo_remove_$at'),
+                            label: 'Remove photo',
+                            onPress:
+                                canPhoto
+                                    ? () => _removeCoAuthorPhoto(row)
+                                    : null,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+    );
+  }
+
   // --- Author section: credit switch, name, suggestions, photo --------------
 
   Widget _authorSection(LibraryBookStage stage) {
@@ -899,7 +1405,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
               labels: const ['Me', 'Someone else'],
               index: _creditsOther ? 1 : 0,
               enabled:
-                  !_busy && !_authorPhotoBusy && !_coverBusy && !_frozen(stage),
+                  !_busy && !_anyPhotoBusy && !_coverBusy && !_frozen(stage),
               onChanged:
                   (i) => _setCredit(
                     i == 1 ? AuthorCredit.other : AuthorCredit.self,
@@ -925,6 +1431,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
           listenable: _fields[_Field.author]!,
           builder: (context, _) => _authorExtras(stage),
         ),
+        _coAuthorsSection(stage),
       ],
     );
   }
@@ -1050,8 +1557,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     // With no photo of their own yet, an author already on ChessEver is
     // pictured by the photo they have there.
     final borrowed = !hasPhoto ? _httpsUri(matched?.avatarUrl ?? '') : null;
-    final enabled =
-        !_busy && !_authorPhotoBusy && !_coverBusy && !_frozen(stage);
+    final enabled = !_busy && !_anyPhotoBusy && !_coverBusy && !_frozen(stage);
     final Widget thumb =
         _authorPhotoPreview != null
             ? Image.memory(_authorPhotoPreview!, fit: BoxFit.cover)
@@ -1070,66 +1576,84 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
         children: [
           const _OptionalLabel('Author photo'),
           const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Semantics(
-                image: true,
-                label: hasPhoto ? 'Author photo' : 'No author photo yet',
-                child: ClipOval(
-                  child: SizedBox.square(
-                    dimension: 64,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        thumb,
-                        if (_authorPhotoBusy) const _Uploading(),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          ImageDropZone(
+            key: const ValueKey('author_photo_drop'),
+            enabled: enabled,
+            semanticsLabel:
+                'Author photo. Drop an image here, or choose a file.',
+            onChoose: _pickAuthorPhoto,
+            onDropped: (bytes) => _pickAuthorPhoto(dropped: bytes),
+            onRefused: (reason) => setState(() => _error = reason),
+            builder:
+                (context, phase) => Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        DesktopDialogButton(
-                          key: const ValueKey('author_photo_choose'),
-                          label:
-                              _authorPhotoBusy
-                                  ? 'Saving photo…'
-                                  : hasPhoto
-                                  ? 'Replace photo'
-                                  : 'Choose photo…',
-                          onPress: enabled ? _pickAuthorPhoto : null,
-                        ),
-                        if (hasPhoto && !_authorPhotoBusy)
-                          DesktopDialogButton(
-                            key: const ValueKey('author_photo_remove'),
-                            label: 'Remove photo',
-                            tone: DesktopDialogButtonTone.ghost,
-                            onPress: enabled ? _removeAuthorPhoto : null,
+                    Semantics(
+                      image: true,
+                      label: hasPhoto ? 'Author photo' : 'No author photo yet',
+                      child: ClipOval(
+                        child: SizedBox.square(
+                          dimension: 64,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              thumb,
+                              if (_authorPhotoBusy) const _Uploading(),
+                            ],
                           ),
-                      ],
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      borrowed != null
-                          ? 'Using the photo already on ChessEver for this author.'
-                          : stage == LibraryBookStage.live
-                          ? 'A square photo of the author, not your profile photo. On a live collection, a new photo goes back to review first.'
-                          : 'A square photo of the author, not your profile photo. JPEG, PNG or WebP, at least 256 × 256.',
-                      style: _noteStyle,
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _DropPrompt(
+                            phase: phase,
+                            rest:
+                                hasPhoto
+                                    ? 'Drop a new photo here to replace it'
+                                    : 'Drop a photo here',
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              DesktopDialogButton(
+                                key: const ValueKey('author_photo_choose'),
+                                label:
+                                    _authorPhotoBusy
+                                        ? 'Saving photo…'
+                                        : hasPhoto
+                                        ? 'Replace photo'
+                                        : 'Choose photo…',
+                                onPress: enabled ? _pickAuthorPhoto : null,
+                              ),
+                              if (hasPhoto && !_authorPhotoBusy)
+                                DesktopDialogButton(
+                                  key: const ValueKey('author_photo_remove'),
+                                  label: 'Remove photo',
+                                  tone: DesktopDialogButtonTone.ghost,
+                                  onPress: enabled ? _removeAuthorPhoto : null,
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            borrowed != null
+                                ? 'Using the photo already on ChessEver for this author.'
+                                : stage == LibraryBookStage.live
+                                ? 'A square photo of the author, not your profile photo. On a live collection, a new photo goes back to review first.'
+                                : 'A square photo of the author, not your profile photo. JPEG, PNG or WebP, at least 256 × 256.',
+                            style: _noteStyle,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
-              ),
-            ],
           ),
         ],
       ),
@@ -1160,63 +1684,83 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
         children: [
           const _OptionalLabel('Cover'),
           const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Semantics(
-                image: true,
-                label: hasCover ? 'Collection cover' : 'No cover yet',
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: SizedBox(
-                    width: 64,
-                    height: 96,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [thumb, if (_coverBusy) const _Uploading()],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          ImageDropZone(
+            key: const ValueKey('book_cover_drop'),
+            enabled: enabled,
+            semanticsLabel: 'Cover. Drop an image here, or choose a file.',
+            onChoose: _pickCover,
+            onDropped: (bytes) => _pickCover(dropped: bytes),
+            onRefused: (reason) => setState(() => _error = reason),
+            builder:
+                (context, phase) => Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        DesktopDialogButton(
-                          key: const ValueKey('book_cover_choose'),
-                          label:
-                              _coverBusy
-                                  ? 'Saving cover…'
-                                  : hasCover
-                                  ? 'Replace image'
-                                  : 'Choose image…',
-                          onPress: enabled ? _pickCover : null,
-                        ),
-                        if (hasCover && !_coverBusy)
-                          DesktopDialogButton(
-                            key: const ValueKey('book_cover_remove'),
-                            label: 'Remove cover',
-                            tone: DesktopDialogButtonTone.ghost,
-                            onPress: enabled ? _removeCover : null,
+                    Semantics(
+                      image: true,
+                      label: hasCover ? 'Collection cover' : 'No cover yet',
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: SizedBox(
+                          width: 64,
+                          height: 96,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              thumb,
+                              if (_coverBusy) const _Uploading(),
+                            ],
                           ),
-                      ],
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      stage == LibraryBookStage.live
-                          ? 'You frame it as a 2:3 portrait after choosing. On a live collection, a new cover goes back to review first.'
-                          : 'You frame it as a 2:3 portrait after choosing. JPEG, PNG or WebP, at least 600 × 900. Without one, the stacked boards are shown.',
-                      style: _noteStyle,
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _DropPrompt(
+                            phase: phase,
+                            rest:
+                                hasCover
+                                    ? 'Drop a new image here to replace it'
+                                    : 'Drop an image here',
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              DesktopDialogButton(
+                                key: const ValueKey('book_cover_choose'),
+                                label:
+                                    _coverBusy
+                                        ? 'Saving cover…'
+                                        : hasCover
+                                        ? 'Replace image'
+                                        : 'Choose image…',
+                                onPress: enabled ? _pickCover : null,
+                              ),
+                              if (hasCover && !_coverBusy)
+                                DesktopDialogButton(
+                                  key: const ValueKey('book_cover_remove'),
+                                  label: 'Remove cover',
+                                  tone: DesktopDialogButtonTone.ghost,
+                                  onPress: enabled ? _removeCover : null,
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            stage == LibraryBookStage.live
+                                ? 'You frame it as a 2:3 portrait after choosing. On a live collection, a new cover goes back to review first.'
+                                : 'You frame it as a 2:3 portrait after choosing. JPEG, PNG or WebP, at least 600 × 900. Without one, the stacked boards are shown.',
+                            style: _noteStyle,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
-              ),
-            ],
           ),
         ],
       ),
@@ -1773,7 +2317,10 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             ),
             const SizedBox(height: 12),
             ListenableBuilder(
-              listenable: Listenable.merge(_fields.values),
+              listenable: Listenable.merge([
+                ..._fields.values,
+                for (final row in _coAuthors) row.name,
+              ]),
               builder:
                   (context, _) => Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1782,7 +2329,10 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                         page: _previewTab == 1,
                         title: _text(_Field.title).trim(),
                         subtitle: _text(_Field.subtitle).trim(),
-                        author: _text(_Field.author).trim(),
+                        author: bookAuthorCredit([
+                          _text(_Field.author),
+                          ..._coAuthorNames,
+                        ]),
                         year: _text(_Field.year).trim(),
                         about: _text(_Field.about).trim(),
                         cover: _coverUri(_coverUrl),
@@ -1934,6 +2484,216 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
           _scheduleStash();
         },
         validator: (raw) => _validate(field, raw),
+      ),
+    );
+  }
+}
+
+/// A co-author's round photo, and the space between it and the name field.
+const _coAuthorPhoto = 40.0;
+const _coAuthorGap = 12.0;
+
+/// One more credited author in the form: their name field and their photo.
+class _CoAuthor {
+  _CoAuthor({String name = ''})
+    : name = TextEditingController(text: name),
+      seen = name;
+
+  final TextEditingController name;
+  final FocusNode focus = FocusNode();
+
+  /// The text the field last held as far as the dialog knows (forui reports
+  /// caret moves as changes too).
+  String seen;
+  String photoUrl = '';
+  Uint8List? preview;
+  bool busy = false;
+
+  /// What is wrong with the name, shown under the field after a save tries.
+  String? error;
+
+  /// The name as it is saved: trimmed, single-spaced.
+  String get text => name.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+  void dispose() {
+    name.dispose();
+    focus.dispose();
+  }
+}
+
+/// The line inside a picture slot that says what a drop does there.
+class _DropPrompt extends StatelessWidget {
+  const _DropPrompt({required this.phase, required this.rest});
+
+  final ImageDropPhase phase;
+  final String rest;
+
+  @override
+  Widget build(BuildContext context) {
+    final dragging = phase == ImageDropPhase.dragging;
+    return Text(
+      dragging ? 'Drop to use this image' : rest,
+      style: TextStyle(
+        color: dragging ? kPrimaryColor : kWhiteColor,
+        fontSize: 13,
+        fontWeight: FontWeight.w500,
+      ),
+    );
+  }
+}
+
+/// A co-author's round photo, pressed to choose or replace it.
+class _PhotoButton extends StatefulWidget {
+  const _PhotoButton({
+    super.key,
+    required this.tooltip,
+    required this.onPress,
+    required this.child,
+  });
+
+  final String tooltip;
+  final VoidCallback? onPress;
+  final Widget child;
+
+  @override
+  State<_PhotoButton> createState() => _PhotoButtonState();
+}
+
+class _PhotoButtonState extends State<_PhotoButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.onPress != null;
+    final still = MediaQuery.disableAnimationsOf(context);
+    return DesktopTooltip(
+      message: widget.tooltip,
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        label: widget.tooltip,
+        child: FocusableActionDetector(
+          enabled: enabled,
+          mouseCursor:
+              enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+          onShowHoverHighlight: (value) => setState(() => _hovered = value),
+          onShowFocusHighlight: (value) => setState(() => _focused = value),
+          actions: {
+            ActivateIntent: CallbackAction<ActivateIntent>(
+              onInvoke: (_) => widget.onPress?.call(),
+            ),
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: enabled ? (_) => setState(() => _pressed = true) : null,
+            onTapCancel: () => setState(() => _pressed = false),
+            onTapUp: (_) => setState(() => _pressed = false),
+            onTap: widget.onPress,
+            child: AnimatedScale(
+              scale: _pressed && !still ? 0.96 : 1,
+              duration: const Duration(milliseconds: 120),
+              curve: _easeOut,
+              child: DecoratedBox(
+                // The ring is the photo's own edge, lit while it can be pressed.
+                decoration: ShapeDecoration(
+                  shape: CircleBorder(
+                    side: BorderSide(
+                      width: 1.5,
+                      strokeAlign: BorderSide.strokeAlignOutside,
+                      color:
+                          _focused
+                              ? kPrimaryColor
+                              : kWhiteColor.withValues(
+                                alpha: _hovered && enabled ? 0.45 : 0.14,
+                              ),
+                    ),
+                  ),
+                ),
+                child: ClipOval(
+                  child: SizedBox.square(
+                    dimension: _coAuthorPhoto,
+                    child: widget.child,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A small text action under a field: quiet at rest, white under the pointer.
+class _QuietAction extends StatefulWidget {
+  const _QuietAction({
+    super.key,
+    required this.label,
+    required this.onPress,
+    this.lit = false,
+  });
+
+  final String label;
+  final VoidCallback? onPress;
+
+  /// Drawn in the accent, while a file is held over the row.
+  final bool lit;
+
+  @override
+  State<_QuietAction> createState() => _QuietActionState();
+}
+
+class _QuietActionState extends State<_QuietAction> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.onPress != null;
+    final color =
+        widget.lit
+            ? kPrimaryColor
+            : !enabled
+            ? kWhiteColor.withValues(alpha: 0.35)
+            : _hovered || _focused
+            ? kWhiteColor
+            : kWhiteColor70;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      child: FocusableActionDetector(
+        enabled: enabled,
+        mouseCursor:
+            enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        onShowHoverHighlight: (value) => setState(() => _hovered = value),
+        onShowFocusHighlight: (value) => setState(() => _focused = value),
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) => widget.onPress?.call(),
+          ),
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onPress,
+          child: Padding(
+            // A taller target than the 12 px line it holds.
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 120),
+              curve: _easeOut,
+              // Merged, so the line keeps the dialog's typeface.
+              style: DefaultTextStyle.of(context).style.copyWith(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                height: 16 / 12,
+              ),
+              child: Text(widget.label),
+            ),
+          ),
+        ),
       ),
     );
   }

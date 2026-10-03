@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:chessever/desktop/widgets/library/cover_crop_dialog.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
+import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
+import 'package:chessever/desktop/widgets/library/image_drop_zone.dart';
 import 'package:chessever/desktop/widgets/library/library_book_dialog.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:flutter/gestures.dart';
@@ -119,16 +122,46 @@ class _Publisher implements LibraryBookPublisher {
   @override
   Future<LibraryBookPublication> uploadAuthorPhoto(
     LibraryFolder folder,
-    Uint8List image,
-  ) async {
+    Uint8List image, {
+    int index = 0,
+  }) async {
     authorPhotos.add(image);
+    authorPhotoIndexes.add(index);
+    if (index > 0) return _withCoAuthorPhoto(index, _coAuthorPhotoUrl(index));
     return _withAuthorPhoto('https://media.example.invalid/author.webp');
   }
 
   @override
-  Future<LibraryBookPublication> removeAuthorPhoto(LibraryFolder folder) async {
+  Future<LibraryBookPublication> removeAuthorPhoto(
+    LibraryFolder folder, {
+    int index = 0,
+  }) async {
     authorPhotoRemovals++;
+    authorPhotoRemovalIndexes.add(index);
+    if (index > 0) return _withCoAuthorPhoto(index, '');
     return _withAuthorPhoto('');
+  }
+
+  /// The place in the author list each photo upload / removal named.
+  final authorPhotoIndexes = <int>[];
+  final authorPhotoRemovalIndexes = <int>[];
+
+  String _coAuthorPhotoUrl(int index) =>
+      'https://media.example.invalid/author-$index.webp';
+
+  LibraryBookPublication _withCoAuthorPhoto(int index, String url) {
+    final coAuthors = [...publication.metadata.coAuthors];
+    coAuthors[index - 1] = BookAuthor(
+      name: coAuthors[index - 1].name,
+      photoUrl: url,
+    );
+    return publication = LibraryBookPublication(
+      status: publication.status,
+      bookId: publication.bookId,
+      gameCount: publication.gameCount,
+      hadAuthorCreditKey: publication.hadAuthorCreditKey,
+      metadata: publication.metadata.copyWith(coAuthors: coAuthors),
+    );
   }
 
   @override
@@ -174,6 +207,13 @@ Future<void> _pump(
         ),
         authorPhotoPickerProvider.overrideWithValue(
           (_) async => pickedAuthorPhoto,
+        ),
+        // A dropped image skips the file dialog and goes straight to framing.
+        collectionCoverFramerProvider.overrideWithValue(
+          (_, source) async => source,
+        ),
+        authorPhotoFramerProvider.overrideWithValue(
+          (_, source) async => source,
         ),
       ],
       child: MaterialApp(
@@ -350,8 +390,8 @@ void main() {
       // Field labels for Foreword and Publisher are gone from the editor.
       expect(find.text('Foreword'), findsNothing);
       expect(find.text('Publisher'), findsNothing);
-      // Three optional fields: Subtitle, Year, Cover image link.
-      expect(find.text('Optional'), findsNWidgets(3));
+      // Four optional parts: Subtitle, More authors, Year, Cover.
+      expect(find.text('Optional'), findsNWidgets(4));
       await _tap(tester, 'Save draft');
       expect(publisher.saves.single.metadata.foreword, 'Kept foreword');
       expect(publisher.saves.single.metadata.publisher, 'ChessEver');
@@ -1289,4 +1329,428 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  // --- Picture slots: drop an image, or click to choose ---------------------
+
+  testWidgets(
+    'an image dropped on the cover slot is framed and uploaded',
+    semanticsEnabled: false,
+    (tester) async {
+      // The file dialog would give nothing: only the drop can supply a cover.
+      pickedCover = null;
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      final file = await _tempFile(tester, 'cover.png', _onePixelPng);
+      await _drop(tester, const ValueKey('book_cover_drop'), [file]);
+      expect(publisher.covers, hasLength(1));
+      expect(publisher.covers.single, _onePixelPng);
+      expect(find.text('Cover saved.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'the slot says a drop will be used while a file is held over it',
+    semanticsEnabled: false,
+    (tester) async {
+      await _pump(tester, _Publisher());
+      final slot = find.byKey(const ValueKey('book_cover_drop'));
+      await tester.ensureVisible(slot);
+      await tester.pumpAndSettle();
+      expect(find.text('Drop an image here'), findsOneWidget);
+      await _dragEvent(tester, 'entered', tester.getCenter(slot));
+      await tester.pumpAndSettle();
+      expect(find.text('Drop to use this image'), findsOneWidget);
+      await _dragEvent(tester, 'exited', tester.getCenter(slot));
+      await tester.pumpAndSettle();
+      expect(find.text('Drop an image here'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a dropped file that is not an image is refused in words',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      final file = await _tempFile(tester, 'games.pgn', utf8.encode('1. e4'));
+      await _drop(tester, const ValueKey('book_cover_drop'), [file]);
+      expect(find.text('Use a JPEG, PNG or WebP image.'), findsOneWidget);
+      expect(publisher.covers, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'clicking the cover slot itself opens the file dialog',
+    semanticsEnabled: false,
+    (tester) async {
+      pickedCover = _onePixelPng;
+      addTearDown(() => pickedCover = null);
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      final prompt = find.text('Drop an image here');
+      await tester.ensureVisible(prompt);
+      await tester.pumpAndSettle();
+      await tester.tap(prompt);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(publisher.covers, hasLength(1));
+    },
+  );
+
+  testWidgets(
+    'an image dropped on the author photo slot becomes the author photo',
+    semanticsEnabled: false,
+    (tester) async {
+      pickedAuthorPhoto = null;
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      await _tapSegment(tester, 'Someone else');
+      await tester.enterText(find.byType(TextField).at(2), 'Judit Polgar');
+      await tester.pump();
+      final file = await _tempFile(tester, 'judit.png', _onePixelPng);
+      await _drop(tester, const ValueKey('author_photo_drop'), [file]);
+      expect(publisher.authorPhotos, hasLength(1));
+      expect(publisher.authorPhotoIndexes, [0]);
+    },
+  );
+
+  test('what a picture slot refuses before reading a file', () {
+    expect(imageDropRefusal(name: 'a.PNG', bytes: 10), isNull);
+    expect(imageDropRefusal(name: 'a.jpeg', bytes: 10), isNull);
+    expect(
+      imageDropRefusal(name: 'book.pgn', bytes: 10),
+      'Use a JPEG, PNG or WebP image.',
+    );
+    expect(
+      imageDropRefusal(name: 'noending', bytes: 10),
+      'Use a JPEG, PNG or WebP image.',
+    );
+    expect(
+      imageDropRefusal(name: 'a.png', bytes: imageDropMaxBytes + 1),
+      'Choose an image smaller than 25 MB.',
+    );
+    expect(
+      imageDropRefusal(name: 'a.png', bytes: 0),
+      'This image could not be read. Choose another one.',
+    );
+  });
+
+  testWidgets(
+    'the chess-file drop zones are held quiet while the dialog is open',
+    semanticsEnabled: false,
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1100, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            libraryBookPublisherProvider.overrideWithValue(_Publisher()),
+          ],
+          child: MaterialApp(
+            home: Builder(
+              builder:
+                  (context) => TextButton(
+                    onPressed:
+                        () => showLibraryBookDialog(context, folder: _folder()),
+                    child: const Text('open'),
+                  ),
+            ),
+          ),
+        ),
+      );
+      // Other tests in this file leave their dialog open; count from here.
+      final before = chessFileDropHolds.value;
+      await tester.tap(find.text('open'));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(chessFileDropHolds.value, before + 1);
+      Navigator.of(tester.element(find.byType(LibraryBookDialog))).pop();
+      await tester.pumpAndSettle();
+      expect(chessFileDropHolds.value, before);
+    },
+  );
+
+  // --- Several authors ------------------------------------------------------
+
+  testWidgets(
+    'one author saves exactly as before: no author list is sent',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      await _tap(tester, 'Save draft');
+      expect(publisher.saves.single.metadata.coAuthors, isEmpty);
+      expect(
+        publisher.saves.single.metadata.toJson().containsKey('authors'),
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets(
+    'an added author is saved after the first, in order',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      await _tap(tester, 'Add an author');
+      await tester.enterText(
+        find.byKey(const ValueKey('book_coauthor_name_0')).first,
+        'Judit Polgar',
+      );
+      await tester.pump();
+      await _tap(tester, 'Add an author');
+      await tester.enterText(
+        find.byKey(const ValueKey('book_coauthor_name_1')).first,
+        'Vasif Durarbayli',
+      );
+      await tester.pump();
+      // The preview credits everyone on one line.
+      expect(
+        find.textContaining('Owner, Judit Polgar and Vasif Durarbayli'),
+        findsWidgets,
+      );
+      await _tap(tester, 'Save draft');
+      expect(publisher.saves.single.metadata.toJson()['authors'], [
+        {'name': 'Owner'},
+        {'name': 'Judit Polgar'},
+        {'name': 'Vasif Durarbayli'},
+      ]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'an author row left empty credits nobody',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      await _tap(tester, 'Add an author');
+      await _tap(tester, 'Save draft');
+      expect(
+        publisher.saves.single.metadata.toJson().containsKey('authors'),
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets(
+    'the same person cannot be credited twice',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      await _tap(tester, 'Add an author');
+      await tester.enterText(
+        find.byKey(const ValueKey('book_coauthor_name_0')).first,
+        'owner',
+      );
+      await tester.pump();
+      await _tap(tester, 'Save draft');
+      expect(find.text('Already credited above.'), findsOneWidget);
+      expect(publisher.saves, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'removing the last co-author of a saved book still tells the server',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..publication = const LibraryBookPublication(
+              status: 'draft',
+              bookId: 'book-1',
+              gameCount: 5,
+              metadata: LibraryBookMetadata(
+                title: 'My study',
+                author: 'Owner',
+                about: 'A chess study',
+                coAuthors: [BookAuthor(name: 'Judit Polgar')],
+                sendAuthorList: true,
+              ),
+            );
+      await _pump(tester, publisher);
+      expect(find.text('Judit Polgar'), findsWidgets);
+      final remove = find.byKey(const ValueKey('book_coauthor_remove_0'));
+      await tester.ensureVisible(remove);
+      await tester.pumpAndSettle();
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('book_coauthor_name_0')), findsNothing);
+      await _tap(tester, 'Save draft');
+      expect(publisher.saves.single.metadata.toJson()['authors'], [
+        {'name': 'Owner'},
+      ]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a co-author photo is stored against their place in the list',
+    semanticsEnabled: false,
+    (tester) async {
+      pickedAuthorPhoto = _onePixelPng;
+      addTearDown(() => pickedAuthorPhoto = null);
+      final publisher =
+          _Publisher()
+            ..publication = const LibraryBookPublication(
+              status: 'draft',
+              bookId: 'book-1',
+              gameCount: 5,
+              metadata: LibraryBookMetadata(
+                title: 'My study',
+                author: 'Owner',
+                about: 'A chess study',
+                coAuthors: [
+                  BookAuthor(name: 'Judit Polgar'),
+                  BookAuthor(name: 'Vasif Durarbayli'),
+                ],
+                sendAuthorList: true,
+              ),
+            );
+      await _pump(tester, publisher);
+      final choose = find.byKey(const ValueKey('book_coauthor_choose_1'));
+      await tester.ensureVisible(choose);
+      await tester.pumpAndSettle();
+      await tester.tap(choose);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      // Already saved under that name: no extra save, straight to index 2.
+      expect(publisher.saves, isEmpty);
+      expect(publisher.authorPhotoIndexes, [2]);
+      expect(find.text('Author photo saved.'), findsOneWidget);
+      // With a photo, the row offers to replace or remove it.
+      expect(
+        find.byKey(const ValueKey('book_coauthor_photo_remove_1')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('book_coauthor_photo_remove_1')),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(publisher.authorPhotoRemovalIndexes, [2]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a new co-author is saved before their photo is uploaded',
+    semanticsEnabled: false,
+    (tester) async {
+      pickedAuthorPhoto = _onePixelPng;
+      addTearDown(() => pickedAuthorPhoto = null);
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      await _tap(tester, 'Add an author');
+      // No name yet: the photo waits for one.
+      await tester.tap(find.byKey(const ValueKey('book_coauthor_choose_0')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Add this author’s name first, then their photo.'),
+        findsOneWidget,
+      );
+      expect(publisher.authorPhotos, isEmpty);
+      await tester.enterText(
+        find.byKey(const ValueKey('book_coauthor_name_0')).first,
+        'Judit Polgar',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('book_coauthor_choose_0')));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(publisher.saves, hasLength(1));
+      expect(publisher.saves.single.publish, isFalse);
+      expect(publisher.authorPhotoIndexes, [1]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a co-author row lines its photo, field and remove control on one centre',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      await _tap(tester, 'Add an author');
+      final photo = tester.getRect(
+        find.byKey(const ValueKey('book_coauthor_photo_0')),
+      );
+      // forui hands the key on to the field it builds: the outer one is
+      // the form field.
+      final field = tester.getRect(
+        find.byKey(const ValueKey('book_coauthor_name_0')).first,
+      );
+      final remove = tester.getRect(
+        find.byKey(const ValueKey('book_coauthor_remove_0')),
+      );
+      expect(photo.center.dy, moreOrLessEquals(field.center.dy, epsilon: 0.5));
+      expect(remove.center.dy, moreOrLessEquals(field.center.dy, epsilon: 0.5));
+      // The row keeps the form's edges: flush with the title field.
+      final title = tester.getRect(find.byType(FTextFormField).first);
+      expect(photo.left, moreOrLessEquals(title.left, epsilon: 0.5));
+      expect(remove.right, lessThanOrEqualTo(title.right + 0.5));
+    },
+  );
+
+  testWidgets('at most six authors can be credited', semanticsEnabled: false, (
+    tester,
+  ) async {
+    await _pump(tester, _Publisher());
+    for (var i = 0; i < libraryBookMaxAuthors - 1; i++) {
+      await _tap(tester, 'Add an author');
+    }
+    expect(find.widgetWithText(FButton, 'Add an author'), findsNothing);
+    expect(find.text('A collection credits up to 6 authors.'), findsOneWidget);
+  });
+}
+
+/// A real file on disk, as a drop hands over a path.
+Future<String> _tempFile(
+  WidgetTester tester,
+  String name,
+  List<int> bytes,
+) async {
+  final path = await tester.runAsync(() async {
+    final dir = await Directory.systemTemp.createTemp('book_dialog_drop');
+    final file = File('${dir.path}/$name');
+    await file.writeAsBytes(bytes);
+    return file.path;
+  });
+  addTearDown(() => File(path!).parent.deleteSync(recursive: true));
+  return path!;
+}
+
+/// One raw drag event, as the desktop_drop plugin reports it.
+Future<void> _dragEvent(
+  WidgetTester tester,
+  String method,
+  Offset at, [
+  List<String>? paths,
+]) => tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+  'desktop_drop',
+  const StandardMethodCodec().encodeMethodCall(
+    MethodCall(method, paths ?? <double>[at.dx, at.dy]),
+  ),
+  (_) {},
+);
+
+/// Drags [paths] over the slot keyed [slot] and lets go. The slot reads the
+/// file off the disk, so the wait runs on the real event loop.
+Future<void> _drop(WidgetTester tester, Key slot, List<String> paths) async {
+  final target = find.byKey(slot);
+  await tester.ensureVisible(target);
+  await tester.pumpAndSettle();
+  final at = tester.getCenter(target);
+  await _dragEvent(tester, 'entered', at);
+  await tester.pump();
+  await tester.runAsync(() async {
+    await _dragEvent(tester, 'performOperation', at, paths);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+  });
+  await tester.pump(const Duration(milliseconds: 300));
+  await tester.pumpAndSettle();
 }

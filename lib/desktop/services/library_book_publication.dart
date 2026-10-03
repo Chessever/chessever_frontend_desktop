@@ -4,6 +4,8 @@ import 'package:chessever/desktop/services/library_book_failure_message.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show immutable;
+
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -145,6 +147,37 @@ bool libraryFolderCanPublish(LibraryFolder folder) =>
     !folder.isPermanentLibraryFolder &&
     folder.id != kTwicBookId;
 
+/// One credited author of a collection: the name readers see and, when one
+/// was uploaded, their own photo.
+@immutable
+class BookAuthor {
+  const BookAuthor({required this.name, this.photoUrl = ''});
+
+  final String name;
+  final String photoUrl;
+
+  @override
+  bool operator ==(Object other) =>
+      other is BookAuthor && other.name == name && other.photoUrl == photoUrl;
+
+  @override
+  int get hashCode => Object.hash(name, photoUrl);
+}
+
+/// How several authors read on one line: "A", "A and B", "A, B and C".
+/// Blank names are skipped; no names give an empty string.
+String bookAuthorCredit(Iterable<String> names) {
+  final named = [
+    for (final name in names)
+      if (name.trim().isNotEmpty) name.trim(),
+  ];
+  if (named.length <= 1) return named.join();
+  return '${named.take(named.length - 1).join(', ')} and ${named.last}';
+}
+
+/// The most authors one collection can credit, the first one included.
+const libraryBookMaxAuthors = 6;
+
 class LibraryBookMetadata {
   const LibraryBookMetadata({
     required this.title,
@@ -157,6 +190,8 @@ class LibraryBookMetadata {
     this.coverUrl = '',
     this.authorCredit,
     this.authorPhotoUrl = '',
+    this.coAuthors = const [],
+    this.sendAuthorList = false,
   });
 
   final String title;
@@ -180,28 +215,73 @@ class LibraryBookMetadata {
   /// publishing account's profile photo. Empty when none is set.
   final String authorPhotoUrl;
 
-  factory LibraryBookMetadata.fromJson(Map<String, dynamic> json) =>
-      LibraryBookMetadata(
-        title: json['title'] as String? ?? '',
-        subtitle: json['subtitle'] as String? ?? '',
-        author: json['author'] as String? ?? '',
-        about: json['about'] as String? ?? '',
-        foreword: json['foreword'] as String? ?? '',
-        publisher: json['publisher'] as String? ?? '',
-        publishedYear: (json['publishedYear'] as num?)?.toInt(),
-        coverUrl: json['coverUrl'] as String? ?? '',
-        // A present key (even an unrecognised value, which parses to self via
-        // the caller) is what [LibraryBookPublication.hadAuthorCreditKey]
-        // records; the typed value here is only the known states.
-        authorCredit: AuthorCredit.maybeParse(json['authorCredit']),
-        authorPhotoUrl: json['authorPhotoUrl'] as String? ?? '',
-      );
+  /// Everyone credited after the first author, in order. [author] and
+  /// [authorPhotoUrl] stay the first author's, so a one-author collection
+  /// reads and saves exactly as it always did.
+  final List<BookAuthor> coAuthors;
+
+  /// Whether a save writes the whole author list. Only set when there is more
+  /// than one author, or the saved collection had more than one (so removing
+  /// them reaches the server): an older server refuses the unknown key.
+  final bool sendAuthorList;
+
+  /// Every credited author, the first one included.
+  List<BookAuthor> get authors => [
+    if (author.trim().isNotEmpty || coAuthors.isNotEmpty)
+      BookAuthor(name: author.trim(), photoUrl: authorPhotoUrl),
+    ...coAuthors,
+  ];
+
+  /// The author list of a book payload, or empty when the server sent none.
+  static List<BookAuthor> _authorsOf(Object? raw) {
+    if (raw is! List) return const [];
+    return [
+      for (final item in raw)
+        if (item is Map && (item['name'] as Object?) is String)
+          if ((item['name'] as String).trim().isNotEmpty)
+            BookAuthor(
+              name: (item['name'] as String).trim(),
+              photoUrl: item['photoUrl'] as String? ?? '',
+            ),
+    ];
+  }
+
+  factory LibraryBookMetadata.fromJson(Map<String, dynamic> json) {
+    // With an author list the legacy `author` is every name joined for old
+    // clients; the first entry is the one this form's name field edits.
+    final listed = _authorsOf(json['authors']);
+    return LibraryBookMetadata(
+      title: json['title'] as String? ?? '',
+      subtitle: json['subtitle'] as String? ?? '',
+      author:
+          listed.isNotEmpty
+              ? listed.first.name
+              : json['author'] as String? ?? '',
+      about: json['about'] as String? ?? '',
+      foreword: json['foreword'] as String? ?? '',
+      publisher: json['publisher'] as String? ?? '',
+      publishedYear: (json['publishedYear'] as num?)?.toInt(),
+      coverUrl: json['coverUrl'] as String? ?? '',
+      // A present key (even an unrecognised value, which parses to self via
+      // the caller) is what [LibraryBookPublication.hadAuthorCreditKey]
+      // records; the typed value here is only the known states.
+      authorCredit: AuthorCredit.maybeParse(json['authorCredit']),
+      authorPhotoUrl:
+          listed.isNotEmpty && listed.first.photoUrl.isNotEmpty
+              ? listed.first.photoUrl
+              : json['authorPhotoUrl'] as String? ?? '',
+      coAuthors: listed.skip(1).toList(growable: false),
+      sendAuthorList: listed.length > 1,
+    );
+  }
 
   LibraryBookMetadata copyWith({
     String? author,
     AuthorCredit? authorCredit,
     bool clearAuthorCredit = false,
     String? authorPhotoUrl,
+    List<BookAuthor>? coAuthors,
+    bool? sendAuthorList,
   }) => LibraryBookMetadata(
     title: title,
     subtitle: subtitle,
@@ -214,6 +294,8 @@ class LibraryBookMetadata {
     authorCredit:
         clearAuthorCredit ? null : (authorCredit ?? this.authorCredit),
     authorPhotoUrl: authorPhotoUrl ?? this.authorPhotoUrl,
+    coAuthors: coAuthors ?? this.coAuthors,
+    sendAuthorList: sendAuthorList ?? this.sendAuthorList,
   );
 
   Map<String, dynamic> toJson() => {
@@ -229,6 +311,13 @@ class LibraryBookMetadata {
     // a new "Me" book sends nothing. authorPhotoUrl is never written here — it
     // is only ever changed through the author-photo upload/remove endpoints.
     if (authorCredit != null) 'authorCredit': authorCredit!.wire,
+    // Names only: each photo is changed through the author-photo endpoints,
+    // and the server keeps a photo with its name when the list is edited.
+    if (sendAuthorList)
+      'authors': [
+        for (final credited in authors)
+          if (credited.name.trim().isNotEmpty) {'name': credited.name.trim()},
+      ],
   };
 
   static String? _nullable(String value) =>
@@ -328,11 +417,18 @@ abstract class LibraryBookPublisher {
   /// Collections), distinct from the cover and the profile photo. [image] is a
   /// prepared square image; the book's details must have been saved once.
   /// Uploading sets the credit to "other" server-side.
+  ///
+  /// [index] is the author's place in the credited list (0 is the first
+  /// author, the only one an older server knows).
   Future<LibraryBookPublication> uploadAuthorPhoto(
     LibraryFolder folder,
-    Uint8List image,
-  );
-  Future<LibraryBookPublication> removeAuthorPhoto(LibraryFolder folder);
+    Uint8List image, {
+    int index = 0,
+  });
+  Future<LibraryBookPublication> removeAuthorPhoto(
+    LibraryFolder folder, {
+    int index = 0,
+  });
 
   /// Existing published ChessEver authors whose name matches [name], so one
   /// person's collections stay grouped. Any failure (old server, network)
@@ -344,6 +440,61 @@ abstract class LibraryBookPublisher {
 class LibraryBookPublicationException implements Exception {
   const LibraryBookPublicationException(this.message);
   final String message;
+}
+
+/// The server could not turn some of the folder's games into a publishable
+/// book and named them. Nothing was changed.
+class LibraryBookInvalidGames extends LibraryBookPublicationException {
+  LibraryBookInvalidGames({required this.count, required this.games})
+    : super(_describe(count, games));
+
+  /// How many games were refused; [games] names at most the first few.
+  final int count;
+  final List<({String label, String reason})> games;
+
+  static String _describe(
+    int count,
+    List<({String label, String reason})> games,
+  ) {
+    // A server that names no games and gives no count: say so plainly rather
+    // than invent a number.
+    final head = switch (count) {
+      0 => 'Some games in this folder could not be prepared for publishing.',
+      1 => '1 game in this folder could not be prepared for publishing.',
+      _ => '$count games in this folder could not be prepared for publishing.',
+    };
+    final named = [
+      for (final game in games)
+        game.reason.isEmpty
+            ? '\u2022 ${game.label}'
+            : '\u2022 ${game.label}: ${game.reason}',
+    ];
+    final more = count - games.length;
+    return [
+      head,
+      ...named,
+      if (named.isNotEmpty && more > 0) '\u2022 and $more more',
+      'Fix ${count == 1 ? 'it' : 'them'} in the folder, then submit again. The collection is unchanged.',
+    ].join('\n');
+  }
+
+  static LibraryBookInvalidGames fromError(Map<dynamic, dynamic> details) {
+    final listed = <({String label, String reason})>[];
+    final raw = details['games'];
+    if (raw is List) {
+      for (final item in raw.whereType<Map>()) {
+        final label = (item['label'] as Object?)?.toString().trim() ?? '';
+        if (label.isEmpty) continue;
+        final reason = (item['reason'] as Object?)?.toString().trim() ?? '';
+        listed.add((label: label, reason: reason));
+      }
+    }
+    final counted = (details['invalidGameCount'] as num?)?.toInt() ?? 0;
+    return LibraryBookInvalidGames(
+      count: counted > listed.length ? counted : listed.length,
+      games: List.unmodifiable(listed),
+    );
+  }
 }
 
 /// The proxy in front of gamebase does not carry book publishing yet: an edge
@@ -542,17 +693,27 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
   @override
   Future<LibraryBookPublication> uploadAuthorPhoto(
     LibraryFolder folder,
-    Uint8List image,
-  ) => _request(
+    Uint8List image, {
+    int index = 0,
+  }) => _request(
     folder,
     'POST',
     resource: 'book/author-photo',
     body: {'image': base64Encode(image)},
+    // The first author needs no index, so an older server still takes it.
+    query: index > 0 ? {'index': index} : null,
   );
 
   @override
-  Future<LibraryBookPublication> removeAuthorPhoto(LibraryFolder folder) =>
-      _request(folder, 'DELETE', resource: 'book/author-photo');
+  Future<LibraryBookPublication> removeAuthorPhoto(
+    LibraryFolder folder, {
+    int index = 0,
+  }) => _request(
+    folder,
+    'DELETE',
+    resource: 'book/author-photo',
+    query: index > 0 ? {'index': index} : null,
+  );
 
   @override
   Future<List<AuthorSuggestion>> suggestAuthors(String name) async {
@@ -716,6 +877,19 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
           'Crediting someone else is not available here yet. Choose Me for now; your details are still here.',
         );
       }
+      // An older server refuses the unknown author list the same way.
+      if (resource == 'book' &&
+          method == 'PUT' &&
+          body?['authors'] != null &&
+          error.response?.statusCode == 400 &&
+          (details is! Map || details['code'] == null)) {
+        throw const LibraryBookPublicationException(
+          'Crediting several authors is not available here yet. Keep one author for now; your details are still here.',
+        );
+      }
+      if (details is Map && details['code'] == 'invalid_collection_games') {
+        throw LibraryBookInvalidGames.fromError(details);
+      }
       if (details is Map && details['code'] == 'publication_deleting') {
         throw const LibraryBookPublicationException(
           'This folder has a pending deletion. Retry deleting it to finish.',
@@ -731,6 +905,16 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
                   said.length <= 160
               ? said.trim()
               : null;
+      // A 422 is the server refusing the content, in its own words: say them
+      // rather than guess. (A refused game is not an empty folder.)
+      final refused =
+          error.response?.statusCode == 422 &&
+                  code == null &&
+                  said is String &&
+                  said.trim().isNotEmpty &&
+                  said.length <= 240
+              ? said.trim()
+              : null;
       final named = switch (code) {
         'taken_down' =>
           'ChessEver took this collection down. Ask ChessEver to restore it.',
@@ -739,7 +923,7 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
         // The server's code for missing details on a submission.
         'forbidden_field' =>
           'Add an author credit and a description before submitting.',
-        _ => refusal,
+        _ => refusal ?? refused,
       };
       if (named != null) throw LibraryBookPublicationException(named);
       final snapshotFailure = libraryBookSnapshotFailureMessage(

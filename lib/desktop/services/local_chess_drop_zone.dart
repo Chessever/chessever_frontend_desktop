@@ -17,6 +17,11 @@ import 'package:chessever/theme/app_theme.dart';
 /// This replaces the mobile [`receive_sharing_intent`] integration which
 /// is Android/iOS only — desktop users get content into the app via OS
 /// drag-and-drop, file associations, and explicit open-file commands.
+/// Above zero while a surface that takes its own file drops is open over the
+/// app (a picture slot in a dialog). The chess-file zones underneath then stay
+/// quiet: no overlay behind the dialog, no import of what was dropped on it.
+final ValueNotifier<int> chessFileDropHolds = ValueNotifier<int>(0);
+
 class LocalChessDropZone extends StatefulWidget {
   const LocalChessDropZone({
     super.key,
@@ -39,8 +44,15 @@ class _LocalChessDropZoneState extends State<LocalChessDropZone> {
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: chessFileDropHolds,
+      builder: (context, holds, _) => _zone(held: holds > 0),
+    );
+  }
+
+  Widget _zone({required bool held}) {
     return DropTarget(
-      enable: widget.enabled,
+      enable: widget.enabled && !held,
       onDragEntered: (_) => setState(() => _hovering = true),
       onDragExited: (_) => setState(() => _hovering = false),
       onDragDone: (details) async {
@@ -60,7 +72,7 @@ class _LocalChessDropZoneState extends State<LocalChessDropZone> {
       child: Stack(
         children: [
           widget.child,
-          if (_hovering)
+          if (_hovering && !held)
             const Positioned.fill(child: IgnorePointer(child: _DropOverlay())),
         ],
       ),

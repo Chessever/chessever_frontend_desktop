@@ -898,6 +898,221 @@ void main() {
       );
     },
   );
+
+  // --- Refused games: say which, never "add a game" -------------------------
+
+  GamebaseLibraryBookPublisher rawPublisher(
+    int status,
+    Map<String, dynamic> body,
+  ) => GamebaseLibraryBookPublisher(
+    dio: Dio()..httpClientAdapter = _RawAdapter(status, body),
+    supabaseUrl: _testAuthUrl,
+    baseUrl: 'https://example.test',
+    accessToken: () => 'session',
+  );
+
+  Future<Object> publishError(
+    int status,
+    Map<String, dynamic> error, {
+    LibraryBookMetadata metadata = const LibraryBookMetadata(title: 'Ulvi'),
+  }) async {
+    try {
+      await rawPublisher(status, {
+        'status': 'error',
+        'error': error,
+      }).save(_folder(), metadata, publish: true);
+      return 'no error';
+    } catch (error) {
+      return error;
+    }
+  }
+
+  test(
+    'a refused game is named with its reason, not called an empty folder',
+    () async {
+      final error = await publishError(422, {
+        'code': 'invalid_collection_games',
+        'message': 'One or more games could not be prepared for publishing.',
+        'invalidGameCount': 1,
+        'games': [
+          {
+            'label': 'Steinitz - Von Bardeleben, Hastings 1895',
+            'reason': 'Illegal move 25... Rxh7+',
+          },
+        ],
+      });
+      expect(error, isA<LibraryBookInvalidGames>());
+      final refused = error as LibraryBookInvalidGames;
+      expect(refused.count, 1);
+      expect(
+        refused.games.single.label,
+        'Steinitz - Von Bardeleben, Hastings 1895',
+      );
+      expect(
+        refused.message,
+        '1 game in this folder could not be prepared for publishing.\n'
+        '\u2022 Steinitz - Von Bardeleben, Hastings 1895: Illegal move 25... Rxh7+\n'
+        'Fix it in the folder, then submit again. The collection is unchanged.',
+      );
+      expect(refused.message, isNot(contains('at least one game')));
+    },
+  );
+
+  test('more refused games than the server named are counted', () async {
+    final error =
+        await publishError(422, {
+              'code': 'invalid_collection_games',
+              'invalidGameCount': 7,
+              'games': [
+                {'label': 'Game 3', 'reason': 'Illegal move 12. Nf6'},
+                {'label': 'Game 9', 'reason': ''},
+              ],
+            })
+            as LibraryBookInvalidGames;
+    expect(error.count, 7);
+    expect(
+      error.message,
+      '7 games in this folder could not be prepared for publishing.\n'
+      '\u2022 Game 3: Illegal move 12. Nf6\n'
+      '\u2022 Game 9\n'
+      '\u2022 and 5 more\n'
+      'Fix them in the folder, then submit again. The collection is unchanged.',
+    );
+  });
+
+  test('a refusal that names no games never invents a count', () async {
+    final error =
+        await publishError(422, {
+              'code': 'invalid_collection_games',
+              'message': 'One or more games could not be prepared.',
+            })
+            as LibraryBookInvalidGames;
+    expect(error.count, 0);
+    expect(
+      error.message,
+      'Some games in this folder could not be prepared for publishing.\n'
+      'Fix them in the folder, then submit again. The collection is unchanged.',
+    );
+  });
+
+  test('an uncoded 422 says what the server said', () async {
+    // What the server answers before it names the games.
+    const said =
+        'The folder contains invalid or empty games. Fix them before submitting; the previous book is unchanged.';
+    final error = await publishError(422, {'message': said});
+    expect((error as LibraryBookPublicationException).message, said);
+    // No words from the server: still never "add at least one game".
+    final silent = await publishError(422, {});
+    expect(
+      (silent as LibraryBookPublicationException).message,
+      'Could not prepare this collection for publishing. Check the details or retry. Your existing collection is unchanged.',
+    );
+  });
+
+  // --- Several authors -----------------------------------------------------
+
+  test('one author never sends the author list', () {
+    const metadata = LibraryBookMetadata(title: 'Book', author: 'Vasif');
+    expect(metadata.toJson().containsKey('authors'), isFalse);
+    expect(metadata.authors, [const BookAuthor(name: 'Vasif')]);
+  });
+
+  test('several authors send every name in order, without photos', () {
+    const metadata = LibraryBookMetadata(
+      title: 'Book',
+      author: ' Aleksandar Colovic ',
+      authorPhotoUrl: 'https://media.example.invalid/a.webp',
+      coAuthors: [
+        BookAuthor(name: 'Vasif Durarbayli', photoUrl: 'https://x.invalid/b'),
+        BookAuthor(name: '  '),
+      ],
+      sendAuthorList: true,
+    );
+    expect(metadata.toJson()['authors'], [
+      {'name': 'Aleksandar Colovic'},
+      {'name': 'Vasif Durarbayli'},
+    ]);
+    expect(metadata.toJson()['author'], 'Aleksandar Colovic');
+  });
+
+  test('a book with an author list reads its first author from the list', () {
+    final metadata = LibraryBookMetadata.fromJson({
+      'title': 'Book',
+      // The legacy field is every name joined, for old clients.
+      'author': 'Aleksandar Colovic and Vasif Durarbayli',
+      'authorPhotoUrl': 'https://media.example.invalid/first.webp',
+      'authors': [
+        {
+          'name': 'Aleksandar Colovic',
+          'photoUrl': 'https://media.example.invalid/first.webp',
+        },
+        {'name': 'Vasif Durarbayli', 'photoUrl': null},
+      ],
+    });
+    expect(metadata.author, 'Aleksandar Colovic');
+    expect(metadata.authorPhotoUrl, 'https://media.example.invalid/first.webp');
+    expect(metadata.coAuthors, [const BookAuthor(name: 'Vasif Durarbayli')]);
+    expect(metadata.sendAuthorList, isTrue);
+    // A server that predates the list: the single author field stands.
+    final legacy = LibraryBookMetadata.fromJson({
+      'title': 'Book',
+      'author': 'GM Colovic',
+    });
+    expect(legacy.author, 'GM Colovic');
+    expect(legacy.coAuthors, isEmpty);
+    expect(legacy.sendAuthorList, isFalse);
+  });
+
+  test('authors read as one credit line', () {
+    expect(bookAuthorCredit(const []), '');
+    expect(bookAuthorCredit(const ['A', ' ']), 'A');
+    expect(bookAuthorCredit(const ['A', 'B']), 'A and B');
+    expect(bookAuthorCredit(const ['A', 'B', 'C']), 'A, B and C');
+  });
+
+  test(
+    'a co-author photo names its place; the first author sends none',
+    () async {
+      final adapter = _Adapter();
+      final dio = Dio()..httpClientAdapter = adapter;
+      final publisher = GamebaseLibraryBookPublisher(
+        dio: dio,
+        supabaseUrl: _testAuthUrl,
+        baseUrl: 'https://example.test',
+        accessToken: () => 'session',
+      );
+      await publisher.uploadAuthorPhoto(_folder(), Uint8List.fromList([1]));
+      expect(adapter.requests.last.uri.hasQuery, isFalse);
+      await publisher.uploadAuthorPhoto(
+        _folder(),
+        Uint8List.fromList([1]),
+        index: 2,
+      );
+      expect(adapter.requests.last.uri.queryParameters, {'index': '2'});
+      expect(adapter.requests.last.method, 'POST');
+      await publisher.removeAuthorPhoto(_folder(), index: 1);
+      expect(adapter.requests.last.uri.queryParameters, {'index': '1'});
+      expect(adapter.requests.last.method, 'DELETE');
+      dio.close();
+    },
+  );
+
+  test('an older server refusing the author list says so', () async {
+    final error = await publishError(
+      400,
+      {'message': 'Unrecognized key(s) in object'},
+      metadata: const LibraryBookMetadata(
+        title: 'Book',
+        author: 'A',
+        coAuthors: [BookAuthor(name: 'B')],
+        sendAuthorList: true,
+      ),
+    );
+    expect(
+      (error as LibraryBookPublicationException).message,
+      'Crediting several authors is not available here yet. Keep one author for now; your details are still here.',
+    );
+  });
 }
 
 /// Returns a configurable authors payload for suggestion tests.
