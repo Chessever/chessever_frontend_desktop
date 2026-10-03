@@ -63,6 +63,7 @@ import 'package:chessever/desktop/state/my_likes_provider.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
+import 'package:chessever/desktop/utils/library_folder_tree.dart';
 import 'package:chessever/repository/freemium/freemium_quota.dart';
 import 'package:chessever/utils/freemium_quota_guard.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -642,7 +643,7 @@ final _twicPreviewPgnProvider = FutureProvider.autoDispose
 // Cloud Library rail (complete synced cloud collection)
 // =====================================================================
 
-class _FolderRail extends StatelessWidget {
+class _FolderRail extends ConsumerWidget {
   const _FolderRail({
     required this.ownedFolders,
     required this.subscribedFolders,
@@ -669,22 +670,55 @@ class _FolderRail extends StatelessWidget {
   final VoidCallback onCollapse;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(myDatabasesFocusProvider);
     return Container(
       color: kBlack2Color,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _RailHeader(onCollapse: onCollapse),
-          Expanded(child: _body()),
+          Expanded(child: _body(context, ref)),
         ],
       ),
     );
   }
 
-  Widget _body() {
+  Widget _body(BuildContext context, WidgetRef ref) {
     if (isLoading) return const _RailLoading();
     final folders = [kTwicFolder, ...ownedFolders, ...subscribedFolders];
+    final expansion = ref.read(myDatabasesFocusProvider).folderExpansion;
+    Iterable<Widget> rowsFor(List<LibraryFolder> group) {
+      final byParent = <String?, List<LibraryFolder>>{};
+      for (final folder in group) {
+        byParent.putIfAbsent(folder.parentId, () => <LibraryFolder>[]).add(folder);
+      }
+      final rows = projectLibraryFolderTree<LibraryFolder>(
+        roots: libraryFolderTreeRoots(items: group, keyOf: (folder) => folder.id, parentKeyOf: (folder) => folder.parentId),
+        keyOf: (folder) => folder.id,
+        childrenOf: (folder) => byParent[folder.id] ?? const <LibraryFolder>[],
+        isExpanded: (folder) => expansion['rail:cloud:${folder.id}'] ?? true,
+      );
+      return rows.map((row) {
+        final folder = row.item;
+        final kind = _cloudFolderIconKind(folder, folders);
+        final isFolder = kind == _DatabaseBoardIconKind.folder;
+        final key = 'rail:cloud:${folder.id}';
+        return _FolderRow(
+          key: ValueKey('library-rail:${folder.id}'),
+          folder: folder,
+          iconKind: kind,
+          depth: row.depth,
+          expanded: isFolder ? row.expanded : null,
+          onToggleExpanded: isFolder ? () => unawaited(_changeLibraryFolderExpansion(context, ref, key, defaultExpanded: true)) : null,
+          onSetExpanded: isFolder ? (value) => unawaited(_changeLibraryFolderExpansion(context, ref, key, expanded: value)) : null,
+          selected: folder.id == selectedId,
+          onTap: () => onSelect(folder.id),
+          onOpen: () => onOpen(folder),
+          onAction: (action) => onAction(folder, action),
+        );
+      });
+    }
     return ListView(
       physics: const DesktopScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -710,15 +744,7 @@ class _FolderRail extends StatelessWidget {
         if (ownedFolders.isNotEmpty) ...[
           const SizedBox(height: 14),
           _RailGroupHeader(label: 'Cloud folders', count: ownedFolders.length),
-          for (final folder in ownedFolders)
-            _FolderRow(
-              folder: folder,
-              iconKind: _cloudFolderIconKind(folder, folders),
-              selected: folder.id == selectedId,
-              onTap: () => onSelect(folder.id),
-              onOpen: () => onOpen(folder),
-              onAction: (action) => onAction(folder, action),
-            ),
+          ...rowsFor(ownedFolders),
         ] else if (subscribedFolders.isEmpty) ...[
           const SizedBox(height: 14),
           const _RailEmptyHint(),
@@ -729,15 +755,7 @@ class _FolderRail extends StatelessWidget {
             label: 'Subscribed',
             count: subscribedFolders.length,
           ),
-          for (final folder in subscribedFolders)
-            _FolderRow(
-              folder: folder,
-              iconKind: _cloudFolderIconKind(folder, folders),
-              selected: folder.id == selectedId,
-              onTap: () => onSelect(folder.id),
-              onOpen: () => onOpen(folder),
-              onAction: (action) => onAction(folder, action),
-            ),
+          ...rowsFor(subscribedFolders),
         ],
       ],
     );
@@ -1117,6 +1135,11 @@ String libraryFolderSyncErrorMessage(Object error) {
 
 class _FolderRow extends ConsumerStatefulWidget {
   const _FolderRow({
+    super.key,
+    this.depth = 0,
+    this.expanded,
+    this.onToggleExpanded,
+    this.onSetExpanded,
     required this.folder,
     required this.iconKind,
     required this.selected,
@@ -1127,6 +1150,10 @@ class _FolderRow extends ConsumerStatefulWidget {
 
   final LibraryFolder folder;
   final _DatabaseBoardIconKind iconKind;
+  final int depth;
+  final bool? expanded;
+  final VoidCallback? onToggleExpanded;
+  final ValueChanged<bool>? onSetExpanded;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onOpen;
@@ -1140,6 +1167,13 @@ class _FolderRowState extends ConsumerState<_FolderRow>
     with DeferredPointerStateMixin<_FolderRow> {
   bool _hovered = false;
   bool _pressed = false;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'library-folder-rail-row');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1157,7 +1191,7 @@ class _FolderRowState extends ConsumerState<_FolderRow>
             ? chrome.accent.withValues(alpha: 0.12)
             : (_hovered ? kBlack3Color : Colors.transparent);
     final nudgeX = _pressed ? -1.5 : (_hovered ? 3.0 : 0.0);
-    final isChild = widget.folder.parentId != null;
+    final depth = widget.depth;
     return FolderDropTarget(
       enabled: isWritableLibraryFolder(widget.folder),
       folderName: widget.folder.name,
@@ -1190,6 +1224,7 @@ class _FolderRowState extends ConsumerState<_FolderRow>
                       _pressed = false;
                     }),
                 child: Focus(
+                  focusNode: _focusNode,
                   canRequestFocus: true,
                   onKeyEvent: (_, event) {
                     if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -1198,12 +1233,28 @@ class _FolderRowState extends ConsumerState<_FolderRow>
                       widget.onOpen();
                       return KeyEventResult.handled;
                     }
+                    if (widget.onToggleExpanded != null && event.logicalKey == LogicalKeyboardKey.space) {
+                      widget.onToggleExpanded!();
+                      return KeyEventResult.handled;
+                    }
+                    if (widget.onSetExpanded != null &&
+                        (event.logicalKey == LogicalKeyboardKey.arrowRight || event.logicalKey == LogicalKeyboardKey.arrowLeft)) {
+                      widget.onSetExpanded!(event.logicalKey == LogicalKeyboardKey.arrowRight);
+                      return KeyEventResult.handled;
+                    }
                     return KeyEventResult.ignored;
                   },
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTap: widget.onTap,
-                    onDoubleTap: widget.onOpen,
+                    onTap: () {
+                      _focusNode.requestFocus();
+                      widget.onTap();
+                      widget.onToggleExpanded?.call();
+                    },
+                    onDoubleTap: () {
+                      _focusNode.requestFocus();
+                      widget.onOpen();
+                    },
                     onTapDown:
                         (_) => setStateAfterPointerEvent(() => _pressed = true),
                     onTapUp:
@@ -1213,7 +1264,7 @@ class _FolderRowState extends ConsumerState<_FolderRow>
                         () => setStateAfterPointerEvent(() => _pressed = false),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 120),
-                      padding: EdgeInsets.fromLTRB(isChild ? 20 : 10, 7, 8, 7),
+                      padding: EdgeInsets.fromLTRB(10 + depth * 14, 7, 8, 7),
                       decoration: BoxDecoration(
                         color: bg,
                         borderRadius: BorderRadius.circular(6),
@@ -1260,6 +1311,8 @@ class _FolderRowState extends ConsumerState<_FolderRow>
                               ),
                             ),
                             const SizedBox(width: 9),
+                            if (widget.expanded != null)
+                              _LibraryFolderDisclosure(expanded: widget.expanded!),
                             Expanded(
                               child: Text(
                                 widget.folder.name,
@@ -2233,18 +2286,50 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     }
 
     items.sort(compareItems);
-    final visibleItems = items
-        .where((item) {
-          final kind = item.iconKind(folders);
-          return libraryDatabaseCatalogMatches(
-            title: item.title,
-            details: '${item.catalogDetails(kind)} ${item.sourceLabel}',
-            source: item.catalogSource,
-            filter: sourceFilter,
-            query: query,
-          );
-        })
-        .toList(growable: false);
+    final rootKeys = items.map((item) => item.stableKey).toSet();
+    List<_DatabaseBoardItem> childrenOfItem(_DatabaseBoardItem item) {
+      final folder = item.folder;
+      final group = item.localGroup;
+      final children = <_DatabaseBoardItem>[
+        if (folder != null && item.iconKind(folders) == _DatabaseBoardIconKind.folder)
+          for (final child in libraryVisibleCloudFolders(folders: folders, parentId: folder.id, hiddenIds: hiddenCloudFolderIds))
+            _DatabaseBoardItem.cloud(folder: child, count: counts[child.id], userPinned: pinnedDatabaseKeys.contains(libraryCloudDatabasePinKey(child.id))),
+        if (group != null)
+          for (final entry in group.entries)
+            _DatabaseBoardItem.local(entry: entry, count: localGameCount(entry), userPinned: pinnedDatabaseKeys.contains(libraryLocalDatabasePinKey(entry.path))),
+      ];
+      if (group != null && localLibraryGroupBelongsToPlayerWorkspace(groupId: group.id, entries: group.entries)) {
+        children.sort((a, b) => comparePlayerWorkspaceLibraryEntries(a.entry!, b.entry!));
+      } else {
+        children.sort(compareItems);
+      }
+      return children;
+    }
+    bool matchesItem(_DatabaseBoardItem item) {
+      final kind = item.iconKind(folders);
+      return libraryDatabaseCatalogMatches(
+        title: item.title,
+        details: '${item.catalogDetails(kind)} ${item.sourceLabel}',
+        source: item.catalogSource,
+        filter: sourceFilter,
+        query: query,
+      );
+    }
+    final visibleTreeRows = projectLibraryFolderTree<_DatabaseBoardItem>(
+      roots: items,
+      keyOf: (item) => item.stableKey,
+      childrenOf: childrenOfItem,
+      isExpanded: (item) => focusState.folderExpansion['home:${item.stableKey}'] ?? false,
+      matches: query.trim().isNotEmpty || sourceFilter != LibraryDatabaseCatalogSourceFilter.all ? matchesItem : null,
+    );
+    final visibleItems = visibleTreeRows.map((row) => row.item).toList(growable: false);
+    final foldersSectionExpanded = focusState.folderExpansion['section:home:folders'] ?? true;
+    final catalogRows = projectLibraryCatalogSections<_DatabaseBoardItem>(
+      rows: visibleTreeRows,
+      sectionOfRoot: (root) => root.sectionRank(folders),
+      foldersExpanded: foldersSectionExpanded,
+      showSections: currentFolderId == null && currentLocalGroup == null,
+    );
 
     final reorderingEnabled =
         currentFolderId == null &&
@@ -2253,7 +2338,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         sourceFilter == LibraryDatabaseCatalogSourceFilter.all;
 
     bool canReorderItem(_DatabaseBoardItem item) {
-      if (!reorderingEnabled) return false;
+      if (!reorderingEnabled || !rootKeys.contains(item.stableKey)) return false;
       final section = item.sectionRank(folders);
       return section == 1 || (section == 0 && item.userPinned);
     }
@@ -3087,13 +3172,17 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       );
     }
 
-    Widget buildBoardTile(_DatabaseBoardItem item) {
+    Widget buildBoardTile(_DatabaseBoardItem item, {bool? expanded}) {
       final folder = item.folder;
       final entry = item.entry;
       final localGroup = item.localGroup;
       final iconKind = item.iconKind(folders);
       final isFolder = iconKind == _DatabaseBoardIconKind.folder;
       final tile = _DatabaseBoardTile(
+        key: ValueKey('library-tile:${item.stableKey}'),
+        expanded: isFolder ? expanded : null,
+        onToggleExpanded: isFolder ? () => unawaited(_changeLibraryFolderExpansion(context, ref, 'home:${item.stableKey}')) : null,
+        onSetExpanded: isFolder ? (value) => unawaited(_changeLibraryFolderExpansion(context, ref, 'home:${item.stableKey}', expanded: value)) : null,
         title: item.title,
         subtitle: item.subtitleForKind(iconKind),
         iconKind: iconKind,
@@ -3155,8 +3244,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
 
     Widget buildBoardRow(
       _DatabaseBoardItem item,
-      LibraryDatabaseCatalogColumns columns,
-    ) {
+      LibraryDatabaseCatalogColumns columns, {
+      int depth = 0,
+      bool? expanded,
+    }) {
       final folder = item.folder;
       final entry = item.entry;
       final localGroup = item.localGroup;
@@ -3164,6 +3255,11 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       final isFolder = iconKind == _DatabaseBoardIconKind.folder;
       final lastOpened = focusState.lastOpenedAtByItemKey[item.stableKey];
       final row = _DatabaseBoardRow(
+        key: ValueKey('library-home:${item.stableKey}'),
+        depth: depth,
+        expanded: isFolder ? expanded : null,
+        onToggleExpanded: isFolder ? () => unawaited(_changeLibraryFolderExpansion(context, ref, 'home:${item.stableKey}')) : null,
+        onSetExpanded: isFolder ? (value) => unawaited(_changeLibraryFolderExpansion(context, ref, 'home:${item.stableKey}', expanded: value)) : null,
         title: item.title,
         details: item.catalogDetails(iconKind),
         source: item.sourceLabel,
@@ -3288,8 +3384,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                                     spacing: 10,
                                     runSpacing: 10,
                                     children: [
-                                      for (final item in visibleItems)
-                                        buildBoardTile(item),
+                                      for (final row in visibleTreeRows)
+                                        buildBoardTile(row.item, expanded: row.expanded),
                                     ],
                                   )
                                 else
@@ -3348,44 +3444,31 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                                   ),
                                   Expanded(
                                     child:
-                                        visibleItems.isEmpty
+                                        catalogRows.isEmpty
                                             ? Center(child: empty)
                                             : ListView.builder(
-                                              physics:
-                                                  const DesktopScrollPhysics(),
-                                              itemCount: visibleItems.length,
+                                              physics: const DesktopScrollPhysics(),
+                                              itemCount: catalogRows.length,
                                               itemBuilder: (context, index) {
-                                                final item =
-                                                    visibleItems[index];
-                                                final previous =
-                                                    index == 0
-                                                        ? null
-                                                        : visibleItems[index -
-                                                            1];
-                                                final section = item
-                                                    .sectionLabel(folders);
-                                                final showSection =
-                                                    currentFolderId == null &&
-                                                    currentLocalGroup == null &&
-                                                    (previous == null ||
-                                                        previous.sectionLabel(
-                                                              folders,
-                                                            ) !=
-                                                            section);
-                                                return Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment
-                                                          .stretch,
-                                                  children: [
-                                                    if (showSection)
-                                                      _DatabaseBoardSectionLabel(
-                                                        label: section,
-                                                      ),
-                                                    buildBoardRow(
-                                                      item,
-                                                      columns,
+                                                final entry = catalogRows[index];
+                                                final section = entry.section;
+                                                if (section != null) {
+                                                  return KeyedSubtree(
+                                                    key: ValueKey('library-home-section:$section'),
+                                                    child: _DatabaseBoardSectionLabel(
+                                                      label: section == 0 ? 'Pinned' : section == 1 ? 'Folders' : 'Databases',
+                                                      expanded: section == 1 ? foldersSectionExpanded : null,
+                                                      onToggle: section == 1 ? () => unawaited(_changeLibraryFolderExpansion(
+                                                        context, ref, 'section:home:folders', defaultExpanded: true,
+                                                      )) : null,
                                                     ),
-                                                  ],
+                                                  );
+                                                }
+                                                final treeRow = entry.treeRow!;
+                                                final item = treeRow.item;
+                                                return KeyedSubtree(
+                                                  key: ValueKey('library-tree:${item.stableKey}'),
+                                                  child: buildBoardRow(item, columns, depth: treeRow.depth, expanded: treeRow.expanded),
                                                 );
                                               },
                                             ),
@@ -4317,6 +4400,10 @@ const double _kDatabaseBoardTileHeight = 100;
 
 class _DatabaseBoardTile extends StatefulWidget {
   const _DatabaseBoardTile({
+    super.key,
+    this.expanded,
+    this.onToggleExpanded,
+    this.onSetExpanded,
     required this.title,
     required this.iconKind,
     required this.pinned,
@@ -4330,6 +4417,9 @@ class _DatabaseBoardTile extends StatefulWidget {
   final String title;
   final String? subtitle;
   final _DatabaseBoardIconKind iconKind;
+  final bool? expanded;
+  final VoidCallback? onToggleExpanded;
+  final ValueChanged<bool>? onSetExpanded;
   final bool pinned;
   final bool selected;
   final VoidCallback onSelect;
@@ -4384,6 +4474,15 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
             _openFromTile();
             return KeyEventResult.handled;
           }
+          if (widget.onToggleExpanded != null && event.logicalKey == LogicalKeyboardKey.space) {
+            widget.onToggleExpanded!();
+            return KeyEventResult.handled;
+          }
+          if (widget.onSetExpanded != null &&
+              (event.logicalKey == LogicalKeyboardKey.arrowRight || event.logicalKey == LogicalKeyboardKey.arrowLeft)) {
+            widget.onSetExpanded!(event.logicalKey == LogicalKeyboardKey.arrowRight);
+            return KeyEventResult.handled;
+          }
           return KeyEventResult.ignored;
         },
         child: DesktopTooltip(
@@ -4394,7 +4493,10 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
               onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: _selectFromTile,
+                onTap: () {
+                  _selectFromTile();
+                  widget.onToggleExpanded?.call();
+                },
                 onDoubleTap: _openFromTile,
                 onSecondaryTapDown:
                     widget.onContextMenu == null
@@ -4454,6 +4556,8 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
                             children: [
                               Row(
                                 children: [
+                                  if (widget.expanded != null)
+                                    _LibraryFolderDisclosure(expanded: widget.expanded!),
                                   Expanded(
                                     child: Text(
                                       widget.title,
@@ -4618,13 +4722,15 @@ class _ResizableDatabaseHeaderCellState
 }
 
 class _DatabaseBoardSectionLabel extends StatelessWidget {
-  const _DatabaseBoardSectionLabel({required this.label});
+  const _DatabaseBoardSectionLabel({required this.label, this.expanded, this.onToggle});
 
   final String label;
+  final bool? expanded;
+  final VoidCallback? onToggle;
 
   @override
   Widget build(BuildContext context) =>
-      LibraryCatalogSectionLabel(label: label);
+      LibraryCatalogSectionLabel(label: label, expanded: expanded, onToggle: onToggle);
 }
 
 @visibleForTesting
@@ -4633,6 +4739,9 @@ Widget buildLibraryDatabaseCatalogRowForTest({
   required VoidCallback onSelect,
   required VoidCallback onOpen,
   required ValueChanged<Offset> onContextMenu,
+  bool? expanded,
+  VoidCallback? onToggleExpanded,
+  ValueChanged<bool>? onSetExpanded,
   LibraryDatabaseCatalogColumns columns = const LibraryDatabaseCatalogColumns(
     showSource: true,
     showLastOpened: true,
@@ -4643,7 +4752,10 @@ Widget buildLibraryDatabaseCatalogRowForTest({
     details: '1 game',
     source: 'Local',
     lastOpened: 'Never',
-    iconKind: _DatabaseBoardIconKind.localDatabase,
+    iconKind: expanded == null ? _DatabaseBoardIconKind.localDatabase : _DatabaseBoardIconKind.folder,
+    expanded: expanded,
+    onToggleExpanded: onToggleExpanded,
+    onSetExpanded: onSetExpanded,
     columns: columns,
     pinned: false,
     selected: false,
@@ -4655,6 +4767,11 @@ Widget buildLibraryDatabaseCatalogRowForTest({
 
 class _DatabaseBoardRow extends StatefulWidget {
   const _DatabaseBoardRow({
+    super.key,
+    this.depth = 0,
+    this.expanded,
+    this.onToggleExpanded,
+    this.onSetExpanded,
     required this.title,
     required this.details,
     required this.source,
@@ -4676,6 +4793,10 @@ class _DatabaseBoardRow extends StatefulWidget {
   final String lastOpened;
   final _DatabaseBoardIconKind iconKind;
   final LibraryDatabaseCatalogColumns columns;
+  final int depth;
+  final bool? expanded;
+  final VoidCallback? onToggleExpanded;
+  final ValueChanged<bool>? onSetExpanded;
   final bool pinned;
   final bool selected;
   final VoidCallback onSelect;
@@ -4699,6 +4820,9 @@ class _DatabaseBoardRowState extends State<_DatabaseBoardRow> {
           '${widget.title}, ${widget.details}, ${widget.source}, '
           '${widget.lastOpened}',
       focusDebugLabel: 'library-database-row',
+      expanded: widget.expanded,
+      onToggleExpanded: widget.onToggleExpanded,
+      onSetExpanded: widget.onSetExpanded,
       onSelect: widget.onSelect,
       onOpen: widget.onOpen,
       onContextMenu: widget.onContextMenu,
@@ -4765,12 +4889,19 @@ class _DatabaseBoardRowState extends State<_DatabaseBoardRow> {
                   ),
               ],
             ),
-            name: Text(
-              widget.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: libraryCatalogTitleStyle(selected: widget.selected),
-            ),
+            name: Row(children: [
+              SizedBox(width: math.min(widget.depth, 10) * 14.0),
+              if (widget.expanded != null)
+                _LibraryFolderDisclosure(expanded: widget.expanded!)
+              else
+                const SizedBox(width: 18),
+              Expanded(child: Text(
+                widget.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: libraryCatalogTitleStyle(selected: widget.selected),
+              )),
+            ]),
             details: _DatabaseBoardMutedCell(widget.details),
             source: Row(
               mainAxisSize: MainAxisSize.min,
@@ -4787,12 +4918,8 @@ class _DatabaseBoardRowState extends State<_DatabaseBoardRow> {
               ],
             ),
             lastOpened: _DatabaseBoardMutedCell(widget.lastOpened),
-            trailing: Icon(
-              widget.pinned
-                  ? Icons.push_pin_rounded
-                  : isFolder
-                  ? Icons.chevron_right_rounded
-                  : Icons.more_horiz_rounded,
+            trailing: isFolder && !widget.pinned ? const SizedBox(width: 16) : Icon(
+              widget.pinned ? Icons.push_pin_rounded : Icons.more_horiz_rounded,
               size: 16,
               color: widget.pinned ? chrome.accent : kLightGreyColor,
             ),
@@ -14351,6 +14478,34 @@ class LibraryReadOnlyGamesPreview extends HookConsumerWidget {
 // =====================================================================
 // Sorting helper
 // =====================================================================
+
+/// Persist only the local disclosure preference, through the existing queue.
+Future<void> _changeLibraryFolderExpansion(BuildContext context, WidgetRef ref, String key, {bool? expanded, bool defaultExpanded = false}) async {
+  final notifier = ref.read(myDatabasesFocusProvider.notifier);
+  try {
+    if (expanded == null) {
+      await notifier.toggleFolderExpanded(key, defaultExpanded: defaultExpanded);
+    } else {
+      await notifier.setFolderExpanded(key, expanded);
+    }
+  } catch (_) {
+    if (context.mounted) showDesktopToast(context, 'Could not save folder expansion.', error: true);
+  }
+}
+
+class _LibraryFolderDisclosure extends StatelessWidget {
+  const _LibraryFolderDisclosure({required this.expanded});
+  final bool expanded;
+  @override
+  Widget build(BuildContext context) => Semantics(
+    expanded: expanded,
+    label: expanded ? 'Expanded folder' : 'Collapsed folder',
+    child: IgnorePointer(child: SizedBox(width: 18, child: Icon(
+      expanded ? Icons.expand_more_rounded : Icons.chevron_right_rounded,
+      size: 16, color: kWhiteColor70,
+    ))),
+  );
+}
 
 List<LibraryFolder> _hierarchical(List<LibraryFolder> folders) {
   final byParent = <String?, List<LibraryFolder>>{};

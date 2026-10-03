@@ -438,6 +438,40 @@ void main() {
     },
   );
 
+  test('folder expansion survives reload and unrelated pin changes', () async {
+    final database = _FocusDatabase(values: {_FocusDatabase.v2Key: _v2Record()});
+    final notifier = MyDatabasesFocusNotifier(database);
+    await notifier.toggleFolderExpanded('rail:cloud:a', defaultExpanded: true);
+    await notifier.setFolderExpanded('home:group:player', true);
+    await notifier.pinDatabase('cloud:other');
+    final reloaded = MyDatabasesFocusNotifier(database);
+    await reloaded.loaded;
+    expect(reloaded.state.folderExpansion, {'rail:cloud:a': false, 'home:group:player': true});
+    expect(reloaded.state.pinnedDatabaseKeys, {'cloud:other'});
+    notifier.dispose(); reloaded.dispose();
+  });
+
+  test('rapid folder toggles wait for hydration and serialize their intent', () async {
+    final database = _FocusDatabase(values: {_FocusDatabase.v2Key: _v2Record()}, delayReads: true);
+    final notifier = MyDatabasesFocusNotifier(database);
+    await database.readStarted;
+    final toggles = [for (var i = 0; i < 3; i++) notifier.toggleFolderExpanded('rail:cloud:a', defaultExpanded: true)];
+    database.releaseReads();
+    await Future.wait(toggles);
+    expect(notifier.state.folderExpansion['rail:cloud:a'], isFalse);
+    expect(database.writeCount, 3);
+    notifier.dispose();
+  });
+
+  test('failed expansion persistence restores the last good preference', () async {
+    final database = _FocusDatabase(values: {_FocusDatabase.v2Key: _v2Record()}, failWrites: true);
+    final notifier = MyDatabasesFocusNotifier(database);
+    await notifier.loaded;
+    await expectLater(notifier.toggleFolderExpanded('home:cloud:a'), throwsA(anything));
+    expect(notifier.state.folderExpansion, isEmpty);
+    notifier.dispose();
+  });
+
   test('pinned databases still sort before unpinned databases', () {
     expect(compareLibraryDatabaseCatalogPinState(true, false), -1);
     expect(compareLibraryDatabaseCatalogPinState(false, true), 1);
