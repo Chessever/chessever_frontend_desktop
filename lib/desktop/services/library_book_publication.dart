@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:chessever/desktop/services/library_book_failure_message.dart';
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -741,6 +742,13 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
         _ => refusal,
       };
       if (named != null) throw LibraryBookPublicationException(named);
+      final snapshotFailure = libraryBookSnapshotFailureMessage(
+        details,
+        error.response?.statusCode,
+      );
+      if (snapshotFailure != null) {
+        throw LibraryBookPublicationException(snapshotFailure);
+      }
       final message = switch (error.response?.statusCode) {
         401 => 'Your session expired. Sign in again to continue.',
         403 => 'You do not have permission to publish this folder.',
@@ -752,8 +760,7 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
               : 'This book is already being processed. Wait a moment and retry.',
         413 =>
           'Publish at most 1,000 games and 10 MB at a time. Move a smaller set into a folder.',
-        400 || 422 =>
-          'Check the book details and add at least one game before publishing.',
+        400 || 422 => 'Could not prepare this collection for publishing.',
         _ =>
           'Could not update the book. Your entered details are still here. Retry when connected.',
       };
