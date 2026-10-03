@@ -313,12 +313,18 @@ class LibraryBookMetadata {
     if (authorCredit != null) 'authorCredit': authorCredit!.wire,
     // Names only: each photo is changed through the author-photo endpoints,
     // and the server keeps a photo with its name when the list is edited.
-    if (sendAuthorList)
+    // An empty list is refused; with nobody left to credit, the null `author`
+    // above is what clears the credit.
+    if (sendAuthorList && _creditedNames.isNotEmpty)
       'authors': [
-        for (final credited in authors)
-          if (credited.name.trim().isNotEmpty) {'name': credited.name.trim()},
+        for (final name in _creditedNames) {'name': name},
       ],
   };
+
+  List<String> get _creditedNames => [
+    for (final credited in authors)
+      if (credited.name.trim().isNotEmpty) credited.name.trim(),
+  ];
 
   static String? _nullable(String value) =>
       value.trim().isEmpty ? null : value.trim();
@@ -920,6 +926,8 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
           'ChessEver took this collection down. Ask ChessEver to restore it.',
         'empty_collection' =>
           'Add at least one game to this folder before submitting.',
+        'invalid_authors' =>
+          'Check the authors: up to $libraryBookMaxAuthors, each named once.',
         // The server's code for missing details on a submission.
         'forbidden_field' =>
           'Add an author credit and a description before submitting.',

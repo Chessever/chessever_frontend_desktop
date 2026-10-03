@@ -1035,6 +1035,26 @@ void main() {
     expect(metadata.toJson()['author'], 'Aleksandar Colovic');
   });
 
+  test('nobody left to credit clears the credit without an empty list', () {
+    // The saved book had two authors; every name was removed.
+    const metadata = LibraryBookMetadata(title: 'Book', sendAuthorList: true);
+    final body = metadata.toJson();
+    expect(body.containsKey('authors'), isFalse);
+    expect(body['author'], isNull);
+  });
+
+  test('a refused author list is said in words', () async {
+    final error = await publishError(400, {
+      'code': 'invalid_authors',
+      'message':
+          'List 1 to 6 authors, each named once in at most 80 characters.',
+    });
+    expect(
+      (error as LibraryBookPublicationException).message,
+      'Check the authors: up to 6, each named once.',
+    );
+  });
+
   test('a book with an author list reads its first author from the list', () {
     final metadata = LibraryBookMetadata.fromJson({
       'title': 'Book',
