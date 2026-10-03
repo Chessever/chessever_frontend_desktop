@@ -40,6 +40,7 @@ import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_game_filter_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
+import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/library/library_catalog_row.dart';
@@ -76,12 +77,13 @@ const Set<DesktopGameFilterSection> _collectionFilterSections = {
 };
 
 /// [text] and [filter] as the API takes them, narrowed to [author] when one
-/// is chosen.
+/// is chosen and in the order [sort] asks for.
 @visibleForTesting
 CollectionSearchQuery collectionQueryFor({
   required String text,
   required GameFilter filter,
   CollectionAuthor? author,
+  CollectionCatalogSort sort = const CollectionCatalogSort.standard(),
   DateTime? now,
 }) {
   final thisYear = (now ?? DateTime.now()).year;
@@ -95,7 +97,24 @@ CollectionSearchQuery collectionQueryFor({
     maxYear: years ? filter.maxYear : null,
     authorId: author != null && author.hasCatalogIdentity ? author.id : '',
     author: author != null && !author.hasCatalogIdentity ? author.name : '',
+    sort: sort.sort,
+    order: sort.order,
   );
+}
+
+/// What the reader is told when the catalog could not be read in [asked]'s
+/// order. [refused] is the server answering that it does not know the order,
+/// which is how a sort it has yet to learn looks.
+@visibleForTesting
+String collectionSortFailedMessage(
+  CollectionCatalogSort asked, {
+  required bool refused,
+}) {
+  final by = asked.column?.api ?? 'default';
+  if (!refused) return 'Could not sort by $by. Try again.';
+  return asked.isNatural
+      ? 'Sorting by $by is not available yet.'
+      : 'Sorting by $by in reverse is not available yet.';
 }
 
 int _collectionFilterCount(GameFilter filter) {
@@ -166,19 +185,67 @@ class CollectionsPane extends HookConsumerWidget {
     );
     final shownAuthor = resolveCollectionAuthor(author.value, knownAuthors);
 
-    final query = collectionQueryFor(
-      text: text,
-      filter: filter.value,
-      author: shownAuthor,
-    );
-    final catalog = ref.watch(collectionCatalogProvider(query));
+    // The order the headers ask for, and the order of the rows on screen:
+    // the same once the first page in the new order is here. Until then the
+    // rows stay as they were, so a press never blanks the list.
+    final sort = useState(const CollectionCatalogSort.standard());
+    final shownSort = useState(const CollectionCatalogSort.standard());
+    // Orders the server answered it does not know. A header steps over them.
+    final refusedSorts = useRef(<CollectionCatalogSort>{});
+
+    CollectionSearchQuery queryIn(CollectionCatalogSort order) =>
+        collectionQueryFor(
+          text: text,
+          filter: filter.value,
+          author: shownAuthor,
+          sort: order,
+        );
+    final asked = ref.watch(collectionCatalogProvider(queryIn(sort.value)));
+    final awaitingSort = sort.value != shownSort.value;
+    final query = queryIn(shownSort.value);
+    final catalog =
+        awaitingSort ? ref.watch(collectionCatalogProvider(query)) : asked;
+
+    // The asked order arrives, or the read fails and the catalog goes back
+    // to the order it had.
+    useEffect(() {
+      if (!awaitingSort || asked.isLoading) return null;
+      final order = sort.value;
+      final failure = asked.error;
+      // A search that fails in the old order too is not the order's doing,
+      // and the team's own order is never one to go back from.
+      final sortFailed =
+          failure != null && catalog.error == null && !order.isStandard;
+      Future.microtask(() {
+        if (!context.mounted || sort.value != order) return;
+        if (!sortFailed) {
+          shownSort.value = order;
+          return;
+        }
+        final refused =
+            failure is CollectionsRequestException && failure.statusCode == 400;
+        if (refused) refusedSorts.value.add(order);
+        sort.value = shownSort.value;
+        showDesktopToast(
+          context,
+          collectionSortFailedMessage(order, refused: refused),
+          error: true,
+        );
+      });
+      return null;
+    }, [awaitingSort, asked.isLoading, asked.error, sort.value]);
+
     final favorites = ref.watch(favoriteCollectionSlugsProvider);
+    final pinned = shownSort.value.isStandard;
     final items = useMemoized(
-      () => pinStarredCollections(
-        catalog.items,
-        (collection) => favorites.contains(collection.slug),
-      ),
-      [catalog.items, favorites],
+      () =>
+          pinned
+              ? pinStarredCollections(
+                catalog.items,
+                (collection) => favorites.contains(collection.slug),
+              )
+              : catalog.items,
+      [catalog.items, favorites, pinned],
     );
     final selected = items.firstWhereOrNull(
       (collection) => collection.slug == selectedSlug.value,
@@ -189,16 +256,42 @@ class CollectionsPane extends HookConsumerWidget {
       selectedSlug.value = null;
     }
 
+    void pressSort(CollectionSortColumn column) {
+      final next = sort.value.after(column, refused: refusedSorts.value);
+      if (next != sort.value) {
+        sort.value = next;
+        return;
+      }
+      // Everything this column offers was refused: say so again rather than
+      // let the press do nothing.
+      showDesktopToast(
+        context,
+        collectionSortFailedMessage(
+          CollectionCatalogSort.natural(column),
+          refused: true,
+        ),
+        error: true,
+      );
+    }
+
     Future<void> editFilters() async {
       final next = await showDesktopGameFilterDialog(
         context: context,
         currentFilter: filter.value,
         sections: _catalogFilterSections,
       );
-      if (next != null) filter.value = next;
+      if (next == null) return;
+      // Clearing the filters clears the order with them, as on the phone.
+      if (_collectionFilterCount(next) == 0 &&
+          _collectionFilterCount(filter.value) > 0) {
+        sort.value = shownSort.value = const CollectionCatalogSort.standard();
+      }
+      filter.value = next;
     }
 
     void refresh() {
+      // The server may have learned an order since it refused it.
+      refusedSorts.value.clear();
       ref.read(collectionCatalogProvider(query).notifier).refresh();
       ref.read(collectionAuthorsProvider.notifier).refresh();
     }
@@ -254,7 +347,14 @@ class CollectionsPane extends HookConsumerWidget {
                           child: _CatalogList(
                             state: catalog,
                             items: items,
-                            searching: query.isActive,
+                            // An order never empties the catalog.
+                            searching:
+                                queryIn(
+                                  const CollectionCatalogSort.standard(),
+                                ).isActive,
+                            sort: sort.value,
+                            shownSort: shownSort.value,
+                            onSort: pressSort,
                             selectedSlug: selectedSlug.value,
                             onSelect:
                                 (collection) =>
@@ -594,6 +694,9 @@ class _CatalogList extends HookConsumerWidget {
     required this.state,
     required this.items,
     required this.searching,
+    required this.sort,
+    required this.shownSort,
+    required this.onSort,
     required this.selectedSlug,
     required this.onSelect,
     required this.onOpen,
@@ -604,6 +707,13 @@ class _CatalogList extends HookConsumerWidget {
   final CollectionCatalogState<Collection> state;
   final List<Collection> items;
   final bool searching;
+
+  /// The order the headers show: what was last asked for.
+  final CollectionCatalogSort sort;
+
+  /// The order [items] are in.
+  final CollectionCatalogSort shownSort;
+  final ValueChanged<CollectionSortColumn> onSort;
   final String? selectedSlug;
   final ValueChanged<Collection> onSelect;
   final ValueChanged<Collection> onOpen;
@@ -612,7 +722,8 @@ class _CatalogList extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final scrollController = useScrollController();
+    // No remembered offset: a new order's list starts from its top.
+    final scrollController = useScrollController(keepScrollOffset: false);
 
     // The next page is asked for as the list nears its end, and also when a
     // short first page does not fill the pane at all.
@@ -698,6 +809,8 @@ class _CatalogList extends HookConsumerWidget {
       final hasFooter =
           state.isLoadingMore || state.moreError != null || state.hasMore;
       body = ListView.builder(
+        // A list of its own for each order, so none inherits a scroll.
+        key: ValueKey(shownSort),
         controller: scrollController,
         physics: const DesktopScrollPhysics(),
         padding: EdgeInsets.zero,
@@ -728,7 +841,10 @@ class _CatalogList extends HookConsumerWidget {
       color: kBackgroundColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [const CollectionCatalogHeader(), Expanded(child: body)],
+        children: [
+          CollectionCatalogHeader(sort: sort, onSort: onSort),
+          Expanded(child: body),
+        ],
       ),
     );
   }
@@ -1209,7 +1325,13 @@ class _CollectionWorkspace extends HookConsumerWidget {
                 LibraryCatalogMutedCell('$views'),
                 const SizedBox(width: 12),
               ],
-              CollectionStarButton(collection: detail),
+              // The glyph is inset in the square that takes the pointer;
+              // moved out by that much, it ends on the margin the toolbar
+              // under it ends on.
+              Transform.translate(
+                offset: const Offset(6, 0),
+                child: CollectionStarButton(collection: detail),
+              ),
             ],
           ),
         ),
