@@ -5,6 +5,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:chessever/repository/sqlite/app_database.dart';
+import 'package:chessever/desktop/utils/library_folder_tree.dart';
 
 @immutable
 class MyDatabasesFocusState {
@@ -16,6 +17,7 @@ class MyDatabasesFocusState {
     List<String> orderedFolderKeys = const <String>[],
     Map<String, DateTime> lastOpenedAtByItemKey = const <String, DateTime>{},
     Map<String, double> catalogColumnWidths = const <String, double>{},
+    Map<String, bool> folderExpansion = const <String, bool>{},
     bool listViewPreferred = true,
     bool loaded = false,
   }) {
@@ -38,6 +40,7 @@ class MyDatabasesFocusState {
       catalogColumnWidths: Map<String, double>.unmodifiable(
         _normalizedColumnWidths(catalogColumnWidths),
       ),
+      folderExpansion: readLibraryFolderExpansion(folderExpansion),
       listViewPreferred: listViewPreferred,
       loaded: loaded,
     );
@@ -51,6 +54,7 @@ class MyDatabasesFocusState {
     required this.orderedFolderKeys,
     required this.lastOpenedAtByItemKey,
     required this.catalogColumnWidths,
+    required this.folderExpansion,
     required this.listViewPreferred,
     required this.loaded,
   });
@@ -64,6 +68,7 @@ class MyDatabasesFocusState {
   final List<String> orderedFolderKeys;
   final Map<String, DateTime> lastOpenedAtByItemKey;
   final Map<String, double> catalogColumnWidths;
+  final Map<String, bool> folderExpansion;
   final bool listViewPreferred;
   final bool loaded;
 
@@ -75,6 +80,7 @@ class MyDatabasesFocusState {
     List<String>? orderedFolderKeys,
     Map<String, DateTime>? lastOpenedAtByItemKey,
     Map<String, double>? catalogColumnWidths,
+    Map<String, bool>? folderExpansion,
     bool? listViewPreferred,
     bool? loaded,
   }) {
@@ -90,6 +96,7 @@ class MyDatabasesFocusState {
       lastOpenedAtByItemKey:
           lastOpenedAtByItemKey ?? this.lastOpenedAtByItemKey,
       catalogColumnWidths: catalogColumnWidths ?? this.catalogColumnWidths,
+      folderExpansion: folderExpansion ?? this.folderExpansion,
       listViewPreferred: listViewPreferred ?? this.listViewPreferred,
       loaded: loaded ?? this.loaded,
     );
@@ -243,6 +250,7 @@ class MyDatabasesFocusNotifier extends StateNotifier<MyDatabasesFocusState> {
       orderedFolderKeys: _stringListField(raw['orderedFolderKeys']),
       lastOpenedAtByItemKey: _lastOpenedAtField(raw['lastOpenedAtByItemKey']),
       catalogColumnWidths: _columnWidthsField(raw['catalogColumnWidths']),
+      folderExpansion: readLibraryFolderExpansion(raw['folderExpansion']),
       listViewPreferred:
           raw['listViewPreferred'] is bool
               ? raw['listViewPreferred'] as bool
@@ -424,6 +432,23 @@ class MyDatabasesFocusNotifier extends StateNotifier<MyDatabasesFocusState> {
     });
   }
 
+  Future<void> toggleFolderExpanded(String folderKey, {bool defaultExpanded = false}) {
+    final key = folderKey.trim();
+    if (key.isEmpty) return Future<void>.value();
+    return _queueMutation((current) => current.copyWith(
+      folderExpansion: toggleLibraryFolderExpansion(current.folderExpansion, key, defaultExpanded: defaultExpanded),
+    ));
+  }
+
+  Future<void> setFolderExpanded(String folderKey, bool expanded) {
+    final key = folderKey.trim();
+    if (key.isEmpty) return Future<void>.value();
+    return _queueMutation((current) {
+      if (current.folderExpansion[key] == expanded) return current;
+      return current.copyWith(folderExpansion: {...current.folderExpansion, key: expanded});
+    });
+  }
+
   Future<void> setListViewPreferred(bool preferred) {
     return _queueMutation((current) {
       if (current.listViewPreferred == preferred) return current;
@@ -493,6 +518,8 @@ class MyDatabasesFocusNotifier extends StateNotifier<MyDatabasesFocusState> {
       'orderedFolderKeys': snapshot.orderedFolderKeys.toList(),
       'lastOpenedAtByItemKey': timestamps,
       'catalogColumnWidths': widths,
+      if (snapshot.folderExpansion.isNotEmpty)
+        'folderExpansion': snapshot.folderExpansion,
       'listViewPreferred': snapshot.listViewPreferred,
     });
   }

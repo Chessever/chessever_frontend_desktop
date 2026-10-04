@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
@@ -48,26 +49,48 @@ class LibraryCatalogHeaderStrip extends StatelessWidget {
 
 /// A quiet band naming the run of rows under it.
 class LibraryCatalogSectionLabel extends StatelessWidget {
-  const LibraryCatalogSectionLabel({super.key, required this.label});
+  const LibraryCatalogSectionLabel({super.key, required this.label, this.expanded, this.onToggle});
 
   final String label;
+  final bool? expanded;
+  final VoidCallback? onToggle;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 25,
-      alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+    final text = Text(label, style: TextStyle(
+      color: kWhiteColor.withValues(alpha: 0.52),
+      fontSize: 10.5, fontWeight: FontWeight.w700, letterSpacing: 0.2,
+    ));
+    final toggle = onToggle;
+    if (toggle == null) {
+      return Container(height: 25, alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        color: kBlackColor.withValues(alpha: 0.34), child: text);
+    }
+    return ColoredBox(
       color: kBlackColor.withValues(alpha: 0.34),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: kWhiteColor.withValues(alpha: 0.52),
-          fontSize: 10.5,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.2,
+      child: FTheme(data: FThemes.zinc.dark, child: Semantics(
+        button: true, expanded: expanded, label: '$label section', onTap: toggle,
+        child: FButton.raw(
+          onPress: toggle,
+          style: FButtonStyle.ghost((style) => style.copyWith(
+            decoration: FWidgetStateMap({
+              WidgetState.focused: BoxDecoration(color: kBlack3Color,
+                border: Border(left: BorderSide(color: kPrimaryColor))),
+              WidgetState.hovered | WidgetState.pressed: BoxDecoration(color: kBlack3Color),
+              WidgetState.any: const BoxDecoration(color: Colors.transparent),
+            }),
+          )),
+          child: SizedBox(height: 25, width: double.infinity, child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(children: [
+              Icon(expanded == false ? Icons.chevron_right_rounded : Icons.expand_more_rounded,
+                size: 14, color: kWhiteColor70),
+              const SizedBox(width: 3), text,
+            ]),
+          )),
         ),
-      ),
+      )),
     );
   }
 }
@@ -117,6 +140,9 @@ class LibraryCatalogRowFrame extends StatefulWidget {
     required this.onOpen,
     required this.builder,
     this.onContextMenu,
+    this.expanded,
+    this.onToggleExpanded,
+    this.onSetExpanded,
     this.height = kLibraryCatalogRowHeight,
     this.focusDebugLabel = 'library-catalog-row',
   });
@@ -126,6 +152,9 @@ class LibraryCatalogRowFrame extends StatefulWidget {
   final VoidCallback onSelect;
   final VoidCallback onOpen;
   final ValueChanged<Offset>? onContextMenu;
+  final bool? expanded;
+  final VoidCallback? onToggleExpanded;
+  final ValueChanged<bool>? onSetExpanded;
   final Widget Function(BuildContext context, bool hovered) builder;
   final double height;
   final String focusDebugLabel;
@@ -162,6 +191,7 @@ class _LibraryCatalogRowFrameState extends State<LibraryCatalogRowFrame>
     return Semantics(
       button: true,
       selected: widget.selected,
+      expanded: widget.expanded,
       label: widget.semanticsLabel,
       child: Focus(
         focusNode: _focusNode,
@@ -173,6 +203,15 @@ class _LibraryCatalogRowFrameState extends State<LibraryCatalogRowFrame>
             _open();
             return KeyEventResult.handled;
           }
+          if (widget.onToggleExpanded != null && event.logicalKey == LogicalKeyboardKey.space) {
+            widget.onToggleExpanded!();
+            return KeyEventResult.handled;
+          }
+          if (widget.onSetExpanded != null &&
+              (event.logicalKey == LogicalKeyboardKey.arrowRight || event.logicalKey == LogicalKeyboardKey.arrowLeft)) {
+            widget.onSetExpanded!(event.logicalKey == LogicalKeyboardKey.arrowRight);
+            return KeyEventResult.handled;
+          }
           return KeyEventResult.ignored;
         },
         child: ClickCursor(
@@ -181,7 +220,10 @@ class _LibraryCatalogRowFrameState extends State<LibraryCatalogRowFrame>
             onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: _select,
+              onTap: () {
+                _select();
+                widget.onToggleExpanded?.call();
+              },
               onDoubleTap: _open,
               onSecondaryTapUp:
                   widget.onContextMenu == null
