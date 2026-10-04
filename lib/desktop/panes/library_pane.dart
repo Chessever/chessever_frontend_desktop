@@ -671,23 +671,28 @@ class _FolderRail extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    ref.watch(myDatabasesFocusProvider);
+    final expansion = ref.watch(
+      myDatabasesFocusProvider.select((state) => state.folderExpansion),
+    );
     return Container(
       color: kBlack2Color,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _RailHeader(onCollapse: onCollapse),
-          Expanded(child: _body(context, ref)),
+          Expanded(child: _body(context, ref, expansion)),
         ],
       ),
     );
   }
 
-  Widget _body(BuildContext context, WidgetRef ref) {
+  Widget _body(
+    BuildContext context,
+    WidgetRef ref,
+    Map<String, bool> expansion,
+  ) {
     if (isLoading) return const _RailLoading();
     final folders = [kTwicFolder, ...ownedFolders, ...subscribedFolders];
-    final expansion = ref.read(myDatabasesFocusProvider).folderExpansion;
     Iterable<Widget> rowsFor(List<LibraryFolder> group) {
       final byParent = <String?, List<LibraryFolder>>{};
       for (final folder in group) {
@@ -2315,19 +2320,22 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         query: query,
       );
     }
+    final catalogFiltered = query.trim().isNotEmpty || sourceFilter != LibraryDatabaseCatalogSourceFilter.all;
     final visibleTreeRows = projectLibraryFolderTree<_DatabaseBoardItem>(
       roots: items,
       keyOf: (item) => item.stableKey,
       childrenOf: childrenOfItem,
       isExpanded: (item) => focusState.folderExpansion['home:${item.stableKey}'] ?? false,
-      matches: query.trim().isNotEmpty || sourceFilter != LibraryDatabaseCatalogSourceFilter.all ? matchesItem : null,
+      matches: catalogFiltered ? matchesItem : null,
     );
     final visibleItems = visibleTreeRows.map((row) => row.item).toList(growable: false);
     final foldersSectionExpanded = focusState.folderExpansion['section:home:folders'] ?? true;
     final catalogRows = projectLibraryCatalogSections<_DatabaseBoardItem>(
       rows: visibleTreeRows,
       sectionOfRoot: (root) => root.sectionRank(folders),
-      foldersExpanded: foldersSectionExpanded,
+      // A search or source filter must reach folders even while the section is
+      // collapsed; the saved preference is left alone and returns afterwards.
+      foldersExpanded: foldersSectionExpanded || catalogFiltered,
       showSections: currentFolderId == null && currentLocalGroup == null,
     );
 
@@ -3457,8 +3465,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                                                     key: ValueKey('library-home-section:$section'),
                                                     child: _DatabaseBoardSectionLabel(
                                                       label: section == 0 ? 'Pinned' : section == 1 ? 'Folders' : 'Databases',
-                                                      expanded: section == 1 ? foldersSectionExpanded : null,
-                                                      onToggle: section == 1 ? () => unawaited(_changeLibraryFolderExpansion(
+                                                      expanded: section == 1 && !catalogFiltered ? foldersSectionExpanded : null,
+                                                      onToggle: section == 1 && !catalogFiltered ? () => unawaited(_changeLibraryFolderExpansion(
                                                         context, ref, 'section:home:folders', defaultExpanded: true,
                                                       )) : null,
                                                     ),

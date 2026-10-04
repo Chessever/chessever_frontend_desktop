@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:chessever/desktop/utils/library_folder_tree.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 class Node {
   Node(this.key, [this.parent]);
@@ -14,6 +15,10 @@ void check(bool value, String label) {
 }
 
 void main() {
+  test('folder hierarchy, collapse, search, pin and persistence', _checks);
+}
+
+void _checks() {
   final root = Node('cloud:collections');
   final nested = Node('cloud:nested', root.key);
   final ulvi = Node('cloud:ulvi', nested.key);

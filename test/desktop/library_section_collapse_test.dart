@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:chessever/desktop/utils/library_folder_tree.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 class Item {
   const Item(this.id, this.rank);
@@ -15,6 +16,10 @@ void check(bool value, String label) {
 }
 
 void main() {
+  test('Folders section collapse keeps headings and sibling sections', _checks);
+}
+
+void _checks() {
   const pinned = Item('pin', 0);
   const pinnedChild = Item('pinned-folder-child', 1);
   const folder = Item('folder', 1);

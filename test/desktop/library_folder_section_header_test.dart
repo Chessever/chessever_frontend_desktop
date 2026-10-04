@@ -36,10 +36,15 @@ void main() {
       expect(find.text('Folder contents'), findsNothing);
       expect(find.text('Pinned database'), findsOneWidget);
       expect(find.text('Standalone database'), findsOneWidget);
+      // A click does not move keyboard focus onto the heading; Tab does.
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
       expect(expanded, isTrue);
       expect(find.text('Folder contents'), findsOneWidget);
+      // Let the button's press feedback timer run out before teardown.
+      await tester.pump(const Duration(seconds: 1));
     },
   );
 }
