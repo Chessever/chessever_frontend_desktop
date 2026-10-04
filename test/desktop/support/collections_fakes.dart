@@ -57,6 +57,17 @@ class FakeSubscription extends SubscriptionNotifier {
   void set(SubscriptionState next) => state = next;
 }
 
+/// The favorite row a starred collection is, as the phone writes it.
+FavoriteEvent starredCollection(String slug) => FavoriteEvent(
+  id: 'fav-$slug',
+  userId: 'user-1',
+  eventId: collectionFavoriteId(slug),
+  eventName: slug,
+  metadata: {'kind': 'collection', 'slug': slug},
+  createdAt: DateTime.utc(2026),
+  updatedAt: DateTime.utc(2026),
+);
+
 SubscriptionState get freeSubscription => SubscriptionState();
 SubscriptionState get premiumSubscription => SubscriptionState(
   isSubscribed: true,
@@ -150,6 +161,14 @@ const Collection eventCollection = Collection(
   access: CollectionAccess.free,
 );
 
+final Map<String, Comparable<Object> Function(Collection book)> _sortKeys = {
+  'name': (book) => book.title.toLowerCase(),
+  'author': (book) => (book.author ?? '').toLowerCase(),
+  'games': (book) => book.gameCount,
+  'views': (book) => book.viewCount,
+  'stars': (book) => book.starCount,
+};
+
 /// A reader over fixed data, recording what was asked of it.
 class FakeCollectionsReader implements CollectionsReader {
   FakeCollectionsReader({
@@ -185,6 +204,16 @@ class FakeCollectionsReader implements CollectionsReader {
   final List<(String, bool)> stars = [];
   Object? booksError;
   Object? gamesError;
+
+  /// What reading the catalog in a query's order fails with, if anything.
+  /// The real server answers an order it does not know with a 400
+  /// ([unknownOrder]).
+  Object? Function(CollectionSearchQuery query)? orderError;
+
+  static const unknownOrder = CollectionsRequestException(
+    'Invalid sort',
+    statusCode: 400,
+  );
   int freshReads = 0;
   final Map<String, int> _holds = {};
 
@@ -205,6 +234,8 @@ class FakeCollectionsReader implements CollectionsReader {
     bookQueries.add(query);
     final error = booksError;
     if (error != null) throw error;
+    final refused = orderError?.call(query);
+    if (refused != null) throw refused;
     final matching = [
       for (final book in books)
         if ((query.text.isEmpty ||
@@ -213,6 +244,12 @@ class FakeCollectionsReader implements CollectionsReader {
             (query.author.isEmpty || book.author == query.author))
           book,
     ];
+    // The order is the server's to give: the catalog never sorts a row.
+    final by = _sortKeys[query.sort];
+    if (by != null) {
+      final sign = query.direction == 'desc' ? -1 : 1;
+      matching.sort((a, b) => sign * by(a).compareTo(by(b)));
+    }
     return CollectionsPage(
       items: offset == 0 ? matching : const [],
       total: matching.length,

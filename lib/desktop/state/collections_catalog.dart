@@ -169,9 +169,94 @@ final collectionAuthorsProvider = StateNotifierProvider.autoDispose<
   );
 });
 
+/// A column the catalog can be ordered by, under the name the API knows it
+/// by.
+enum CollectionSortColumn {
+  name('name'),
+  author('author'),
+  games('games'),
+  views('views'),
+  stars('stars');
+
+  const CollectionSortColumn(this.api);
+
+  final String api;
+
+  /// Whether a first press sorts upwards: names do, counts start from the
+  /// largest.
+  bool get ascendingFirst => CollectionSearchQuery.naturalOrder(api) == 'asc';
+}
+
+/// The order the catalog is asked for: the team's own, or one column in one
+/// direction. The server sorts; nothing here reorders a row.
+@immutable
+class CollectionCatalogSort {
+  /// The team's own order.
+  const CollectionCatalogSort.standard() : column = null, ascending = false;
+
+  const CollectionCatalogSort.by(
+    CollectionSortColumn this.column, {
+    required this.ascending,
+  });
+
+  /// [column] in the direction a first press gives it.
+  CollectionCatalogSort.natural(CollectionSortColumn column)
+    : this.by(column, ascending: column.ascendingFirst);
+
+  final CollectionSortColumn? column;
+  final bool ascending;
+
+  bool get isStandard => column == null;
+
+  /// Whether this is its column's first-press direction.
+  bool get isNatural => column != null && ascending == column!.ascendingFirst;
+
+  /// The API's `sort`.
+  String get sort => column?.api ?? 'default';
+
+  /// The API's `order`.
+  String get order => column == null ? '' : (ascending ? 'asc' : 'desc');
+
+  /// What a press on [pressed]'s header asks for: the column's natural
+  /// direction, then the other one, then the team's order again.
+  ///
+  /// An order in [refused] (the server answered it does not know it) is
+  /// stepped over, so a press never asks for it twice. When that leaves the
+  /// column nothing to offer, the order stays as it is.
+  CollectionCatalogSort after(
+    CollectionSortColumn pressed, {
+    Set<CollectionCatalogSort> refused = const {},
+  }) {
+    final natural = CollectionCatalogSort.natural(pressed);
+    final reversed = CollectionCatalogSort.by(
+      pressed,
+      ascending: !pressed.ascendingFirst,
+    );
+    const standard = CollectionCatalogSort.standard();
+    final steps =
+        column != pressed
+            ? [natural, reversed]
+            : (this == natural ? [reversed, standard] : [standard]);
+    return steps.firstWhere(
+      (step) => !refused.contains(step),
+      orElse: () => this,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is CollectionCatalogSort &&
+      column == other.column &&
+      (column == null || ascending == other.ascending);
+
+  @override
+  int get hashCode => Object.hash(column, column == null ? null : ascending);
+}
+
 /// The catalog's order with the collections this account starred first, as
 /// the phone lists them. Stable: starred keep their order, and so do the
-/// rest.
+/// rest. Only the team's order is pinned: a sorted catalog is the server's
+/// order, row for row.
 List<Collection> pinStarredCollections(
   List<Collection> items,
   bool Function(Collection collection) isStarred,

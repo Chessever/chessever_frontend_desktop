@@ -54,6 +54,7 @@ class SvgAsset {
 
   static const refresh = 'assets/svgs/refresh.svg';
   static const left_arrow = 'assets/svgs/left_arrow.svg';
+  static const arrowDown = 'assets/svgs/arrow_down.svg';
 
   static const right_arrow = 'assets/svgs/right_arrows.svg';
   static const chat = 'assets/svgs/chat.svg';

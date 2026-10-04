@@ -11,12 +11,22 @@ import 'package:chessever/theme/app_theme.dart';
 
 /// Choose an image, let the author frame it, and return the prepared 2:3
 /// cover, or null when they cancel at either step. Overridden in tests.
-final collectionCoverPickerProvider = Provider<
-  Future<Uint8List?> Function(BuildContext context)
+final collectionCoverPickerProvider =
+    Provider<Future<Uint8List?> Function(BuildContext context)>(
+      (ref) => (context) async {
+        final source = await ref.read(collectionCoverSourceProvider)();
+        if (source == null || !context.mounted) return null;
+        return ref.read(collectionCoverFramerProvider)(context, source);
+      },
+    );
+
+/// Frame an image that is already in hand (a file dropped on the cover slot)
+/// and return the prepared 2:3 cover, or null when the author cancels.
+/// Overridden in tests.
+final collectionCoverFramerProvider = Provider<
+  Future<Uint8List?> Function(BuildContext context, Uint8List source)
 >(
-  (ref) => (context) async {
-    final source = await ref.read(collectionCoverSourceProvider)();
-    if (source == null || !context.mounted) return null;
+  (ref) => (context, source) async {
     final size = await collectionCoverSourceSize(source);
     if (!collectionCoverFits(size)) {
       throw const FormatException(
@@ -38,12 +48,22 @@ final collectionCoverPickerProvider = Provider<
 /// 512×512 author photo, or null when they cancel at either step. Reuses the
 /// generalized cropper with a 1:1 frame; the cover path is untouched.
 /// Overridden in tests.
-final authorPhotoPickerProvider = Provider<
-  Future<Uint8List?> Function(BuildContext context)
+final authorPhotoPickerProvider =
+    Provider<Future<Uint8List?> Function(BuildContext context)>(
+      (ref) => (context) async {
+        final source = await ref.read(authorPhotoSourceProvider)();
+        if (source == null || !context.mounted) return null;
+        return ref.read(authorPhotoFramerProvider)(context, source);
+      },
+    );
+
+/// Frame an image that is already in hand (a file dropped on an author's
+/// photo slot) and return the prepared square photo, or null on cancel.
+/// Overridden in tests.
+final authorPhotoFramerProvider = Provider<
+  Future<Uint8List?> Function(BuildContext context, Uint8List source)
 >(
-  (ref) => (context) async {
-    final source = await ref.read(authorPhotoSourceProvider)();
-    if (source == null || !context.mounted) return null;
+  (ref) => (context, source) async {
     final size = await collectionCoverSourceSize(source);
     if (!authorPhotoFits(size)) {
       throw const FormatException(
@@ -148,9 +168,7 @@ class _CoverCropCardState extends State<CoverCropCard> {
 
   static Size _frameFor(int aw, int ah) {
     const long = 450.0;
-    return aw >= ah
-        ? Size(long, long * ah / aw)
-        : Size(long * aw / ah, long);
+    return aw >= ah ? Size(long, long * ah / aw) : Size(long * aw / ah, long);
   }
 
   final _transform = TransformationController();

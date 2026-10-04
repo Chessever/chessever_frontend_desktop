@@ -1,16 +1,24 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/collections_reader.dart';
+import 'package:chessever/desktop/state/collections_catalog.dart';
 import 'package:chessever/desktop/widgets/collections/collection_text.dart';
-import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
+import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
+import 'package:chessever/desktop/widgets/desktop_icon.dart';
 import 'package:chessever/desktop/widgets/desktop_locked_content.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/library/library_catalog_row.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/svg_asset.dart';
 
 /// A collection's cover at the size of a catalog row's leading well, or the
 /// well itself with the kind's glyph when it has no cover (or the image
@@ -65,8 +73,11 @@ class CollectionCoverThumb extends StatelessWidget {
   }
 }
 
-/// Stars or unstars a collection: the Library's header icon button, with the
-/// public star count beside it when there is one.
+/// Stars or unstars a collection: the phone's star as a bare glyph, with the
+/// public star count before it when there is one.
+///
+/// A catalog row lays the count out itself, in its own column, and asks for
+/// the star alone ([showCount] false).
 class CollectionStarButton extends ConsumerWidget {
   const CollectionStarButton({
     super.key,
@@ -80,22 +91,213 @@ class CollectionStarButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final starred = ref.watch(collectionStarredProvider(collection.slug));
+    final star = _StarGlyphButton(
+      starred: starred,
+      onPress: () => unawaited(pressCollectionStar(context, collection)),
+    );
+    if (!showCount) return star;
     final count = collectionStarCount(ref, collection);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (showCount && count > 0) ...[
+        if (count > 0) ...[
           LibraryCatalogMutedCell('$count'),
-          const SizedBox(width: 2),
+          const SizedBox(width: CollectionCatalogColumns.starGap),
         ],
-        DesktopHeaderIconButton(
-          icon: Icons.star_outline_rounded,
-          selectedIcon: Icons.star_rounded,
-          selected: starred,
-          tooltip: starred ? 'Unstar collection' : 'Star collection',
-          onPress: () => unawaited(pressCollectionStar(context, collection)),
-        ),
+        star,
       ],
+    );
+  }
+}
+
+/// Whether [event] presses the focused control: Enter or Space.
+bool _isActivation(KeyEvent event) {
+  if (event is! KeyDownEvent) return false;
+  final key = event.logicalKey;
+  return key == LogicalKeyboardKey.enter ||
+      key == LogicalKeyboardKey.numpadEnter ||
+      key == LogicalKeyboardKey.space;
+}
+
+/// One of the phone's line glyphs (the outline star, the chevron) in exactly
+/// [color].
+///
+/// Those assets are stroked at 70% opacity, so a plain tint comes out dimmer
+/// than the colour asked for. The filter replaces the colour and scales the
+/// art's own alpha back to full before [color]'s applies.
+class _LineGlyph extends StatelessWidget {
+  const _LineGlyph(this.asset, {required this.size, required this.color});
+
+  final String asset;
+  final double size;
+  final Color color;
+
+  static const double _strokeOpacity = 0.7;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColorFiltered(
+      colorFilter: ColorFilter.matrix(<double>[
+        0, 0, 0, 0, color.r * 255, //
+        0, 0, 0, 0, color.g * 255, //
+        0, 0, 0, 0, color.b * 255, //
+        0, 0, 0, color.a / _strokeOpacity, 0, //
+      ]),
+      child: DesktopIcon(asset, size: size),
+    );
+  }
+}
+
+/// A tap that takes the pointer as soon as it lands. A catalog row waits to
+/// tell a click from a double click; the star on it answers at once.
+class _EagerTapGestureRecognizer extends TapGestureRecognizer {
+  _EagerTapGestureRecognizer({super.debugOwner});
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    resolve(GestureDisposition.accepted);
+  }
+}
+
+/// The star itself: the phone's gold star while starred, its outline
+/// otherwise. A bare glyph in every state; hovering brightens the outline
+/// and a press dips it, nothing is drawn behind it.
+class _StarGlyphButton extends StatefulWidget {
+  const _StarGlyphButton({required this.starred, required this.onPress});
+
+  final bool starred;
+  final VoidCallback onPress;
+
+  @override
+  State<_StarGlyphButton> createState() => _StarGlyphButtonState();
+}
+
+class _StarGlyphButtonState extends State<_StarGlyphButton>
+    with
+        SingleTickerProviderStateMixin,
+        DeferredPointerStateMixin<_StarGlyphButton> {
+  static const double _glyphSize = 16;
+
+  late final AnimationController _press = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 120),
+  );
+  late final Animation<double> _scale = Tween<double>(
+    begin: 1,
+    end: 0.97,
+  ).animate(
+    CurvedAnimation(
+      parent: _press,
+      curve: Curves.easeOut,
+      // Played backwards, so this eases out of the dip as well.
+      reverseCurve: Curves.easeIn,
+    ),
+  );
+
+  bool _hovered = false;
+  bool _focused = false;
+  bool _held = false;
+
+  @override
+  void dispose() {
+    _press.dispose();
+    super.dispose();
+  }
+
+  bool get _still => MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+
+  void _down() {
+    _held = true;
+    if (!_still) _press.forward();
+  }
+
+  void _release() {
+    _held = false;
+    if (_still) return;
+    // A quick click still dips all the way before it comes back.
+    _press.forward().whenCompleteOrCancel(() {
+      if (mounted && !_held) _press.reverse();
+    });
+  }
+
+  void _activate() {
+    _down();
+    _release();
+    widget.onPress();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tooltip = widget.starred ? 'Unstar collection' : 'Star collection';
+    final Widget glyph =
+        widget.starred
+            // Gold, as the phone draws it.
+            ? const DesktopIcon(SvgAsset.starFilledIcon, size: _glyphSize)
+            : TweenAnimationBuilder<Color?>(
+              tween: ColorTween(
+                end: _hovered || _focused ? kWhiteColor : kWhiteColor70,
+              ),
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOut,
+              builder:
+                  (context, color, _) => _LineGlyph(
+                    SvgAsset.starIcon,
+                    size: _glyphSize,
+                    color: color ?? kWhiteColor70,
+                  ),
+            );
+    return DesktopTooltip(
+      message: tooltip,
+      // The star stands at a right edge: the tip is set from its right, so
+      // it never has to be pushed back in from the edge of the window.
+      tipAnchor: Alignment.bottomRight,
+      childAnchor: Alignment.topRight,
+      child: Focus(
+        debugLabel: 'collection-star',
+        onFocusChange: (focused) => setState(() => _focused = focused),
+        onKeyEvent: (_, event) {
+          if (!_isActivation(event)) return KeyEventResult.ignored;
+          _activate();
+          return KeyEventResult.handled;
+        },
+        child: Semantics(
+          button: true,
+          label: tooltip,
+          onTap: widget.onPress,
+          excludeSemantics: true,
+          child: CursorAware(
+            mode: CursorMode.hover,
+            child: MouseRegion(
+              onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+              onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
+              child: RawGestureDetector(
+                behavior: HitTestBehavior.opaque,
+                gestures: {
+                  _EagerTapGestureRecognizer:
+                      GestureRecognizerFactoryWithHandlers<
+                        _EagerTapGestureRecognizer
+                      >(
+                        () => _EagerTapGestureRecognizer(debugOwner: this),
+                        (recognizer) =>
+                            recognizer
+                              ..onTapDown = ((_) => _down())
+                              ..onTapUp = ((_) => _release())
+                              ..onTapCancel = _release
+                              ..onTap = widget.onPress,
+                      ),
+                },
+                child: SizedBox.square(
+                  dimension: CollectionCatalogColumns.starWidth,
+                  child: Center(
+                    child: ScaleTransition(scale: _scale, child: glyph),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -126,7 +328,11 @@ Future<void> pressCollectionStar(
   }
 }
 
-/// Which of the catalog's columns fit [width].
+/// Which of the catalog's columns fit [width], and how wide each one is.
+///
+/// Every column is one [gutter] from the next. Text columns are set from
+/// their left edge and counts from their right, and each header label sits
+/// on the edge its cells do.
 @immutable
 class CollectionCatalogColumns {
   const CollectionCatalogColumns._({
@@ -136,17 +342,30 @@ class CollectionCatalogColumns {
 
   factory CollectionCatalogColumns.forWidth(double width) =>
       CollectionCatalogColumns._(
-        showAuthor: width >= 560,
-        showViews: width >= 720,
+        showAuthor: width >= 600,
+        showViews: width >= 700,
       );
 
   final bool showAuthor;
   final bool showViews;
 
-  static const double authorWidth = 190;
-  static const double gamesWidth = 78;
-  static const double viewsWidth = 66;
-  static const double starWidth = 64;
+  static const double gutter = 16;
+  static const double coverWidth = 27;
+  static const double authorWidth = 160;
+  static const double gamesWidth = 72;
+  static const double viewsWidth = 60;
+
+  /// The star count's own slot: every count ends on its right edge, and a
+  /// row without stars leaves it empty instead of closing it.
+  static const double starCountWidth = 56;
+
+  /// The star's slot, which is also what takes the pointer. The glyph sits
+  /// in the middle of it, so the stars of every row form one line.
+  static const double starWidth = 28;
+
+  /// Between a count and its star's slot. They read as one value: the glyph
+  /// is inset in its slot, which makes the visible distance 8.
+  static const double starGap = 2;
 }
 
 class _CatalogColumnsLayout extends StatelessWidget {
@@ -156,7 +375,9 @@ class _CatalogColumnsLayout extends StatelessWidget {
     required this.author,
     required this.games,
     required this.views,
-    required this.trailing,
+    required this.stars,
+    required this.star,
+    this.stretch = false,
   });
 
   final Widget leading;
@@ -164,42 +385,52 @@ class _CatalogColumnsLayout extends StatelessWidget {
   final Widget author;
   final Widget games;
   final Widget views;
-  final Widget trailing;
+  final Widget stars;
+  final Widget star;
+
+  /// Cells take the full height of the line: a header cell is pressable all
+  /// over, not only on its label.
+  final bool stretch;
 
   @override
   Widget build(BuildContext context) {
+    const gutter = SizedBox(width: CollectionCatalogColumns.gutter);
     return LayoutBuilder(
       builder: (context, constraints) {
         final columns = CollectionCatalogColumns.forWidth(constraints.maxWidth);
         return Row(
+          crossAxisAlignment:
+              stretch ? CrossAxisAlignment.stretch : CrossAxisAlignment.center,
           children: [
             SizedBox(
-              width: 39,
-              child: Align(alignment: Alignment.centerLeft, child: leading),
+              width: CollectionCatalogColumns.coverWidth,
+              child: leading,
             ),
-            const SizedBox(width: 5),
+            gutter,
             Expanded(child: name),
             if (columns.showAuthor) ...[
-              const SizedBox(width: 12),
+              gutter,
               SizedBox(
                 width: CollectionCatalogColumns.authorWidth,
                 child: author,
               ),
             ],
-            const SizedBox(width: 12),
+            gutter,
             SizedBox(width: CollectionCatalogColumns.gamesWidth, child: games),
             if (columns.showViews) ...[
-              const SizedBox(width: 12),
+              gutter,
               SizedBox(
                 width: CollectionCatalogColumns.viewsWidth,
                 child: views,
               ),
             ],
-            const SizedBox(width: 8),
+            gutter,
             SizedBox(
-              width: CollectionCatalogColumns.starWidth,
-              child: Align(alignment: Alignment.centerRight, child: trailing),
+              width: CollectionCatalogColumns.starCountWidth,
+              child: stars,
             ),
+            const SizedBox(width: CollectionCatalogColumns.starGap),
+            SizedBox(width: CollectionCatalogColumns.starWidth, child: star),
           ],
         );
       },
@@ -207,26 +438,191 @@ class _CatalogColumnsLayout extends StatelessWidget {
   }
 }
 
-/// The catalog's column headers, on the Library's header strip.
+/// The catalog's column headers, on the Library's header strip. A press on
+/// one asks for the catalog in that column's order ([onSort]); the column it
+/// is sorted by is lit and carries the direction.
 class CollectionCatalogHeader extends StatelessWidget {
-  const CollectionCatalogHeader({super.key});
+  const CollectionCatalogHeader({
+    super.key,
+    required this.sort,
+    required this.onSort,
+  });
+
+  final CollectionCatalogSort sort;
+  final ValueChanged<CollectionSortColumn> onSort;
 
   @override
   Widget build(BuildContext context) {
-    Widget label(String text, {TextAlign? align}) => Text(
-      text,
-      textAlign: align,
-      maxLines: 1,
-      style: kLibraryCatalogHeaderStyle,
+    Widget cell(
+      CollectionSortColumn column,
+      String label, {
+      bool end = false,
+    }) => _SortHeaderCell(
+      column: column,
+      label: label,
+      alignEnd: end,
+      sort: sort,
+      onPress: () => onSort(column),
     );
     return LibraryCatalogHeaderStrip(
-      child: _CatalogColumnsLayout(
-        leading: const SizedBox.shrink(),
-        name: label('COLLECTION'),
-        author: label('AUTHOR'),
-        games: label('GAMES'),
-        views: label('VIEWS'),
-        trailing: label('STARS', align: TextAlign.right),
+      child: Padding(
+        // A row's cells start after its selection bar.
+        padding: const EdgeInsets.only(left: kLibraryCatalogRowBarWidth),
+        child: _CatalogColumnsLayout(
+          stretch: true,
+          leading: const SizedBox.shrink(),
+          name: cell(CollectionSortColumn.name, 'COLLECTION'),
+          author: cell(CollectionSortColumn.author, 'AUTHOR'),
+          games: cell(CollectionSortColumn.games, 'GAMES', end: true),
+          views: cell(CollectionSortColumn.views, 'VIEWS', end: true),
+          stars: cell(CollectionSortColumn.stars, 'STARS', end: true),
+          star: const SizedBox.shrink(),
+        ),
+      ),
+    );
+  }
+}
+
+/// One column header as a button. Its label keeps its edge whatever the
+/// order: the direction mark goes after a label set from the left and before
+/// one set from the right, and an unsorted column keeps no room for it.
+class _SortHeaderCell extends StatefulWidget {
+  const _SortHeaderCell({
+    required this.column,
+    required this.label,
+    required this.alignEnd,
+    required this.sort,
+    required this.onPress,
+  });
+
+  final CollectionSortColumn column;
+  final String label;
+  final bool alignEnd;
+  final CollectionCatalogSort sort;
+  final VoidCallback onPress;
+
+  @override
+  State<_SortHeaderCell> createState() => _SortHeaderCellState();
+}
+
+class _SortHeaderCellState extends State<_SortHeaderCell>
+    with DeferredPointerStateMixin<_SortHeaderCell> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = widget.sort.column == widget.column;
+    final ascending = widget.sort.ascending;
+    final color =
+        active
+            ? kWhiteColor
+            : (_hovered || _focused ? kWhiteColor70 : kLightGreyColor);
+    // The label's line is as tall as the direction mark, with its capitals
+    // in the middle of it. A typeface sets its capitals off the centre of
+    // its line box, each by its own amount; anchored on the baseline, the
+    // label and the mark share a centre on every platform.
+    final capitals = (kLibraryCatalogHeaderStyle.fontSize ?? 10.5) * 0.7;
+    final label = Flexible(
+      child: SizedBox(
+        height: _SortMark.size,
+        child: Baseline(
+          baseline: (_SortMark.size + capitals) / 2,
+          baselineType: TextBaseline.alphabetic,
+          child: AnimatedDefaultTextStyle(
+            // A new order shows at once; only the hover eases.
+            key: ValueKey(active),
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            style: DefaultTextStyle.of(
+              context,
+            ).style.merge(kLibraryCatalogHeaderStyle.copyWith(color: color)),
+            child: Text(
+              widget.label,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+      ),
+    );
+    const gap = SizedBox(width: 2);
+    final mark = _SortMark(ascending: ascending);
+    return Focus(
+      debugLabel: 'collection-sort-${widget.column.api}',
+      onFocusChange: (focused) => setState(() => _focused = focused),
+      onKeyEvent: (_, event) {
+        if (!_isActivation(event)) return KeyEventResult.ignored;
+        widget.onPress();
+        return KeyEventResult.handled;
+      },
+      child: Semantics(
+        button: true,
+        label: 'Sort by ${widget.column.api}',
+        value: active ? (ascending ? 'Ascending' : 'Descending') : null,
+        onTap: widget.onPress,
+        excludeSemantics: true,
+        child: ClickCursor(
+          child: MouseRegion(
+            onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+            onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onPress,
+              child: Align(
+                alignment:
+                    widget.alignEnd
+                        ? Alignment.centerRight
+                        : Alignment.centerLeft,
+                child: FFocusedOutline(
+                  focused: _focused,
+                  style:
+                      (style) => style.copyWith(
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (active && widget.alignEnd) ...[mark, gap],
+                      label,
+                      if (active && !widget.alignEnd) ...[gap, mark],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The direction of the sorted column: the phone's chevron, pointing down
+/// for a descending order and turned over for an ascending one.
+class _SortMark extends StatelessWidget {
+  const _SortMark({required this.ascending});
+
+  final bool ascending;
+
+  static const double size = 14;
+
+  /// The chevron is drawn a little right of the middle of its 21 wide art
+  /// board; this brings it back, so it is centred both ways up.
+  static const double _drawnOffCentre = 0.4648 / 21;
+
+  @override
+  Widget build(BuildContext context) {
+    return RotatedBox(
+      quarterTurns: ascending ? 2 : 0,
+      child: Transform.translate(
+        offset: const Offset(-size * _drawnOffCentre, 0),
+        child: const _LineGlyph(
+          SvgAsset.arrowDown,
+          size: size,
+          color: kWhiteColor,
+        ),
       ),
     );
   }
@@ -277,6 +673,7 @@ class CollectionCatalogRow extends ConsumerWidget {
             leading: CollectionCoverThumb(
               coverUrl: collection.coverUrl,
               kind: collection.kind,
+              size: CollectionCatalogColumns.coverWidth,
             ),
             name: CollectionTitleLine(
               title: collection.title,
@@ -285,11 +682,20 @@ class CollectionCatalogRow extends ConsumerWidget {
               locked: locked,
             ),
             author: LibraryCatalogMutedCell(credit ?? ''),
-            games: LibraryCatalogMutedCell(games),
+            games: LibraryCatalogMutedCell(games, textAlign: TextAlign.right),
             views: LibraryCatalogMutedCell(
               collection.kind == CollectionKind.book ? '$views' : '',
+              textAlign: TextAlign.right,
             ),
-            trailing: CollectionStarButton(collection: collection),
+            // A row without stars keeps the slot, so every star stays in line.
+            stars: LibraryCatalogMutedCell(
+              stars > 0 ? '$stars' : '',
+              textAlign: TextAlign.right,
+            ),
+            star: CollectionStarButton(
+              collection: collection,
+              showCount: false,
+            ),
           ),
     );
   }

@@ -12,6 +12,7 @@ class CollectionSearchQuery {
     this.authorId = '',
     this.annotated = false,
     this.sort = 'default',
+    this.order = '',
   });
   final String text;
   final String eco;
@@ -27,7 +28,30 @@ class CollectionSearchQuery {
     return CollectionSearchQuery(minYear: year - 1, maxYear: year);
   }
   final bool annotated;
+
+  /// `default`, `newest`, `oldest`, or a column: `name`, `author`, `games`,
+  /// `views`, `stars`.
   final String sort;
+
+  /// `asc` or `desc` for a column sort. Empty asks for the column's own
+  /// direction ([naturalOrder]).
+  final String order;
+
+  /// The direction a column sort runs in unless told otherwise: names from A
+  /// to Z, counts from the largest. Empty for a sort that has no direction of
+  /// its own.
+  static String naturalOrder(String sort) => switch (sort) {
+    'name' || 'author' => 'asc',
+    'games' || 'views' || 'stars' => 'desc',
+    _ => '',
+  };
+
+  /// The direction the server will sort in: [order], or the natural one when
+  /// none was asked for. Empty when [sort] takes no direction.
+  String get direction {
+    final natural = naturalOrder(sort);
+    return natural.isEmpty || order.isEmpty ? natural : order;
+  }
 
   int get filterCount =>
       (eco.isEmpty ? 0 : 1) +
@@ -48,6 +72,7 @@ class CollectionSearchQuery {
     if (authorId.isNotEmpty) 'authorId': authorId,
     if (annotated) 'annotated': 'true',
     if (sort != 'default') 'sort': sort,
+    if (direction != naturalOrder(sort)) 'order': direction,
   };
   CollectionSearchQuery withText(String value) => CollectionSearchQuery(
     text: value,
@@ -60,6 +85,7 @@ class CollectionSearchQuery {
     authorId: authorId,
     annotated: annotated,
     sort: sort,
+    order: order,
   );
   @override
   bool operator ==(Object other) =>
@@ -73,7 +99,8 @@ class CollectionSearchQuery {
       author == other.author &&
       authorId == other.authorId &&
       annotated == other.annotated &&
-      sort == other.sort;
+      sort == other.sort &&
+      direction == other.direction;
   @override
   int get hashCode => Object.hash(
     text,
@@ -86,5 +113,6 @@ class CollectionSearchQuery {
     authorId,
     annotated,
     sort,
+    direction,
   );
 }

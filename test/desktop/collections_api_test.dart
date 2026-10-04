@@ -100,6 +100,53 @@ void main() {
     },
   );
 
+  test(
+    'a sort and its direction go out only when they are not the default',
+    () async {
+      Future<Map<String, String>> sent(CollectionSearchQuery search) async {
+        adapter.answer(
+          200,
+          _ok({'items': [], 'total': 0, 'limit': 40, 'offset': 0}),
+        );
+        await api.searchCollectionBooks(search: search);
+        return Map.of(adapter.requests.last.uri.queryParameters)
+          ..remove('limit')
+          ..remove('offset');
+      }
+
+      expect(await sent(const CollectionSearchQuery()), isEmpty);
+      // A column in its natural direction: names from A, counts from the top.
+      expect(await sent(const CollectionSearchQuery(sort: 'name')), {
+        'sort': 'name',
+      });
+      expect(
+        await sent(const CollectionSearchQuery(sort: 'name', order: 'asc')),
+        {'sort': 'name'},
+      );
+      expect(
+        await sent(const CollectionSearchQuery(sort: 'stars', order: 'desc')),
+        {'sort': 'stars'},
+      );
+      // The other direction is asked for by name.
+      expect(
+        await sent(const CollectionSearchQuery(sort: 'author', order: 'desc')),
+        {'sort': 'author', 'order': 'desc'},
+      );
+      expect(
+        await sent(const CollectionSearchQuery(sort: 'games', order: 'asc')),
+        {'sort': 'games', 'order': 'asc'},
+      );
+      expect(
+        await sent(const CollectionSearchQuery(sort: 'views', order: 'asc')),
+        {'sort': 'views', 'order': 'asc'},
+      );
+      // The phone's dated sorts are untouched.
+      expect(await sent(const CollectionSearchQuery(sort: 'newest')), {
+        'sort': 'newest',
+      });
+    },
+  );
+
   test('authors come back with their photo and counts', () async {
     adapter.answer(
       200,
