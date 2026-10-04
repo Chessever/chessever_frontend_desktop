@@ -22,6 +22,11 @@ const TextStyle kLibraryCatalogHeaderStyle = TextStyle(
 /// Height of one catalog row.
 const double kLibraryCatalogRowHeight = 42;
 
+/// Width of the accent bar a selected row carries on its left edge. A row's
+/// cells start this far right of the header strip's, so a header that lines
+/// its labels up with the cells insets itself by it.
+const double kLibraryCatalogRowBarWidth = 2;
+
 /// The strip that carries a catalog's column headers.
 class LibraryCatalogHeaderStrip extends StatelessWidget {
   const LibraryCatalogHeaderStrip({super.key, required this.child});
@@ -242,7 +247,7 @@ class _LibraryCatalogRowFrameState extends State<LibraryCatalogRowFrame>
                     left: BorderSide(
                       color:
                           widget.selected ? kPrimaryColor : Colors.transparent,
-                      width: 2,
+                      width: kLibraryCatalogRowBarWidth,
                     ),
                     bottom: BorderSide(
                       color: kDividerColor.withValues(alpha: 0.72),
