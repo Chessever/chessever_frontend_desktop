@@ -643,7 +643,7 @@ final _twicPreviewPgnProvider = FutureProvider.autoDispose
 // Cloud Library rail (complete synced cloud collection)
 // =====================================================================
 
-class _FolderRail extends ConsumerWidget {
+class _FolderRail extends StatelessWidget {
   const _FolderRail({
     required this.ownedFolders,
     required this.subscribedFolders,
@@ -670,60 +670,22 @@ class _FolderRail extends ConsumerWidget {
   final VoidCallback onCollapse;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final expansion = ref.watch(
-      myDatabasesFocusProvider.select((state) => state.folderExpansion),
-    );
+  Widget build(BuildContext context) {
     return Container(
       color: kBlack2Color,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _RailHeader(onCollapse: onCollapse),
-          Expanded(child: _body(context, ref, expansion)),
+          Expanded(child: _body()),
         ],
       ),
     );
   }
 
-  Widget _body(
-    BuildContext context,
-    WidgetRef ref,
-    Map<String, bool> expansion,
-  ) {
+  Widget _body() {
     if (isLoading) return const _RailLoading();
     final folders = [kTwicFolder, ...ownedFolders, ...subscribedFolders];
-    Iterable<Widget> rowsFor(List<LibraryFolder> group) {
-      final byParent = <String?, List<LibraryFolder>>{};
-      for (final folder in group) {
-        byParent.putIfAbsent(folder.parentId, () => <LibraryFolder>[]).add(folder);
-      }
-      final rows = projectLibraryFolderTree<LibraryFolder>(
-        roots: libraryFolderTreeRoots(items: group, keyOf: (folder) => folder.id, parentKeyOf: (folder) => folder.parentId),
-        keyOf: (folder) => folder.id,
-        childrenOf: (folder) => byParent[folder.id] ?? const <LibraryFolder>[],
-        isExpanded: (folder) => expansion['rail:cloud:${folder.id}'] ?? true,
-      );
-      return rows.map((row) {
-        final folder = row.item;
-        final kind = _cloudFolderIconKind(folder, folders);
-        final isFolder = kind == _DatabaseBoardIconKind.folder;
-        final key = 'rail:cloud:${folder.id}';
-        return _FolderRow(
-          key: ValueKey('library-rail:${folder.id}'),
-          folder: folder,
-          iconKind: kind,
-          depth: row.depth,
-          expanded: isFolder ? row.expanded : null,
-          onToggleExpanded: isFolder ? () => unawaited(_changeLibraryFolderExpansion(context, ref, key, defaultExpanded: true)) : null,
-          onSetExpanded: isFolder ? (value) => unawaited(_changeLibraryFolderExpansion(context, ref, key, expanded: value)) : null,
-          selected: folder.id == selectedId,
-          onTap: () => onSelect(folder.id),
-          onOpen: () => onOpen(folder),
-          onAction: (action) => onAction(folder, action),
-        );
-      });
-    }
     return ListView(
       physics: const DesktopScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -749,7 +711,14 @@ class _FolderRail extends ConsumerWidget {
         if (ownedFolders.isNotEmpty) ...[
           const SizedBox(height: 14),
           _RailGroupHeader(label: 'Cloud folders', count: ownedFolders.length),
-          ...rowsFor(ownedFolders),
+          _RailFolderTree(
+            group: ownedFolders,
+            folders: folders,
+            selectedId: selectedId,
+            onSelect: onSelect,
+            onOpen: onOpen,
+            onAction: onAction,
+          ),
         ] else if (subscribedFolders.isEmpty) ...[
           const SizedBox(height: 14),
           const _RailEmptyHint(),
@@ -760,9 +729,80 @@ class _FolderRail extends ConsumerWidget {
             label: 'Subscribed',
             count: subscribedFolders.length,
           ),
-          ...rowsFor(subscribedFolders),
+          _RailFolderTree(
+            group: subscribedFolders,
+            folders: folders,
+            selectedId: selectedId,
+            onSelect: onSelect,
+            onOpen: onOpen,
+            onAction: onAction,
+          ),
         ],
       ],
+    );
+  }
+}
+
+/// One rail group as a tree: children sit under their parent, indented, and a
+/// folder's children show while it is expanded.
+///
+/// Only this part of the rail reads the saved expansion, so the rail's empty,
+/// loading and error states need no provider and rebuild for nothing.
+class _RailFolderTree extends ConsumerWidget {
+  const _RailFolderTree({
+    required this.group,
+    required this.folders,
+    required this.selectedId,
+    required this.onSelect,
+    required this.onOpen,
+    required this.onAction,
+  });
+
+  final List<LibraryFolder> group;
+  final List<LibraryFolder> folders;
+  final String? selectedId;
+  final ValueChanged<String> onSelect;
+  final ValueChanged<LibraryFolder> onOpen;
+  final void Function(LibraryFolder folder, LibraryFolderAction action)
+  onAction;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final expansion = ref.watch(
+      myDatabasesFocusProvider.select((state) => state.folderExpansion),
+    );
+      final byParent = <String?, List<LibraryFolder>>{};
+      for (final folder in group) {
+        byParent.putIfAbsent(folder.parentId, () => <LibraryFolder>[]).add(folder);
+      }
+      final rows = projectLibraryFolderTree<LibraryFolder>(
+        roots: libraryFolderTreeRoots(items: group, keyOf: (folder) => folder.id, parentKeyOf: (folder) => folder.parentId),
+        keyOf: (folder) => folder.id,
+        childrenOf: (folder) => byParent[folder.id] ?? const <LibraryFolder>[],
+        isExpanded: (folder) => expansion['rail:cloud:${folder.id}'] ?? true,
+      );
+      final tiles = rows.map((row) {
+        final folder = row.item;
+        final kind = _cloudFolderIconKind(folder, folders);
+        final isFolder = kind == _DatabaseBoardIconKind.folder;
+        final key = 'rail:cloud:${folder.id}';
+        return _FolderRow(
+          key: ValueKey('library-rail:${folder.id}'),
+          folder: folder,
+          iconKind: kind,
+          depth: row.depth,
+          expanded: isFolder ? row.expanded : null,
+          onToggleExpanded: isFolder ? () => unawaited(_changeLibraryFolderExpansion(context, ref, key, defaultExpanded: true)) : null,
+          onSetExpanded: isFolder ? (value) => unawaited(_changeLibraryFolderExpansion(context, ref, key, expanded: value)) : null,
+          selected: folder.id == selectedId,
+          onTap: () => onSelect(folder.id),
+          onOpen: () => onOpen(folder),
+          onAction: (action) => onAction(folder, action),
+        );
+      });
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: tiles.toList(growable: false),
     );
   }
 }
