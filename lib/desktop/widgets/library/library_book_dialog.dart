@@ -1142,7 +1142,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     } catch (error) {
       if (mounted) {
         setState(() {
-          _rowNamed(name)?.preview = null;
+          row.preview = null;
           _error =
               error is LibraryBookPublicationException
                   ? error.message
@@ -1150,7 +1150,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
         });
       }
     } finally {
-      if (mounted) setState(() => _rowNamed(name)?.busy = false);
+      // The row itself, never a lookup by the name it had when the upload
+      // began: a name edited meanwhile would leave it busy for good.
+      if (mounted) setState(() => row.busy = false);
     }
   }
 
@@ -1787,7 +1789,12 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             : null;
       case _Field.author:
         if (value.isEmpty) {
-          // Required only when submitting for publication.
+          // With nobody first, the server would move a co-author up into
+          // this place and file their photo as the first author's.
+          if (_coAuthorNames.isNotEmpty) {
+            return 'Name the first author before adding more.';
+          }
+          // Otherwise required only when submitting for publication.
           return _validateForPublish ? 'Credit the author by name.' : null;
         }
         return _authorNamed(value) ? null : 'Enter the author’s name.';

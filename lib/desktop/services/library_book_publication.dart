@@ -873,17 +873,9 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
           },
         });
       }
-      // An older server refuses the unknown credit key with a bare 400.
-      if (resource == 'book' &&
-          method == 'PUT' &&
-          body?['authorCredit'] == 'other' &&
-          error.response?.statusCode == 400 &&
-          (details is! Map || details['code'] == null)) {
-        throw const LibraryBookPublicationException(
-          'Crediting someone else is not available here yet. Choose Me for now; your details are still here.',
-        );
-      }
-      // An older server refuses the unknown author list the same way.
+      // An older server refuses the unknown author list with a bare 400. This
+      // is checked before the credit key: every server that knows the list
+      // knows the credit, so with both sent the list is what was refused.
       if (resource == 'book' &&
           method == 'PUT' &&
           body?['authors'] != null &&
@@ -891,6 +883,16 @@ class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
           (details is! Map || details['code'] == null)) {
         throw const LibraryBookPublicationException(
           'Crediting several authors is not available here yet. Keep one author for now; your details are still here.',
+        );
+      }
+      // An older still server refuses the unknown credit key the same way.
+      if (resource == 'book' &&
+          method == 'PUT' &&
+          body?['authorCredit'] == 'other' &&
+          error.response?.statusCode == 400 &&
+          (details is! Map || details['code'] == null)) {
+        throw const LibraryBookPublicationException(
+          'Crediting someone else is not available here yet. Choose Me for now; your details are still here.',
         );
       }
       if (details is Map && details['code'] == 'invalid_collection_games') {

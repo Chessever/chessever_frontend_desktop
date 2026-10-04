@@ -1555,6 +1555,29 @@ void main() {
   );
 
   testWidgets(
+    'a co-author cannot be credited while the first author is blank',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      await tester.enterText(find.byType(TextField).at(2), '');
+      await _tap(tester, 'Add an author');
+      await tester.enterText(
+        find.byKey(const ValueKey('book_coauthor_name_0')).first,
+        'Judit Polgar',
+      );
+      await tester.pump();
+      await _tap(tester, 'Save draft');
+      // Saved like that, the server would put her first.
+      expect(
+        find.text('Name the first author before adding more.'),
+        findsOneWidget,
+      );
+      expect(publisher.saves, isEmpty);
+    },
+  );
+
+  testWidgets(
     'removing the last co-author of a saved book still tells the server',
     semanticsEnabled: false,
     (tester) async {

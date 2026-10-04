@@ -247,9 +247,17 @@ class CollectionsPane extends HookConsumerWidget {
               : catalog.items,
       [catalog.items, favorites, pinned],
     );
-    final selected = items.firstWhereOrNull(
-      (collection) => collection.slug == selectedSlug.value,
-    );
+    // A new order can leave the open collection off the first page. It stays
+    // open from what was last read of it until its row is paged in again.
+    final lastSelected = useRef<Collection?>(null);
+    final selected =
+        items.firstWhereOrNull(
+          (collection) => collection.slug == selectedSlug.value,
+        ) ??
+        (lastSelected.value?.slug == selectedSlug.value
+            ? lastSelected.value
+            : null);
+    lastSelected.value = selected;
 
     void selectAuthor(CollectionAuthor? next) {
       author.value = next;

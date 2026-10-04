@@ -1133,6 +1133,27 @@ void main() {
       'Crediting several authors is not available here yet. Keep one author for now; your details are still here.',
     );
   });
+
+  test(
+    'someone else plus several authors blames the list, not the credit',
+    () async {
+      final error = await publishError(
+        400,
+        {'message': 'Unrecognized key(s) in object'},
+        metadata: const LibraryBookMetadata(
+          title: 'Book',
+          author: 'A',
+          authorCredit: AuthorCredit.other,
+          coAuthors: [BookAuthor(name: 'B')],
+          sendAuthorList: true,
+        ),
+      );
+      expect(
+        (error as LibraryBookPublicationException).message,
+        'Crediting several authors is not available here yet. Keep one author for now; your details are still here.',
+      );
+    },
+  );
 }
 
 /// Returns a configurable authors payload for suggestion tests.
