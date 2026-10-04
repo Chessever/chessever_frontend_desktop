@@ -90,6 +90,7 @@ import 'package:chessever/desktop/widgets/library/library_cloud_rows.dart';
 import 'package:chessever/desktop/widgets/library/local_database_show_in_folder.dart';
 import 'package:chessever/desktop/widgets/library/library_folder_context_menu.dart';
 import 'package:chessever/desktop/widgets/library/library_folder_dialogs.dart';
+import 'package:chessever/desktop/widgets/library/library_publish_button.dart';
 import 'package:chessever/desktop/widgets/library/library_game_context_menu.dart';
 import 'package:chessever/desktop/widgets/library/library_game_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_database_drag_payload.dart';
@@ -1863,6 +1864,15 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
               onSourceFilterChanged:
                   (value) => catalogSourceFilter.value = value,
               onNewDatabase: onNewDatabase,
+              // A local database is selected by path; only a cloud item can
+              // be published.
+              publishTarget:
+                  selectedKind == _LibraryDatabaseKind.cloud
+                      ? selectedFolder
+                      : null,
+              onPublish:
+                  (folder) =>
+                      unawaited(showLibraryBookDialog(context, folder: folder)),
             ),
             Expanded(
               child: ResizableSplitView(
@@ -1943,6 +1953,8 @@ class _MyDatabasesHeader extends StatelessWidget {
     required this.onNewFolder,
     required this.onImportPgnFiles,
     required this.onNewDatabase,
+    required this.publishTarget,
+    required this.onPublish,
     required this.searchController,
     required this.sourceFilter,
     required this.onQueryChanged,
@@ -1958,6 +1970,8 @@ class _MyDatabasesHeader extends StatelessWidget {
   final VoidCallback? onNewFolder;
   final VoidCallback onImportPgnFiles;
   final VoidCallback onNewDatabase;
+  final LibraryFolder? publishTarget;
+  final ValueChanged<LibraryFolder> onPublish;
   final TextEditingController searchController;
   final LibraryDatabaseCatalogSourceFilter sourceFilter;
   final ValueChanged<String> onQueryChanged;
@@ -2088,6 +2102,13 @@ class _MyDatabasesHeader extends StatelessWidget {
                 iconSize: 14.5,
                 spacing: 4,
                 hitSize: 34,
+              ),
+              const SizedBox(width: 8),
+              LibraryPublishButton(
+                folder: publishTarget,
+                onPublish: onPublish,
+                // The toolbar beside it drops its labels at the same width.
+                compact: !showActionLabels,
               ),
             ],
           );
@@ -6923,11 +6944,10 @@ class _FolderHeader extends StatelessWidget {
           if (showOverflow &&
               onAction != null &&
               libraryFolderCanPublish(folder)) ...[
-            const SizedBox(width: 4),
-            DesktopDialogIconButton(
-              icon: Icons.publish_rounded,
-              tooltip: 'Publish / edit collection',
-              onPress: () => onAction!(LibraryFolderAction.publishBook),
+            const SizedBox(width: 6),
+            LibraryPublishButton(
+              folder: folder,
+              onPublish: (_) => onAction!(LibraryFolderAction.publishBook),
             ),
           ],
           if (showOverflow &&
