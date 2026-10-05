@@ -65,6 +65,35 @@ class _Adapter implements HttpClientAdapter {
 
 void main() {
   test(
+    'the author description is read as authorBio and sent as authorAbout',
+    () {
+      // An older server never sent it: the key stays out of the save.
+      const older = LibraryBookMetadata(title: 'T');
+      expect(older.toJson().containsKey('authorAbout'), isFalse);
+      final known = LibraryBookMetadata.fromJson(const {
+        'title': 'T',
+        'author': 'Ann',
+        'authorBio': 'Coach from Baku.',
+      });
+      expect(known.authorAbout, 'Coach from Baku.');
+      expect(known.toJson()['authorAbout'], 'Coach from Baku.');
+      expect(known.copyWith(author: 'Anne').authorAbout, 'Coach from Baku.');
+      // An emptied field is null, which clears it.
+      expect(
+        const LibraryBookMetadata(title: 'T', authorAbout: ' ').toJson(),
+        containsPair('authorAbout', null),
+      );
+      expect(
+        LibraryBookMetadata.fromJson(const {
+          'title': 'T',
+          'authorBio': null,
+        }).authorAbout,
+        '',
+      );
+    },
+  );
+
+  test(
     'unsafe endpoint or account environment never receives a token',
     () async {
       final adapter = _Adapter();

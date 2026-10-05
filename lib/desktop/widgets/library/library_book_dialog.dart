@@ -102,7 +102,7 @@ class _TidySpacesFormatter extends TextInputFormatter {
 /// page. Foreword and publisher are not edited here: the publisher is always
 /// ChessEver's own editor, and a foreword belongs to a printed book, not to a
 /// folder of games. Whatever the server already holds for them is kept.
-enum _Field { title, subtitle, author, year, about }
+enum _Field { title, subtitle, author, year, about, authorAbout }
 
 /// Which preview a field is drawn in: the list row (0) or the page (1).
 const _listFields = {_Field.title, _Field.author};
@@ -254,6 +254,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       _Field.author: m.author,
       _Field.year: m.publishedYear?.toString() ?? '',
       _Field.about: m.about,
+      _Field.authorAbout: m.authorAbout ?? '',
     };
     for (final entry in values.entries) {
       _write(entry.key, entry.value);
@@ -538,6 +539,13 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       subtitle: _text(_Field.subtitle).trim(),
       author: _text(_Field.author).trim(),
       about: _text(_Field.about).trim(),
+      // An older server refuses the key, so an empty one it never showed
+      // is left out.
+      authorAbout:
+          saved?.authorAbout != null ||
+                  _text(_Field.authorAbout).trim().isNotEmpty
+              ? _text(_Field.authorAbout).trim()
+              : null,
       // Not editable here; carried through so a save never erases them.
       foreword: saved?.foreword ?? '',
       publisher: saved?.publisher ?? '',
@@ -758,6 +766,20 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       if (credit == AuthorCredit.other && _authorPrefilled) {
         _write(_Field.author, '');
         _authorPrefilled = false;
+      }
+      // The description is about whoever was credited: one that was only
+      // loaded does not follow the credit to another person, and comes back
+      // with the credit it was loaded for.
+      final saved = _publication?.metadata;
+      final loaded = saved?.authorAbout?.trim() ?? '';
+      final loadedFor = saved?.authorCredit ?? AuthorCredit.self;
+      if (loaded.isNotEmpty) {
+        final about = _text(_Field.authorAbout).trim();
+        if (credit != loadedFor && about == loaded) {
+          _write(_Field.authorAbout, '');
+        } else if (credit == loadedFor && about.isEmpty) {
+          _write(_Field.authorAbout, loaded);
+        }
       }
       _suggestions = const [];
       _suggestionsFor = '';
@@ -1808,6 +1830,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
         return _validateForPublish && value.isEmpty
             ? 'Describe this collection.'
             : null;
+      case _Field.authorAbout:
+        return null;
     }
   }
 
@@ -2052,6 +2076,20 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             counter: true,
           ),
           _authorSection(stage),
+          _field(
+            _Field.authorAbout,
+            stage: stage,
+            label: 'About the author',
+            optional: true,
+            where:
+                _credit == AuthorCredit.other
+                    ? 'A few lines about them, on their author page and under “About the author” here. Leave it empty to keep what their other collections say.'
+                    : 'A few lines about you, on your author page and under “About the author” here.',
+            hint:
+                'e.g. International Master and coach from Baku, writing about endgames since 2015.',
+            lines: 3,
+            limit: 4000,
+          ),
           // A year is four digits: the field is as wide as what it holds.
           Align(
             alignment: Alignment.centerLeft,
@@ -2468,7 +2506,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             ),
             const _TidySpacesFormatter(),
           ],
-          _Field.about => [const _TidySpacesFormatter(multiline: true)],
+          _Field.about ||
+          _Field.authorAbout => [const _TidySpacesFormatter(multiline: true)],
           _ => [const _TidySpacesFormatter()],
         },
         // Author is a proper name: every word starts upper-case.

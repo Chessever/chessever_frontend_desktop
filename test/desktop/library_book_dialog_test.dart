@@ -391,7 +391,7 @@ void main() {
       expect(find.text('Foreword'), findsNothing);
       expect(find.text('Publisher'), findsNothing);
       // Four optional parts: Subtitle, More authors, Year, Cover.
-      expect(find.text('Optional'), findsNWidgets(4));
+      expect(find.text('Optional'), findsNWidgets(5));
       await _tap(tester, 'Save draft');
       expect(publisher.saves.single.metadata.foreword, 'Kept foreword');
       expect(publisher.saves.single.metadata.publisher, 'ChessEver');
@@ -969,13 +969,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester
-            .widget<TextField>(find.byType(TextField).at(4))
+            .widget<TextField>(find.byType(TextField).at(5))
             .focusNode!
             .hasFocus,
         isTrue,
       );
 
-      await tester.enterText(find.byType(TextField).at(4), 'Annotated wins.');
+      await tester.enterText(find.byType(TextField).at(5), 'Annotated wins.');
       await tester.pump();
       expect(find.text('1 detail left'), findsOneWidget);
       await tester.enterText(find.byType(TextField).at(2), 'Garry Kasparov');

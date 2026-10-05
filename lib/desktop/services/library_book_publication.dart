@@ -192,6 +192,7 @@ class LibraryBookMetadata {
     this.authorPhotoUrl = '',
     this.coAuthors = const [],
     this.sendAuthorList = false,
+    this.authorAbout,
   });
 
   final String title;
@@ -224,6 +225,12 @@ class LibraryBookMetadata {
   /// than one author, or the saved collection had more than one (so removing
   /// them reaches the server): an older server refuses the unknown key.
   final bool sendAuthorList;
+
+  /// The first author's description of themselves, shown on their author
+  /// page and under "About the author". Null when the server predates it (it
+  /// then refuses the key), so it is only sent when known or when one is
+  /// written.
+  final String? authorAbout;
 
   /// Every credited author, the first one included.
   List<BookAuthor> get authors => [
@@ -272,6 +279,10 @@ class LibraryBookMetadata {
               : json['authorPhotoUrl'] as String? ?? '',
       coAuthors: listed.skip(1).toList(growable: false),
       sendAuthorList: listed.length > 1,
+      authorAbout:
+          json.containsKey('authorBio')
+              ? json['authorBio'] as String? ?? ''
+              : null,
     );
   }
 
@@ -296,6 +307,7 @@ class LibraryBookMetadata {
     authorPhotoUrl: authorPhotoUrl ?? this.authorPhotoUrl,
     coAuthors: coAuthors ?? this.coAuthors,
     sendAuthorList: sendAuthorList ?? this.sendAuthorList,
+    authorAbout: authorAbout,
   );
 
   Map<String, dynamic> toJson() => {
@@ -311,6 +323,8 @@ class LibraryBookMetadata {
     // a new "Me" book sends nothing. authorPhotoUrl is never written here — it
     // is only ever changed through the author-photo upload/remove endpoints.
     if (authorCredit != null) 'authorCredit': authorCredit!.wire,
+    // Null clears what this collection wrote about its first author.
+    if (authorAbout != null) 'authorAbout': _nullable(authorAbout!),
     // Names only: each photo is changed through the author-photo endpoints,
     // and the server keeps a photo with its name when the list is edited.
     // An empty list is refused; with nobody left to credit, the null `author`
