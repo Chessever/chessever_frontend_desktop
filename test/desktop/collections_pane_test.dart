@@ -1663,25 +1663,13 @@ void main() {
       await _settle(tester);
       expect(find.text('Sorting by stars is not available yet.'), findsNothing);
 
-      // The next press steps over what was refused instead of asking again.
-      await tester.tap(find.text('STARS'));
-      await _settle(tester);
-      expect(reader.bookQueries.last.parameters, {
-        'sort': 'stars',
-        'order': 'asc',
-      });
-      expect(
-        find.text('Sorting by stars in reverse is not available yet.'),
-        findsOneWidget,
-      );
-      await tester.pump(const Duration(seconds: 4));
-      await _settle(tester);
-
-      // With nothing left to ask for, a press still answers.
+      // The next press asks the server again instead of answering from
+      // memory: it may have learned the order since.
       final asked = reader.bookQueries.length;
       await tester.tap(find.text('STARS'));
       await _settle(tester);
-      expect(reader.bookQueries.length, asked);
+      expect(reader.bookQueries.length, asked + 1);
+      expect(reader.bookQueries.last.parameters, {'sort': 'stars'});
       expect(
         find.text('Sorting by stars is not available yet.'),
         findsOneWidget,
@@ -1689,6 +1677,17 @@ void main() {
       expect(_titles(tester), byGames);
       await tester.pump(const Duration(seconds: 4));
       await _settle(tester);
+
+      // The server learns the order: the same header now sorts.
+      reader.orderError = null;
+      await tester.tap(find.text('STARS'));
+      await _settle(tester);
+      expect(reader.bookQueries.last.parameters, {'sort': 'stars'});
+      expect(find.textContaining('is not available yet'), findsNothing);
+      expect(
+        tester.getRect(_glyph(SvgAsset.arrowDown)).right,
+        lessThan(_ink(tester, find.text('STARS')).left),
+      );
     });
 
     testWidgets('a reverse the server refuses still lets the header go back', (

@@ -190,7 +190,8 @@ class CollectionsPane extends HookConsumerWidget {
     // rows stay as they were, so a press never blanks the list.
     final sort = useState(const CollectionCatalogSort.standard());
     final shownSort = useState(const CollectionCatalogSort.standard());
-    // Orders the server answered it does not know. A header steps over them.
+    // Orders the server answered it does not know. A header steps over them
+    // until its column is come to afresh.
     final refusedSorts = useRef(<CollectionCatalogSort>{});
 
     CollectionSearchQuery queryIn(CollectionCatalogSort order) =>
@@ -265,21 +266,13 @@ class CollectionsPane extends HookConsumerWidget {
     }
 
     void pressSort(CollectionSortColumn column) {
-      final next = sort.value.after(column, refused: refusedSorts.value);
-      if (next != sort.value) {
-        sort.value = next;
-        return;
+      // A refusal is remembered for one trip through a column, so the header
+      // can step back from a reverse the server does not know. Coming to the
+      // column afresh asks the server again: it may have learned the order.
+      if (sort.value.column != column) {
+        refusedSorts.value.removeWhere((order) => order.column == column);
       }
-      // Everything this column offers was refused: say so again rather than
-      // let the press do nothing.
-      showDesktopToast(
-        context,
-        collectionSortFailedMessage(
-          CollectionCatalogSort.natural(column),
-          refused: true,
-        ),
-        error: true,
-      );
+      sort.value = sort.value.after(column, refused: refusedSorts.value);
     }
 
     Future<void> editFilters() async {
