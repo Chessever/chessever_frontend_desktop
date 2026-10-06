@@ -1,6 +1,32 @@
 {
   "releases": [
     {
+      "version": "22.6.0",
+      "date": "2026-10-06",
+      "title": "Choose the games you prepare with",
+      "subtitle": "More control over connected Lichess and Chess.com profiles.",
+      "entries": [
+        {
+          "type": "New",
+          "impact": 96,
+          "title": "Download by speed and date",
+          "summary": "Choose the time controls and optional date range for each connected profile, such as Blitz games from a chosen start date."
+        },
+        {
+          "type": "Performance",
+          "impact": 90,
+          "title": "Prepare your selected games",
+          "summary": "Filtered downloads request matching games from Lichess and the relevant monthly archives from Chess.com."
+        },
+        {
+          "type": "Improved",
+          "impact": 84,
+          "title": "Clearer preparation progress",
+          "summary": "Download progress and preparation messages reflect your selected games. Your download choices are saved for each profile."
+        }
+      ]
+    },
+    {
       "version": "11.1.0",
       "date": "2026-05-29",
       "title": "What’s new in ChessEver Desktop v11.1",
