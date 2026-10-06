@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -468,9 +469,9 @@ class DesktopShell extends HookConsumerWidget {
           // not by Shortcuts. Registering Backspace here consumes the key
           // before focused search/text fields can delete their text.
           const SingleActivator(LogicalKeyboardKey.keyK, meta: true):
-              const _OpenCommandPaletteIntent(),
+              const DesktopGlobalSearchIntent(),
           const SingleActivator(LogicalKeyboardKey.keyK, control: true):
-              const _OpenCommandPaletteIntent(),
+              const DesktopGlobalSearchIntent(),
           const SingleActivator(LogicalKeyboardKey.keyO, meta: true):
               const _ImportPgnIntent(),
           const SingleActivator(LogicalKeyboardKey.keyO, control: true):
@@ -487,9 +488,9 @@ class DesktopShell extends HookConsumerWidget {
             control: true,
           ): const SwitchPaneIntent(DesktopPane.players),
           const SingleActivator(LogicalKeyboardKey.keyF, meta: true):
-              const _OpenCommandPaletteIntent(),
+              const DesktopGlobalSearchIntent(),
           const SingleActivator(LogicalKeyboardKey.keyF, control: true):
-              const _OpenCommandPaletteIntent(),
+              const DesktopGlobalSearchIntent(),
           const SingleActivator(
             LogicalKeyboardKey.keyL,
             control: true,
@@ -613,12 +614,12 @@ class DesktopShell extends HookConsumerWidget {
               LogicalKeyboardKey.keyF,
               meta: true,
             )] =
-            const _OpenCommandPaletteIntent();
+            const DesktopGlobalSearchIntent();
         shellShortcuts[const SingleActivator(
               LogicalKeyboardKey.keyF,
               control: true,
             )] =
-            const _OpenCommandPaletteIntent();
+            const DesktopGlobalSearchIntent();
 
         return Focus(
           onKeyEvent: (node, event) {
@@ -655,8 +656,8 @@ class DesktopShell extends HookConsumerWidget {
                   return null;
                 },
               ),
-              _OpenCommandPaletteIntent:
-                  CallbackAction<_OpenCommandPaletteIntent>(
+              DesktopGlobalSearchIntent:
+                  CallbackAction<DesktopGlobalSearchIntent>(
                     onInvoke: (_) {
                       openCommandPalette();
                       return null;
@@ -1179,10 +1180,6 @@ bool isReservedDesktopGlobalSearchShortcut(ShortcutActivator activator) {
 
 class _ToggleSidebarIntent extends Intent {
   const _ToggleSidebarIntent();
-}
-
-class _OpenCommandPaletteIntent extends Intent {
-  const _OpenCommandPaletteIntent();
 }
 
 class _ImportPgnIntent extends Intent {

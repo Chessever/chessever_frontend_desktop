@@ -47,6 +47,7 @@ import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
+import 'package:chessever/desktop/widgets/player_download_options_dialog.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/screens/favorites/tabs/favorites_players_tab.dart'
@@ -271,14 +272,14 @@ class _PlayerTreeBuildController extends StateNotifier<_PlayerTreeBuildState> {
   }
 }
 
-final _playerTreeBuildProvider = StateNotifierProvider<
-  _PlayerTreeBuildController,
-  _PlayerTreeBuildState
->((ref) {
-  return _PlayerTreeBuildController(
-    ref.read(localChessDatabaseRepositoryProvider),
-  );
-});
+final _playerTreeBuildProvider =
+    StateNotifierProvider<_PlayerTreeBuildController, _PlayerTreeBuildState>((
+      ref,
+    ) {
+      return _PlayerTreeBuildController(
+        ref.read(localChessDatabaseRepositoryProvider),
+      );
+    });
 
 class PlayerWorkspacePane extends HookConsumerWidget {
   const PlayerWorkspacePane({super.key, this.tabId});
@@ -1812,6 +1813,12 @@ class _SourceCard extends StatelessWidget {
                 if (connected) ...[
                   if (canEditUsername) ...[
                     DesktopDialogIconButton(
+                      icon: Icons.tune_rounded,
+                      tooltip: 'Download options',
+                      onPress: working ? null : onSync,
+                    ),
+                    const SizedBox(width: 4),
+                    DesktopDialogIconButton(
                       icon: Icons.edit_outlined,
                       tooltip: 'Edit username',
                       onPress: working ? null : onEditAccount,
@@ -1867,6 +1874,30 @@ class _SourceCard extends StatelessWidget {
                 const SizedBox(height: 7),
                 _DownloadProgress(account: currentAccount),
               ],
+            ],
+            if (connected && canEditUsername) ...[
+              const SizedBox(height: 8),
+              Text(
+                currentAccount!.downloadPreferences.describe(
+                  dailyCorrespondence: source == PlayerWorkspaceSource.chesscom,
+                ),
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 11,
+                  height: 1.4,
+                ),
+              ),
+              if (currentAccount.downloadPreferences !=
+                      currentAccount.appliedDownloadPreferences &&
+                  currentAccount.pgnPath != null)
+                const Text(
+                  'New options will apply on the next download.',
+                  style: TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: 11,
+                    height: 1.4,
+                  ),
+                ),
             ],
             if (operation != null) ...[
               const SizedBox(height: 10),
@@ -3997,7 +4028,21 @@ Future<void> openOrBuildPlayerWorkspaceSourceTree({
     if (account == null) {
       throw StateError('${source.label} is not connected.');
     }
-    await workspaceNotifier.syncAccount(account);
+    if (account.source == PlayerWorkspaceSource.lichess ||
+        account.source == PlayerWorkspaceSource.chesscom) {
+      if (!context.mounted) return;
+      final preferences = await showPlayerDownloadOptionsDialog(
+        context,
+        account: account,
+      );
+      if (preferences == null || !context.mounted) return;
+      await workspaceNotifier.syncAccount(
+        account,
+        downloadPreferences: preferences,
+      );
+    } else {
+      await workspaceNotifier.syncAccount(account);
+    }
     currentPlayer =
         _playerById(ref.read(playerWorkspaceProvider).players, player.id) ??
         currentPlayer;
@@ -4228,10 +4273,7 @@ void _openLocalTree(
               ),
             },
           )
-          .then<void>(
-            (_) {},
-            onError: (Object _, StackTrace __) {},
-          ),
+          .then<void>((_) {}, onError: (Object _, StackTrace __) {}),
     );
   } catch (_) {
     // Registry metadata is best-effort and must never block opening the tree.
@@ -4290,7 +4332,17 @@ Future<void> _runAccountSync(
   PlayerWorkspaceAccount account,
 ) async {
   try {
-    await ref.read(playerWorkspaceProvider.notifier).syncAccount(account);
+    final external =
+        account.source == PlayerWorkspaceSource.lichess ||
+        account.source == PlayerWorkspaceSource.chesscom;
+    final preferences =
+        external
+            ? await showPlayerDownloadOptionsDialog(context, account: account)
+            : null;
+    if (!context.mounted || (external && preferences == null)) return;
+    await ref
+        .read(playerWorkspaceProvider.notifier)
+        .syncAccount(account, downloadPreferences: preferences);
   } catch (error) {
     // Already presented as a paywall by the guard: no toast.
     if (error is DesktopPremiumRequiredException) return;
@@ -6583,6 +6635,11 @@ String playerWorkspaceLichessDownloadNotice(
   PlayerWorkspaceAccount account,
   PlayerWorkspaceOperation operation,
 ) {
+  if (account.downloadPreferences.isFiltered) {
+    return 'ChessEver is preparing the shared Lichess cache. Only games '
+        'matching your download options will be imported. Large accounts '
+        'can take 20 minutes or longer; future syncs are faster.';
+  }
   if (_isPreparingExternalHistory(operation)) {
     final available = account.effectiveAvailableGameCount;
     final readyCopy =
@@ -6599,6 +6656,9 @@ String playerWorkspaceLichessDownloadNotice(
 
 @visibleForTesting
 String playerWorkspaceAccountGamesLabel(PlayerWorkspaceAccount account) {
+  if (account.appliedDownloadPreferences.isFiltered) {
+    return '${_formatInt(account.gameCount)} downloaded games';
+  }
   if (account.source == PlayerWorkspaceSource.chessever &&
       account.hasDownloadedGames) {
     final imported = _formatInt(account.gameCount);
@@ -6615,6 +6675,10 @@ String playerWorkspaceAccountGamesLabel(PlayerWorkspaceAccount account) {
 
 @visibleForTesting
 bool playerWorkspaceShowsIdleDownloadProgress(PlayerWorkspaceAccount account) {
+  if (account.downloadPreferences.isFiltered ||
+      account.appliedDownloadPreferences.isFiltered) {
+    return false;
+  }
   if (account.source == PlayerWorkspaceSource.chessever &&
       account.hasDownloadedGames) {
     return false;
@@ -6623,6 +6687,9 @@ bool playerWorkspaceShowsIdleDownloadProgress(PlayerWorkspaceAccount account) {
 }
 
 String? _sourceGameCountLine(PlayerWorkspaceAccount account) {
+  if (account.appliedDownloadPreferences.isFiltered) {
+    return '${playerWorkspaceAccountGamesLabel(account)} · ${_formatDate(account.lastSyncAtMs)}';
+  }
   final available = account.effectiveAvailableGameCount;
   if (available <= 0) return null;
   final label = playerWorkspaceAccountGamesLabel(account);

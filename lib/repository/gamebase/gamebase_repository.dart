@@ -46,12 +46,14 @@ class GamebasePlayerPgnExport {
     required this.gameCount,
     this.cacheStatus,
     this.snapshotStatus,
+    this.filterVersion,
   });
 
   final String pgn;
   final int gameCount;
   final String? cacheStatus;
   final String? snapshotStatus;
+  final String? filterVersion;
 }
 
 ({int? preparedGameCount, int? expectedGameCount})
@@ -1916,6 +1918,9 @@ class GamebaseRepository {
     bool refresh = false,
     bool prepare = true,
     int? sinceMs,
+    int? dateFromMs,
+    int? untilMs,
+    Set<String> timeControls = const {},
     Duration? receiveTimeout,
     CancelToken? cancelToken,
   }) async {
@@ -1932,6 +1937,10 @@ class GamebaseRepository {
           if (refresh) 'refresh': 'true',
           if (prepare) 'prepare': 'true',
           if (sinceMs != null && sinceMs >= 0) 'since': sinceMs,
+          if (dateFromMs != null) 'dateFrom': dateFromMs,
+          if (untilMs != null) 'until': untilMs,
+          if (timeControls.isNotEmpty)
+            'timeControls': (timeControls.toList()..sort()).join(','),
         },
         options: Options(
           headers: <String, String>{
@@ -1961,12 +1970,14 @@ class GamebaseRepository {
       );
       final cacheStatus = response.headers.value('x-pgn-cache');
       final snapshotStatus = response.headers.value('x-pgn-snapshot');
+      final filterVersion = response.headers.value('x-pgn-filter-version');
 
       return GamebasePlayerPgnExport(
         pgn: pgn,
         gameCount: gameCount ?? 0,
         cacheStatus: cacheStatus,
         snapshotStatus: snapshotStatus,
+        filterVersion: filterVersion,
       );
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode;

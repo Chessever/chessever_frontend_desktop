@@ -12,6 +12,7 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
+import 'package:chessever/desktop/models/player_download_preferences.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
@@ -1524,6 +1525,152 @@ void main() {
         expect(combinedGames.single, contains('Lichess import 2'));
         await LocalChessDatabaseRepository.debugDrainBackgroundPurgeQueue();
         expect(await _count(db, 'local_chess_databases'), 0);
+      },
+    );
+
+    test(
+      'changed choices replace local games and clearing them fetches older games',
+      () async {
+        final pgns = <String, String>{
+          'alpha': '$_mergeGameOne\n\n$_mergeGameTwo',
+        };
+        final repository = _FakePlayerWorkspaceRepository(
+          root: temp,
+          lichessPgnByUsername: pgns,
+        );
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: repository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: localRepository,
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('Prep Target');
+        await notifier.selectPlayer(notifier.state.players.single.id);
+        await notifier.connectExternalAccount(
+          source: PlayerWorkspaceSource.lichess,
+          username: 'alpha',
+        );
+        PlayerWorkspaceAccount current() =>
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.lichess,
+            )!;
+        await notifier.syncAccount(current());
+        // Library has already cached the unrestricted source and Combined.
+        final sourcePath = current().pgnPath!;
+        final combinedPath = notifier.state.selectedPlayer!.combinedPgnPath!;
+        await localRepository.importSingleFileSource(path: sourcePath);
+        await localRepository.importSingleFileSource(path: combinedPath);
+        expect(await _count(db, 'local_chess_databases'), 2);
+        final selection = PlayerDownloadPreferences(
+          timeControls: const {PlayerDownloadTimeControl.blitz},
+          fromDate: DateTime.utc(2026, 6, 2),
+        );
+        pgns['alpha'] = _mergeGameTwo;
+        // Exercise the same-file queue across two Database.open instances:
+        // an unrelated Library import can write while old caches are purged.
+        final concurrentFile = File('${temp.path}/unrelated-library.pgn');
+        await concurrentFile.writeAsString(_mergeGameThree);
+        final concurrentDb = await resqlite.Database.open(
+          '${temp.path}/local_chess.db',
+        );
+        try {
+          final concurrentRepository = LocalChessDatabaseRepository(
+            database: () async => concurrentDb,
+          );
+          await Future.wait<void>([
+            notifier.syncAccount(current(), downloadPreferences: selection),
+            concurrentRepository
+                .importSingleFileSource(path: concurrentFile.path)
+                .then((source) => expect(source, isNotNull)),
+          ]);
+        } finally {
+          await concurrentDb.close();
+        }
+        // Both old caches are gone; the unrelated import survived.
+        expect(await _count(db, 'local_chess_databases'), 1);
+        expect(repository.lichessSinceMsRequests.last, isNull);
+        expect(repository.lichessPreferencesRequests.last, selection);
+        expect(repository.lichessForceRefreshRequests.last, isFalse);
+        expect(repository.replaceExistingRequests.last, isTrue);
+        expect(current().appliedDownloadPreferences, selection);
+        expect(current().gameCount, 1);
+        expect(notifier.state.selectedPlayer!.combinedGameCount, 1);
+        expect(
+          notifier.state.selectedPlayer!.combinedDownloadOptionsChanged,
+          isFalse,
+        );
+        pgns['alpha'] = '$_mergeGameOne\n\n$_mergeGameTwo';
+        await notifier.syncAccount(
+          current(),
+          downloadPreferences: const PlayerDownloadPreferences(),
+        );
+        expect(repository.lichessSinceMsRequests.last, isNull);
+        expect(current().gameCount, 2);
+        expect(notifier.state.selectedPlayer!.combinedGameCount, 2);
+        await notifier.refreshAccountEntry(current());
+        expect(
+          current().downloadPreferences,
+          const PlayerDownloadPreferences(),
+        );
+      },
+    );
+
+    test(
+      'a failed selection change retains old games and retries without a date cursor',
+      () async {
+        final pgns = <String, String>{
+          'alpha': '$_mergeGameOne\n\n$_mergeGameTwo',
+        };
+        final repository = _FakePlayerWorkspaceRepository(
+          root: temp,
+          lichessPgnByUsername: pgns,
+        );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: repository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('Prep Target');
+        await notifier.selectPlayer(notifier.state.players.single.id);
+        await notifier.connectExternalAccount(
+          source: PlayerWorkspaceSource.lichess,
+          username: 'alpha',
+        );
+        PlayerWorkspaceAccount current() =>
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.lichess,
+            )!;
+        await notifier.syncAccount(current());
+        const selection = PlayerDownloadPreferences(
+          timeControls: {PlayerDownloadTimeControl.blitz},
+        );
+        repository.failNextLichessDownload = true;
+        await expectLater(
+          notifier.syncAccount(current(), downloadPreferences: selection),
+          throwsStateError,
+        );
+        expect(current().gameCount, 2);
+        expect(current().downloadPreferences, selection);
+        expect(
+          current().appliedDownloadPreferences,
+          const PlayerDownloadPreferences(),
+        );
+        pgns['alpha'] = '';
+        await notifier.syncAccount(current());
+        expect(repository.lichessSinceMsRequests.last, isNull);
+        expect(repository.replaceExistingRequests.last, isTrue);
+        expect(current().gameCount, 0);
+        expect(current().appliedDownloadPreferences, selection);
+        expect(notifier.state.selectedPlayer!.combinedGameCount, 0);
+        await notifier.refreshAccountEntry(current());
+        expect(current().gameCount, 0);
+        expect(current().downloadPreferences, selection);
       },
     );
 
@@ -5177,6 +5324,8 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   PlayerWorkspaceSnapshot snapshot = const PlayerWorkspaceSnapshot();
   final lichessSinceMsRequests = <int?>[];
   final lichessForceRefreshRequests = <bool>[];
+  final lichessPreferencesRequests = <PlayerDownloadPreferences>[];
+  bool failNextLichessDownload = false;
   final chessComSinceMsRequests = <int?>[];
   final chessComForceRefreshRequests = <bool>[];
   final chessEverSinceDateRequests = <DateTime?>[];
@@ -5277,12 +5426,18 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
     lichessSinceMsRequests.add(sinceMs);
+    lichessPreferencesRequests.add(preferences);
+    if (failNextLichessDownload) {
+      failNextLichessDownload = false;
+      throw StateError('Simulated download failure');
+    }
     lichessForceRefreshRequests.add(forceRefresh);
     final pgn = lichessPgnByUsername[username.trim()] ?? '';
     onProgress?.call('Downloading Lichess games...', null);
@@ -5298,6 +5453,7 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -5343,6 +5499,7 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     required Iterable<String> playerAliases,
     String? playerFideId,
     bool replaceExisting = false,
+    bool invalidateExistingCache = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) {
@@ -5355,6 +5512,7 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
       playerAliases: playerAliases,
       playerFideId: playerFideId,
       replaceExisting: replaceExisting,
+      invalidateExistingCache: invalidateExistingCache,
       onProgress: onProgress,
       cancellationToken: cancellationToken,
     );
@@ -5400,6 +5558,7 @@ class _CoalescingPlayerWorkspaceRepository
   Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
@@ -5421,6 +5580,7 @@ class _CoalescingPlayerWorkspaceRepository
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -5446,6 +5606,7 @@ class _CoalescingPlayerWorkspaceRepository
     required Iterable<String> playerAliases,
     String? playerFideId,
     bool replaceExisting = false,
+    bool invalidateExistingCache = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -5470,6 +5631,7 @@ class _CoalescingPlayerWorkspaceRepository
     Iterable<PlayerWorkspaceCombinedSource> sources =
         const <PlayerWorkspaceCombinedSource>[],
     required Iterable<String> playerAliases,
+    bool invalidateExistingCache = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -5495,6 +5657,7 @@ class _RemoteHitPlayerWorkspaceRepository
   Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
@@ -5540,6 +5703,7 @@ class _HoldingMergePlayerWorkspaceRepository
     required Iterable<String> playerAliases,
     String? playerFideId,
     bool replaceExisting = false,
+    bool invalidateExistingCache = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -5570,6 +5734,7 @@ class _HoldingMergePlayerWorkspaceRepository
     Iterable<PlayerWorkspaceCombinedSource> sources =
         const <PlayerWorkspaceCombinedSource>[],
     required Iterable<String> playerAliases,
+    bool invalidateExistingCache = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -5651,6 +5816,7 @@ class _HoldingChessComSnapshotWorkspaceRepository
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -5696,6 +5862,7 @@ class _HoldingLichessSnapshotWorkspaceRepository
   Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
@@ -5772,6 +5939,7 @@ class _HoldingImportChessEverWorkspaceRepository
     required Iterable<String> playerAliases,
     String? playerFideId,
     bool replaceExisting = false,
+    bool invalidateExistingCache = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -5794,6 +5962,7 @@ class _HoldingImportChessEverWorkspaceRepository
       playerAliases: playerAliases,
       playerFideId: playerFideId,
       replaceExisting: replaceExisting,
+      invalidateExistingCache: invalidateExistingCache,
       onProgress: onProgress,
       cancellationToken: cancellationToken,
     );
@@ -5981,6 +6150,9 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     bool refresh = false,
     bool prepare = true,
     int? sinceMs,
+    int? dateFromMs,
+    int? untilMs,
+    Set<String> timeControls = const {},
     Duration? receiveTimeout,
     CancelToken? cancelToken,
   }) async {

@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
+import 'package:chessever/desktop/models/player_download_preferences.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -578,6 +579,7 @@ class PlayerWorkspaceRepository {
   Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
@@ -590,6 +592,7 @@ class PlayerWorkspaceRepository {
         workspaceSource: PlayerWorkspaceSource.lichess,
         username: username,
         sinceMs: sinceMs,
+        preferences: preferences,
         forceRefresh: forceRefresh,
         onProgress: onProgress,
         cancellationToken: cancellationToken,
@@ -620,6 +623,7 @@ class PlayerWorkspaceRepository {
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -631,6 +635,7 @@ class PlayerWorkspaceRepository {
         workspaceSource: PlayerWorkspaceSource.chesscom,
         username: username,
         sinceMs: sinceMs,
+        preferences: preferences,
         forceRefresh: forceRefresh,
         onProgress: onProgress,
         cancellationToken: cancellationToken,
@@ -738,12 +743,16 @@ class PlayerWorkspaceRepository {
     required PlayerWorkspaceSource workspaceSource,
     required String username,
     required int? sinceMs,
+    required PlayerDownloadPreferences preferences,
     required bool forceRefresh,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
     final repository = _gamebaseRepository;
     if (repository == null) return null;
+    if (preferences.validationError != null) {
+      throw ArgumentError(preferences.validationError);
+    }
 
     cancellationToken?.throwIfCanceled();
     onProgress?.call('${externalSource.label}: checking source cache...', null);
@@ -774,6 +783,10 @@ class PlayerWorkspaceRepository {
           refresh: requestRefresh,
           prepare: true,
           sinceMs: sinceMs,
+          dateFromMs: preferences.fromMs,
+          untilMs: preferences.untilMs,
+          timeControls:
+              preferences.timeControls.map((value) => value.name).toSet(),
           receiveTimeout: remaining,
           cancelToken: requestCancelToken,
         );
@@ -825,6 +838,14 @@ class PlayerWorkspaceRepository {
     }
     cancellationToken?.throwIfCanceled();
     if (export == null) return null;
+
+    // Old servers ignore unknown query parameters. Do not import a full
+    // history while claiming the user's selection was honored.
+    if (preferences.isFiltered && export.filterVersion != '1') {
+      throw const _PlayerWorkspaceDownloadException(
+        'Download options are not available on the server yet. Please try again after the server is updated.',
+      );
+    }
 
     final gameCount =
         export.gameCount > 0 ? export.gameCount : countPgnGames(export.pgn);
@@ -930,6 +951,7 @@ class PlayerWorkspaceRepository {
     required Iterable<String> playerAliases,
     String? playerFideId,
     bool replaceExisting = false,
+    bool invalidateExistingCache = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -944,71 +966,87 @@ class PlayerWorkspaceRepository {
     );
     cancellationToken?.throwIfCanceled();
 
-    if (replaceExisting || !fileExists) {
-      await _writePgnText(file, pgn, onProgress: onProgress);
+    // Keep any same-path Library import out until the replacement file is ready.
+    // The existing purge API serializes all cache writes through the app queue.
+    final cacheGuard =
+        invalidateExistingCache
+            ? localRepository.acquireCacheDeletionGuard([path])
+            : null;
+    try {
+      if (invalidateExistingCache) {
+        await localRepository.deleteCachedSourcesAwaitingPurge(
+          sourcePaths: [path],
+        );
+        cancellationToken?.throwIfCanceled();
+      }
+      if (replaceExisting || !fileExists) {
+        await _writePgnText(file, pgn, onProgress: onProgress);
+        cancellationToken?.throwIfCanceled();
+        onProgress?.call('Finalizing $sourceLabel...', 0.99);
+        return PlayerWorkspaceImportResult(
+          path: path,
+          stats: PlayerWorkspaceImportStats(
+            gameCount: prepared.stats.gameCount,
+            newGameCount: prepared.stats.gameCount,
+            winCount: prepared.stats.winCount,
+            drawCount: prepared.stats.drawCount,
+            lossCount: prepared.stats.lossCount,
+          ),
+        );
+      }
+
+      // Player sources are file-backed. Keep same-source syncing idempotent by
+      // comparing the incoming games with the existing PGN in a worker isolate,
+      // instead of materializing both files into the large shared Library cache.
+      onProgress?.call('Checking existing games...', 0.12);
+      final existingPrepared = await _preparePgnImport(
+        pgn: await file.readAsString(),
+        playerAliases: playerAliases,
+        playerFideId: playerFideId,
+      );
+      cancellationToken?.throwIfCanceled();
+      final remainingExisting = <String, int>{};
+      for (final fingerprint in existingPrepared.fingerprints) {
+        remainingExisting.update(
+          fingerprint,
+          (count) => count + 1,
+          ifAbsent: () => 1,
+        );
+      }
+      final appended = <_PreparedPgnGame>[];
+      for (final game in prepared.games) {
+        final remaining = remainingExisting[game.fingerprint] ?? 0;
+        if (remaining > 0) {
+          remainingExisting[game.fingerprint] = remaining - 1;
+        } else {
+          appended.add(game);
+        }
+      }
+      if (appended.isNotEmpty) {
+        await _appendPreparedPgnGames(file, appended);
+      }
       cancellationToken?.throwIfCanceled();
       onProgress?.call('Finalizing $sourceLabel...', 0.99);
+      final appendedStats = analyzePgnStats(
+        appended.map((game) => game.pgn),
+        playerAliases,
+        playerFideId: playerFideId,
+      );
       return PlayerWorkspaceImportResult(
         path: path,
         stats: PlayerWorkspaceImportStats(
-          gameCount: prepared.stats.gameCount,
-          newGameCount: prepared.stats.gameCount,
-          winCount: prepared.stats.winCount,
-          drawCount: prepared.stats.drawCount,
-          lossCount: prepared.stats.lossCount,
+          // Source syncing remains idempotent within this account. Combined keeps
+          // every source row, including games that overlap another provider.
+          gameCount: existingPrepared.stats.gameCount + appendedStats.gameCount,
+          newGameCount: appended.length,
+          winCount: existingPrepared.stats.winCount + appendedStats.winCount,
+          drawCount: existingPrepared.stats.drawCount + appendedStats.drawCount,
+          lossCount: existingPrepared.stats.lossCount + appendedStats.lossCount,
         ),
       );
+    } finally {
+      cacheGuard?.release();
     }
-
-    // Player sources are file-backed. Keep same-source syncing idempotent by
-    // comparing the incoming games with the existing PGN in a worker isolate,
-    // instead of materializing both files into the large shared Library cache.
-    onProgress?.call('Checking existing games...', 0.12);
-    final existingPrepared = await _preparePgnImport(
-      pgn: await file.readAsString(),
-      playerAliases: playerAliases,
-      playerFideId: playerFideId,
-    );
-    cancellationToken?.throwIfCanceled();
-    final remainingExisting = <String, int>{};
-    for (final fingerprint in existingPrepared.fingerprints) {
-      remainingExisting.update(
-        fingerprint,
-        (count) => count + 1,
-        ifAbsent: () => 1,
-      );
-    }
-    final appended = <_PreparedPgnGame>[];
-    for (final game in prepared.games) {
-      final remaining = remainingExisting[game.fingerprint] ?? 0;
-      if (remaining > 0) {
-        remainingExisting[game.fingerprint] = remaining - 1;
-      } else {
-        appended.add(game);
-      }
-    }
-    if (appended.isNotEmpty) {
-      await _appendPreparedPgnGames(file, appended);
-    }
-    cancellationToken?.throwIfCanceled();
-    onProgress?.call('Finalizing $sourceLabel...', 0.99);
-    final appendedStats = analyzePgnStats(
-      appended.map((game) => game.pgn),
-      playerAliases,
-      playerFideId: playerFideId,
-    );
-    return PlayerWorkspaceImportResult(
-      path: path,
-      stats: PlayerWorkspaceImportStats(
-        // Source syncing remains idempotent within this account. Combined keeps
-        // every source row, including games that overlap another provider.
-        gameCount: existingPrepared.stats.gameCount + appendedStats.gameCount,
-        newGameCount: appended.length,
-        winCount: existingPrepared.stats.winCount + appendedStats.winCount,
-        drawCount: existingPrepared.stats.drawCount + appendedStats.drawCount,
-        lossCount: existingPrepared.stats.lossCount + appendedStats.lossCount,
-      ),
-    );
   }
 
   Future<PlayerWorkspaceImportResult> rebuildCombinedDatabase({
@@ -1020,6 +1058,7 @@ class PlayerWorkspaceRepository {
     Iterable<PlayerWorkspaceCombinedSource> sources =
         const <PlayerWorkspaceCombinedSource>[],
     required Iterable<String> playerAliases,
+    bool invalidateExistingCache = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -1059,52 +1098,66 @@ class PlayerWorkspaceRepository {
       playerName: playerName,
       fideId: playerFideId,
     );
-    onProgress?.call('Preparing combined database...', 0.02);
-    final prepared = await _prepareCombinedPgnImport(
-      sources: preparedInputs,
-      combinedPath: combinedPath,
-      playerAliases: playerAliases,
-      playerFideId: playerFideId,
-      onProgress: onProgress,
-      cancellationToken: cancellationToken,
-    );
-    cancellationToken?.throwIfCanceled();
-    var authoritativeStats = PlayerWorkspaceImportStats(
-      gameCount: prepared.stats.gameCount,
-      newGameCount: prepared.stats.gameCount,
-      winCount: prepared.stats.winCount,
-      drawCount: prepared.stats.drawCount,
-      lossCount: prepared.stats.lossCount,
-    );
+    final cacheGuard =
+        invalidateExistingCache
+            ? localRepository.acquireCacheDeletionGuard([combinedPath])
+            : null;
     try {
-      final cachedStats = await localRepository.localDatabaseResultStats(
-        databasePath: prepared.path,
+      if (invalidateExistingCache) {
+        await localRepository.deleteCachedSourcesAwaitingPurge(
+          sourcePaths: [combinedPath],
+        );
+        cancellationToken?.throwIfCanceled();
+      }
+      onProgress?.call('Preparing combined database...', 0.02);
+      final prepared = await _prepareCombinedPgnImport(
+        sources: preparedInputs,
+        combinedPath: combinedPath,
         playerAliases: playerAliases,
         playerFideId: playerFideId,
-        preferDirectDatabase: true,
+        onProgress: onProgress,
+        cancellationToken: cancellationToken,
       );
       cancellationToken?.throwIfCanceled();
-      if (cachedStats.gameCount > 0) {
-        authoritativeStats = PlayerWorkspaceImportStats(
-          gameCount: cachedStats.gameCount,
-          newGameCount: cachedStats.gameCount,
-          winCount: cachedStats.winCount,
-          drawCount: cachedStats.drawCount,
-          lossCount: cachedStats.lossCount,
+      var authoritativeStats = PlayerWorkspaceImportStats(
+        gameCount: prepared.stats.gameCount,
+        newGameCount: prepared.stats.gameCount,
+        winCount: prepared.stats.winCount,
+        drawCount: prepared.stats.drawCount,
+        lossCount: prepared.stats.lossCount,
+      );
+      try {
+        final cachedStats = await localRepository.localDatabaseResultStats(
+          databasePath: prepared.path,
+          playerAliases: playerAliases,
+          playerFideId: playerFideId,
+          preferDirectDatabase: true,
         );
+        cancellationToken?.throwIfCanceled();
+        if (cachedStats.gameCount > 0) {
+          authoritativeStats = PlayerWorkspaceImportStats(
+            gameCount: cachedStats.gameCount,
+            newGameCount: cachedStats.gameCount,
+            winCount: cachedStats.winCount,
+            drawCount: cachedStats.drawCount,
+            lossCount: cachedStats.lossCount,
+          );
+        }
+      } catch (error) {
+        if (isOperationCanceled(error)) rethrow;
+        // The Players workspace is file-backed and intentionally does not
+        // materialize a second Combined cache. A Library cache may nevertheless
+        // already exist; when it does, its complete path is authoritative. On a
+        // cold workspace, keep the stats prepared while writing the PGN.
       }
-    } catch (error) {
-      if (isOperationCanceled(error)) rethrow;
-      // The Players workspace is file-backed and intentionally does not
-      // materialize a second Combined cache. A Library cache may nevertheless
-      // already exist; when it does, its complete path is authoritative. On a
-      // cold workspace, keep the stats prepared while writing the PGN.
+      onProgress?.call('Finalizing combined database...', 0.99);
+      return PlayerWorkspaceImportResult(
+        path: prepared.path,
+        stats: authoritativeStats,
+      );
+    } finally {
+      cacheGuard?.release();
     }
-    onProgress?.call('Finalizing combined database...', 0.99);
-    return PlayerWorkspaceImportResult(
-      path: prepared.path,
-      stats: authoritativeStats,
-    );
   }
 
   Future<bool> isCombinedDatabaseCurrent(String path) async {

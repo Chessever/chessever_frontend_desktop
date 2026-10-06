@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
+import 'package:chessever/desktop/models/player_download_preferences.dart';
 import 'package:chessever/desktop/panes/player_workspace_pane.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -130,7 +131,7 @@ void main() {
     final repository = _PaneFakePlayerWorkspaceRepository();
     final container = ProviderContainer(
       overrides: [
-          ...desktopPremiumTestOverrides,
+        ...desktopPremiumTestOverrides,
         playerWorkspaceRepositoryProvider.overrideWithValue(repository),
         _playerWorkspaceOverride(repository),
       ],
@@ -302,6 +303,10 @@ void main() {
     );
 
     await tester.tap(find.text('Download games').first);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(DesktopToolbarPillButton, 'Download games').last,
+    );
     await repository.onlineDownloadStarted.future.timeout(
       const Duration(seconds: 5),
     );
@@ -559,9 +564,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Opening trees'), findsOneWidget);
 
-    await tester.tap(
-      find.widgetWithText(LocalTreeActionButton, 'Build Tree'),
-    );
+    await tester.tap(find.widgetWithText(LocalTreeActionButton, 'Build Tree'));
     await tester.pump();
     expect(
       find.descendant(
@@ -629,7 +632,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-          ...desktopPremiumTestOverrides,
+            ...desktopPremiumTestOverrides,
             playerWorkspaceRepositoryProvider.overrideWithValue(repository),
             _playerWorkspaceOverride(repository),
             localChessDatabaseRepositoryProvider.overrideWithValue(
@@ -1309,7 +1312,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(DesktopPaywallView), findsOneWidget);
-      expect(find.text('Adding preparation targets is Premium'), findsOneWidget);
+      expect(
+        find.text('Adding preparation targets is Premium'),
+        findsOneWidget,
+      );
       expect(find.text('Create manual player'), findsNothing);
       expectNoToast(tester);
       expect(tester.takeException(), isNull);
@@ -1376,12 +1382,18 @@ void main() {
       await tester.pump();
       await tester.enterText(find.byType(TextField).last, 'Carlsen');
       await tester.pumpAndSettle();
-      expect(find.text('Adding preparation targets is Premium'), findsOneWidget);
+      expect(
+        find.text('Adding preparation targets is Premium'),
+        findsOneWidget,
+      );
 
       VoidCallback? manualAdd() =>
           tester
               .widget<DesktopDialogButton>(
-                find.widgetWithText(DesktopDialogButton, 'Create manual player'),
+                find.widgetWithText(
+                  DesktopDialogButton,
+                  'Create manual player',
+                ),
               )
               .onPress;
       expect(manualAdd(), isNull);
@@ -1446,6 +1458,10 @@ Future<void> _expectOnlineDownloadShowsProgress(
   );
 
   await tester.tap(find.text('Download games').first);
+  await tester.pumpAndSettle();
+  await tester.tap(
+    find.widgetWithText(DesktopToolbarPillButton, 'Download games').last,
+  );
   await tester.pump(const Duration(milliseconds: 250));
   await repository.onlineDownloadStarted.future.timeout(
     const Duration(seconds: 5),
@@ -1478,7 +1494,7 @@ Future<void> _pumpAndConnectOnlineAccount(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-          ...desktopPremiumTestOverrides,
+        ...desktopPremiumTestOverrides,
         playerWorkspaceRepositoryProvider.overrideWithValue(repository),
         _playerWorkspaceOverride(repository),
       ],
@@ -1510,7 +1526,6 @@ Future<void> _pumpAndConnectOnlineAccount(
 
   await tester.tap(find.text('Add 1 username'));
   await tester.pumpAndSettle();
-
 }
 
 Override _guardedPlayerWorkspaceOverride(
@@ -1571,8 +1586,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     PlayerWorkspaceSnapshot? snapshot,
     this.chessEverSearchResults = const <GamebasePlayer>[],
     this.combinedRebuildPath = '/tmp/combined.pgn',
-    this.lichessDownloadMessage =
-        'Receiving Lichess games: 21 of about 42...',
+    this.lichessDownloadMessage = 'Receiving Lichess games: 21 of about 42...',
     this.lichessDownloadProgress = 0.5,
   }) : snapshot =
            snapshot ??
@@ -1674,6 +1688,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
@@ -1693,6 +1708,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -1763,6 +1779,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     required Iterable<String> playerAliases,
     String? playerFideId,
     bool replaceExisting = false,
+    bool invalidateExistingCache = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -1783,6 +1800,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     Iterable<PlayerWorkspaceCombinedSource> sources =
         const <PlayerWorkspaceCombinedSource>[],
     required Iterable<String> playerAliases,
+    bool invalidateExistingCache = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -1938,8 +1956,7 @@ class _PaneMutableTreeLocalChessDatabaseRepository
   }
 
   @override
-  Future<LocalChessOpeningTreeRebuildResult?>
-  rebuildOpeningTreeFromPgnFile({
+  Future<LocalChessOpeningTreeRebuildResult?> rebuildOpeningTreeFromPgnFile({
     required String databasePath,
     LocalChessScanProgressSink? onProgress,
     OperationCancellationToken? cancellationToken,
