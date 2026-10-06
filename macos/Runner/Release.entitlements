@@ -28,5 +28,7 @@
 	     be issued by the Apple Developer account holder. The desktop app
 	     therefore uses Supabase-hosted Apple OAuth through a loopback
 	     callback instead of the native AuthenticationServices sheet. -->
+	<key>com.apple.security.device.camera</key>
+	<true/>
 </dict>
 </plist>

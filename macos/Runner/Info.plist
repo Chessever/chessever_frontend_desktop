@@ -74,5 +74,7 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo of a chessboard to import its position.</string>
 </dict>
 </plist>
