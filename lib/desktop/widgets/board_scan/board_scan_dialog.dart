@@ -43,6 +43,7 @@ class _BoardScanDialogState extends State<_BoardScanDialog> {
   bool _camera = false;
   bool _photo = false;
   bool _blackToMove = false;
+  bool _flipped = false;
   bool _busy = false;
   String? _error;
 
@@ -124,7 +125,13 @@ class _BoardScanDialogState extends State<_BoardScanDialog> {
         photo: _photo,
       );
       if (!mounted) return;
-      final position = await _api.scan(quadrants, photo: _photo);
+      final source = await boardScanSource(image, _corners);
+      if (!mounted) return;
+      final position = await _api.scan(
+        quadrants,
+        photo: _photo,
+        source: source,
+      );
       if (mounted) setState(() => _position = position);
     } catch (error) {
       if (mounted) {
@@ -295,7 +302,7 @@ class _BoardScanDialogState extends State<_BoardScanDialog> {
               ),
             ] else ...[
               const Text(
-                'Check every piece against the image. Rotate the position until its coordinates match your board.',
+                'Review the position, then open the board editor to adjust pieces.',
               ),
               const SizedBox(height: 16),
               LayoutBuilder(
@@ -307,6 +314,7 @@ class _BoardScanDialogState extends State<_BoardScanDialog> {
                         BoardScanPreview(
                           size: math.min(410, constraints.maxWidth),
                           fen: position.fen(),
+                          flipped: _flipped,
                         ),
                         SizedBox(
                           width: math.min(330, constraints.maxWidth),
@@ -321,10 +329,9 @@ class _BoardScanDialogState extends State<_BoardScanDialog> {
                 runSpacing: 12,
                 children: [
                   DesktopDialogButton(
-                    label: 'Rotate position 90°',
-                    icon: Icons.rotate_right,
-                    onPress:
-                        () => setState(() => _position = position.rotated()),
+                    label: 'Flip board',
+                    icon: Icons.swap_vert,
+                    onPress: () => setState(() => _flipped = !_flipped),
                   ),
                   DesktopDialogButton(
                     label: _blackToMove ? 'Black to move' : 'White to move',
