@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/board_scan/board_scan_dialog.dart';
 import 'package:chessground/chessground.dart';
 import 'package:dartchess/dartchess.dart' hide Board;
 import 'package:file_picker/file_picker.dart';
@@ -111,6 +112,13 @@ class _BoardPositionSetupDialogState
   void _showToast(String message, {bool error = false}) {
     if (!mounted) return;
     showDesktopToast(context, message, error: error);
+  }
+
+  Future<void> _importImage() async {
+    final fen = await showBoardScanDialog(context);
+    if (!mounted || fen == null) return;
+    ref.read(boardEditorProvider.notifier).loadFen(fen);
+    _showToast('Review every detected piece before applying.');
   }
 
   Future<void> _pasteFen() async {
@@ -228,6 +236,7 @@ class _BoardPositionSetupDialogState
                     },
                     onCopyFen: () => _copyFen(editorState.fullFen),
                     onPasteFen: _pasteFen,
+                    onImportImage: _importImage,
                   ),
                 ),
               ],
@@ -407,6 +416,14 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
       ref,
       seed: PlayFromHereSeed(fen: editorState.fullFen),
     );
+  }
+
+  Future<void> _importImage() async {
+    final fen = await showBoardScanDialog(context);
+    if (!mounted || fen == null) return;
+    setState(_clearPgnOverride);
+    ref.read(boardEditorProvider.notifier).loadFen(fen);
+    _showToast('Review every detected piece before applying.');
   }
 
   Future<void> _pasteFen() async {
@@ -669,6 +686,7 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
                   },
                   onCopyFen: () => _copyFen(editorState.fullFen),
                   onPasteFen: _pasteFen,
+                  onImportImage: _importImage,
                   onPastePgn: _pastePgn,
                   onOpenLocalFiles: _openLocalFiles,
                   onOpenLocalFolder: _openLocalFolder,
@@ -1082,6 +1100,7 @@ class _PositionSetupModalInspector extends StatelessWidget {
     required this.onToggleCastling,
     required this.onCopyFen,
     required this.onPasteFen,
+    required this.onImportImage,
   });
 
   final BoardEditorState editorState;
@@ -1097,6 +1116,7 @@ class _PositionSetupModalInspector extends StatelessWidget {
   onToggleCastling;
   final VoidCallback onCopyFen;
   final VoidCallback onPasteFen;
+  final VoidCallback onImportImage;
 
   @override
   Widget build(BuildContext context) {
@@ -1194,6 +1214,12 @@ class _PositionSetupModalInspector extends StatelessWidget {
                   children: [
                     _FenBlock(fen: editorState.fullFen, onCopyFen: onCopyFen),
                     const SizedBox(height: 7),
+                    _EditorActionButton(
+                      icon: Icons.add_photo_alternate_outlined,
+                      label: 'Import image',
+                      tone: _EditorButtonTone.secondary,
+                      onPress: onImportImage,
+                    ),
                     _EditorActionButton(
                       icon: Icons.content_paste_go_rounded,
                       label: 'Paste FEN',
@@ -1365,6 +1391,7 @@ class _EditorInspector extends StatelessWidget {
     required this.onToggleDeleteMode,
     required this.onCopyFen,
     required this.onPasteFen,
+    required this.onImportImage,
     required this.onPastePgn,
     required this.onOpenLocalFiles,
     required this.onOpenLocalFolder,
@@ -1389,6 +1416,7 @@ class _EditorInspector extends StatelessWidget {
   final VoidCallback onToggleDeleteMode;
   final VoidCallback onCopyFen;
   final VoidCallback onPasteFen;
+  final VoidCallback onImportImage;
   final VoidCallback onPastePgn;
   final VoidCallback onOpenLocalFiles;
   final VoidCallback onOpenLocalFolder;
@@ -1568,6 +1596,14 @@ class _EditorInspector extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        _EditorActionButton(
+                          icon: Icons.add_photo_alternate_outlined,
+                          label: 'Import board image',
+                          tone: _EditorButtonTone.secondary,
+                          fillWidth: true,
+                          onPress: onImportImage,
+                        ),
+                        const SizedBox(height: 10),
                         Row(
                           children: [
                             Expanded(

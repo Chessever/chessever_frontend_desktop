@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 22.3.0+437
+version: 22.3.1+438
 environment:
   sdk: ^3.7.2
 
@@ -181,6 +181,7 @@ dependencies:
   screen_retriever: ^0.2.0        # display work-area bounds for safe window sizing
   hotkey_manager: ^0.2.3          # global hotkeys (when Flutter Shortcuts/Actions aren't enough)
   local_notifier: ^0.1.6          # transient desktop notifications (replaces OneSignal on desktop)
+  flutter_webrtc: ^1.2.1
   desktop_drop: ^0.6.0            # drag-drop files into the window (replaces receive_sharing_intent)
   sqflite_common_ffi: ^2.3.6      # sqflite on Windows/Linux/macOS via FFI (replaces sqflite on desktop)
   ffi: ^2.1.4

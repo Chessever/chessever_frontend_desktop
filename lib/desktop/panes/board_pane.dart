@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/board_scan/board_scan_dialog.dart';
 import 'dart:async';
 import '../state/event_player_board_games.dart';
 import 'dart:io' as io;
@@ -3461,11 +3462,11 @@ class _BoardPaneContent extends HookConsumerWidget {
       ref.read(desktopTabsProvider.notifier).open(TabKind.boardSettings);
     }
 
-    Future<void> openPositionSetup() async {
+    Future<void> openPositionSetup([String? importedFen]) async {
       final nextFen = await showBoardPositionSetupDialog(
         context,
         ref: ref,
-        initialFen: position.fen,
+        initialFen: importedFen ?? position.fen,
       );
       if (nextFen == null || !context.mounted) return;
       final trimmedFen = nextFen.trim();
@@ -3501,6 +3502,12 @@ class _BoardPaneContent extends HookConsumerWidget {
       dirtySinceLoad.value = true;
       showToast('Position setup applied');
       focusNode.requestFocus();
+    }
+
+    Future<void> importPositionImage() async {
+      final fen = await showBoardScanDialog(context);
+      if (fen == null || !context.mounted) return;
+      await openPositionSetup(fen);
     }
 
     void openExplorerTab({bool toggle = false}) {
@@ -4995,6 +5002,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         boardFocusMode
             ? null
             : _RightRailBoardActions(
+              onImportImage: () => unawaited(importPositionImage()),
               headers: pgnHeaders.value,
               eventInfoTrigger: eventInfoTrigger.value,
               onSaveGame: () => unawaited(saveGameToLibraryAction()),
@@ -7741,6 +7749,7 @@ class _RightRailBoardActions extends StatelessWidget {
     required this.canSaveGame,
     required this.saveShortcutLabel,
     this.onPlayAgain,
+    this.onImportImage,
   });
 
   final Map<String, String> headers;
@@ -7750,6 +7759,7 @@ class _RightRailBoardActions extends StatelessWidget {
   final bool canSaveGame;
   final String? saveShortcutLabel;
   final VoidCallback? onPlayAgain;
+  final VoidCallback? onImportImage;
 
   @override
   Widget build(BuildContext context) {
@@ -7762,6 +7772,14 @@ class _RightRailBoardActions extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (onImportImage != null) ...[
+            _RailIconAction(
+              tooltip: 'Import board image',
+              icon: Icons.add_photo_alternate_outlined,
+              onPress: onImportImage,
+            ),
+            const SizedBox(width: 4),
+          ],
           _RailIconAction(
             tooltip: saveTooltip,
             icon: FIcons.bookmarkPlus,
