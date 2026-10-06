@@ -6614,13 +6614,14 @@ String _formatPercent(double? value) {
 }
 
 bool _isPreparingExternalHistory(PlayerWorkspaceOperation operation) {
-  if (operation.source != PlayerWorkspaceSource.lichess ||
+  if ((operation.source != PlayerWorkspaceSource.lichess &&
+          operation.source != PlayerWorkspaceSource.chesscom) ||
       operation.progress != null) {
     return false;
   }
-  return operation.message.toLowerCase().contains(
-    'preparing the complete game history on chessever',
-  );
+  final message = operation.message.toLowerCase();
+  return message.contains('preparing the complete game history on chessever') ||
+      message.contains('preparing selected games');
 }
 
 @visibleForTesting
@@ -6636,9 +6637,8 @@ String playerWorkspaceLichessDownloadNotice(
   PlayerWorkspaceOperation operation,
 ) {
   if (account.downloadPreferences.isFiltered) {
-    return 'ChessEver is preparing the shared Lichess cache. Only games '
-        'matching your download options will be imported. Large accounts '
-        'can take 20 minutes or longer; future syncs are faster.';
+    return 'Only games matching your download options are being prepared. '
+        'Larger selections can take a while; future syncs are faster.';
   }
   if (_isPreparingExternalHistory(operation)) {
     final available = account.effectiveAvailableGameCount;

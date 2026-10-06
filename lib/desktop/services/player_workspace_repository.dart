@@ -754,6 +754,8 @@ class PlayerWorkspaceRepository {
       throw ArgumentError(preferences.validationError);
     }
 
+    final historyDescription =
+        preferences.isFiltered ? 'selected games' : 'the complete game history';
     cancellationToken?.throwIfCanceled();
     onProgress?.call('${externalSource.label}: checking source cache...', null);
     var requestRefresh = forceRefresh;
@@ -766,8 +768,8 @@ class PlayerWorkspaceRepository {
       final remaining = preparationDeadline.difference(DateTime.now());
       if (remaining <= Duration.zero) {
         throw _PlayerWorkspaceDownloadException(
-          '${externalSource.label} took too long to prepare the complete '
-          'game history. Please try again.',
+          '${externalSource.label} took too long to prepare '
+          '$historyDescription. Please try again.',
         );
       }
       final requestCancelToken = CancelToken();
@@ -798,8 +800,8 @@ class PlayerWorkspaceRepository {
         final pollRemaining = preparationDeadline.difference(DateTime.now());
         if (pollRemaining <= Duration.zero) {
           throw _PlayerWorkspaceDownloadException(
-            '${externalSource.label} took too long to prepare the complete '
-            'game history. Please try again.',
+            '${externalSource.label} took too long to prepare '
+            '$historyDescription. Please try again.',
           );
         }
         final preparedGameCount = preparing.preparedGameCount;
@@ -815,9 +817,12 @@ class PlayerWorkspaceRepository {
                 : ' — ${NumberFormat.decimalPattern('en_US').format(preparedGameCount)} '
                     'games received so far$expectedCountMessage';
         onProgress?.call(
-          '${externalSource.label}: preparing the complete game history on '
-          'ChessEver$preparedCountMessage. This one-time step can take a while '
-          'for large accounts...',
+          preferences.isFiltered
+              ? '${externalSource.label}: preparing selected games'
+                  '$preparedCountMessage. Larger selections can take a while...'
+              : '${externalSource.label}: preparing the complete game history on '
+                  'ChessEver$preparedCountMessage. This one-time step can take a while '
+                  'for large accounts...',
           null,
         );
         await _waitForExternalCachePoll(
