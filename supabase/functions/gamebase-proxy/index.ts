@@ -10,7 +10,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, if-none-match, cache-control, pragma",
   "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
   "Access-Control-Expose-Headers":
-    "X-Game-Count, X-PGN-Cache, X-PGN-Snapshot, X-PGN-Warm-Job, Retry-After, ETag, Content-Disposition",
+    "X-Game-Count, X-PGN-Cache, X-PGN-Snapshot, X-PGN-Filter-Version, X-PGN-Warm-Job, Retry-After, ETag, Content-Disposition",
 };
 
 const DEFAULT_GAMEBASE_API_BASE = "https://service.chessever.com";
@@ -137,6 +137,8 @@ Deno.serve(async (req: Request) => {
     if (pgnCache) responseHeaders.set("X-PGN-Cache", pgnCache);
     const pgnSnapshot = upstream.headers.get("x-pgn-snapshot");
     if (pgnSnapshot) responseHeaders.set("X-PGN-Snapshot", pgnSnapshot);
+    const pgnFilterVersion = upstream.headers.get("x-pgn-filter-version");
+    if (pgnFilterVersion) responseHeaders.set("X-PGN-Filter-Version", pgnFilterVersion);
     const pgnWarmJob = upstream.headers.get("x-pgn-warm-job");
     if (pgnWarmJob) responseHeaders.set("X-PGN-Warm-Job", pgnWarmJob);
     const retryAfter = upstream.headers.get("retry-after");
