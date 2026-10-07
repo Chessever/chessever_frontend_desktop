@@ -81,20 +81,60 @@ class _PlayerDownloadOptionsDialogState
           ]
           : PlayerDownloadTimeControl.values;
 
+  // The end field shows today for an open-ended range. Saving today as a real
+  // end date would cap every future sync at that day and make an unfiltered
+  // profile look changed, so today is stored as no end date.
   PlayerDownloadPreferences get _preferences => PlayerDownloadPreferences(
     timeControls: _allControls ? const {} : Set.unmodifiable(_selected),
     fromDate: _from.value,
-    toDate: _to.value,
+    toDate: _isToday(_to.value) ? null : _to.value,
   );
+
+  bool _isToday(DateTime? date) {
+    final today = _today;
+    return date != null &&
+        date.year == today.year &&
+        date.month == today.month &&
+        date.day == today.day;
+  }
 
   @override
   void initState() {
     super.initState();
     final initial = widget.account.downloadPreferences;
     _allControls = initial.timeControls.isEmpty;
-    _selected = _allControls ? _controls.toSet() : initial.timeControls.toSet();
-    _from = FDateFieldController(vsync: this, initialDate: initial.fromDate);
-    _to = FDateFieldController(vsync: this, initialDate: initial.toDate);
+    _selected = initial.timeControls.toSet();
+    _from = FDateFieldController(
+      vsync: this,
+      initialDate: initial.fromDate,
+      validator: (date) => _dateError(date, starting: true),
+    );
+    _to = FDateFieldController(
+      vsync: this,
+      initialDate: initial.toDate ?? _today,
+      validator: (date) => _dateError(date, starting: false),
+    );
+  }
+
+  DateTime get _today {
+    final now = DateTime.now().toUtc();
+    return DateTime.utc(now.year, now.month, now.day);
+  }
+
+  String? _dateError(DateTime? date, {required bool starting}) {
+    if (date == null) return starting ? null : 'Choose an end date.';
+    if (date.isBefore(DateTime.utc(1900))) {
+      return 'Choose a date on or after January 1, 1900.';
+    }
+    if (date.isAfter(_today)) return 'Choose today or an earlier date (UTC).';
+    final other = starting ? _to.value : _from.value;
+    if (other != null &&
+        (starting ? date.isAfter(other) : date.isBefore(other))) {
+      return starting
+          ? 'The starting date must be on or before the end date.'
+          : 'The end date must be on or after the starting date.';
+    }
+    return null;
   }
 
   @override
@@ -115,10 +155,11 @@ class _PlayerDownloadOptionsDialogState
 
   void _reset() {
     _from.value = null;
-    _to.value = null;
+    // Forui 0.16 toggles equal date assignments off.
+    if (_to.value != _today) _to.value = _today;
     setState(() {
       _allControls = true;
-      _selected = _controls.toSet();
+      _selected = {};
     });
   }
 
@@ -128,7 +169,8 @@ class _PlayerDownloadOptionsDialogState
     final error =
         emptySelection
             ? 'Choose at least one time control.'
-            : _preferences.validationError;
+            : _dateError(_from.value, starting: true) ??
+                _dateError(_to.value, starting: false);
     final replacesGames =
         widget.account.pgnPath != null &&
         _preferences != widget.account.appliedDownloadPreferences;
@@ -191,7 +233,6 @@ class _PlayerDownloadOptionsDialogState
                       onChange:
                           (value) => setState(() {
                             _allControls = value;
-                            _selected = value ? _controls.toSet() : {};
                           }),
                     ),
                     const SizedBox(height: 14),
@@ -213,7 +254,7 @@ class _PlayerDownloadOptionsDialogState
                                     : control.label,
                               ),
                               value:
-                                  _allControls || _selected.contains(control),
+                                  !_allControls && _selected.contains(control),
                               onChange:
                                   (value) => setState(() {
                                     _allControls = false;
@@ -229,7 +270,10 @@ class _PlayerDownloadOptionsDialogState
                     LayoutBuilder(
                       builder: (context, constraints) {
                         final fields = [
-                          _dateField(controller: _from, label: 'Starting date'),
+                          _dateField(
+                            controller: _from,
+                            label: 'Starting date (optional)',
+                          ),
                           _dateField(controller: _to, label: 'End date'),
                         ];
                         return constraints.maxWidth < 400
@@ -253,7 +297,7 @@ class _PlayerDownloadOptionsDialogState
                     ),
                     const SizedBox(height: 10),
                     const Text(
-                      'Dates are optional and include the whole selected day (UTC).',
+                      'Leave the starting date blank for all history. An end date of today keeps future syncs open. Dates include the whole selected day (UTC).',
                       style: TextStyle(
                         color: kWhiteColor70,
                         fontSize: 12,
@@ -312,13 +356,34 @@ class _PlayerDownloadOptionsDialogState
     );
   }
 
+  // The editable Forui 0.16 date input writes directly to a toggleable calendar
+  // controller, so reparsing the same date can clear the selection. Use the
+  // calendar-only field to retain dates and prevent impossible typed dates.
   Widget _dateField({
     required FDateFieldController controller,
     required String label,
-  }) => FDateField(
+  }) => FDateField.calendar(
+    key: ObjectKey(controller),
     controller: controller,
     label: Text(label),
-    clearable: true,
+    hint: controller == _from ? 'All history' : 'Choose an end date',
+    end: _today,
+    today: _today,
+    autovalidateMode: AutovalidateMode.always,
+    // Forui 0.16's calendar-only clear button clears the display text alone.
+    // Clear the selected date explicitly so the submitted filter matches it.
+    suffixBuilder:
+        (_, _, _) =>
+            controller != _from || controller.value == null
+                ? const SizedBox.shrink()
+                : Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: DesktopDialogIconButton(
+                    icon: Icons.close_rounded,
+                    tooltip: 'Clear starting date',
+                    onPress: () => controller.value = null,
+                  ),
+                ),
     onChange: (_) => setState(() {}),
   );
 }
