@@ -6,6 +6,11 @@ import 'package:chessever/desktop/auth/desktop_access_context.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+// Flutter stable (CI) only exports ScrollCacheExtent from rendering; newer
+// channels re-export it from material and flag this import as unnecessary.
+// Keep it, or the release builds stop compiling.
+// ignore: unnecessary_import
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
