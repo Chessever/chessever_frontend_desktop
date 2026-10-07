@@ -490,9 +490,45 @@ Future<void> createLocalChessResqliteDatabaseSchema(
   // gigabytes of raw PGN text before a download could begin, even when there
   // was nothing to migrate. Keep the upgrade path below, but avoid taking the
   // writer queue at all when the required schema and migrations are present.
-  if (await _localChessResqliteSchemaIsCurrent(db)) return;
+  if (await _localChessResqliteSchemaIsCurrent(db)) {
+    await _ensureLocalChessGamesOriginalOrderIndex(db);
+    return;
+  }
   await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
     () => _createLocalChessResqliteDatabaseSchemaUnlocked(db),
+  );
+}
+
+@visibleForTesting
+const String localChessGamesOriginalOrderIndexName =
+    'idx_local_chess_games_db_original_order';
+
+// Matches the default Library/Board ordering (`originalOrder` in
+// `_localDatabaseGamesOrderBy`) column for column, collation included, so an
+// unfiltered games page walks this index for OFFSET + LIMIT entries instead of
+// reading and sorting every game row of the database on each page turn.
+const String _localChessGamesOriginalOrderIndexSql =
+    'CREATE INDEX IF NOT EXISTS $localChessGamesOriginalOrderIndexName ON '
+    '$localChessGamesTable('
+    'database_id, source_relative_path COLLATE NOCASE, index_in_file, id)';
+
+/// Adds the original-order index to an otherwise current cache.
+///
+/// Deliberately not part of `_localChessResqliteSchemaIsCurrent`: a missing
+/// additive index must not send every existing cache through the full upgrade
+/// transaction (which rescans games and position refs for backfills). One
+/// `sqlite_master` probe per open, and a single queued CREATE INDEX the first
+/// time an upgraded install opens its cache.
+Future<void> _ensureLocalChessGamesOriginalOrderIndex(
+  resqlite.Database db,
+) async {
+  final rows = await db.select(
+    "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ? LIMIT 1",
+    const <Object?>[localChessGamesOriginalOrderIndexName],
+  );
+  if (rows.isNotEmpty) return;
+  await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
+    () => db.execute(_localChessGamesOriginalOrderIndexSql),
   );
 }
 
@@ -1856,6 +1892,7 @@ const List<String> _localChessSchemaStatements = <String>[
   ''',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_database ON $localChessGamesTable(database_id)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_database_index ON $localChessGamesTable(database_id, index_in_file)',
+  _localChessGamesOriginalOrderIndexSql,
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_date ON $localChessGamesTable(date)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_white ON $localChessGamesTable(white_id)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_black ON $localChessGamesTable(black_id)',
@@ -4407,7 +4444,9 @@ class LocalChessDatabaseRepository {
     final parameters = <Object?>[databaseId];
     _appendLocalGameSearch(where, parameters, search);
     final activeFilter = filter;
-    if (activeFilter != null && activeFilter.hasActiveFilters) {
+    final hasActiveFilter =
+        activeFilter != null && activeFilter.hasActiveFilters;
+    if (hasActiveFilter) {
       appendLocalChessGameFilter(
         where,
         parameters,
@@ -4424,8 +4463,12 @@ class LocalChessDatabaseRepository {
       LEFT JOIN $localChessEventsTable ev ON ev.id = g.event_id
       LEFT JOIN $localChessSitesTable st ON st.id = g.site_id
     ''';
+    final whereSql = where.toString();
     final totalRows = await db.select(
-      'SELECT COUNT(*) AS count $fromClause WHERE $where',
+      'SELECT COUNT(*) AS count '
+      'FROM $localChessGamesTable g '
+      '${_localGameLookupJoinsReferencedBy(whereSql)}'
+      'WHERE $whereSql',
       parameters,
     );
     final total = _readInt(totalRows.single['count']);
@@ -4435,8 +4478,8 @@ class LocalChessDatabaseRepository {
       '''
       SELECT ${_localChessGameProjection('g')}
       $fromClause
-      WHERE $where
-      ORDER BY ${_localDatabaseGamesOrderBy(sortBy, sortDirection)}
+      WHERE $whereSql
+      ORDER BY ${_localDatabaseGamesOrderBy(sortBy, sortDirection, useOriginalOrderIndex: !hasActiveFilter)}
       LIMIT ? OFFSET ?
       ''',
       <Object?>[...parameters, size, page * size],
@@ -5750,14 +5793,19 @@ class LocalChessDatabaseRepository {
       LEFT JOIN $localChessEventsTable ev ON ev.id = g.event_id
       LEFT JOIN $localChessSitesTable st ON st.id = g.site_id
     ''';
+    final whereSql = where.toString();
     final total = await _localPositionGamesTotalCount(
       db,
       databaseId: databaseId,
       fenKey: fenKey,
       pinnedUci: pinnedUci,
       filters: filters,
-      joinedFromClause: fromClause,
-      joinedWhere: where.toString(),
+      joinedFromClause:
+          'FROM $localChessPositionGamesTable pg '
+          'JOIN $localChessGamesTable g '
+          'ON g.database_id = pg.database_id AND g.id = pg.game_id '
+          '${_localGameLookupJoinsReferencedBy(whereSql)}',
+      joinedWhere: whereSql,
       joinedParameters: parameters,
     );
     if (total == 0 && moves.isNotEmpty) {
@@ -6017,8 +6065,12 @@ class LocalChessDatabaseRepository {
       LEFT JOIN $localChessEventsTable ev ON ev.id = g.event_id
       LEFT JOIN $localChessSitesTable st ON st.id = g.site_id
     ''';
+    final whereSql = where.toString();
     final totalRows = await db.select(
-      'SELECT COUNT(*) AS count $fromClause WHERE $where',
+      'SELECT COUNT(*) AS count '
+      'FROM $localChessGamesTable g '
+      '${_localGameLookupJoinsReferencedBy(whereSql)}'
+      'WHERE $whereSql',
       parameters,
     );
     final total = _readInt(totalRows.single['count']);
@@ -6034,7 +6086,7 @@ class LocalChessDatabaseRepository {
         ? AS ref_ply,
         g.*
       $fromClause
-      WHERE $where
+      WHERE $whereSql
       ORDER BY $sortExpression $direction, g.index_in_file ASC
       LIMIT ? OFFSET ?
       ''',
@@ -9049,6 +9101,32 @@ String _rootPathFromRelativePath(String databasePath, String? relativePath) {
 
 String _stableId(String value) => sha1.convert(utf8.encode(value)).toString();
 
+/// LEFT JOINs to the player / event / site lookups, keeping only the ones
+/// [whereSql] actually reads.
+///
+/// Each lookup is matched on its INTEGER PRIMARY KEY, so a LEFT JOIN yields
+/// exactly one row per game and can never change `COUNT(*)`. SQLite still
+/// performs all four rowid probes per game (and cannot answer the count from a
+/// covering `database_id` index), which made an unfiltered games count ~45x
+/// slower than the plain count. Count queries use this; page queries keep all
+/// joins because their projection and sort read the names.
+String _localGameLookupJoinsReferencedBy(String whereSql) {
+  final out = StringBuffer();
+  if (whereSql.contains(RegExp(r'\bwp\.'))) {
+    out.write('LEFT JOIN $localChessPlayersTable wp ON wp.id = g.white_id ');
+  }
+  if (whereSql.contains(RegExp(r'\bbp\.'))) {
+    out.write('LEFT JOIN $localChessPlayersTable bp ON bp.id = g.black_id ');
+  }
+  if (whereSql.contains(RegExp(r'\bev\.'))) {
+    out.write('LEFT JOIN $localChessEventsTable ev ON ev.id = g.event_id ');
+  }
+  if (whereSql.contains(RegExp(r'\bst\.'))) {
+    out.write('LEFT JOIN $localChessSitesTable st ON st.id = g.site_id ');
+  }
+  return out.toString();
+}
+
 String _localChessGameProjection(String alias) {
   final column = alias.isEmpty ? '' : '$alias.';
   return '''
@@ -9148,15 +9226,21 @@ String _escapeSqlLike(String value) {
 
 String _localDatabaseGamesOrderBy(
   LocalChessGameSortField sortBy,
-  LocalChessGameSortDirection sortDirection,
-) {
+  LocalChessGameSortDirection sortDirection, {
+  bool useOriginalOrderIndex = true,
+}) {
   final direction =
       sortDirection == LocalChessGameSortDirection.asc ? 'ASC' : 'DESC';
   const stableTieBreak =
       'g.source_relative_path COLLATE NOCASE ASC, g.index_in_file ASC, g.id ASC';
+  // A unary `+` keeps the identical ordering but stops SQLite from satisfying
+  // it with idx_local_chess_games_db_original_order. With an indexed filter
+  // active (ECO, result, rating...), walking the whole database in index order
+  // to find a few matches is slower than the filter index plus a small sort.
+  final originalOrderLead = useOriginalOrderIndex ? '' : '+';
   return switch (sortBy) {
     LocalChessGameSortField.originalOrder =>
-      'g.source_relative_path COLLATE NOCASE $direction, '
+      '${originalOrderLead}g.source_relative_path COLLATE NOCASE $direction, '
           'g.index_in_file $direction, g.id $direction',
     LocalChessGameSortField.white =>
       '${_localTextSortExpression("COALESCE(wp.name, json_extract(g.headers_json, '\$.White'), '')", direction)}, $stableTieBreak',
