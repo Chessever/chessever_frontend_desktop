@@ -21,6 +21,7 @@ import 'package:chessever/desktop/services/local_chess_database_open_guard.dart'
 import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
+import 'package:chessever/desktop/services/position_game_notation.dart';
 
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -322,8 +323,11 @@ class _DesktopPositionGamesTableState
   static const double _scrollPrefetchExtent = 360;
 
   final ScrollController _scroll = ScrollController();
+  final ScrollController _horizontalScroll = ScrollController();
   final Map<String, GlobalKey> _rowKeys = <String, GlobalKey>{};
   final List<Map<String, dynamic>> _rows = <Map<String, dynamic>>[];
+  final Map<Map<String, dynamic>, PositionGameNotation> _preparedNotations =
+      Map.identity();
   final Map<String, List<String>> _fullContinuationCache =
       <String, List<String>>{};
   final Set<String> _loadingFullContinuations = <String>{};
@@ -405,6 +409,41 @@ class _DesktopPositionGamesTableState
 
   ScrollController get _activeScrollController =>
       widget.externalScrollController ?? _scroll;
+
+  bool get _usesLazyRows =>
+      widget.referenceLayout &&
+      !widget.useFixedRowAlignment &&
+      widget.externalScrollController == null;
+
+  double get _lazyRowExtent => 12 + MediaQuery.textScalerOf(context).scale(22);
+
+  // Shared by the header and every visible row. Long metadata uses the
+  // existing ellipsis treatment; the user can still resize every column.
+  static const _lazyColumnWidths = <String, double>{
+    'white': 90,
+    'whiteElo': 60,
+    'black': 90,
+    'blackElo': 60,
+    'result': 54,
+    'year': 92,
+    'event': 164,
+    'notation': 520,
+    'eco': 52,
+    'site': 144,
+    'opening': 174,
+    'variation': 134,
+    'timeControl': 64,
+    'mode': 70,
+  };
+
+  Map<String, double> get _scaledLazyColumnWidths {
+    final scale = MediaQuery.textScalerOf(context).scale(12) / 12;
+    if (scale == 1) return _lazyColumnWidths;
+    return {
+      for (final entry in _lazyColumnWidths.entries)
+        entry.key: entry.value * scale,
+    };
+  }
 
   @override
   void initState() {
@@ -508,6 +547,7 @@ class _DesktopPositionGamesTableState
     widget.externalScrollController?.removeListener(_onScroll);
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
+    _horizontalScroll.dispose();
     super.dispose();
   }
 
@@ -817,9 +857,10 @@ class _DesktopPositionGamesTableState
     }
     return DesktopAccessContext(
       feature: DesktopFeature.openingExplorer,
-      action: widget.exactFenSearch
-          ? DesktopAction.acquireSource
-          : DesktopAction.previewNavigate,
+      action:
+          widget.exactFenSearch
+              ? DesktopAction.acquireSource
+              : DesktopAction.previewNavigate,
       origin: DesktopDiscoveryOrigin.gamebase,
       playedPlies: widget.moves.length,
       playerScoped:
@@ -834,17 +875,17 @@ class _DesktopPositionGamesTableState
   /// Rows from a ChessEver database position carry gamebase provenance.
   DesktopAccessContext get _rowAccessContext =>
       widget.localOpeningTreeIndex != null &&
-          widget.playerOpeningTreePlayerId == null
-      ? const DesktopAccessContext(
-          feature: DesktopFeature.localFiles,
-          action: DesktopAction.openContent,
-          origin: DesktopDiscoveryOrigin.localFile,
-        )
-      : const DesktopAccessContext(
-          feature: DesktopFeature.gamebase,
-          action: DesktopAction.openContent,
-          origin: DesktopDiscoveryOrigin.gamebase,
-        );
+              widget.playerOpeningTreePlayerId == null
+          ? const DesktopAccessContext(
+            feature: DesktopFeature.localFiles,
+            action: DesktopAction.openContent,
+            origin: DesktopDiscoveryOrigin.localFile,
+          )
+          : const DesktopAccessContext(
+            feature: DesktopFeature.gamebase,
+            action: DesktopAction.openContent,
+            origin: DesktopDiscoveryOrigin.gamebase,
+          );
 
   Future<void> _fetchPage({
     required bool reset,
@@ -999,9 +1040,12 @@ class _DesktopPositionGamesTableState
       }
 
       setState(() {
+        if (reset) _preparedNotations.clear();
         _rows
           ..clear()
           ..addAll(merged);
+        final retainedRows = _rows.toSet();
+        _preparedNotations.removeWhere((row, _) => !retainedRows.contains(row));
         _hasMore = response.metadata.hasMore && added > 0;
         _nextPageNumber = pageNumber + 1;
         if (reset) {
@@ -1042,6 +1086,13 @@ class _DesktopPositionGamesTableState
         _rowContinuationsSnapshot(),
         _rowSourceLabelsSnapshot(),
       );
+      // Local tree pages carry each game's whole remaining line instead of
+      // the server's short preview. Rows paint at once (visible cells replay
+      // their own prefix); a worker replays the rest of the page so rows
+      // scrolled into view later do not replay during a frame.
+      if (!global) {
+        unawaited(_prewarmNotations(requestToken, query.fen, response.data));
+      }
       if (reset) {
         _recordPaint(ExplorerGamesSource.network);
         _resumeDeferredPaging();
@@ -1235,6 +1286,51 @@ class _DesktopPositionGamesTableState
   /// for. They trail the widget while a newer position is on its way (or
   /// failed), and a row opened in that window must open against its own.
   String get _rowsFen => _lastSuccessfulQuery?.fen ?? widget.fen;
+
+  /// The row's displayed notation, replayed at most once per line. Cells of
+  /// a lazy list unmount when scrolled away; this cache outlives them.
+  PositionGameNotation _notationFor(
+    Map<String, dynamic> row,
+    List<String> continuation,
+  ) {
+    final fen = _rowsFen;
+    final cached = _preparedNotations[row];
+    if (cached != null && cached.matches(fen, continuation)) return cached;
+    return _preparedNotations[row] = PositionGameNotation.fromLine(
+      fen,
+      continuation,
+    );
+  }
+
+  Future<void> _prewarmNotations(
+    int requestToken,
+    String fen,
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final pending = <Map<String, dynamic>>[
+      for (final row in rows)
+        if (!_preparedNotations.containsKey(row)) row,
+    ];
+    if (pending.isEmpty) return;
+    final List<PositionGameNotation> notations;
+    try {
+      notations = await preparePositionGameNotations(fen, [
+        for (final row in pending) _readContinuation(row['continuation']),
+      ]);
+    } catch (_) {
+      return; // Best effort: cells replay their own line on demand.
+    }
+    if (!mounted || requestToken != _requestToken) return;
+    final retained = _rows.toSet();
+    for (var i = 0; i < pending.length && i < notations.length; i++) {
+      final row = pending[i];
+      // No rebuild: only rows mounted from now on read the cache.
+      if (retained.contains(row)) {
+        _preparedNotations.putIfAbsent(row, () => notations[i]);
+      }
+    }
+  }
+
   List<String> get _rowsMoves => _lastSuccessfulQuery?.moves ?? widget.moves;
   String? get _rowsUci =>
       _lastSuccessfulQuery == null ? widget.uci : _lastSuccessfulQuery!.uci;
@@ -1593,6 +1689,33 @@ class _DesktopPositionGamesTableState
     if (id == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      if (_usesLazyRows && _activeScrollController.hasClients) {
+        // Off-screen rows have no RenderBox in a lazy list. Resolve their
+        // position from the same extent used by the sliver, so keyboard
+        // navigation can still reveal any loaded game.
+        final index = _rows.indexWhere(
+          (row) => row['id']?.toString().trim() == id,
+        );
+        if (index < 0) return;
+        final position = _activeScrollController.position;
+        final top = 24 + index * _lazyRowExtent;
+        final bottom = top + _lazyRowExtent;
+        if (top >= position.pixels &&
+            bottom <= position.pixels + position.viewportDimension) {
+          return;
+        }
+        final target = (top -
+                (position.viewportDimension - _lazyRowExtent) * 0.16)
+            .clamp(position.minScrollExtent, position.maxScrollExtent);
+        unawaited(
+          _activeScrollController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+          ),
+        );
+        return;
+      }
       final context = _rowKeys[id]?.currentContext;
       if (context == null) return;
       final renderObject = context.findRenderObject();
@@ -1901,7 +2024,7 @@ class _DesktopPositionGamesTableState
         (s) => s.valueOrNull ?? const BoardSettingsNew(),
       ),
     );
-    final body = _buildBody(boardSettings);
+    final body = RepaintBoundary(child: _buildBody(boardSettings));
     // Host-driven scroll (combined moves+games explorer) supplies its own
     // outer scroll view; the table must size to its content so the outer
     // sliver knows how tall to render it. Otherwise the table fills the
@@ -1982,7 +2105,10 @@ class _DesktopPositionGamesTableState
       columns: _buildColumns(boardSettings, selectedRowId),
       rows: _rows,
       enableColumnResizing: widget.referenceLayout,
+      lazyRowExtent: _usesLazyRows ? _lazyRowExtent : null,
+      lazyColumnWidths: _usesLazyRows ? _scaledLazyColumnWidths : null,
       scrollController: _scroll,
+      horizontalScrollController: _horizontalScroll,
       useFixedRowAlignment: widget.useFixedRowAlignment,
       rowMinHeight: widget.referenceLayout ? 30 : 32,
       headerHeight: 24,
@@ -2016,6 +2142,7 @@ class _DesktopPositionGamesTableState
                     rowId: rowId,
                     indicatorNamespace: 'games',
                     continuation: continuation,
+                    preparedNotation: _notationFor(row, continuation),
                     activePlyIndex:
                         isSelected ? widget.activeContinuationStep : null,
                     activeAutoplay:
@@ -2070,16 +2197,21 @@ class _DesktopPositionGamesTableState
       onRowSecondaryTap:
           (row, position) => unawaited(_showRowContextMenu(row, position)),
       footer:
-          _hasMore
-              ? const Padding(
-                padding: EdgeInsets.symmetric(vertical: 14),
-                child: Center(
-                  child: SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.6,
-                      valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+          // Having another page is not loading. An off-screen indeterminate
+          // spinner still ticks, keeping the entire board screen rendering
+          // while idle. Only animate during an actual pagination request.
+          _hasMore && _isLoadingMore
+              ? const RepaintBoundary(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 14),
+                  child: Center(
+                    child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.6,
+                        valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                      ),
                     ),
                   ),
                 ),
@@ -2186,14 +2318,16 @@ class _DesktopPositionGamesTableState
                 selectedRowId != null &&
                 selectedRowId.isNotEmpty &&
                 rowId == selectedRowId;
+            final continuation = _bestContinuationForRow(
+              row,
+              _readContinuation(row['continuation']),
+            );
             return _NotationCell(
               fen: _rowsFen,
               rowId: rowId,
               indicatorNamespace: indicatorNamespace,
-              continuation: _bestContinuationForRow(
-                row,
-                _readContinuation(row['continuation']),
-              ),
+              continuation: continuation,
+              preparedNotation: _notationFor(row, continuation),
               activePlyIndex: isSelected ? widget.activeContinuationStep : null,
               activeAutoplay: isSelected && widget.activeContinuationAutoplay,
               useFigurine: boardSettings.useFigurine,
@@ -2560,12 +2694,13 @@ class _Numeric extends StatelessWidget {
   }
 }
 
-class _NotationCell extends StatelessWidget {
+class _NotationCell extends StatefulWidget {
   const _NotationCell({
     required this.fen,
     required this.rowId,
     required this.indicatorNamespace,
     required this.continuation,
+    this.preparedNotation,
     required this.activePlyIndex,
     required this.activeAutoplay,
     required this.useFigurine,
@@ -2577,6 +2712,7 @@ class _NotationCell extends StatelessWidget {
   final String rowId;
   final String indicatorNamespace;
   final List<String> continuation;
+  final PositionGameNotation? preparedNotation;
   final int? activePlyIndex;
   final bool activeAutoplay;
   final bool useFigurine;
@@ -2584,16 +2720,71 @@ class _NotationCell extends StatelessWidget {
   final ValueChanged<int> onTapStep;
 
   @override
+  State<_NotationCell> createState() => _NotationCellState();
+}
+
+class _NotationCellState extends State<_NotationCell> {
+  late List<String> _cappedContinuation;
+  late List<String> _sanTokens;
+  late List<List<String>> _hoverLines;
+  late PositionGameNotation _notation;
+  Widget? _content;
+
+  @override
+  void initState() {
+    super.initState();
+    _prepareNotation();
+  }
+
+  @override
+  void didUpdateWidget(covariant _NotationCell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_notation.matches(widget.fen, widget.continuation)) {
+      _prepareNotation();
+    }
+    if (oldWidget.rowId != widget.rowId ||
+        oldWidget.indicatorNamespace != widget.indicatorNamespace ||
+        oldWidget.activePlyIndex != widget.activePlyIndex ||
+        oldWidget.activeAutoplay != widget.activeAutoplay ||
+        oldWidget.useFigurine != widget.useFigurine ||
+        oldWidget.pieceAssets != widget.pieceAssets) {
+      _content = null;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _content = null;
+  }
+
+  void _prepareNotation() {
+    // Imported games carry the entire remaining line. Replay it once per
+    // position/line, never again for selection, hover, or parent rebuilds.
+    final prepared = widget.preparedNotation;
+    _notation =
+        prepared != null && prepared.matches(widget.fen, widget.continuation)
+            ? prepared
+            : PositionGameNotation.fromLine(widget.fen, widget.continuation);
+    _cappedContinuation = _notation.continuation;
+    _sanTokens = _notation.tokens;
+    _hoverLines = <List<String>>[
+      for (var i = 0; i < _sanTokens.length; i++)
+        List<String>.unmodifiable(_cappedContinuation.take(i + 1)),
+    ];
+    _content = null;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Cap at 20 full moves (40 plies) — the oneliner is a preview, not the
-    // whole game. Anything beyond that just gets clipped/faded anyway, so
-    // skip the work of rendering it.
-    const maxPlies = 40;
-    final cappedContinuation =
-        continuation.length > maxPlies
-            ? continuation.sublist(0, maxPlies)
-            : continuation;
-    final sanTokens = _toSanTokens(fen, cappedContinuation);
+    // Most parent updates change another row's selection. Reuse this exact
+    // subtree so its dozens of hover targets do not rebuild in that case.
+    return _content ??= _buildNotation();
+  }
+
+  Widget _buildNotation() {
+    final sanTokens = _sanTokens;
+    final height = MediaQuery.textScalerOf(context).scale(22);
     const style = TextStyle(
       color: kWhiteColor,
       fontSize: 11.5,
@@ -2605,9 +2796,10 @@ class _NotationCell extends StatelessWidget {
     if (sanTokens.isEmpty) {
       return const SizedBox.shrink();
     }
-    final activeIndex = activePlyIndex?.clamp(0, sanTokens.length - 1).toInt();
+    final activeIndex =
+        widget.activePlyIndex?.clamp(0, sanTokens.length - 1).toInt();
     return SizedBox(
-      height: 22,
+      height: height,
       child: ShaderMask(
         // Soft right-edge fade telegraphs that the row continues past the
         // visible width without the visual jolt of a hard mid-letter clip.
@@ -2624,8 +2816,8 @@ class _NotationCell extends StatelessWidget {
             alignment: Alignment.centerLeft,
             minWidth: 0,
             maxWidth: double.infinity,
-            minHeight: 22,
-            maxHeight: 22,
+            minHeight: height,
+            maxHeight: height,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 1),
               child: Row(
@@ -2634,25 +2826,28 @@ class _NotationCell extends StatelessWidget {
                   for (var i = 0; i < sanTokens.length; i++) ...[
                     _NotationHoverToken(
                       tokenKey: ValueKey<String>(
-                        'position-game-notation-token-$indicatorNamespace-$rowId-$i',
+                        'position-game-notation-token-${widget.indicatorNamespace}-${widget.rowId}-$i',
                       ),
-                      startingFen: fen,
-                      movesUpToHover: cappedContinuation
-                          .take(i + 1)
-                          .toList(growable: false),
+                      startingFen: widget.fen,
+                      movesUpToHover: _hoverLines[i],
+                      replay: (
+                        fen: _notation.positions[i + 1],
+                        preFen: _notation.positions[i],
+                        lastMove: Move.parse(_cappedContinuation[i]),
+                      ),
                       token: sanTokens[i],
-                      useFigurine: useFigurine,
-                      pieceAssets: pieceAssets,
+                      useFigurine: widget.useFigurine,
+                      pieceAssets: widget.pieceAssets,
                       style: style,
                       active: activeIndex == i,
-                      autoplaying: activeIndex == i && activeAutoplay,
+                      autoplaying: activeIndex == i && widget.activeAutoplay,
                       activeKey:
                           activeIndex == i
                               ? ValueKey<String>(
-                                'position-game-notation-active-$indicatorNamespace-$rowId-$i',
+                                'position-game-notation-active-${widget.indicatorNamespace}-${widget.rowId}-$i',
                               )
                               : null,
-                      onTap: () => onTapStep(i),
+                      onTap: () => widget.onTapStep(i),
                     ),
                     // Larger whitespace between full moves (after a black
                     // ply, i.e. odd index) than between the two plies of
@@ -2676,6 +2871,7 @@ class _NotationHoverToken extends StatefulWidget {
     required this.tokenKey,
     required this.startingFen,
     required this.movesUpToHover,
+    required this.replay,
     required this.token,
     required this.useFigurine,
     required this.pieceAssets,
@@ -2689,6 +2885,7 @@ class _NotationHoverToken extends StatefulWidget {
   final Key tokenKey;
   final String startingFen;
   final List<String> movesUpToHover;
+  final MovePreviewReplay replay;
   final String token;
   final bool useFigurine;
   final PieceAssets pieceAssets;
@@ -2797,6 +2994,7 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
       child: MoveHoverPreview(
         startingFen: widget.startingFen,
         movesUpToHover: widget.movesUpToHover,
+        replay: widget.replay,
         size: 180,
         child: MouseRegion(
           cursor: SystemMouseCursors.click,
@@ -2815,54 +3013,8 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
 
 enum _PositionGameRowAction { openInNewTab, openInNewWindow, insertGame }
 
-/// Walk the UCI continuation through dartchess, emitting SAN with the
-/// move-number labels a chess reader expects:
-///   white-to-move + first ply  → "8.dxc3"
-///   black-to-move + first ply  → "8…Bc5"
-///   white-to-move on a later ply → "9.Qe2+"
-///   black-to-move on a later ply → just "Qe7"
-List<String> _toSanTokens(String fen, List<String> ucis) {
-  if (ucis.isEmpty) return const <String>[];
-  final parts = fen.trim().split(RegExp(r'\s+'));
-  final initialFullMove = parts.length >= 6 ? int.tryParse(parts[5]) ?? 1 : 1;
-  final whiteFirst = parts.length >= 2 ? parts[1] == 'w' : true;
-
-  Position position;
-  try {
-    position = Chess.fromSetup(
-      Setup.parseFen(fen),
-      ignoreImpossibleCheck: true,
-    );
-  } catch (_) {
-    return const <String>[];
-  }
-
-  final tokens = <String>[];
-  var fullMove = initialFullMove;
-  var whiteToMove = whiteFirst;
-  for (final uci in ucis) {
-    final move = Move.parse(uci);
-    if (move == null) break;
-    late final (Position, String) made;
-    try {
-      made = position.makeSan(move);
-    } catch (_) {
-      break;
-    }
-    final (next, san) = made;
-    if (whiteToMove) {
-      tokens.add('$fullMove.$san');
-    } else if (tokens.isEmpty) {
-      tokens.add('$fullMove…$san');
-    } else {
-      tokens.add(san);
-    }
-    position = next;
-    if (!whiteToMove) fullMove += 1;
-    whiteToMove = !whiteToMove;
-  }
-  return tokens;
-}
+List<String> _toSanTokens(String fen, List<String> ucis) =>
+    positionGameSanTokens(fen, ucis);
 
 String _shortNotation(List<String> tokens) {
   const maxTokens = 8;

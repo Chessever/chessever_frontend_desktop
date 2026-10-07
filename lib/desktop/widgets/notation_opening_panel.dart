@@ -660,7 +660,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                   initialWeight: 0.58,
                   label: 'Explorer',
                   collapsedIcon: Icons.menu_book_outlined,
-                  child: explorerPane,
+                  child: RepaintBoundary(child: explorerPane),
                 ),
               ],
             )
@@ -687,7 +687,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                           // while analysis/report content is off. The previous
                           // collapsed split reserved a blank strip and painted
                           // an engine chip in its center.
-                          widget.enginePanel!,
+                          RepaintBoundary(child: widget.enginePanel!),
                           Expanded(child: notationContent),
                         ],
                       )
@@ -706,7 +706,9 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                             label: 'Engine',
                             collapsedIcon: Icons.memory_rounded,
                             onRestore: _resumeEngineFromRail,
-                            child: widget.enginePanel!,
+                            // Stockfish repaints up to 12.5 Hz. Keep it from
+                            // repainting the explorer and games tables below.
+                            child: RepaintBoundary(child: widget.enginePanel!),
                           ),
                           SplitChild(
                             // Compact floor so the report and notation can
@@ -1484,12 +1486,17 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       notifier.setLocalDatabaseTreeMode(effectiveLocalTree != null);
       final scope = widget.explorerScope;
       final appliedScopeKey = ref.read(appliedBoardExplorerScopeKeyProvider);
+      final currentFilters = ref.read(gamebaseExplorerProvider).filters;
       final scopedFilters = boardExplorerFiltersForScope(
         scope: scope,
-        currentFilters: ref.read(gamebaseExplorerProvider).filters,
+        currentFilters: currentFilters,
         appliedScopeKey: appliedScopeKey,
       );
-      if (scopedFilters != null) {
+      // A scoped (Prep / Build Tree) board re-enforces its scope on every
+      // move, which nearly always yields the filters already applied.
+      // `updateFilters` emits and clears the moves unconditionally, so only
+      // call it for a real change; the position update below still emits.
+      if (scopedFilters != null && scopedFilters != currentFilters) {
         notifier.updateFilters(scopedFilters);
       }
       ref.read(appliedBoardExplorerScopeKeyProvider.notifier).state =
@@ -1905,15 +1912,15 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
           ProviderScope.containerOf(context, listen: false),
           widget.localOpeningTreeIndex != null && widget.explorerScope == null
               ? const DesktopAccessContext(
-                  feature: DesktopFeature.localFiles,
-                  action: DesktopAction.insertMove,
-                  origin: DesktopDiscoveryOrigin.localFile,
-                )
+                feature: DesktopFeature.localFiles,
+                action: DesktopAction.insertMove,
+                origin: DesktopDiscoveryOrigin.localFile,
+              )
               : const DesktopAccessContext(
-                  feature: DesktopFeature.gamebase,
-                  action: DesktopAction.insertMove,
-                  origin: DesktopDiscoveryOrigin.gamebase,
-                ),
+                feature: DesktopFeature.gamebase,
+                action: DesktopAction.insertMove,
+                origin: DesktopDiscoveryOrigin.gamebase,
+              ),
           surface: 'explorer_insert_moves',
         )) {
       return;
@@ -2781,15 +2788,15 @@ class _PositionGamesPageState extends ConsumerState<_PositionGamesPage>
           ProviderScope.containerOf(context, listen: false),
           widget.localOpeningTreeIndex != null && widget.explorerScope == null
               ? const DesktopAccessContext(
-                  feature: DesktopFeature.localFiles,
-                  action: DesktopAction.insertMove,
-                  origin: DesktopDiscoveryOrigin.localFile,
-                )
+                feature: DesktopFeature.localFiles,
+                action: DesktopAction.insertMove,
+                origin: DesktopDiscoveryOrigin.localFile,
+              )
               : const DesktopAccessContext(
-                  feature: DesktopFeature.gamebase,
-                  action: DesktopAction.insertMove,
-                  origin: DesktopDiscoveryOrigin.gamebase,
-                ),
+                feature: DesktopFeature.gamebase,
+                action: DesktopAction.insertMove,
+                origin: DesktopDiscoveryOrigin.gamebase,
+              ),
           surface: 'explorer_insert_moves',
         )) {
       return;

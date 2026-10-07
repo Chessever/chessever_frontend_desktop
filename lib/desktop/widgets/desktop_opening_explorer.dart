@@ -262,10 +262,6 @@ class DesktopOpeningExplorer extends ConsumerWidget {
       });
     }
     final localCriteria = _localTreeCriteriaForFilters(state.filters);
-    final localFallbackMoves =
-        localIndex == null
-            ? const <MoveAggregate>[]
-            : localIndex.movesForFen(state.currentFen, filters: localCriteria);
     final localDatabasePath = localIndex?.playerId?.trim() ?? '';
     final localFen = state.currentFen.trim();
     final localSqlMoves =
@@ -285,6 +281,13 @@ class DesktopOpeningExplorer extends ConsumerWidget {
       data: (moves) => moves,
       orElse: () => null,
     );
+    // The in-memory index only stands in until the database answers. With a
+    // full index and a player scope it walks every game at this position, so
+    // skip it on the many rebuilds after the query has returned.
+    final localFallbackMoves =
+        localIndex == null || queriedLocalMoves != null
+            ? const <MoveAggregate>[]
+            : localIndex.movesForFen(state.currentFen, filters: localCriteria);
     final effectiveState =
         localIndex == null
             ? state

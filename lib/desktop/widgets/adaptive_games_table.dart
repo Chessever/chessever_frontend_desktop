@@ -100,6 +100,10 @@ class AdaptiveColumn<T> {
 /// construction: the framework runs `IntrinsicColumnWidth` once over the
 /// entire content set.
 ///
+/// Dense, internally scrolled callers can instead supply [lazyRowExtent] and
+/// [lazyColumnWidths]. That path uses slivers and one fixed-width Table per
+/// visible row, sharing the exact column grid without measuring hidden cells.
+///
 /// Layout
 /// ```
 /// LayoutBuilder
@@ -159,7 +163,16 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
     this.sortState,
     this.onSortChanged,
     this.enableColumnResizing = false,
+    this.lazyRowExtent,
+    this.lazyColumnWidths,
   });
+
+  /// Opts an internally scrolled, single-line table into viewport-only rows.
+  /// Every column needs a shared width so off-screen cells never participate
+  /// in intrinsic layout. Sublines and externally scrolled tables keep the
+  /// content-measured layout.
+  final double? lazyRowExtent;
+  final Map<String, double>? lazyColumnWidths;
 
   /// Active sort. When null, the table reads as the caller's default.
   final AdaptiveSortState? sortState;
@@ -172,7 +185,7 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
 
   /// Adds draggable dividers to the header. Dragging a divider changes the
   /// column immediately; double-clicking it returns that column to its
-  /// content-derived width.
+  /// default width (content-derived, or supplied in [lazyColumnWidths]).
   final bool enableColumnResizing;
 
   final List<AdaptiveColumn<T>> columns;
@@ -307,6 +320,8 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
                 sortState: sortState,
                 onSortChanged: onSortChanged,
                 enableColumnResizing: enableColumnResizing,
+                lazyRowExtent: lazyRowExtent,
+                lazyColumnWidths: lazyColumnWidths,
               ),
             ),
           ),
@@ -330,10 +345,8 @@ TableColumnWidth _columnWidthFor<T>(AdaptiveColumn<T> column) {
   );
 }
 
-/// Stateful host that owns hover state and renders the single combined
-/// [Table]. When [useInternalVerticalScroll] is true, the Table is wrapped
-/// in a vertical [SingleChildScrollView]; otherwise the parent is expected
-/// to own vertical scrolling.
+/// Owns hover and column sizing for the content-measured or lazy row layout.
+/// Externally scrolled callers always retain the single combined [Table].
 class _SingleTableBody<T> extends StatefulWidget {
   const _SingleTableBody({
     required this.columns,
@@ -360,6 +373,8 @@ class _SingleTableBody<T> extends StatefulWidget {
     required this.sortState,
     required this.onSortChanged,
     required this.enableColumnResizing,
+    required this.lazyRowExtent,
+    required this.lazyColumnWidths,
   });
 
   final List<AdaptiveColumn<T>> columns;
@@ -391,6 +406,8 @@ class _SingleTableBody<T> extends StatefulWidget {
   final AdaptiveSortState? sortState;
   final void Function(AdaptiveSortState? next)? onSortChanged;
   final bool enableColumnResizing;
+  final double? lazyRowExtent;
+  final Map<String, double>? lazyColumnWidths;
 
   @override
   State<_SingleTableBody<T>> createState() => _SingleTableBodyState<T>();
@@ -436,6 +453,20 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
 
   @override
   Widget build(BuildContext context) {
+    final lazyExtent = widget.lazyRowExtent;
+    final lazyWidths = widget.lazyColumnWidths;
+    if (lazyExtent != null &&
+        lazyWidths != null &&
+        widget.useInternalVerticalScroll &&
+        widget.maxHeight.isFinite &&
+        widget.rowSublineBuilder == null &&
+        widget.columns.every(
+          (column) =>
+              lazyWidths.containsKey(column.id) ||
+              column.id == '__adaptive_spacer__',
+        )) {
+      return _buildLazyRows(lazyExtent, lazyWidths);
+    }
     // Pre-resolve sublines so we don't ask the builder twice per row.
     final sublines = <int, Widget>{};
     if (widget.rowSublineBuilder != null) {
@@ -490,6 +521,80 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
     }
 
     return content;
+  }
+
+  Widget _buildLazyRows(double extent, Map<String, double> widths) {
+    final resolved = <double>[
+      for (final column in widget.columns)
+        _resizedWidths[column.id] ?? widths[column.id] ?? 0,
+    ];
+    final naturalWidth = resolved.fold(0.0, (sum, width) => sum + width);
+    final tableWidth =
+        naturalWidth < widget.sublineTargetWidth
+            ? widget.sublineTargetWidth
+            : naturalWidth;
+    final flexibleColumns = <int>[
+      for (var i = 0; i < widget.columns.length; i++)
+        if (widget.columns[i].flex != null &&
+            !_resizedWidths.containsKey(widget.columns[i].id))
+          i,
+    ];
+    final flexTotal = flexibleColumns.fold(
+      0.0,
+      (sum, index) => sum + widget.columns[index].flex!,
+    );
+    for (final index in flexibleColumns) {
+      resolved[index] +=
+          (tableWidth - naturalWidth) * widget.columns[index].flex! / flexTotal;
+    }
+    final columnWidths = <int, TableColumnWidth>{
+      for (var i = 0; i < resolved.length; i++)
+        i: FixedColumnWidth(resolved[i]),
+    };
+    final border =
+        widget.enableColumnResizing
+            ? const TableBorder(
+              verticalInside: BorderSide(color: kDividerColor, width: 0.5),
+            )
+            : null;
+    final content = SizedBox(
+      width: tableWidth,
+      height: widget.maxHeight,
+      child: CustomScrollView(
+        controller: widget.scrollController,
+        physics: const DesktopScrollPhysics(),
+        // A short cache keeps notation controls bounded by the viewport,
+        // even when many pages have been loaded into the table.
+        scrollCacheExtent: ScrollCacheExtent.pixels(extent * 2),
+        slivers: [
+          if (widget.showHeader)
+            SliverToBoxAdapter(
+              child: Table(
+                columnWidths: columnWidths,
+                border: border,
+                children: [_headerRow()],
+              ),
+            ),
+          SliverFixedExtentList(
+            itemExtent: extent,
+            delegate: SliverChildBuilderDelegate(
+              (context, index) => Table(
+                columnWidths: columnWidths,
+                border: border,
+                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                children: [_bodyRow(index, hasSubline: false, height: extent)],
+              ),
+              childCount: widget.rows.length,
+              addAutomaticKeepAlives: false,
+            ),
+          ),
+          if (widget.footer != null) SliverToBoxAdapter(child: widget.footer!),
+        ],
+      ),
+    );
+    return widget.enableRowHover
+        ? MouseRegion(onExit: (_) => _setHover(null), child: content)
+        : content;
   }
 
   // ---------------------------------------------------------------------
@@ -603,7 +708,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
     cb(null);
   }
 
-  TableRow _bodyRow(int rowIndex, {required bool hasSubline}) {
+  TableRow _bodyRow(int rowIndex, {required bool hasSubline, double? height}) {
     final row = widget.rows[rowIndex];
     final hovered = _hoveredIndex == rowIndex;
     final decoration = _decorationFor(
@@ -623,6 +728,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
             rowIndex: rowIndex,
             col: widget.columns[colIndex],
             rowKey: colIndex == 0 ? widget.rowKeyBuilder?.call(row) : null,
+            height: height,
           ),
       ],
     );
@@ -733,9 +839,10 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
     required int rowIndex,
     required AdaptiveColumn<T> col,
     required Key? rowKey,
+    double? height,
   }) {
     Widget child = ConstrainedBox(
-      constraints: BoxConstraints(minHeight: widget.rowMinHeight),
+      constraints: BoxConstraints(minHeight: height ?? widget.rowMinHeight),
       child: Padding(
         padding: widget.padding.add(const EdgeInsets.symmetric(vertical: 6)),
         child: Align(

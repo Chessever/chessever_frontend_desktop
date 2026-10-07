@@ -1,6 +1,8 @@
 import 'package:chessground/chessground.dart';
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
@@ -22,6 +24,8 @@ import 'package:chessever/theme/app_theme.dart';
 /// the desktop chrome (sidebar nudge, segment-tab arrival, etc.).
 enum MoveHoverPreviewPlacement { tokenAnchored, engineLine }
 
+typedef MovePreviewReplay = ({String fen, String? preFen, Move? lastMove});
+
 class MoveHoverPreview extends StatefulWidget {
   const MoveHoverPreview({
     super.key,
@@ -32,6 +36,7 @@ class MoveHoverPreview extends StatefulWidget {
     this.orientation = Side.white,
     this.enabled = true,
     this.lastMoveUci,
+    this.replay,
     this.placement = MoveHoverPreviewPlacement.tokenAnchored,
     this.placementAnchorKey,
   });
@@ -50,6 +55,10 @@ class MoveHoverPreview extends StatefulWidget {
   /// post-move position (so [movesUpToHover] is empty). Ignored when
   /// [movesUpToHover] is non-empty (replay derives lastMove itself).
   final String? lastMoveUci;
+
+  /// A prepared position for callers that already replayed their line.
+  /// Avoids replaying full imported continuations on pointer entry.
+  final MovePreviewReplay? replay;
 
   /// The token / widget the user hovers over.
   final Widget child;
@@ -110,7 +119,7 @@ class MovePreviewBoard extends StatelessWidget {
   }
 }
 
-({String fen, String? preFen, Move? lastMove}) computeMovePreviewReplay({
+MovePreviewReplay computeMovePreviewReplay({
   required String startingFen,
   required List<String> movesUpToHover,
   String? lastMoveUci,
@@ -122,14 +131,14 @@ class MovePreviewBoard extends StatelessWidget {
       ignoreImpossibleCheck: true,
     );
   } catch (_) {
-    final fallbackLast = movesUpToHover.isEmpty
-        ? Move.parse(lastMoveUci ?? '')
-        : null;
+    final fallbackLast =
+        movesUpToHover.isEmpty ? Move.parse(lastMoveUci ?? '') : null;
     return (
       fen: startingFen,
-      preFen: fallbackLast == null
-          ? null
-          : _reverseToPreMoveFen(startingFen, fallbackLast),
+      preFen:
+          fallbackLast == null
+              ? null
+              : _reverseToPreMoveFen(startingFen, fallbackLast),
       lastMove: fallbackLast,
     );
   }
@@ -161,6 +170,15 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
   bool _popupRefreshScheduled = false;
   bool _popupVisibilityScheduled = false;
   bool _hovered = false;
+  MovePreviewReplay? _cachedReplay;
+
+  MovePreviewReplay get _replay =>
+      widget.replay ??
+      (_cachedReplay ??= computeMovePreviewReplay(
+        startingFen: widget.startingFen,
+        movesUpToHover: widget.movesUpToHover,
+        lastMoveUci: widget.lastMoveUci,
+      ));
 
   @override
   void dispose() {
@@ -175,11 +193,7 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
     if (overlay == null) return;
     _entry = OverlayEntry(
       builder: (context) {
-        final replay = computeMovePreviewReplay(
-          startingFen: widget.startingFen,
-          movesUpToHover: widget.movesUpToHover,
-          lastMoveUci: widget.lastMoveUci,
-        );
+        final replay = _replay;
         return _MoveHoverPopup(
           link: _link,
           placement: widget.placement,
@@ -210,7 +224,10 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
         return;
       }
       if (!widget.enabled || !_hovered) {
+        final hadPopup = _entry != null;
         _removePopupNow();
+        // Release the leader layer the removed popup was following.
+        if (hadPopup) setState(() {});
         return;
       }
       _showPopupNow();
@@ -233,6 +250,12 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
   @override
   void didUpdateWidget(covariant MoveHoverPreview old) {
     super.didUpdateWidget(old);
+    if (old.startingFen != widget.startingFen ||
+        old.lastMoveUci != widget.lastMoveUci ||
+        old.replay != widget.replay ||
+        !listEquals(old.movesUpToHover, widget.movesUpToHover)) {
+      _cachedReplay = null;
+    }
     if (old.enabled != widget.enabled) {
       _schedulePopupVisibilitySync();
     } else if (_entry != null) {
@@ -248,20 +271,80 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
 
   @override
   Widget build(BuildContext context) {
-    return CompositedTransformTarget(
+    return _OnDemandTransformTarget(
       link: _link,
+      // Only a token whose popup can be showing anchors a follower. Notation
+      // rows mount hundreds of these; a permanent LeaderLayer on each one
+      // splits every row into hundreds of composited layers.
+      active: _hovered || _entry != null,
       child: MouseRegion(
         onEnter: (_) {
-          _hovered = true;
+          setState(() => _hovered = true);
           _schedulePopupVisibilitySync();
         },
         onExit: (_) {
-          _hovered = false;
+          setState(() => _hovered = false);
           _schedulePopupVisibilitySync();
         },
         child: widget.child,
       ),
     );
+  }
+}
+
+/// [CompositedTransformTarget] that pushes its [LeaderLayer] only while
+/// [active]. Inactive, it paints its child inline like a plain proxy box, so
+/// an idle token costs no layer. The popup's follower hides while unlinked,
+/// and [active] stays on until that popup has been removed.
+class _OnDemandTransformTarget extends SingleChildRenderObjectWidget {
+  const _OnDemandTransformTarget({
+    required this.link,
+    required this.active,
+    super.child,
+  });
+
+  final LayerLink link;
+  final bool active;
+
+  @override
+  _RenderOnDemandLeader createRenderObject(BuildContext context) =>
+      _RenderOnDemandLeader(link: link, active: active);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderOnDemandLeader renderObject,
+  ) {
+    renderObject
+      ..link = link
+      ..active = active;
+  }
+}
+
+class _RenderOnDemandLeader extends RenderLeaderLayer {
+  _RenderOnDemandLeader({required super.link, required bool active})
+    : _active = active;
+
+  bool _active;
+  set active(bool value) {
+    if (_active == value) return;
+    _active = value;
+    markNeedsCompositingBitsUpdate();
+    markNeedsPaint();
+  }
+
+  @override
+  bool get alwaysNeedsCompositing => _active;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (_active) {
+      super.paint(context, offset);
+      return;
+    }
+    layer = null;
+    final child = this.child;
+    if (child != null) context.paintChild(child, offset);
   }
 }
 
@@ -468,7 +551,11 @@ class _AnimatedHoverCardState extends ConsumerState<_AnimatedHoverCard> {
             opacity: t.clamp(0, 1),
             child: Transform.translate(
               offset: Offset(0, (1 - t) * 6),
-              child: Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+              child: Transform.scale(
+                scale: scale,
+                filterQuality: FilterQuality.medium,
+                child: child,
+              ),
             ),
           );
         },
@@ -538,9 +625,8 @@ class _PopupCard extends StatelessWidget {
                 // Non-zero only when we have a pre-move FEN to slide from —
                 // otherwise we'd animate phantom diffs when the popup first
                 // mounts on a token we cannot rewind.
-                animationDuration: animate
-                    ? const Duration(milliseconds: 280)
-                    : Duration.zero,
+                animationDuration:
+                    animate ? const Duration(milliseconds: 280) : Duration.zero,
               ),
             ),
           ),
@@ -564,15 +650,17 @@ String? _reverseToPreMoveFen(String postFen, Move move) {
     final setup = Setup.parseFen(postFen);
     final pieceAtTo = setup.board.pieceAt(move.to);
     if (pieceAtTo == null) return null;
-    final originalPiece = move.promotion != null
-        ? Piece(color: pieceAtTo.color, role: Role.pawn)
-        : pieceAtTo;
+    final originalPiece =
+        move.promotion != null
+            ? Piece(color: pieceAtTo.color, role: Role.pawn)
+            : pieceAtTo;
     final newBoard = setup.board
         .removePieceAt(move.to)
         .setPieceAt(move.from, originalPiece);
-    final fullmoves = (setup.turn == Side.white && setup.fullmoves > 1)
-        ? setup.fullmoves - 1
-        : setup.fullmoves;
+    final fullmoves =
+        (setup.turn == Side.white && setup.fullmoves > 1)
+            ? setup.fullmoves - 1
+            : setup.fullmoves;
     return Setup(
       board: newBoard,
       turn: setup.turn.opposite,
@@ -590,9 +678,8 @@ Map<Square, SquareHighlight> _lastMoveHighlights(Move? lastMove) {
   final out = <Square, SquareHighlight>{};
   for (final square in lastMove.squares) {
     final isLight = (square.file + square.rank) % 2 == 1;
-    final color = isLight
-        ? kLastMoveHighlightLightSquare
-        : kLastMoveHighlightDarkSquare;
+    final color =
+        isLight ? kLastMoveHighlightLightSquare : kLastMoveHighlightDarkSquare;
     out[square] = SquareHighlight(details: HighlightDetails(solidColor: color));
   }
   return out;
