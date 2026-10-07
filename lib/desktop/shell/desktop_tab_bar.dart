@@ -77,6 +77,14 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
   GameTabDragPayload? _hoverPayload;
   bool _closeConfirmationOpen = false;
 
+  // Last built tab strip and the inputs it was built from.
+  Widget? _tabStrip;
+  Object? _tabStripTabs;
+  Object? _tabStripActiveId;
+  double? _tabStripListWidth;
+  bool? _tabStripFillsRest;
+  Map<String, double>? _tabStripWidths;
+
   Future<void> _closeTabWithUnsavedAnalysisGuard(String tabId) async {
     final session = ref.read(boardPaneSessionByTabIdProvider)[tabId];
     if (boardSessionHasUnsavedAnalysis(session)) {
@@ -159,7 +167,29 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                         constraints.maxWidth,
                         desiredListWidth,
                       );
-                      return Row(
+                      final fillsRest = listWidth < constraints.maxWidth;
+                      // Window-resize frames re-run this builder even when
+                      // every chip keeps its width. Returning the identical
+                      // strip lets Flutter skip rebuilding the list and every
+                      // chip; any real input change builds a fresh one.
+                      final cachedStrip = _tabStrip;
+                      if (cachedStrip != null &&
+                          identical(_tabStripTabs, state.tabs) &&
+                          _tabStripActiveId == state.activeId &&
+                          _tabStripListWidth == listWidth &&
+                          _tabStripFillsRest == fillsRest &&
+                          const MapEquality<String, double>().equals(
+                            _tabStripWidths,
+                            widths,
+                          )) {
+                        return cachedStrip;
+                      }
+                      _tabStripTabs = state.tabs;
+                      _tabStripActiveId = state.activeId;
+                      _tabStripListWidth = listWidth;
+                      _tabStripFillsRest = fillsRest;
+                      _tabStripWidths = widths;
+                      return _tabStrip = Row(
                         children: [
                           SizedBox(
                             width: listWidth,
@@ -229,7 +259,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                               },
                             ),
                           ),
-                          if (listWidth < constraints.maxWidth)
+                          if (fillsRest)
                             const Expanded(
                               child: DragToMoveArea(child: SizedBox.expand()),
                             ),

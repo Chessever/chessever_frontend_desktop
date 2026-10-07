@@ -32,6 +32,7 @@ import 'package:chessever/desktop/state/opening_explorer_seed.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/utils/event_game_card_keyboard_navigation.dart';
 import 'package:chessever/desktop/utils/player_build_tree_filters.dart';
+import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/default_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
@@ -75,7 +76,6 @@ import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/country_utils.dart';
-
 
 import 'package:chessever/utils/number_format_utils.dart';
 import 'package:chessever/utils/png_asset.dart';
@@ -330,16 +330,29 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
 
   Future<void> _toggleFavorite() async {
     final args = widget.args;
-    final favorites = ref.read(favoritePlayersProviderNew).valueOrNull ?? const [];
-    final already = favorites.any((player) => favoritePlayerMatchesIdentity(player,
-      fideId: args.fideId?.toString(), playerName: args.playerName.trim(),
-      memorialSourceIdentity: args.memorialSourceIdentity));
-    await setDesktopPlayerFavorite(context, ref, favorite: !already,
-      playerName: args.playerName, fideId: args.fideId?.toString(),
-      countryCode: args.federation, rating: args.rating, title: args.title,
+    final favorites =
+        ref.read(favoritePlayersProviderNew).valueOrNull ?? const [];
+    final already = favorites.any(
+      (player) => favoritePlayerMatchesIdentity(
+        player,
+        fideId: args.fideId?.toString(),
+        playerName: args.playerName.trim(),
+        memorialSourceIdentity: args.memorialSourceIdentity,
+      ),
+    );
+    await setDesktopPlayerFavorite(
+      context,
+      ref,
+      favorite: !already,
+      playerName: args.playerName,
+      fideId: args.fideId?.toString(),
+      countryCode: args.federation,
+      rating: args.rating,
+      title: args.title,
       gamebasePlayerId: args.gamebasePlayerId,
       memorialSourceIdentity: args.memorialSourceIdentity,
-      memorialRouteId: args.memorialRouteId);
+      memorialRouteId: args.memorialRouteId,
+    );
   }
 
   void _showToast(String message, {bool error = false}) {
@@ -1418,8 +1431,9 @@ class _RatingHistoryPanelState extends State<_RatingHistoryPanel> {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: kDividerColor),
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
+      child: BucketedLayoutBuilder<bool>(
+        bucket: (constraints) => constraints.maxWidth >= 760,
+        builder: (context, wide) {
           final controls = <Widget>[
             SizedBox(
               width: 286,
@@ -1498,7 +1512,7 @@ class _RatingHistoryPanelState extends State<_RatingHistoryPanel> {
             ],
           );
           final header =
-              constraints.maxWidth >= 760
+              wide
                   ? Row(children: [title, const Spacer(), ...controls])
                   : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2412,9 +2426,11 @@ class _OverviewDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 1040;
+    // Rebuilds only when the wide/narrow breakpoint flips, not on every
+    // resize frame.
+    return BucketedLayoutBuilder<bool>(
+      bucket: (constraints) => constraints.maxWidth >= 1040,
+      builder: (context, wide) {
         final performance = DesktopPlayerProfileResultSummary(
           stats: analytics.resultStats,
           title: 'Overall performance',
@@ -3301,8 +3317,9 @@ class _OpeningTable extends StatelessWidget {
                 'Frequently played openings ranked relative to this player',
           ),
           const SizedBox(height: 10),
-          LayoutBuilder(
-            builder: (context, constraints) {
+          BucketedLayoutBuilder<bool>(
+            bucket: (constraints) => constraints.maxWidth < 720,
+            builder: (context, narrow) {
               final best = _OpeningResultGroup(
                 title: 'Best results',
                 color: kGreenColor,
@@ -3317,7 +3334,7 @@ class _OpeningTable extends StatelessWidget {
                 selected: selected,
                 onSelect: onSelect,
               );
-              if (constraints.maxWidth < 720 || groups.worst.isEmpty) {
+              if (narrow || groups.worst.isEmpty) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [

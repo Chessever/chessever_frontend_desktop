@@ -280,19 +280,7 @@ class TournamentsPane extends HookConsumerWidget {
                     onOpenTournament: openTournament,
                   )
                   : selectedCategory == ge.GroupEventCategory.forYou
-                  ? LayoutBuilder(
-                    builder: (context, constraints) {
-                      final paneWidth =
-                          constraints.maxWidth.isFinite
-                              ? constraints.maxWidth
-                              : 0.0;
-                      return _ForYouFeed(
-                        tabId: tabId,
-                        paneWidth: paneWidth,
-                        onOpenTournament: openTournament,
-                      );
-                    },
-                  )
+                  ? _ForYouFeed(tabId: tabId, onOpenTournament: openTournament)
                   : asyncTournaments.when(
                     data: (tournaments) {
                       // Rendered in provider order. Live first re-runs the
@@ -2452,14 +2440,9 @@ final _forYouNavigationBookmarkProvider =
 ///   - `forYouEventsProvider`         → paginated events
 ///   - `forYouEventSnapshotProvider`  → per-event games (lazily watched per row)
 class _ForYouFeed extends ConsumerStatefulWidget {
-  const _ForYouFeed({
-    required this.tabId,
-    required this.paneWidth,
-    required this.onOpenTournament,
-  });
+  const _ForYouFeed({required this.tabId, required this.onOpenTournament});
 
   final String tabId;
-  final double paneWidth;
   final void Function(GroupEventCardModel) onOpenTournament;
 
   @override
@@ -2747,8 +2730,11 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   int _gameColumnCountFor(DesktopCardLayout layout) {
+    // Read at key time. Passing the pane width in as a widget field rebuilt
+    // the whole feed on every resize frame just for keyboard navigation.
+    final paneWidth = context.size?.width ?? 0.0;
     final gameAreaWidth =
-        (widget.paneWidth -
+        (paneWidth -
                 40 -
                 _ForYouEventSection.eventCardWidth -
                 _ForYouEventSection.eventToGamesGap)

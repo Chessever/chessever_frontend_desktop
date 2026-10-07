@@ -5899,7 +5899,7 @@ class _StagedUsernameRow extends StatelessWidget {
       ),
     );
 
-    if (MediaQuery.of(context).disableAnimations) return row;
+    if (MediaQuery.disableAnimationsOf(context)) return row;
     // Each pill slides + fades in once, when it is first staged. The tween end
     // is fixed at 1, so later rebuilds (status resolving) don't re-trigger it.
     return TweenAnimationBuilder<double>(

@@ -585,6 +585,11 @@ class _BoardColumn extends ConsumerWidget {
                 ? cg.PlayerSide.white
                 : cg.PlayerSide.black);
 
+    // Generated once per position, not on every resize frame inside the
+    // LayoutBuilder below; a fresh object there also made the board treat
+    // its legal moves as changed each frame.
+    final validMoves = makeLegalMoves(position);
+
     return Column(
       children: [
         _PositionBreadcrumb(position: position),
@@ -640,7 +645,7 @@ class _BoardColumn extends ConsumerWidget {
                                   orientation: orientation,
                                   playerSide: playerSide,
                                   sideToMove: sideToMove,
-                                  validMoves: makeLegalMoves(position),
+                                  validMoves: validMoves,
                                   isCheck: isCheck,
                                   lastMove: lastMove,
                                   onMove: onMove,

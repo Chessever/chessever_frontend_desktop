@@ -5417,18 +5417,23 @@ class LocalChessDatabaseRepository {
       );
     }
     final indexPath = compactLocalTreeIndexPath(databasePath);
-    final matches = await Isolate.run(
-      () => readCompactLocalTreePositionMatchesSync(
+    // Read and encode in the worker: at a shallow ply the match list is every
+    // game in the file, and copying it back to encode it here stalled frames
+    // on each move of a scoped (Prep) tree.
+    final encodedMatches = await Isolate.run(() {
+      final matches = readCompactLocalTreePositionMatchesSync(
         indexPath: indexPath,
         fen: fen,
-      ),
-    );
-    if (matches.isEmpty) return const <MoveAggregate>[];
+      );
+      if (matches.isEmpty) return null;
+      return jsonEncode(<List<Object?>>[
+        for (final match in matches)
+          if (match.nextUci != null)
+            <Object?>[match.indexInFile, match.nextUci],
+      ]);
+    });
+    if (encodedMatches == null) return const <MoveAggregate>[];
 
-    final encodedMatches = jsonEncode(<List<Object?>>[
-      for (final match in matches)
-        if (match.nextUci != null) <Object?>[match.indexInFile, match.nextUci],
-    ]);
     final where = StringBuffer('g.database_id = ?');
     final parameters = <Object?>[databaseId];
     _appendLocalPositionFilters(where, parameters, filters);
@@ -5813,22 +5818,39 @@ class LocalChessDatabaseRepository {
     required int pageSize,
   }) async {
     final indexPath = compactLocalTreeIndexPath(databasePath);
-    var matches = await Isolate.run(
-      () => readCompactLocalTreePositionMatchesSync(
+    final pinnedUci = uci?.trim().toLowerCase();
+    final pagedInMemory =
+        !filters.hasFilters && sortBy == GamebaseSortField.date;
+    // The SQL path needs every match encoded. Encode in the worker so the
+    // match list (every game at shallow plies) is not copied back and
+    // encoded on the UI isolate for each page of a scoped (Prep) tree.
+    final read = await Isolate.run<
+      ({List<CompactLocalTreePositionMatch> matches, String? encoded})
+    >(() {
+      var matches = readCompactLocalTreePositionMatchesSync(
         indexPath: indexPath,
         fen: fen,
-      ),
-    );
-    final pinnedUci = uci?.trim().toLowerCase();
-    if (pinnedUci != null && pinnedUci.isNotEmpty) {
-      matches = <CompactLocalTreePositionMatch>[
-        for (final match in matches)
-          if (match.nextUci == pinnedUci) match,
-      ];
-    }
+      );
+      if (pinnedUci != null && pinnedUci.isNotEmpty) {
+        matches = <CompactLocalTreePositionMatch>[
+          for (final match in matches)
+            if (match.nextUci == pinnedUci) match,
+        ];
+      }
+      if (pagedInMemory || matches.isEmpty) {
+        return (matches: matches, encoded: null);
+      }
+      return (
+        matches: const <CompactLocalTreePositionMatch>[],
+        encoded: jsonEncode(<List<int>>[
+          for (final match in matches) <int>[match.indexInFile, match.ply],
+        ]),
+      );
+    });
+    final matches = read.matches;
     final size = pageSize <= 0 ? 20 : pageSize;
     final page = pageNumber < 0 ? 0 : pageNumber;
-    if (matches.isEmpty) {
+    if (matches.isEmpty && read.encoded == null) {
       return GamebaseSearchQueryResponse(
         status: 'success',
         data: const <Map<String, dynamic>>[],
@@ -5841,7 +5863,7 @@ class LocalChessDatabaseRepository {
       );
     }
 
-    if (!filters.hasFilters && sortBy == GamebaseSortField.date) {
+    if (pagedInMemory) {
       final ordered = List<CompactLocalTreePositionMatch>.of(matches)..sort((
         left,
         right,
@@ -5909,9 +5931,7 @@ class LocalChessDatabaseRepository {
       );
     }
 
-    final encodedMatches = jsonEncode(<List<int>>[
-      for (final match in matches) <int>[match.indexInFile, match.ply],
-    ]);
+    final encodedMatches = read.encoded!;
     final where = StringBuffer('g.database_id = ?');
     final filterParameters = <Object?>[databaseId];
     _appendLocalPositionFilters(where, filterParameters, filters);

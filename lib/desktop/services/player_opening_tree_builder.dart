@@ -219,6 +219,15 @@ class PlayerOpeningTreeIndex {
     );
   }
 
+  /// Filtered move lists already computed for an index, keyed by position and
+  /// criteria. The index is immutable, and a scoped board (Prep) asks for the
+  /// same position several times per move while its database query is in
+  /// flight; without this each ask re-walked and re-filtered every game at the
+  /// position, which at shallow plies is the whole file.
+  static final Expando<Map<String, List<MoveAggregate>>> _filteredMovesCache =
+      Expando<Map<String, List<MoveAggregate>>>('filteredMovesCache');
+  static const int _filteredMovesCacheLimit = 128;
+
   List<MoveAggregate> movesForFen(
     String fen, {
     PlayerOpeningTreeFilterCriteria filters =
@@ -229,28 +238,21 @@ class PlayerOpeningTreeIndex {
       if (!filters.hasFilters) {
         return _valueForFenKey(localMovesByFen, key) ?? const <MoveAggregate>[];
       }
-      final builders = <String, _MutableMoveAggregate>{};
-      for (final ref in _filteredRefsForKey(key, filters)) {
-        final row = gameRowsById[ref.gameId];
-        if (row == null) continue;
-        final uci = _nextUciForRef(row, ref);
-        if (uci == null) continue;
-        final canonicalDate = _canonicalDateForRow(row);
-        builders
-            .putIfAbsent(uci, () => _MutableMoveAggregate(uci))
-            .addGame(
-              result: row['result']?.toString() ?? '*',
-              gameId: ref.gameId,
-              date:
-                  canonicalDate == null
-                      ? null
-                      : DateTime.tryParse(canonicalDate),
-            );
+      final cache =
+          _filteredMovesCache[this] ??= <String, List<MoveAggregate>>{};
+      final cacheKey = '$key\u0002${filters.cacheSignature}';
+      final cached = cache.remove(cacheKey);
+      if (cached != null) {
+        // Re-insert so the map's insertion order doubles as recency order.
+        cache[cacheKey] = cached;
+        return cached;
       }
-      final moves =
-          builders.values.map((builder) => builder.toAggregate()).toList()
-            ..sort((a, b) => b.total.compareTo(a.total));
-      return List<MoveAggregate>.unmodifiable(moves);
+      final computed = _filteredMovesForFenKey(key, filters);
+      cache[cacheKey] = computed;
+      if (cache.length > _filteredMovesCacheLimit) {
+        cache.remove(cache.keys.first);
+      }
+      return computed;
     }
     final node = _valueForFenKey(nodesByFenKey, _fenKey(fen));
     if (node == null) return const <MoveAggregate>[];
@@ -258,6 +260,32 @@ class PlayerOpeningTreeIndex {
       .map((move) => move.toMoveAggregate(filters: filters))
       .where((move) => move.total > 0)
       .toList(growable: false)..sort((a, b) => b.total.compareTo(a.total));
+    return List<MoveAggregate>.unmodifiable(moves);
+  }
+
+  List<MoveAggregate> _filteredMovesForFenKey(
+    String key,
+    PlayerOpeningTreeFilterCriteria filters,
+  ) {
+    final builders = <String, _MutableMoveAggregate>{};
+    for (final ref in _filteredRefsForKey(key, filters)) {
+      final row = gameRowsById[ref.gameId];
+      if (row == null) continue;
+      final uci = _nextUciForRef(row, ref);
+      if (uci == null) continue;
+      final canonicalDate = _canonicalDateForRow(row);
+      builders
+          .putIfAbsent(uci, () => _MutableMoveAggregate(uci))
+          .addGame(
+            result: row['result']?.toString() ?? '*',
+            gameId: ref.gameId,
+            date:
+                canonicalDate == null ? null : DateTime.tryParse(canonicalDate),
+          );
+    }
+    final moves =
+        builders.values.map((builder) => builder.toAggregate()).toList()
+          ..sort((a, b) => b.total.compareTo(a.total));
     return List<MoveAggregate>.unmodifiable(moves);
   }
 
@@ -280,14 +308,19 @@ class PlayerOpeningTreeIndex {
           .toList(growable: false);
     }
 
-    final sorted = refs
+    final rows = refs
         .map(_rowForRef)
         .whereType<Map<String, dynamic>>()
         .toList(growable: false);
-    sorted.sort((a, b) {
-      final cmp = _compareRows(a, b, sortBy);
+    // Sort values are read once per row: the comparator used to re-parse
+    // both rows' dates on every comparison (about 2·N·log N parses).
+    final keyed = <(Map<String, dynamic>, Object)>[
+      for (final row in rows) (row, _sortValueForRow(row, sortBy)),
+    ]..sort((a, b) {
+      final cmp = _compareSortValues(a.$2, b.$2);
       return sortDirection == GamebaseSortDirection.asc ? cmp : -cmp;
     });
+    final sorted = [for (final entry in keyed) entry.$1];
 
     final start = pageNumber * pageSize;
     if (start >= sorted.length) return const <Map<String, dynamic>>[];
@@ -357,46 +390,43 @@ class PlayerOpeningTreeIndex {
     return List<PlayerOpeningTreeGameRef>.unmodifiable(refs);
   }
 
-  static int _compareRows(
-    Map<String, dynamic> a,
-    Map<String, dynamic> b,
+  static Object _sortValueForRow(
+    Map<String, dynamic> row,
     GamebaseSortField sortBy,
   ) {
-    Object? value(Map<String, dynamic> row) {
-      switch (sortBy) {
-        case GamebaseSortField.date:
-          return DateTime.tryParse(row['date']?.toString() ?? '') ??
-              DateTime.fromMillisecondsSinceEpoch(0);
-        case GamebaseSortField.avgElo:
-          final w = _readInt(row['whiteElo']);
-          final bl = _readInt(row['blackElo']);
-          if (w <= 0 && bl <= 0) return 0;
-          if (w <= 0) return bl;
-          if (bl <= 0) return w;
-          return ((w + bl) / 2).round();
-        case GamebaseSortField.whiteElo:
-          return _readInt(row['whiteElo']);
-        case GamebaseSortField.blackElo:
-          return _readInt(row['blackElo']);
-        case GamebaseSortField.whiteName:
-          return row['white']?.toString().toLowerCase() ?? '';
-        case GamebaseSortField.blackName:
-          return row['black']?.toString().toLowerCase() ?? '';
-        case GamebaseSortField.result:
-          return row['result']?.toString() ?? '';
-        case GamebaseSortField.eco:
-          return row['eco']?.toString() ?? '';
-        case GamebaseSortField.opening:
-          return row['opening']?.toString() ?? '';
-        case GamebaseSortField.event:
-          return row['event']?.toString() ?? '';
-        default:
-          return row['date']?.toString() ?? '';
-      }
+    switch (sortBy) {
+      case GamebaseSortField.date:
+        return DateTime.tryParse(row['date']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+      case GamebaseSortField.avgElo:
+        final w = _readInt(row['whiteElo']);
+        final bl = _readInt(row['blackElo']);
+        if (w <= 0 && bl <= 0) return 0;
+        if (w <= 0) return bl;
+        if (bl <= 0) return w;
+        return ((w + bl) / 2).round();
+      case GamebaseSortField.whiteElo:
+        return _readInt(row['whiteElo']);
+      case GamebaseSortField.blackElo:
+        return _readInt(row['blackElo']);
+      case GamebaseSortField.whiteName:
+        return row['white']?.toString().toLowerCase() ?? '';
+      case GamebaseSortField.blackName:
+        return row['black']?.toString().toLowerCase() ?? '';
+      case GamebaseSortField.result:
+        return row['result']?.toString() ?? '';
+      case GamebaseSortField.eco:
+        return row['eco']?.toString() ?? '';
+      case GamebaseSortField.opening:
+        return row['opening']?.toString() ?? '';
+      case GamebaseSortField.event:
+        return row['event']?.toString() ?? '';
+      default:
+        return row['date']?.toString() ?? '';
     }
+  }
 
-    final av = value(a);
-    final bv = value(b);
+  static int _compareSortValues(Object av, Object bv) {
     if (av is num && bv is num) return av.compareTo(bv);
     if (av is DateTime && bv is DateTime) return av.compareTo(bv);
     return av.toString().compareTo(bv.toString());
@@ -721,6 +751,30 @@ class PlayerOpeningTreeFilterCriteria {
 
   bool get hasMoveBucketFilters =>
       timeControl != null || color != null || isOnline != null;
+
+  /// Value identity of these criteria, for memoizing results computed from
+  /// them. Covers every field [matches] and the move walk read.
+  String get cacheSignature {
+    String list(List<String> values) =>
+        '${values.length}:${values.join('\u0001')}';
+    return <Object?>[
+      playerId == null ? '-' : '+$playerId',
+      list(playerIds),
+      list(playerFideIds),
+      list(playerNames),
+      list(opponentIds),
+      list(opponentFideIds),
+      list(opponentNames),
+      timeControl?.name,
+      minRating,
+      maxRating,
+      color == null ? '-' : '+$color',
+      result == null ? '-' : '+$result',
+      isOnline,
+      yearFrom,
+      yearTo,
+    ].join('\u0003');
+  }
 
   bool matches(Map<String, dynamic> row) {
     final wantedColor = color?.trim().toLowerCase();

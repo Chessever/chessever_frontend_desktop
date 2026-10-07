@@ -15,6 +15,7 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/opening_explorer_seed.dart';
 import 'package:chessever/desktop/widgets/board_editor_import_chooser_dialog.dart';
+import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
@@ -771,9 +772,10 @@ class _WorkspaceHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 560;
+    // Rebuilds the header only when the compact breakpoint flips.
+    return BucketedLayoutBuilder<bool>(
+      bucket: (constraints) => constraints.maxWidth < 560,
+      builder: (context, compact) {
         return Padding(
           padding: const EdgeInsets.fromLTRB(20, 12, 14, 12),
           child: Row(

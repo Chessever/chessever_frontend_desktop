@@ -344,6 +344,84 @@ void main() {
     expect(whiteBlitzMoves.single.white, 1);
   });
 
+  test('memoizes filtered moves per position and criteria', () async {
+    final index = await buildPlayerOpeningTreeBatchAsync([
+      {
+        'id': 'memo-1',
+        'whitePlayerId': 'player-uuid',
+        'blackPlayerId': 'other-1',
+        'timeControl': 'blitz',
+        'result': '1-0',
+        'pgn': '''
+[Event "Memo one"]
+[Date "2026.01.05"]
+[White "Player"]
+[Black "Other"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+''',
+      },
+      {
+        'id': 'memo-2',
+        'whitePlayerId': 'other-2',
+        'blackPlayerId': 'player-uuid',
+        'timeControl': 'blitz',
+        'result': '0-1',
+        'pgn': '''
+[Event "Memo two"]
+[Date "2026.02.07"]
+[White "Other"]
+[Black "Player"]
+[Result "0-1"]
+
+1. d4 d5 0-1
+''',
+      },
+    ]);
+    const asWhite = PlayerOpeningTreeFilterCriteria(
+      playerId: 'player-uuid',
+      color: 'white',
+    );
+    const asBlack = PlayerOpeningTreeFilterCriteria(
+      playerId: 'player-uuid',
+      color: 'black',
+    );
+
+    final first = index.movesForFen(Chess.initial.fen, filters: asWhite);
+    final again = index.movesForFen(
+      Chess.initial.fen,
+      filters: const PlayerOpeningTreeFilterCriteria(
+        playerId: 'player-uuid',
+        color: 'white',
+      ),
+    );
+    final black = index.movesForFen(Chess.initial.fen, filters: asBlack);
+
+    // Equal criteria at the same position reuse the walk; different criteria
+    // never read another criteria's result.
+    expect(identical(first, again), isTrue);
+    expect(first.map((move) => move.uci), <String>['e2e4']);
+    expect(black.map((move) => move.uci), <String>['d2d4']);
+
+    final newestFirst = index.gamesForFen(
+      Chess.initial.fen,
+      sortBy: GamebaseSortField.date,
+      sortDirection: GamebaseSortDirection.desc,
+      pageNumber: 0,
+      pageSize: 10,
+    );
+    final oldestFirst = index.gamesForFen(
+      Chess.initial.fen,
+      sortBy: GamebaseSortField.date,
+      sortDirection: GamebaseSortDirection.asc,
+      pageNumber: 0,
+      pageSize: 10,
+    );
+    expect(newestFirst.map((row) => row['id']), <String>['memo-2', 'memo-1']);
+    expect(oldestFirst.map((row) => row['id']), <String>['memo-1', 'memo-2']);
+  });
+
   test(
     'prep side includes every configured source name for one player',
     () async {

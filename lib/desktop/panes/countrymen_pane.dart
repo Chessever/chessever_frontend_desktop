@@ -9,6 +9,7 @@ import 'package:motor/motor.dart';
 
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
+import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
 import 'package:chessever/desktop/widgets/desktop_event_context_menu.dart';
@@ -750,14 +751,20 @@ class _CountrymenPlayersListState
             child: _CountryPlayerTile(
               player: player,
               isFavorite: favorite,
-              onFavoriteTap: () => setDesktopPlayerFavorite(
-                              context, ref, favorite: !favorite,
-                              playerName: player.name, fideId: player.fideId?.toString(),
-                              countryCode: player.countryCode, rating: player.score, title: player.title,
-                              gamebasePlayerId: player.gamebasePlayerId,
-                              memorialSourceIdentity: player.memorialSourceIdentity,
-                              memorialRouteId: player.memorialRouteId,
-                            ),
+              onFavoriteTap:
+                  () => setDesktopPlayerFavorite(
+                    context,
+                    ref,
+                    favorite: !favorite,
+                    playerName: player.name,
+                    fideId: player.fideId?.toString(),
+                    countryCode: player.countryCode,
+                    rating: player.score,
+                    title: player.title,
+                    gamebasePlayerId: player.gamebasePlayerId,
+                    memorialSourceIdentity: player.memorialSourceIdentity,
+                    memorialRouteId: player.memorialRouteId,
+                  ),
             ),
           );
         },
@@ -1751,13 +1758,13 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
       // Compute column count first so PageUp/PageDown can stride by a full
       // page (~3 rows of `columns` cards). The previous `pageStride: 9`
       // was hardcoded to an assumed 3×3 grid.
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          const targetWidth = 280.0;
-          final columns = (constraints.maxWidth / targetWidth).floor().clamp(
-            2,
-            6,
-          );
+      // Rebuilds only when the column count changes, not on every resize
+      // frame; the grid itself still re-lays out at the new width.
+      return BucketedLayoutBuilder<int>(
+        bucket:
+            (constraints) =>
+                (constraints.maxWidth / 280.0).floor().clamp(2, 6).toInt(),
+        builder: (context, columns) {
           return DesktopGroupedGameKeyboardFocus(
             scopeId: 'countrymen-games',
             groups: keyboardGroups,

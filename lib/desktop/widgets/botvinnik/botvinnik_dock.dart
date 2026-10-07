@@ -166,7 +166,12 @@ class _BotvinnikDockState extends ConsumerState<BotvinnikDock> {
     );
     final chat = ref.watch(botvinnikChatControllerProvider);
     final controller = ref.read(botvinnikChatControllerProvider.notifier);
-    final dock = ref.watch(botvinnikDockProvider);
+    // Select only what the body reads. Watching the whole dock state rebuilt
+    // the header, composer and every visible message on each resize-drag
+    // delta, because the width lives in the same state.
+    final showingHistoryPref = ref.watch(
+      botvinnikDockProvider.select((dock) => dock.showingHistory),
+    );
     final user = ref.watch(currentUserProvider);
     final quota = ref.watch(botvinnikQuotaProvider);
     final signedIn =
@@ -175,7 +180,7 @@ class _BotvinnikDockState extends ConsumerState<BotvinnikDock> {
       isSignedIn: signedIn,
       quota: quota.valueOrNull,
     );
-    final showingHistory = dock.showingHistory && signedIn;
+    final showingHistory = showingHistoryPref && signedIn;
     final ValueChanged<String>? onSuggestion =
         switch (botvinnikSuggestionAction(access)) {
           BotvinnikSuggestionAction.send => _sendSuggestion,
@@ -1156,8 +1161,7 @@ class _StreamingCaretState extends State<_StreamingCaret>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final reduceMotion =
-        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     if (reduceMotion) {
       _pulse
         ..stop()
