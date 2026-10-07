@@ -16,7 +16,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart'
-    show ValueListenable, kDebugMode, visibleForTesting;
+    show ValueListenable, kDebugMode, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -809,7 +809,10 @@ class _BoardPaneContent extends HookConsumerWidget {
     final focusNode = useFocusNode();
     final explorerPreviewUci = useState<String?>(null);
     final explorerPreviewLine = useState<List<String>>(const <String>[]);
-    final explorerPreviewLineStep = useState<int>(0);
+    // A notifier, not useState: line-preview autoplay advances this every
+    // 520 ms, and only the board area and the right-rail panel read it.
+    // useState rebuilt this whole pane, notation included, on every step.
+    final explorerPreviewLineStep = useValueNotifier<int>(0);
     final explorerPreviewLineAutoplay = useState<bool>(true);
     final threatMode = useState<bool>(false);
     final explorerPreviewSoundKey = useRef<String?>(null);
@@ -3920,34 +3923,63 @@ class _BoardPaneContent extends HookConsumerWidget {
       position,
       explorerPreviewUci.value,
     );
-    final explorerLinePreview = _previewExplorerLine(
-      position,
-      explorerPreviewLine.value,
-      explorerPreviewLineStep.value,
+    final previewLine = explorerPreviewLine.value;
+    // The previewed line is replayed lazily once per line, not from its
+    // first move on every autoplay step.
+    final explorerLineFrames = useMemoized(
+      () => _ExplorerLineFrames(position, previewLine),
+      [position.fen, previewLine],
     );
+    _ExplorerLineFrame? linePreviewAt(int step) => explorerLineFrames.at(step);
     final showBoardMoveDecorations = shouldShowBoardMoveDecorations(
       hasMovePreview: explorerPreview != null,
-      hasLinePreview: explorerLinePreview != null,
+      hasLinePreview: linePreviewAt(explorerPreviewLineStep.value) != null,
     );
-    final boardPosition =
-        explorerLinePreview?.position ?? explorerPreview?.position ?? position;
     // Legal moves only change with the position; recomputing them on every
     // rebuild also handed chessground a new map each time.
-    final boardValidMoves = useMemoized(
-      () => makeLegalMoves(boardPosition),
-      [boardPosition],
-    );
-    final activeEvalTarget = activeBoardEvalTarget(
-      fen: boardPosition.fen,
-      threatMode: threatMode.value,
-      isCheck: boardPosition.isCheck,
-    );
-    final boardLastMove =
-        explorerLinePreview?.move ?? explorerPreview?.move ?? lastMove;
+    final boardValidMovesCache = useRef<(String, cg.ValidMoves)?>(null);
+    cg.ValidMoves validMovesFor(Position boardPosition) {
+      final cached = boardValidMovesCache.value;
+      if (cached != null && cached.$1 == boardPosition.fen) return cached.$2;
+      final moves = makeLegalMoves(boardPosition);
+      boardValidMovesCache.value = (boardPosition.fen, moves);
+      return moves;
+    }
+
+    // What the board shows at a line-preview step. The board area and the
+    // right rail resolve it inside their step listeners, and actions resolve
+    // it at call time, so an autoplay step never rebuilds the whole pane.
+    _BoardPreviewView boardViewAt(int step) {
+      final linePreview = linePreviewAt(step);
+      final boardPosition =
+          linePreview?.position ?? explorerPreview?.position ?? position;
+      return (
+        linePreview: linePreview,
+        position: boardPosition,
+        lastMove: linePreview?.move ?? explorerPreview?.move ?? lastMove,
+        evalTarget: activeBoardEvalTarget(
+          fen: boardPosition.fen,
+          threatMode: threatMode.value,
+          isCheck: boardPosition.isCheck,
+        ),
+      );
+    }
+
     final boardPlayerSide =
-        explorerLinePreview == null && explorerPreview == null
-            ? playerSide
-            : cg.PlayerSide.none;
+        showBoardMoveDecorations ? playerSide : cg.PlayerSide.none;
+
+    // Clears a line preview that can no longer be shown from this position.
+    // Deferred because effects reach it while the pane is building.
+    void dropLinePreviewSoon(List<String> line) {
+      Future.microtask(() {
+        if (!context.mounted) return;
+        if (!identical(explorerPreviewLine.value, line)) return;
+        explorerPreviewLine.value = const <String>[];
+        explorerPreviewLineStep.value = 0;
+        explorerPreviewLineAutoplay.value = true;
+        explorerPreviewSoundKey.value = null;
+      });
+    }
 
     useEffect(
       () {
@@ -3957,24 +3989,9 @@ class _BoardPaneContent extends HookConsumerWidget {
             explorerPreviewUci.value = null;
           });
         }
-        if (explorerPreviewLine.value.isNotEmpty &&
-            explorerLinePreview == null) {
-          Future.microtask(() {
-            if (!context.mounted) return;
-            explorerPreviewLine.value = const <String>[];
-            explorerPreviewLineStep.value = 0;
-            explorerPreviewLineAutoplay.value = true;
-            explorerPreviewSoundKey.value = null;
-          });
-        }
         return null;
       },
-      [
-        position.fen,
-        explorerPreviewUci.value,
-        explorerPreviewLine.value,
-        explorerPreviewLineStep.value,
-      ],
+      [position.fen, explorerPreviewUci.value],
     );
 
     useEffect(() {
@@ -4004,17 +4021,35 @@ class _BoardPaneContent extends HookConsumerWidget {
     }, [explorerPreviewLine.value, explorerPreviewLineAutoplay.value]);
 
     useEffect(() {
-      final line = explorerPreviewLine.value;
-      if (line.isEmpty || explorerLinePreview == null) return null;
-      final key =
-          '${position.fen}|${line.join(' ')}|${explorerPreviewLineStep.value}';
-      if (explorerPreviewSoundKey.value == key) return null;
-      explorerPreviewSoundKey.value = key;
-      if (_shouldPlaySounds(ref, activeTabId)) {
-        AudioPlayerService.instance.playSfxForSan(explorerLinePreview.san);
+      final line = previewLine;
+      if (line.isEmpty) return null;
+      // Runs for a line's first frame, then for every autoplay or manual
+      // step. A step written together with a new line fires this listener
+      // before the pane rebuilds; the identity check skips it, and the effect
+      // run for the new line handles that frame.
+      void syncStep() {
+        if (!context.mounted || !identical(explorerPreviewLine.value, line)) {
+          return;
+        }
+        final step = explorerPreviewLineStep.value;
+        final frame = linePreviewAt(step);
+        if (frame == null) {
+          dropLinePreviewSoon(line);
+          return;
+        }
+        final key = '${position.fen}|${line.join(' ')}|$step';
+        if (explorerPreviewSoundKey.value == key) return;
+        explorerPreviewSoundKey.value = key;
+        if (_shouldPlaySounds(ref, activeTabId)) {
+          AudioPlayerService.instance.playSfxForSan(frame.san);
+        }
       }
-      return null;
-    }, [position.fen, explorerPreviewLine.value, explorerPreviewLineStep.value]);
+
+      void onStep() => Future.microtask(syncStep);
+      syncStep();
+      explorerPreviewLineStep.addListener(onStep);
+      return () => explorerPreviewLineStep.removeListener(onStep);
+    }, [position.fen, previewLine]);
 
     void playUci(String uci, {bool requestPaneFocus = true}) {
       explorerPreviewUci.value = null;
@@ -4150,8 +4185,11 @@ class _BoardPaneContent extends HookConsumerWidget {
         return out;
       }
 
+      final view = boardViewAt(explorerPreviewLineStep.value);
+      final boardPosition = view.position;
+
       List<String> visiblePreviewPrefix() {
-        if (explorerLinePreview != null) {
+        if (view.linePreview != null) {
           final line = explorerPreviewLine.value;
           if (line.isEmpty) return const <String>[];
           final end =
@@ -4224,6 +4262,8 @@ class _BoardPaneContent extends HookConsumerWidget {
       // to move to be able to "pass": illegal in check, meaningless once the
       // game is decided.
       if (!threatMode.value) {
+        final boardPosition =
+            boardViewAt(explorerPreviewLineStep.value).position;
         if (boardPosition.isCheck) {
           showToast('No threats — the side to move is in check.', error: true);
           return;
@@ -5151,19 +5191,24 @@ class _BoardPaneContent extends HookConsumerWidget {
                           if (!contextMenuModifierHeld) return;
                           openBoardContextMenu(details.globalPosition);
                         },
-                        child: _BoardArea(
+                        child: ValueListenableBuilder<int>(
+                          valueListenable: explorerPreviewLineStep,
+                          builder: (context, previewStep, _) {
+                          final view = boardViewAt(previewStep);
+                          final boardPosition = view.position;
+                          return _BoardArea(
                           tabId: activeTabId ?? 'board-default',
                           boardRenderKey: boardRenderKey,
                           shareCaptureKey: boardShareCaptureKey,
                           fen: boardPosition.fen,
-                          analysisFen: activeEvalTarget.fen,
-                          threatMode: activeEvalTarget.isThreatProbe,
+                          analysisFen: view.evalTarget.fen,
+                          threatMode: view.evalTarget.isThreatProbe,
                           flipped: flipped.value,
                           sideToMove: boardPosition.turn,
                           playerSide: boardPlayerSide,
-                          validMoves: boardValidMoves,
+                          validMoves: validMovesFor(boardPosition),
                           isCheck: boardPosition.isCheck,
-                          lastMove: boardLastMove,
+                          lastMove: view.lastMove,
                           onMove: onMove,
                           promotionMove: promotionMove.value,
                           onPromotionSelection: onPromotionSelection,
@@ -5239,6 +5284,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                             persistBoardSizePreference();
                           },
                           suppressEngineAnalysis: !runLiveBoardAnalysis,
+                          );
+                          },
                         ),
                       ),
                     ),
@@ -5306,7 +5353,26 @@ class _BoardPaneContent extends HookConsumerWidget {
                       children: [
                         if (broadcastVideoPanel != null) broadcastVideoPanel,
                         Expanded(
-                    child: NotationOpeningPanel(
+                    // Notation is the pass-through child: an autoplay step
+                    // rebuilds the explorer, games table and engine panel,
+                    // which follow the previewed position, but reuses the
+                    // notation ladder as-is.
+                    child: ValueListenableBuilder<int>(
+                    valueListenable: explorerPreviewLineStep,
+                    child: NotationExportScope(
+                        allowPgnCopy: !collectionGame,
+                        child: buildNotationLadder(
+                          scrollController: notationScrollController,
+                          activePointer: pointer.value,
+                          onJump: jumpToPointer,
+                          layoutModeController: notationLayoutController,
+                        ),
+                      ),
+                    builder: (context, previewStep, notationChild) {
+                    final view = boardViewAt(previewStep);
+                    final activeEvalTarget = view.evalTarget;
+                    final boardPosition = view.position;
+                    return NotationOpeningPanel(
                       tabId: activeTabId,
                       explorerScope: boardExplorerScope,
                       localOpeningTreeIndex: boardArgs?.localOpeningTreeIndex,
@@ -5316,19 +5382,11 @@ class _BoardPaneContent extends HookConsumerWidget {
                           boardArgs?.enableLocalOpeningTreePicker ?? false,
                       hideLocalOpeningTreePicker:
                           boardArgs?.hideLocalOpeningTreePicker ?? false,
-                      notationChild: NotationExportScope(
-                        allowPgnCopy: !collectionGame,
-                        child: buildNotationLadder(
-                          scrollController: notationScrollController,
-                          activePointer: pointer.value,
-                          onJump: jumpToPointer,
-                          layoutModeController: notationLayoutController,
-                        ),
-                      ),
+                      notationChild: notationChild!,
                       currentFen: position.fen,
                       startingFen: chessGame.value.startingFen,
                       lineUcis: lineUcis,
-                      previewLineStep: explorerPreviewLineStep.value,
+                      previewLineStep: previewStep,
                       previewLineAutoplay: explorerPreviewLineAutoplay.value,
                       positionAutoplaying: autoReplay.value,
                       onPlayUciMove:
@@ -5343,18 +5401,33 @@ class _BoardPaneContent extends HookConsumerWidget {
                         explorerPreviewUci.value = uci;
                       },
                       onPreviewUciLine: (ucis, {autoplay = true, step}) {
-                        explorerPreviewUci.value = null;
-                        explorerPreviewLineStep.value =
-                            (step ?? 0)
-                                .clamp(0, ucis.isEmpty ? 0 : ucis.length - 1)
-                                .toInt();
-                        explorerPreviewLineAutoplay.value = autoplay;
-                        explorerPreviewSoundKey.value = null;
-                        explorerPreviewLine.value = List<String>.unmodifiable(
+                        final nextLine = List<String>.unmodifiable(
                           ucis
                               .map((uci) => uci.trim().toLowerCase())
                               .where((uci) => uci.isNotEmpty),
                         );
+                        final nextStep =
+                            (step ?? 0)
+                                .clamp(0, ucis.isEmpty ? 0 : ucis.length - 1)
+                                .toInt();
+                        // Arrowing across the moves of the game row already
+                        // previewed only moves the step, so it stays off the
+                        // pane-wide rebuild path like autoplay does.
+                        if (!autoplay &&
+                            !explorerPreviewLineAutoplay.value &&
+                            explorerPreviewUci.value == null &&
+                            nextLine.isNotEmpty &&
+                            nextStep != explorerPreviewLineStep.value &&
+                            listEquals(explorerPreviewLine.value, nextLine)) {
+                          explorerPreviewSoundKey.value = null;
+                          explorerPreviewLineStep.value = nextStep;
+                          return;
+                        }
+                        explorerPreviewUci.value = null;
+                        explorerPreviewLineStep.value = nextStep;
+                        explorerPreviewLineAutoplay.value = autoplay;
+                        explorerPreviewSoundKey.value = null;
+                        explorerPreviewLine.value = nextLine;
                       },
                       onClearPreviewUciMove: () {
                         explorerPreviewUci.value = null;
@@ -5467,6 +5540,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                           onPressed: openBoardContextMenu,
                         ),
                       ),
+                    );
+                    },
                     ),
                   ),
                 ],
@@ -11339,26 +11414,44 @@ String? _nullableFenPositionKey(String? fen) {
   }
 }
 
-({Position position, Move move, String san})? _previewExplorerLine(
-  Position position,
-  List<String> ucis,
-  int step,
-) {
-  if (ucis.isEmpty || step < 0) return null;
-  final upTo = step.clamp(0, ucis.length - 1).toInt();
-  var cursor = position;
-  Move? lastMove;
-  String? lastSan;
-  for (var i = 0; i <= upTo; i++) {
-    final move = Move.parse(ucis[i].trim());
-    if (move == null || !cursor.isLegal(move)) return null;
-    final made = cursor.makeSan(move);
-    cursor = made.$1;
-    lastMove = move;
-    lastSan = made.$2;
+typedef _ExplorerLineFrame = ({Position position, Move move, String san});
+
+typedef _BoardPreviewView =
+    ({
+      _ExplorerLineFrame? linePreview,
+      Position position,
+      Move? lastMove,
+      ActiveBoardEvalTarget evalTarget,
+    });
+
+/// Replays a previewed line lazily and keeps every frame it reached, so a
+/// preview start costs one ply and each autoplay step one more, instead of a
+/// replay from the first move on every step.
+class _ExplorerLineFrames {
+  _ExplorerLineFrames(this._cursor, this.ucis);
+
+  final List<String> ucis;
+  Position _cursor;
+  bool _blocked = false;
+  final List<_ExplorerLineFrame> _frames = <_ExplorerLineFrame>[];
+
+  /// The frame shown at [step], or null when the line is empty or reaches an
+  /// illegal move at or before [step].
+  _ExplorerLineFrame? at(int step) {
+    if (ucis.isEmpty || step < 0) return null;
+    final upTo = step.clamp(0, ucis.length - 1).toInt();
+    while (_frames.length <= upTo && !_blocked) {
+      final move = Move.parse(ucis[_frames.length].trim());
+      if (move == null || !_cursor.isLegal(move)) {
+        _blocked = true;
+        break;
+      }
+      final made = _cursor.makeSan(move);
+      _cursor = made.$1;
+      _frames.add((position: _cursor, move: move, san: made.$2));
+    }
+    return upTo < _frames.length ? _frames[upTo] : null;
   }
-  if (lastMove == null || lastSan == null) return null;
-  return (position: cursor, move: lastMove, san: lastSan);
 }
 
 String _boardRenderKey({

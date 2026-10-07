@@ -20,6 +20,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/board_resize_handle.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
+import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
@@ -352,6 +353,117 @@ void main() {
     expect(rebuiltTypes['_BoardWithAnnotations'] ?? 0, 0);
     expect(rebuiltTypes['DesktopChessBoard'] ?? 0, 0);
   });
+
+  testWidgets('line-preview autoplay steps the board without rebuilding the '
+      'pane or the notation', (tester) async {
+    await _pumpBoardProbe(tester);
+    final start = _boardFen(tester);
+    final line = _legalLine(start, plies: 4);
+    _previewPanel(tester).onPreviewUciLine!(line);
+    await tester.pump();
+    expect(_boardFen(tester), _fenAfter(start, line, step: 0));
+
+    final rebuiltTypes = _recordRebuilds();
+    await tester.pump(const Duration(milliseconds: 520));
+    await tester.pump(const Duration(milliseconds: 520));
+    debugOnRebuildDirtyWidget = null;
+
+    expect(_boardFen(tester), _fenAfter(start, line, step: 2));
+    // The step lives in a notifier: the board area and the right rail follow
+    // it, the rest of the pane and the notation ladder do not rebuild.
+    expect(rebuiltTypes['_BoardPaneContent'] ?? 0, 0);
+    expect(rebuiltTypes['NotationLadderView'] ?? 0, 0);
+    expect(rebuiltTypes['DesktopChessBoard'] ?? 0, greaterThan(0));
+    expect(rebuiltTypes['NotationOpeningPanel'] ?? 0, greaterThan(0));
+
+    // Autoplay stops at the end of the line and the preview stays shown.
+    await tester.pump(const Duration(milliseconds: 520));
+    await tester.pump(const Duration(milliseconds: 520));
+    expect(_boardFen(tester), _fenAfter(start, line, step: 3));
+
+    _previewPanel(tester).onClearPreviewUciMove!();
+    await tester.pump();
+    expect(_boardFen(tester), start);
+  });
+
+  testWidgets('stepping manually through the previewed line skips the pane '
+      'rebuild', (tester) async {
+    await _pumpBoardProbe(tester);
+    final start = _boardFen(tester);
+    final line = _legalLine(start, plies: 4);
+    _previewPanel(tester).onPreviewUciLine!(line, autoplay: false, step: 0);
+    await tester.pump();
+
+    final rebuiltTypes = _recordRebuilds();
+    _previewPanel(tester).onPreviewUciLine!(line, autoplay: false, step: 2);
+    await tester.pump();
+    debugOnRebuildDirtyWidget = null;
+
+    expect(_boardFen(tester), _fenAfter(start, line, step: 2));
+    expect(rebuiltTypes['_BoardPaneContent'] ?? 0, 0);
+    expect(rebuiltTypes['NotationLadderView'] ?? 0, 0);
+
+    // No timer advances a manual preview.
+    await tester.pump(const Duration(milliseconds: 1200));
+    expect(_boardFen(tester), _fenAfter(start, line, step: 2));
+  });
+
+  testWidgets('a previewed line that turns illegal is dropped at that step', (
+    tester,
+  ) async {
+    await _pumpBoardProbe(tester);
+    final start = _boardFen(tester);
+    final legal = _legalLine(start, plies: 2);
+    // The third move is a null move, which is never legal here.
+    final line = [...legal, '0000'];
+    _previewPanel(tester).onPreviewUciLine!(line);
+    await tester.pump();
+    expect(_boardFen(tester), _fenAfter(start, legal, step: 0));
+
+    await tester.pump(const Duration(milliseconds: 520));
+    expect(_boardFen(tester), _fenAfter(start, legal, step: 1));
+    await tester.pump(const Duration(milliseconds: 520));
+    await tester.pump();
+    expect(_boardFen(tester), start);
+  });
+}
+
+String _boardFen(WidgetTester tester) =>
+    tester.widget<DesktopChessBoard>(find.byType(DesktopChessBoard)).fen;
+
+NotationOpeningPanel _previewPanel(WidgetTester tester) =>
+    tester.widget<NotationOpeningPanel>(find.byType(NotationOpeningPanel));
+
+Map<String, int> _recordRebuilds() {
+  final rebuiltTypes = <String, int>{};
+  final previousRebuildCallback = debugOnRebuildDirtyWidget;
+  debugOnRebuildDirtyWidget = (element, builtOnce) {
+    final type = element.widget.runtimeType.toString();
+    rebuiltTypes.update(type, (count) => count + 1, ifAbsent: () => 1);
+  };
+  addTearDown(() => debugOnRebuildDirtyWidget = previousRebuildCallback);
+  return rebuiltTypes;
+}
+
+/// The first legal non-promotion move at each ply, from [fen].
+List<String> _legalLine(String fen, {required int plies}) {
+  Position position = Chess.fromSetup(Setup.parseFen(fen));
+  final line = <String>[];
+  for (var i = 0; i < plies; i++) {
+    final entry = makeLegalMoves(position).entries.first;
+    final move = NormalMove(from: entry.key, to: entry.value.first);
+    line.add(move.uci);
+    position = position.play(move);
+  }
+  return line;
+}
+
+String _fenAfter(String fen, List<String> line, {required int step}) {
+  Position position = Chess.fromSetup(Setup.parseFen(fen));
+  for (final uci in line.take(step + 1)) {
+    position = position.play(Move.parse(uci)!);
+  }
+  return position.fen;
 }
 
 const String _pgn = '''
@@ -429,10 +541,11 @@ Future<_BoardProbe> _pumpBoardProbe(
           _TestKeyboardShortcutsNotifier.new,
         ),
         boardEvalProvider.overrideWith((ref, fen) {
-          return evalNotifiers.putIfAbsent(
-            fen,
-            () => _ManualBoardEvalNotifier(ref, fen),
-          );
+          // A previewed position disposes the base position's notifier; a
+          // return to it needs a fresh one, as the real provider builds.
+          final cached = evalNotifiers[fen];
+          if (cached != null && cached.mounted) return cached;
+          return evalNotifiers[fen] = _ManualBoardEvalNotifier(ref, fen);
         }),
         gameUpdatesStreamProvider.overrideWith(
           (ref, gameId) => activeUpdates.stream,
