@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderProxyBox;
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -687,12 +689,19 @@ class _ExplorerBodyState extends ConsumerState<_ExplorerBody> {
                 : 'No master/online games are indexed for the position on the board.',
       );
     }
+    // Dims only change at width breakpoints, so a resize inside one
+    // breakpoint hands back the identical subtree and the visible move rows
+    // are re-laid out rather than rebuilt each frame.
+    _ColumnDims? builtDims;
+    Widget? built;
     return LayoutBuilder(
       builder: (context, constraints) {
         final dims = _ColumnDims.forWidth(
           constraints.maxWidth,
           compact: widget.compactColumns,
         );
+        if (built != null && dims == builtDims) return built!;
+        builtDims = dims;
         final header =
             widget.showHeader
                 ? _ExplorerHeader(
@@ -789,7 +798,7 @@ class _ExplorerBodyState extends ConsumerState<_ExplorerBody> {
           );
         }
 
-        return Column(
+        return built = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: widget.shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
           children: [
@@ -810,6 +819,11 @@ class _ExplorerBodyState extends ConsumerState<_ExplorerBody> {
 /// the OpeningExplorerPane centre column (wide). Picking column widths
 /// off `constraints.maxWidth` keeps both rendering modes in one place
 /// instead of forcing the caller to pass a "compact" flag.
+///
+/// Every field is fixed per width breakpoint, so dims compare equal across a
+/// resize that stays inside one breakpoint and the rows are not rebuilt. The
+/// width-proportional result bar is sized at layout time by [_ResultBarSlot].
+@immutable
 class _ColumnDims {
   const _ColumnDims({
     required this.move,
@@ -817,7 +831,6 @@ class _ColumnDims {
     required this.gamesIcon,
     required this.last,
     required this.score,
-    required this.resultBar,
     required this.gap,
     required this.horizontalPad,
     required this.showResultBar,
@@ -833,10 +846,6 @@ class _ColumnDims {
   /// `null` when SCORE column is hidden (narrow mode).
   final double? score;
 
-  /// Result-bar width is proportional to the moves view so W/D/L percentages
-  /// have enough room to breathe in both the right rail and full explorer.
-  final double resultBar;
-
   final double gap;
   final double horizontalPad;
   final bool showResultBar;
@@ -845,27 +854,48 @@ class _ColumnDims {
 
   bool get hasScore => score != null;
 
-  factory _ColumnDims.forWidth(double width, {required bool compact}) {
-    double resultBarFor({
-      required double horizontalPad,
-      required double move,
-      required double gamesValue,
-      required double gamesIcon,
-      required double last,
-      required double? score,
-      required double gap,
-    }) {
-      final contentWidth = (width - horizontalPad * 2 - 4).clamp(0, width);
-      final fixedWidth =
-          move +
-          gamesValue +
-          gamesIcon +
-          last +
-          (score ?? 0) +
-          gap * (score == null ? 3 : 5);
-      return (contentWidth - fixedWidth).clamp(48.0, contentWidth * 0.5);
-    }
+  /// Width of every row column except the result bar, gaps included.
+  double get rowFixedWidth =>
+      move +
+      gamesValue +
+      gamesIcon +
+      last +
+      (score ?? 0) +
+      gap * (hasScore ? 4 : 3);
 
+  /// Space left after the result bar. The bar historically reserved 4px of
+  /// row slack, plus one gap more than the row has when SCORE is shown.
+  double get resultBarSlack => 4 + (hasScore ? gap : 0);
+
+  @override
+  bool operator ==(Object other) =>
+      other is _ColumnDims &&
+      other.move == move &&
+      other.gamesValue == gamesValue &&
+      other.gamesIcon == gamesIcon &&
+      other.last == last &&
+      other.score == score &&
+      other.gap == gap &&
+      other.horizontalPad == horizontalPad &&
+      other.showResultBar == showResultBar &&
+      other.headerHeight == headerHeight &&
+      other.rowMinHeight == rowMinHeight;
+
+  @override
+  int get hashCode => Object.hash(
+    move,
+    gamesValue,
+    gamesIcon,
+    last,
+    score,
+    gap,
+    horizontalPad,
+    showResultBar,
+    headerHeight,
+    rowMinHeight,
+  );
+
+  factory _ColumnDims.forWidth(double width, {required bool compact}) {
     if (compact) {
       if (width >= 300) {
         const horizontalPad = 8.0;
@@ -886,15 +916,6 @@ class _ColumnDims {
           gamesIcon: gamesIcon,
           last: last,
           score: score,
-          resultBar: resultBarFor(
-            horizontalPad: horizontalPad,
-            move: move,
-            gamesValue: gamesValue,
-            gamesIcon: gamesIcon,
-            last: last,
-            score: score,
-            gap: gap,
-          ),
           gap: gap,
           horizontalPad: horizontalPad,
           showResultBar: true,
@@ -915,15 +936,6 @@ class _ColumnDims {
         gamesIcon: gamesIcon,
         last: last,
         score: score,
-        resultBar: resultBarFor(
-          horizontalPad: horizontalPad,
-          move: move,
-          gamesValue: gamesValue,
-          gamesIcon: gamesIcon,
-          last: last,
-          score: score,
-          gap: gap,
-        ),
         gap: gap,
         horizontalPad: horizontalPad,
         showResultBar: true,
@@ -945,15 +957,6 @@ class _ColumnDims {
         gamesIcon: gamesIcon,
         last: last,
         score: score,
-        resultBar: resultBarFor(
-          horizontalPad: horizontalPad,
-          move: move,
-          gamesValue: gamesValue,
-          gamesIcon: gamesIcon,
-          last: last,
-          score: score,
-          gap: gap,
-        ),
         gap: gap,
         horizontalPad: horizontalPad,
         showResultBar: true,
@@ -975,15 +978,6 @@ class _ColumnDims {
         gamesIcon: gamesIcon,
         last: last,
         score: score,
-        resultBar: resultBarFor(
-          horizontalPad: horizontalPad,
-          move: move,
-          gamesValue: gamesValue,
-          gamesIcon: gamesIcon,
-          last: last,
-          score: score,
-          gap: gap,
-        ),
         gap: gap,
         horizontalPad: horizontalPad,
         showResultBar: true,
@@ -1005,15 +999,6 @@ class _ColumnDims {
         gamesIcon: gamesIcon,
         last: last,
         score: score,
-        resultBar: resultBarFor(
-          horizontalPad: horizontalPad,
-          move: move,
-          gamesValue: gamesValue,
-          gamesIcon: gamesIcon,
-          last: last,
-          score: score,
-          gap: gap,
-        ),
         gap: gap,
         horizontalPad: horizontalPad,
         showResultBar: true,
@@ -1034,21 +1019,103 @@ class _ColumnDims {
       gamesIcon: gamesIcon,
       last: last,
       score: score,
-      resultBar: resultBarFor(
-        horizontalPad: horizontalPad,
-        move: move,
-        gamesValue: gamesValue,
-        gamesIcon: gamesIcon,
-        last: last,
-        score: score,
-        gap: gap,
-      ),
       gap: gap,
       horizontalPad: horizontalPad,
       showResultBar: true,
       headerHeight: 28,
       rowMinHeight: 34,
     );
+  }
+}
+
+/// Sizes the result bar from the free row space its [Flexible] offers at
+/// layout time: `clamp(free - slack, 48, contentWidth / 2)`, the width
+/// [_ColumnDims] used to precompute for every pixel of a resize. Doing it
+/// here keeps the dims, and so every visible move row, unchanged while the
+/// rail is resized.
+class _ResultBarSlot extends SingleChildRenderObjectWidget {
+  const _ResultBarSlot({required this.dims, super.child});
+
+  final _ColumnDims dims;
+
+  @override
+  _RenderResultBarSlot createRenderObject(BuildContext context) =>
+      _RenderResultBarSlot(
+        fixedWidth: dims.rowFixedWidth,
+        slack: dims.resultBarSlack,
+      );
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderResultBarSlot renderObject,
+  ) {
+    renderObject
+      ..fixedWidth = dims.rowFixedWidth
+      ..slack = dims.resultBarSlack;
+  }
+}
+
+class _RenderResultBarSlot extends RenderProxyBox {
+  _RenderResultBarSlot({required double fixedWidth, required double slack})
+    : _fixedWidth = fixedWidth,
+      _slack = slack;
+
+  static const double _minWidth = 48;
+
+  double _fixedWidth;
+  set fixedWidth(double value) {
+    if (value == _fixedWidth) return;
+    _fixedWidth = value;
+    markNeedsLayout();
+  }
+
+  double _slack;
+  set slack(double value) {
+    if (value == _slack) return;
+    _slack = value;
+    markNeedsLayout();
+  }
+
+  double _widthFor(BoxConstraints constraints) {
+    final free = constraints.maxWidth;
+    if (!free.isFinite) return constraints.constrainWidth(_minWidth);
+    // The row's content width less the 4px slack the explorer always kept.
+    final contentWidth = math.max(0.0, free + _fixedWidth - 4);
+    final width = (free - _slack)
+        .clamp(_minWidth, math.max(_minWidth, contentWidth * 0.5))
+        .toDouble();
+    return constraints.constrainWidth(width);
+  }
+
+  BoxConstraints _childConstraints(BoxConstraints constraints) {
+    final width = _widthFor(constraints);
+    return BoxConstraints(
+      minWidth: width,
+      maxWidth: width,
+      minHeight: constraints.minHeight,
+      maxHeight: constraints.maxHeight,
+    );
+  }
+
+  @override
+  Size computeDryLayout(covariant BoxConstraints constraints) {
+    final width = _widthFor(constraints);
+    final childHeight =
+        child?.getDryLayout(_childConstraints(constraints)).height ?? 0;
+    return constraints.constrain(Size(width, childHeight));
+  }
+
+  @override
+  void performLayout() {
+    final width = _widthFor(constraints);
+    final child = this.child;
+    if (child == null) {
+      size = constraints.constrain(Size(width, 0));
+      return;
+    }
+    child.layout(_childConstraints(constraints), parentUsesSize: true);
+    size = constraints.constrain(Size(width, child.size.height));
   }
 }
 
@@ -1173,11 +1240,13 @@ class _ColumnHeader extends StatelessWidget {
               ),
               SizedBox(width: dims.gap),
               if (dims.showResultBar) ...[
-                SizedBox(
-                  width: dims.resultBar,
-                  child: const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('RESULT', style: _kHeaderStyle),
+                Flexible(
+                  child: _ResultBarSlot(
+                    dims: dims,
+                    child: const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('RESULT', style: _kHeaderStyle),
+                    ),
                   ),
                 ),
                 if (dims.hasScore) ...[
@@ -1557,9 +1626,11 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
                   ),
                   SizedBox(width: dims.gap),
                   if (dims.showResultBar) ...[
-                    SizedBox(
-                      width: dims.resultBar,
-                      child: _ResultBar(aggregate: agg),
+                    Flexible(
+                      child: _ResultBarSlot(
+                        dims: dims,
+                        child: _ResultBar(aggregate: agg),
+                      ),
                     ),
                     if (dims.hasScore) ...[
                       SizedBox(width: dims.gap),

@@ -124,4 +124,78 @@ void main() {
     expect(tester.getTopLeft(find.text('value-1')).dx, closeTo(original, 1));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('resizing reuses lazy rows while the flex column stretches', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    final width = ValueNotifier<double>(700);
+    addTearDown(width.dispose);
+    var cellBuilds = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: ValueListenableBuilder<double>(
+              valueListenable: width,
+              builder:
+                  (_, value, child) =>
+                      SizedBox(width: value, height: 240, child: child),
+              child: AdaptiveGamesTable<int>(
+                rows: List<int>.generate(20, (index) => index),
+                scrollController: controller,
+                lazyRowExtent: 40,
+                lazyColumnWidths: const {'a': 150, 'b': 200, 'c': 100},
+                columns: [
+                  AdaptiveColumn<int>(
+                    id: 'a',
+                    label: 'A',
+                    cellBuilder: (_, row) {
+                      cellBuilds++;
+                      return Text('a-$row');
+                    },
+                  ),
+                  AdaptiveColumn<int>(
+                    id: 'b',
+                    label: 'B',
+                    flex: 1,
+                    cellBuilder: (_, row) => Text('b-$row'),
+                  ),
+                  AdaptiveColumn<int>(
+                    id: 'c',
+                    label: 'C',
+                    cellBuilder: (_, row) => Text('c-$row'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final start = tester.getTopLeft(find.text('c-0')).dx;
+    final headerStart = tester.getTopLeft(find.text('C')).dx;
+    expect(cellBuilds, greaterThan(0));
+    cellBuilds = 0;
+
+    for (final next in [760.0, 820.0, 900.0]) {
+      width.value = next;
+      await tester.pump();
+    }
+
+    // Rows were only re-laid out, and the lone flex column still took the
+    // whole 200px of new slack, in the header and the rows alike.
+    expect(cellBuilds, 0);
+    expect(tester.getTopLeft(find.text('c-0')).dx - start, closeTo(200, 0.5));
+    expect(
+      tester.getTopLeft(find.text('C')).dx - headerStart,
+      closeTo(200, 0.5),
+    );
+    expect(tester.takeException(), isNull);
+  });
 }

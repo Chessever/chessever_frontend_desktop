@@ -17,6 +17,7 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/widgets/board_resize_handle.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -286,6 +287,70 @@ void main() {
     expect(bar.evaluation, isNull);
     expect(bar.mate, isNull);
     expect(bar.isEvaluating, isFalse);
+  });
+
+  testWidgets('dragging the board grip rebuilds the board, not the pane', (
+    tester,
+  ) async {
+    await _pumpBoardProbe(tester);
+    final handle = find.byType(BoardResizeHandle);
+    expect(handle, findsOneWidget);
+    final board = find.byType(DesktopChessBoard);
+    final before = tester.getSize(board).width;
+
+    final rebuiltTypes = <String, int>{};
+    final previousRebuildCallback = debugOnRebuildDirtyWidget;
+    debugOnRebuildDirtyWidget = (element, builtOnce) {
+      final type = element.widget.runtimeType.toString();
+      rebuiltTypes.update(type, (count) => count + 1, ifAbsent: () => 1);
+    };
+    addTearDown(() => debugOnRebuildDirtyWidget = previousRebuildCallback);
+
+    final gesture = await tester.startGesture(tester.getCenter(handle));
+    for (var step = 0; step < 3; step++) {
+      await gesture.moveBy(const Offset(-30, -30));
+      await tester.pump();
+    }
+    debugOnRebuildDirtyWidget = previousRebuildCallback;
+    await gesture.up();
+    await tester.pump();
+
+    expect(tester.getSize(board).width, lessThan(before));
+    // The size lives in a notifier only the board area listens to, so the
+    // pane (notation, explorer, games, engine panel) is not rebuilt per move
+    // and the hoisted player bars keep their widgets.
+    expect(rebuiltTypes['_BoardPaneContent'] ?? 0, 0);
+    expect(rebuiltTypes['DesktopBoardPlayerHeader'] ?? 0, 0);
+    expect(rebuiltTypes['_BoardWithAnnotations'] ?? 0, greaterThan(0));
+    // Let the grip's double-tap window and tooltip exit timers run out.
+    await tester.pump(const Duration(milliseconds: 500));
+  });
+
+  testWidgets('a window resize that keeps the board size rebuilds no board '
+      'content', (tester) async {
+    await _pumpBoardProbe(tester);
+    final board = find.byType(DesktopChessBoard);
+    final before = tester.getSize(board);
+
+    final rebuiltTypes = <String, int>{};
+    final previousRebuildCallback = debugOnRebuildDirtyWidget;
+    debugOnRebuildDirtyWidget = (element, builtOnce) {
+      final type = element.widget.runtimeType.toString();
+      rebuiltTypes.update(type, (count) => count + 1, ifAbsent: () => 1);
+    };
+    addTearDown(() => debugOnRebuildDirtyWidget = previousRebuildCallback);
+
+    for (final width in [1820.0, 1860.0, 1900.0]) {
+      tester.view.physicalSize = Size(width, 1000);
+      await tester.pump();
+    }
+    debugOnRebuildDirtyWidget = previousRebuildCallback;
+
+    expect(tester.getSize(board), before);
+    expect(rebuiltTypes['_BoardPaneContent'] ?? 0, 0);
+    expect(rebuiltTypes['DesktopBoardPlayerHeader'] ?? 0, 0);
+    expect(rebuiltTypes['_BoardWithAnnotations'] ?? 0, 0);
+    expect(rebuiltTypes['DesktopChessBoard'] ?? 0, 0);
   });
 }
 

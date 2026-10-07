@@ -466,17 +466,28 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   /// rows are reused and only re-laid out instead of rebuilt every frame.
   List<TableRow>? _bodyRowsCache;
 
+  /// Body sliver of the lazy table, and the column layout it was built for.
+  /// A new [SliverChildBuilderDelegate] rebuilds every visible row, so a
+  /// resize frame that leaves the rows and column widths alone reuses it.
+  Widget? _lazyBodyCache;
+  Object? _lazyBodyCacheKey;
+
+  void _dropBodyCaches() {
+    _bodyRowsCache = null;
+    _lazyBodyCache = null;
+  }
+
   @override
   void didUpdateWidget(covariant _SingleTableBody<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!_sameBodyRowInputs(oldWidget, widget)) _bodyRowsCache = null;
+    if (!_sameBodyRowInputs(oldWidget, widget)) _dropBodyCaches();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     // Cells may read inherited values (theme, text scale) through this context.
-    _bodyRowsCache = null;
+    _dropBodyCaches();
   }
 
   bool _sameBodyRowInputs(_SingleTableBody<T> a, _SingleTableBody<T> b) =>
@@ -518,7 +529,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   void _setHover(int? next) {
     if (!widget.enableRowHover) return;
     if (_hoveredIndex == next) return;
-    _bodyRowsCache = null;
+    _dropBodyCaches();
     setState(() => _hoveredIndex = next);
     if (next == null || next < 0 || next >= widget.rows.length) return;
     widget.onRowHover?.call(widget.rows[next], next);
@@ -625,17 +636,35 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
             !_resizedWidths.containsKey(widget.columns[i].id))
           i,
     ];
-    final flexTotal = flexibleColumns.fold(
-      0.0,
-      (sum, index) => sum + widget.columns[index].flex!,
-    );
-    for (final index in flexibleColumns) {
-      resolved[index] +=
-          (tableWidth - naturalWidth) * widget.columns[index].flex! / flexTotal;
+    // A lone flexible column gets exactly `tableWidth - fixed columns`, which
+    // the Table works out at layout time from MaxColumnWidth(base, flex). That
+    // keeps the column widths independent of the table width, so a resize
+    // frame can reuse the body sliver below. Several flexible columns share
+    // the slack by flex on top of their base widths, which Table's own flex
+    // split does not reproduce, so they keep resolving here.
+    final singleFlexIndex =
+        flexibleColumns.length == 1 ? flexibleColumns.single : null;
+    if (singleFlexIndex == null) {
+      final flexTotal = flexibleColumns.fold(
+        0.0,
+        (sum, index) => sum + widget.columns[index].flex!,
+      );
+      for (final index in flexibleColumns) {
+        resolved[index] +=
+            (tableWidth - naturalWidth) *
+            widget.columns[index].flex! /
+            flexTotal;
+      }
     }
     final columnWidths = <int, TableColumnWidth>{
       for (var i = 0; i < resolved.length; i++)
-        i: FixedColumnWidth(resolved[i]),
+        i:
+            i == singleFlexIndex
+                ? MaxColumnWidth(
+                  FixedColumnWidth(resolved[i]),
+                  FlexColumnWidth(widget.columns[i].flex!),
+                )
+                : FixedColumnWidth(resolved[i]),
     };
     final border =
         widget.enableColumnResizing
@@ -643,6 +672,28 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
               verticalInside: BorderSide(color: kDividerColor, width: 0.5),
             )
             : null;
+    final bodyKey = (
+      extent,
+      singleFlexIndex,
+      widget.enableColumnResizing,
+      resolved.join(','),
+    );
+    if (_lazyBodyCache == null || _lazyBodyCacheKey != bodyKey) {
+      _lazyBodyCacheKey = bodyKey;
+      _lazyBodyCache = SliverFixedExtentList(
+        itemExtent: extent,
+        delegate: SliverChildBuilderDelegate(
+          (context, index) => Table(
+            columnWidths: columnWidths,
+            border: border,
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            children: [_bodyRow(index, hasSubline: false, height: extent)],
+          ),
+          childCount: widget.rows.length,
+          addAutomaticKeepAlives: false,
+        ),
+      );
+    }
     final content = SizedBox(
       width: tableWidth,
       height: widget.maxHeight,
@@ -661,19 +712,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
                 children: [_headerRow()],
               ),
             ),
-          SliverFixedExtentList(
-            itemExtent: extent,
-            delegate: SliverChildBuilderDelegate(
-              (context, index) => Table(
-                columnWidths: columnWidths,
-                border: border,
-                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-                children: [_bodyRow(index, hasSubline: false, height: extent)],
-              ),
-              childCount: widget.rows.length,
-              addAutomaticKeepAlives: false,
-            ),
-          ),
+          _lazyBodyCache!,
           if (widget.footer != null) SliverToBoxAdapter(child: widget.footer!),
         ],
       ),

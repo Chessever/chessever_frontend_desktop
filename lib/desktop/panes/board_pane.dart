@@ -15,7 +15,8 @@ import 'package:chessground/chessground.dart' as cg;
 import 'package:file_picker/file_picker.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, kDebugMode, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -961,7 +962,14 @@ class _BoardPaneContent extends HookConsumerWidget {
     }, [pictureInPictureMode, boardArgs?.gameId]);
     final requestedBoardFocusMode = ref.watch(boardFocusModeProvider);
     final boardFocusMode = pictureInPictureMode || requestedBoardFocusMode;
-    final boardSizePreference = useState<double?>(null);
+    // A notifier, not useState: the resize grip writes this on every pointer
+    // move, and only [_BoardArea] listens. useState rebuilt this whole pane
+    // (notation, explorer, games table, engine panel) per drag frame.
+    final boardSizePreference = useMemoized(
+      () => ValueNotifier<double?>(null),
+      const [],
+    );
+    useEffect(() => boardSizePreference.dispose, const []);
     final lastPersistedBoardSize = useRef<int?>(null);
     useEffect(() {
       var disposed = false;
@@ -3923,6 +3931,12 @@ class _BoardPaneContent extends HookConsumerWidget {
     );
     final boardPosition =
         explorerLinePreview?.position ?? explorerPreview?.position ?? position;
+    // Legal moves only change with the position; recomputing them on every
+    // rebuild also handed chessground a new map each time.
+    final boardValidMoves = useMemoized(
+      () => makeLegalMoves(boardPosition),
+      [boardPosition],
+    );
     final activeEvalTarget = activeBoardEvalTarget(
       fen: boardPosition.fen,
       threatMode: threatMode.value,
@@ -5147,7 +5161,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           flipped: flipped.value,
                           sideToMove: boardPosition.turn,
                           playerSide: boardPlayerSide,
-                          validMoves: makeLegalMoves(boardPosition),
+                          validMoves: boardValidMoves,
                           isCheck: boardPosition.isCheck,
                           lastMove: boardLastMove,
                           onMove: onMove,
@@ -5199,7 +5213,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                               () => unawaited(dismissPictureInPictureAction()),
                           onNextGame: navigateNextGameManually,
 
-                          boardSizePreference: boardSizePreference.value,
+                          boardSizePreference: boardSizePreference,
                           onBoardSizeChanged: (size) {
                             setBoardSizePreference(size);
                             final settings =
@@ -8418,7 +8432,9 @@ class _BoardArea extends ConsumerWidget {
   final VoidCallback onRestoreMainWindow;
   final VoidCallback onDismissPictureInPicture;
   final VoidCallback onNextGame;
-  final double? boardSizePreference;
+  /// Listened to inside the board's layout only, so a resize-grip drag
+  /// rebuilds the board area and not the pane that owns it.
+  final ValueListenable<double?> boardSizePreference;
   final ValueChanged<double> onBoardSizeChanged;
   final VoidCallback onBoardSizeReset;
   final VoidCallback onBoardSizeChangeEnd;
@@ -8589,326 +8605,216 @@ class _BoardArea extends ConsumerWidget {
     final headerGapTotal = chromeMetrics.headerGapTotal;
     final extraVertical = topRowHeight + bottomRowHeight + headerGapTotal;
 
+    // Top header is whichever player sits at the top of the board: black
+    // when not flipped, white when flipped. Nothing here depends on the
+    // board's size, so the headers are built once per build instead of on
+    // every pass of the layout builder below, which re-runs for each frame
+    // of a window, sidebar, split or board-grip resize.
+    final topIsWhite = flipped;
+    final topName = topIsWhite ? displayWhiteName : displayBlackName;
+    final topFed = topIsWhite ? whiteFed : blackFed;
+    final topTitle = topIsWhite ? whiteTitle : blackTitle;
+    final topRating = topIsWhite ? whiteRating : blackRating;
+    final topClock = topIsWhite ? whiteClockDisplay : blackClockDisplay;
+    final topResult =
+        showFinishedResult
+            ? boardPlayerResultForSide(gameStatus, isWhite: topIsWhite)
+            : null;
+    final bottomIsWhite = !flipped;
+    final bottomName = bottomIsWhite ? displayWhiteName : displayBlackName;
+    final bottomFed = bottomIsWhite ? whiteFed : blackFed;
+    final bottomTitle = bottomIsWhite ? whiteTitle : blackTitle;
+    final bottomRating = bottomIsWhite ? whiteRating : blackRating;
+    final bottomClock = bottomIsWhite ? whiteClockDisplay : blackClockDisplay;
+    final bottomResult =
+        showFinishedResult
+            ? boardPlayerResultForSide(gameStatus, isWhite: bottomIsWhite)
+            : null;
+    final topHeader =
+        hasHeaders
+            ? DesktopBoardPlayerHeader(
+              name: topName,
+              federation: topFed,
+              title: topTitle,
+              rating: topRating,
+              fideId: topIsWhite ? whiteFideId : blackFideId,
+              result: topResult,
+              isWhite: topIsWhite,
+              isToMove:
+                  (topIsWhite && sideToMove == Side.white) ||
+                  (!topIsWhite && sideToMove == Side.black),
+              clockText: topClock,
+              // The menu lives in notation; reserve no trailing control or
+              // gap after the clock.
+              trailingControl: null,
+              activeGameId: activeGameId,
+              historyOwnerId: tabId,
+              useLiveClock: isForegroundTab && isLiveAtTip,
+              boardArgs: boardArgs,
+              sourceGame: sourceGame,
+              viewSource: viewSource,
+              openAbove: false,
+            )
+            : null;
+    final bottomHeader =
+        hasHeaders
+            ? DesktopBoardPlayerHeader(
+              name: bottomName,
+              federation: bottomFed,
+              title: bottomTitle,
+              rating: bottomRating,
+              fideId: bottomIsWhite ? whiteFideId : blackFideId,
+              result: bottomResult,
+              isWhite: bottomIsWhite,
+              isToMove:
+                  (bottomIsWhite && sideToMove == Side.white) ||
+                  (!bottomIsWhite && sideToMove == Side.black),
+              clockText: bottomClock,
+              // The resize grip overlays the board corner.
+              trailingControl: null,
+              activeGameId: activeGameId,
+              historyOwnerId: tabId,
+              useLiveClock: isForegroundTab && isLiveAtTip,
+              boardArgs: boardArgs,
+              sourceGame: sourceGame,
+              viewSource: viewSource,
+              openAbove: true,
+            )
+            : null;
+
+    // Player headers eat fixed vertical space; the board takes the square of
+    // whatever is left after reserving room for the optional left-side
+    // evaluation bar and the button strips.
+    final evalBarReservation =
+        showEvalBar ? _BoardArea.evalBarReservation : 0.0;
+
+    // The board subtree for the last layout pass of this build. A resize that
+    // leaves the board's own size alone (the common case once the board sits
+    // at its preferred size) hands back this identical widget, so the eval
+    // bar, annotations and chessground scene are re-laid out, not rebuilt.
+    Widget? boardStack;
+    Object? boardStackKey;
+
     final boardSurface = Container(
       color: kBackgroundColor,
       padding: EdgeInsets.all(chromeMetrics.outerPadding),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // Player headers eat fixed vertical space; the board takes the
-          // square of whatever is left after reserving room for the
-          // optional left-side evaluation bar and the button strips.
-          final evalBarReservation =
-              showEvalBar ? _BoardArea.evalBarReservation : 0.0;
-          final hLimit = math.max(
-            0.0,
-            constraints.biggest.width - evalBarReservation,
-          );
-          final vLimit = math.max(
-            0.0,
-            constraints.biggest.height - extraVertical,
-          );
-          final maxBoardSize = math.min(hLimit, vLimit);
-          final defaultSize = math.min(maxBoardSize, _defaultDesktopBoardSize);
-          // Fullscreen / focus mode forces the board to its biggest possible
-          // square — equivalent to dragging the resize grip to its limit.
-          // Honour the user's stored preference outside of focus so the
-          // explicit toggle doesn't clobber it.
-          final preferredSize =
-              focusMode
-                  ? math.min(vLimit, _maxDesktopBoardSize)
-                  : (boardSizePreference ?? defaultSize);
-          final minBoardSize = math.min(_minDesktopBoardSize, maxBoardSize);
-          final boardSize =
-              maxBoardSize <= 0
-                  ? 0.0
-                  : preferredSize
-                      .clamp(
-                        minBoardSize,
-                        math.min(maxBoardSize, _maxDesktopBoardSize),
-                      )
-                      .toDouble();
-          final boardWithBar = boardSize + evalBarReservation;
-
-          // Top header is whichever player sits at the top of the board:
-          // black when not flipped, white when flipped.
-          final topIsWhite = flipped;
-          final topName = topIsWhite ? displayWhiteName : displayBlackName;
-          final topFed = topIsWhite ? whiteFed : blackFed;
-          final topTitle = topIsWhite ? whiteTitle : blackTitle;
-          final topRating = topIsWhite ? whiteRating : blackRating;
-          final topClock = topIsWhite ? whiteClockDisplay : blackClockDisplay;
-          final topResult =
-              showFinishedResult
-                  ? boardPlayerResultForSide(gameStatus, isWhite: topIsWhite)
-                  : null;
-          final bottomIsWhite = !flipped;
-          final bottomName =
-              bottomIsWhite ? displayWhiteName : displayBlackName;
-          final bottomFed = bottomIsWhite ? whiteFed : blackFed;
-          final bottomTitle = bottomIsWhite ? whiteTitle : blackTitle;
-          final bottomRating = bottomIsWhite ? whiteRating : blackRating;
-          final bottomClock =
-              bottomIsWhite ? whiteClockDisplay : blackClockDisplay;
-          final bottomResult =
-              showFinishedResult
-                  ? boardPlayerResultForSide(gameStatus, isWhite: bottomIsWhite)
-                  : null;
-
-          final boardRow = SizedBox(
-            height: boardSize,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                if (showEvalBar) ...[
-                  SizedBox(
-                    key: e2eKey(E2eIds.boardEvalBar),
-                    width: _evalBarWidth,
-                    height: boardSize,
-                    child: _BoardEvalBarSurface(
-                      enabled: showEngineAnalysis,
-                      fen: analysisFen,
-                      width: _evalBarWidth,
-                      height: boardSize,
-                      isFlipped: flipped,
-                    ),
-                  ),
-                  const SizedBox(width: _evalBarGap),
-                ],
-                SizedBox(
-                  width: boardSize,
-                  height: boardSize,
-                  child: _BoardWithAnnotations(
-                    tabId: tabId,
-                    boardRenderKey: boardRenderKey,
-                    boardSize: boardSize,
-                    fen: fen,
-                    threatMode: threatActive,
-                    flipped: flipped,
-                    playerSide: playerSide,
-                    sideToMove: sideToMove,
-                    validMoves: validMoves,
-                    isCheck: isCheck,
-                    lastMove: lastMove,
-                    onMove: onMove,
-                    promotionMove: promotionMove,
-                    onPromotionSelection: onPromotionSelection,
-                    pgnShapes: pgnShapes,
-                    onGraphicCommentaryChanged: onGraphicCommentaryChanged,
-                    boardAnnotation: boardAnnotation,
-                    boardAnnotationGlyph: boardAnnotationGlyph,
-                    boardAnnotationSquare: boardAnnotationSquare,
-                    gameEnding: gameEnding,
-                    onWheelStep: onWheelStep,
-                    evalPvs: evalPvs,
-                  ),
-                ),
-              ],
-            ),
-          );
-
-          final resizeHandle =
-              pictureInPicture || boardSize < 16
-                  ? null
-                  : BoardResizeHandle(
-                    boardSize: boardSize,
-                    minSize: math.min(
-                      _minDesktopBoardSize,
-                      math.min(maxBoardSize, _maxDesktopBoardSize),
-                    ),
-                    // Grow's true bottleneck is vertical. Horizontal can always be
-                    // earned back via setSize on the split column, so bound by
-                    // vLimit alone — using maxBoardSize (min(hLimit, vLimit))
-                    // clamped grow-drags to the current column width and no-op'd.
-                    maxSize: math.min(vLimit, _maxDesktopBoardSize),
-                    onResize: onBoardSizeChanged,
-                    onResizeEnd: onBoardSizeChangeEnd,
-                    onReset: onBoardSizeReset,
-                  );
-
-          Widget chromeRow({
-            required double height,
-            required Widget? header,
-            required Widget? trailing,
-          }) {
-            return SizedBox(
-              width: boardWithBar,
-              height: height,
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: SizedBox(
-                  width: boardSize,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      if (header != null)
-                        Expanded(child: header)
-                      else
-                        const Spacer(),
-                      if (trailing != null) ...[
-                        const SizedBox(width: 6),
-                        trailing,
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }
-
-          void clearGraphicCommentaryForCurrentPosition() {
-            final positionKey = _fenPositionKey(fen);
-            final hasShapes =
-                ref
-                    .read(boardAnnotationsProvider(tabId))
-                    .shapesForPosition(positionKey)
-                    .isNotEmpty ||
-                pgnShapes.isNotEmpty;
-            if (!hasShapes) return;
-            ref
-                .read(boardAnnotationsProvider(tabId).notifier)
-                .clear(positionKey: positionKey);
-            onGraphicCommentaryChanged?.call(const <cg.Shape>{});
-          }
-
-          return Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (event) {
-              if (event.buttons & kPrimaryMouseButton == 0) return;
-              // Resizing is chrome interaction, not a board-square click.
-              // The overlay is a sibling of the annotation layer; exclude it
-              // here too so starting a drag/reset cannot erase annotations.
-              final cornerRight = (constraints.maxWidth + boardWithBar) / 2;
-              final cornerBottom =
-                  (constraints.maxHeight + boardSize + extraVertical) / 2 -
-                  bottomRowHeight -
-                  _BoardArea.headerGap;
-              if (hasHeaders &&
-                  !focusMode &&
-                  resizeHandle != null &&
-                  Rect.fromLTWH(
-                    cornerRight - 16,
-                    cornerBottom - 16,
-                    16,
-                    16,
-                  ).contains(event.localPosition)) {
-                return;
-              }
-              final shouldClear = shouldClearBoardAnnotationsForBoardAreaClick(
-                localPosition: event.localPosition,
-                contentSize: constraints.biggest,
-                boardSize: boardSize,
-                boardWithBar: boardWithBar,
-                topRowHeight: topRowHeight,
-                bottomRowHeight: bottomRowHeight,
-                headerGap: _BoardArea.headerGap,
+      child: ValueListenableBuilder<double?>(
+        valueListenable: boardSizePreference,
+        builder: (context, sizePreference, _) {
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final hLimit = math.max(
+                0.0,
+                constraints.biggest.width - evalBarReservation,
               );
-              if (shouldClear) clearGraphicCommentaryForCurrentPosition();
+              final vLimit = math.max(
+                0.0,
+                constraints.biggest.height - extraVertical,
+              );
+              final maxBoardSize = math.min(hLimit, vLimit);
+              final defaultSize = math.min(
+                maxBoardSize,
+                _defaultDesktopBoardSize,
+              );
+              // Fullscreen / focus mode forces the board to its biggest
+              // possible square — equivalent to dragging the resize grip to
+              // its limit. Honour the user's stored preference outside of
+              // focus so the explicit toggle doesn't clobber it.
+              final preferredSize =
+                  focusMode
+                      ? math.min(vLimit, _maxDesktopBoardSize)
+                      : (sizePreference ?? defaultSize);
+              final minBoardSize = math.min(_minDesktopBoardSize, maxBoardSize);
+              final boardSize =
+                  maxBoardSize <= 0
+                      ? 0.0
+                      : preferredSize
+                          .clamp(
+                            minBoardSize,
+                            math.min(maxBoardSize, _maxDesktopBoardSize),
+                          )
+                          .toDouble();
+              final boardWithBar = boardSize + evalBarReservation;
+              final hasResizeHandle = !(pictureInPicture || boardSize < 16);
+
+              // Everything inside the stack depends on these three values
+              // only; the pointer listener below reads live constraints.
+              final stackKey = (boardSize, maxBoardSize, vLimit);
+              if (boardStack == null || stackKey != boardStackKey) {
+                boardStackKey = stackKey;
+                boardStack = _buildBoardStack(
+                  boardSize: boardSize,
+                  boardWithBar: boardWithBar,
+                  maxBoardSize: maxBoardSize,
+                  vLimit: vLimit,
+                  hasResizeHandle: hasResizeHandle,
+                  showEvalBar: showEvalBar,
+                  showEngineAnalysis: showEngineAnalysis,
+                  threatActive: threatActive,
+                  evalPvs: evalPvs,
+                  hasHeaders: hasHeaders,
+                  topRowHeight: topRowHeight,
+                  bottomRowHeight: bottomRowHeight,
+                  topHeader: topHeader,
+                  bottomHeader: bottomHeader,
+                );
+              }
+
+              void clearGraphicCommentaryForCurrentPosition() {
+                final positionKey = _fenPositionKey(fen);
+                final hasShapes =
+                    ref
+                        .read(boardAnnotationsProvider(tabId))
+                        .shapesForPosition(positionKey)
+                        .isNotEmpty ||
+                    pgnShapes.isNotEmpty;
+                if (!hasShapes) return;
+                ref
+                    .read(boardAnnotationsProvider(tabId).notifier)
+                    .clear(positionKey: positionKey);
+                onGraphicCommentaryChanged?.call(const <cg.Shape>{});
+              }
+
+              return Listener(
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (event) {
+                  if (event.buttons & kPrimaryMouseButton == 0) return;
+                  // Resizing is chrome interaction, not a board-square
+                  // click. The overlay is a sibling of the annotation layer;
+                  // exclude it here too so starting a drag/reset cannot
+                  // erase annotations.
+                  final cornerRight =
+                      (constraints.maxWidth + boardWithBar) / 2;
+                  final cornerBottom =
+                      (constraints.maxHeight + boardSize + extraVertical) / 2 -
+                      bottomRowHeight -
+                      _BoardArea.headerGap;
+                  if (hasHeaders &&
+                      !focusMode &&
+                      hasResizeHandle &&
+                      Rect.fromLTWH(
+                        cornerRight - 16,
+                        cornerBottom - 16,
+                        16,
+                        16,
+                      ).contains(event.localPosition)) {
+                    return;
+                  }
+                  final shouldClear =
+                      shouldClearBoardAnnotationsForBoardAreaClick(
+                        localPosition: event.localPosition,
+                        contentSize: constraints.biggest,
+                        boardSize: boardSize,
+                        boardWithBar: boardWithBar,
+                        topRowHeight: topRowHeight,
+                        bottomRowHeight: bottomRowHeight,
+                        headerGap: _BoardArea.headerGap,
+                      );
+                  if (shouldClear) clearGraphicCommentaryForCurrentPosition();
+                },
+                child: boardStack,
+              );
             },
-            child: Center(
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  RepaintBoundary(
-                    key: shareCaptureKey,
-                    child: ColoredBox(
-                      color: kBackgroundColor,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          chromeRow(
-                            height: topRowHeight,
-                            header:
-                                hasHeaders
-                                    ? DesktopBoardPlayerHeader(
-                                      name: topName,
-                                      federation: topFed,
-                                      title: topTitle,
-                                      rating: topRating,
-                                      fideId:
-                                          topIsWhite
-                                              ? whiteFideId
-                                              : blackFideId,
-                                      result: topResult,
-                                      isWhite: topIsWhite,
-                                      isToMove:
-                                          (topIsWhite &&
-                                              sideToMove == Side.white) ||
-                                          (!topIsWhite &&
-                                              sideToMove == Side.black),
-                                      clockText: topClock,
-                                      // The menu lives in notation; reserve no
-                                      // trailing control or gap after the clock.
-                                      trailingControl: null,
-                                      activeGameId: activeGameId,
-                                      historyOwnerId: tabId,
-                                      useLiveClock:
-                                          isForegroundTab && isLiveAtTip,
-                                      boardArgs: boardArgs,
-                                      sourceGame: sourceGame,
-                                      viewSource: viewSource,
-                                      openAbove: false,
-                                    )
-                                    : null,
-                            trailing: null,
-                          ),
-                          SizedBox(height: _BoardArea.headerGap),
-                          boardRow,
-                          SizedBox(height: _BoardArea.headerGap),
-                          chromeRow(
-                            height: bottomRowHeight,
-                            header:
-                                hasHeaders
-                                    ? DesktopBoardPlayerHeader(
-                                      name: bottomName,
-                                      federation: bottomFed,
-                                      title: bottomTitle,
-                                      rating: bottomRating,
-                                      fideId:
-                                          bottomIsWhite
-                                              ? whiteFideId
-                                              : blackFideId,
-                                      result: bottomResult,
-                                      isWhite: bottomIsWhite,
-                                      isToMove:
-                                          (bottomIsWhite &&
-                                              sideToMove == Side.white) ||
-                                          (!bottomIsWhite &&
-                                              sideToMove == Side.black),
-                                      clockText: bottomClock,
-                                      // The resize grip overlays the board corner.
-                                      trailingControl: null,
-                                      activeGameId: activeGameId,
-                                      historyOwnerId: tabId,
-                                      useLiveClock:
-                                          isForegroundTab && isLiveAtTip,
-                                      boardArgs: boardArgs,
-                                      sourceGame: sourceGame,
-                                      viewSource: viewSource,
-                                      openAbove: true,
-                                    )
-                                    : null,
-                            trailing: null,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (hasHeaders && !focusMode && resizeHandle != null)
-                    Positioned(
-                      // Coordinates are inside the squares, not a separate
-                      // gutter. Keep the target in the extreme 16px corner,
-                      // away from the piece centre, and outside share exports.
-                      bottom: bottomRowHeight + _BoardArea.headerGap,
-                      right: 0,
-                      child: SizedBox.square(
-                        dimension: 16,
-                        child: resizeHandle,
-                      ),
-                    ),
-                ],
-              ),
-            ),
           );
         },
       ),
@@ -8920,6 +8826,150 @@ class _BoardArea extends ConsumerWidget {
       onDismiss: onDismissPictureInPicture,
       onNextGame: onNextGame,
       child: boardSurface,
+    );
+  }
+
+  /// The board, its eval bar, the two player rows and the resize grip at one
+  /// resolved board size. Kept free of live constraints so [build] can reuse
+  /// the result across layout passes that leave the board size unchanged.
+  Widget _buildBoardStack({
+    required double boardSize,
+    required double boardWithBar,
+    required double maxBoardSize,
+    required double vLimit,
+    required bool hasResizeHandle,
+    required bool showEvalBar,
+    required bool showEngineAnalysis,
+    required bool threatActive,
+    required List<BoardPv> evalPvs,
+    required bool hasHeaders,
+    required double topRowHeight,
+    required double bottomRowHeight,
+    required Widget? topHeader,
+    required Widget? bottomHeader,
+  }) {
+    final boardRow = SizedBox(
+      height: boardSize,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (showEvalBar) ...[
+            SizedBox(
+              key: e2eKey(E2eIds.boardEvalBar),
+              width: _evalBarWidth,
+              height: boardSize,
+              child: _BoardEvalBarSurface(
+                enabled: showEngineAnalysis,
+                fen: analysisFen,
+                width: _evalBarWidth,
+                height: boardSize,
+                isFlipped: flipped,
+              ),
+            ),
+            const SizedBox(width: _evalBarGap),
+          ],
+          SizedBox(
+            width: boardSize,
+            height: boardSize,
+            child: _BoardWithAnnotations(
+              tabId: tabId,
+              boardRenderKey: boardRenderKey,
+              boardSize: boardSize,
+              fen: fen,
+              threatMode: threatActive,
+              flipped: flipped,
+              playerSide: playerSide,
+              sideToMove: sideToMove,
+              validMoves: validMoves,
+              isCheck: isCheck,
+              lastMove: lastMove,
+              onMove: onMove,
+              promotionMove: promotionMove,
+              onPromotionSelection: onPromotionSelection,
+              pgnShapes: pgnShapes,
+              onGraphicCommentaryChanged: onGraphicCommentaryChanged,
+              boardAnnotation: boardAnnotation,
+              boardAnnotationGlyph: boardAnnotationGlyph,
+              boardAnnotationSquare: boardAnnotationSquare,
+              gameEnding: gameEnding,
+              onWheelStep: onWheelStep,
+              evalPvs: evalPvs,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final resizeHandle =
+        hasResizeHandle
+            ? BoardResizeHandle(
+              boardSize: boardSize,
+              minSize: math.min(
+                _minDesktopBoardSize,
+                math.min(maxBoardSize, _maxDesktopBoardSize),
+              ),
+              // Grow's true bottleneck is vertical. Horizontal can always be
+              // earned back via setSize on the split column, so bound by
+              // vLimit alone — using maxBoardSize (min(hLimit, vLimit))
+              // clamped grow-drags to the current column width and no-op'd.
+              maxSize: math.min(vLimit, _maxDesktopBoardSize),
+              onResize: onBoardSizeChanged,
+              onResizeEnd: onBoardSizeChangeEnd,
+              onReset: onBoardSizeReset,
+            )
+            : null;
+
+    Widget chromeRow({required double height, required Widget? header}) {
+      return SizedBox(
+        width: boardWithBar,
+        height: height,
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: SizedBox(
+            width: boardSize,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (header != null) Expanded(child: header) else const Spacer(),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Center(
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          RepaintBoundary(
+            key: shareCaptureKey,
+            child: ColoredBox(
+              color: kBackgroundColor,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  chromeRow(height: topRowHeight, header: topHeader),
+                  SizedBox(height: _BoardArea.headerGap),
+                  boardRow,
+                  SizedBox(height: _BoardArea.headerGap),
+                  chromeRow(height: bottomRowHeight, header: bottomHeader),
+                ],
+              ),
+            ),
+          ),
+          if (hasHeaders && !focusMode && resizeHandle != null)
+            Positioned(
+              // Coordinates are inside the squares, not a separate gutter.
+              // Keep the target in the extreme 16px corner, away from the
+              // piece centre, and outside share exports.
+              bottom: bottomRowHeight + _BoardArea.headerGap,
+              right: 0,
+              child: SizedBox.square(dimension: 16, child: resizeHandle),
+            ),
+        ],
+      ),
     );
   }
 }

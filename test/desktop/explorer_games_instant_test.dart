@@ -1152,4 +1152,79 @@ void main() {
       expect(repo.aggregateCalls, callsBefore);
     });
   });
+
+  group('rail resize', () {
+    testWidgets('the result bar is sized at layout time, rows are not '
+        'rebuilt', (tester) async {
+      final repo = _Repo(autoAnswer: true)
+        ..aggregates = const [
+          MoveAggregate(uci: 'e2e4', white: 5, black: 3, draws: 2, total: 10),
+          MoveAggregate(uci: 'd2d4', white: 2, black: 2, draws: 2, total: 6),
+        ];
+      final width = ValueNotifier<double>(360);
+      addTearDown(width.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            ...desktopPremiumTestOverrides,
+            gamebaseRepositoryProvider.overrideWithValue(repo),
+            boardSettingsProviderNew.overrideWith(
+              _TestBoardSettingsNotifier.new,
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topLeft,
+                child: ValueListenableBuilder<double>(
+                  valueListenable: width,
+                  builder:
+                      (_, value, child) =>
+                          SizedBox(width: value, height: 400, child: child),
+                  child: DesktopOpeningExplorer(
+                    onMove: (_) {},
+                    compactColumns: true,
+                    showHeader: false,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(DesktopOpeningExplorer)),
+      );
+      container.read(gamebaseExplorerProvider.notifier).setPosition(_startFen);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+      expect(find.text('e4'), findsOneWidget);
+
+      final slots = find.byWidgetPredicate(
+        (widget) => widget.runtimeType.toString() == '_ResultBarSlot',
+      );
+      // The width the explorer used to precompute for every frame at the
+      // compact >= 300px breakpoint: 8px padding, 214px of fixed columns
+      // and gaps, 4px slack, capped at half the content width.
+      double expected(double width) =>
+          (width - 20 - 214).clamp(48.0, (width - 20) / 2).toDouble();
+      expect(tester.getSize(slots.first).width, closeTo(expected(360), 0.01));
+      final countCell = tester.widget(find.text('10'));
+
+      // 480 also crosses the point where the half-width cap takes over.
+      for (final next in [380.0, 400.0, 480.0]) {
+        width.value = next;
+        await tester.pump();
+        for (final index in [0, 1, 2]) {
+          expect(
+            tester.getSize(slots.at(index)).width,
+            closeTo(expected(next), 0.01),
+          );
+        }
+      }
+      // One breakpoint throughout, so the move rows kept their widgets.
+      expect(tester.widget(find.text('10')), same(countCell));
+      expect(tester.takeException(), isNull);
+    });
+  });
 }
