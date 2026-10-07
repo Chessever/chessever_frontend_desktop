@@ -1921,150 +1921,148 @@ class _AchievementsBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.only(top: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _AchievementHero(state: state),
-          const SizedBox(height: 16),
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 340,
-              mainAxisExtent: 128,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-            ),
-            itemCount: kPlayAchievementDefinitions.length,
-            itemBuilder: (context, index) {
-              final def = kPlayAchievementDefinitions[index];
-              final unlocked = state.unlocked.contains(def.id);
-              final claimable = state.claimable.contains(def.id);
-              final earned = unlocked || claimable;
-              final progress = state.stats.progressFor(def.id);
-              final value = (progress / def.target).clamp(0.0, 1.0);
-              final card = AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                decoration: BoxDecoration(
+    // A sliver grid lays out only the cards on screen. The old shrink-wrapped
+    // grid inside a scroll view laid out all of them on every width change.
+    return CustomScrollView(
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.only(top: 4),
+          sliver: SliverToBoxAdapter(child: _AchievementHero(state: state)),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 16)),
+        SliverGrid.builder(
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 340,
+            mainAxisExtent: 128,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+          ),
+          itemCount: kPlayAchievementDefinitions.length,
+          itemBuilder: (context, index) {
+            final def = kPlayAchievementDefinitions[index];
+            final unlocked = state.unlocked.contains(def.id);
+            final claimable = state.claimable.contains(def.id);
+            final earned = unlocked || claimable;
+            final progress = state.stats.progressFor(def.id);
+            final value = (progress / def.target).clamp(0.0, 1.0);
+            final card = AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              decoration: BoxDecoration(
+                color:
+                    claimable
+                        ? def.color.withValues(alpha: 0.08)
+                        : kBlack2Color,
+                border: Border.all(
                   color:
-                      claimable
-                          ? def.color.withValues(alpha: 0.08)
-                          : kBlack2Color,
-                  border: Border.all(
-                    color:
-                        earned
-                            ? def.color.withValues(alpha: 0.55)
-                            : kDividerColor,
-                  ),
-                  borderRadius: BorderRadius.circular(10),
-                  boxShadow:
                       earned
-                          ? [
-                            BoxShadow(
-                              color: def.color.withValues(alpha: 0.10),
-                              blurRadius: 18,
-                              offset: const Offset(0, 8),
-                            ),
-                          ]
-                          : null,
+                          ? def.color.withValues(alpha: 0.55)
+                          : kDividerColor,
                 ),
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    PlayAchievementBadgeArt(
-                      definition: def,
-                      unlocked: earned,
-                      size: 64,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  def.title,
-                                  style: TextStyle(
-                                    color: earned ? kWhiteColor : kWhiteColor70,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ),
-                              Text(
-                                unlocked
-                                    ? 'CLAIMED'
-                                    : claimable
-                                    ? 'CLAIM'
-                                    : '${(value * 100).round()}%',
+                borderRadius: BorderRadius.circular(10),
+                boxShadow:
+                    earned
+                        ? [
+                          BoxShadow(
+                            color: def.color.withValues(alpha: 0.10),
+                            blurRadius: 18,
+                            offset: const Offset(0, 8),
+                          ),
+                        ]
+                        : null,
+              ),
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  PlayAchievementBadgeArt(
+                    definition: def,
+                    unlocked: earned,
+                    size: 64,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                def.title,
                                 style: TextStyle(
-                                  color:
-                                      earned ? def.color : kSecondaryTextColor,
-                                  fontSize: 10,
+                                  color: earned ? kWhiteColor : kWhiteColor70,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.w900,
                                 ),
                               ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            def.description,
-                            style: const TextStyle(
-                              color: kSecondaryTextColor,
-                              fontSize: 11,
-                              height: 1.35,
                             ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            def.group.label,
-                            style: TextStyle(
-                              color:
-                                  earned
-                                      ? def.color.withValues(alpha: 0.82)
-                                      : kWhiteColor.withValues(alpha: 0.36),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(999),
-                            child: LinearProgressIndicator(
-                              value: value.toDouble(),
-                              minHeight: 5,
-                              color: def.color,
-                              backgroundColor: kBlackColor.withValues(
-                                alpha: 0.45,
+                            Text(
+                              unlocked
+                                  ? 'CLAIMED'
+                                  : claimable
+                                  ? 'CLAIM'
+                                  : '${(value * 100).round()}%',
+                              style: TextStyle(
+                                color: earned ? def.color : kSecondaryTextColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
                               ),
                             ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          def.description,
+                          style: const TextStyle(
+                            color: kSecondaryTextColor,
+                            fontSize: 11,
+                            height: 1.35,
                           ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          def.group.label,
+                          style: TextStyle(
+                            color:
+                                earned
+                                    ? def.color.withValues(alpha: 0.82)
+                                    : kWhiteColor.withValues(alpha: 0.36),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            value: value.toDouble(),
+                            minHeight: 5,
+                            color: def.color,
+                            backgroundColor: kBlackColor.withValues(
+                              alpha: 0.45,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              );
-              if (!claimable) return card;
-              return _Tap(
-                onTap: () async {
-                  await ref
-                      .read(playAchievementsProvider.notifier)
-                      .claimAchievements([def.id]);
-                  ref.invalidate(playUserProfileProvider);
-                },
-                child: card,
-              );
-            },
-          ),
-        ],
-      ),
+                  ),
+                ],
+              ),
+            );
+            if (!claimable) return card;
+            return _Tap(
+              onTap: () async {
+                await ref
+                    .read(playAchievementsProvider.notifier)
+                    .claimAchievements([def.id]);
+                ref.invalidate(playUserProfileProvider);
+              },
+              child: card,
+            );
+          },
+        ),
+      ],
     );
   }
 }

@@ -13,6 +13,7 @@ import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 import 'package:chessever/desktop/shell/desktop_main_routes.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
+import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_feedback_dialog.dart';
@@ -59,11 +60,15 @@ class DesktopSidebar extends StatelessWidget {
   static const double collapsedWidth = 72;
   static const double expandedWidth = 240;
 
+  /// Width animation length. `DesktopSidebarLayout` waits this long before
+  /// narrowing the content after an expand.
+  static const Duration animationDuration = Duration(milliseconds: 180);
+
   @override
   Widget build(BuildContext context) {
     final width = expanded ? expandedWidth : collapsedWidth;
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
+      duration: animationDuration,
       curve: Curves.easeOutCubic,
       width: width,
       decoration: const BoxDecoration(
@@ -456,10 +461,12 @@ class _SidebarItemState extends State<_SidebarItem>
                         offset: Offset(widget.expanded ? x : x * 0.35, 0),
                         child: child,
                       ),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final showLabel =
-                          widget.expanded && constraints.maxWidth >= 112;
+                  // Rebuilds only when the label fits or stops fitting, not on
+                  // every frame of the sidebar's width animation.
+                  child: BucketedLayoutBuilder<bool>(
+                    bucket: (constraints) => constraints.maxWidth >= 112,
+                    builder: (context, labelFits) {
+                      final showLabel = widget.expanded && labelFits;
                       return Row(
                         mainAxisAlignment:
                             showLabel

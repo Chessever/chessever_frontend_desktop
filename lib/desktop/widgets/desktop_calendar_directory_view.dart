@@ -99,28 +99,40 @@ class DesktopCalendarDirectoryBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Built outside the LayoutBuilder so a resize frame only re-lays them out;
+    // only the calendar column width depends on the constraints.
+    final list =
+        mode == DesktopCalendarMode.live
+            ? _LiveCalendarList(
+              key: const Key('desktop-calendar-live-list'),
+              listings: listings,
+              selectedEventId: selectedEventId,
+              onSelectEvent: onSelectEvent,
+              onOpenEvent: onOpenEvent,
+            )
+            : _AgendaList(
+              year: year,
+              month: month,
+              selectedDay: selectedDay,
+              listings: listings,
+              selectedEventId: selectedEventId,
+              now: now,
+              onSelectEvent: onSelectEvent,
+              onOpenEvent: onOpenEvent,
+            );
+    final calendar = _CompactMonthCalendar(
+      year: year,
+      month: month,
+      selectedDay: mode == DesktopCalendarMode.live ? null : selectedDay,
+      listings: listings,
+      onSelectDay: mode == DesktopCalendarMode.live ? null : onSelectDay,
+      onPreviousMonth: onPreviousMonth,
+      onNextMonth: onNextMonth,
+      onToday: onToday,
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
         final calendarWidth = (constraints.maxWidth * 0.28).clamp(280.0, 310.0);
-        final list =
-            mode == DesktopCalendarMode.live
-                ? _LiveCalendarList(
-                  key: const Key('desktop-calendar-live-list'),
-                  listings: listings,
-                  selectedEventId: selectedEventId,
-                  onSelectEvent: onSelectEvent,
-                  onOpenEvent: onOpenEvent,
-                )
-                : _AgendaList(
-                  year: year,
-                  month: month,
-                  selectedDay: selectedDay,
-                  listings: listings,
-                  selectedEventId: selectedEventId,
-                  now: now,
-                  onSelectEvent: onSelectEvent,
-                  onOpenEvent: onOpenEvent,
-                );
         return Padding(
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
           child: Row(
@@ -142,18 +154,7 @@ class DesktopCalendarDirectoryBody extends StatelessWidget {
               SizedBox(
                 key: const Key('desktop-calendar-compact-month'),
                 width: calendarWidth,
-                child: _CompactMonthCalendar(
-                  year: year,
-                  month: month,
-                  selectedDay:
-                      mode == DesktopCalendarMode.live ? null : selectedDay,
-                  listings: listings,
-                  onSelectDay:
-                      mode == DesktopCalendarMode.live ? null : onSelectDay,
-                  onPreviousMonth: onPreviousMonth,
-                  onNextMonth: onNextMonth,
-                  onToday: onToday,
-                ),
+                child: calendar,
               ),
             ],
           ),

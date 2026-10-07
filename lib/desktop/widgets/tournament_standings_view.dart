@@ -563,6 +563,41 @@ class TournamentStandingsView extends HookConsumerWidget {
                   ),
                 );
               }
+              // Built once outside the LayoutBuilder: the rows never depend on
+              // the width, so a resize frame only re-lays them out.
+              final list = ListView.separated(
+                key: PageStorageKey<String>(
+                  'tournament-detail-standings:$tabId',
+                ),
+                physics: const DesktopScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                itemCount: filtered.length + 1,
+                separatorBuilder:
+                    (_, i) => Divider(
+                      color: i == 0 ? Colors.transparent : kDividerColor,
+                      height: 1,
+                    ),
+                itemBuilder: (context, i) {
+                  if (i == 0) {
+                    return _StandingsHeaderRow(columns: roundTable.columns);
+                  }
+
+                  final p = filtered[i - 1];
+                  return _StandingsPlayerRow(
+                    player: p,
+                    rank: p.overallRank ?? players.indexOf(p) + 1,
+                    flagFederation: _flagFederation(ref, p.countryCode),
+                    rounds: roundTable,
+                    photoResolver:
+                        photoResolver ??
+                        (fideId) => FidePhotoService.getPhotoUrlOrNull(fideId),
+                    onOpenScoreCard: () => _openScoreCard(ref, p),
+                    onOpenGame:
+                        (game) =>
+                            _openGame(ref, game, scopedGames, openGeneration),
+                  );
+                },
+              );
               return LayoutBuilder(
                 builder: (context, constraints) {
                   final requiredWidth =
@@ -582,52 +617,7 @@ class TournamentStandingsView extends HookConsumerWidget {
                       child: SizedBox(
                         width: contentWidth,
                         height: constraints.maxHeight,
-                        child: ListView.separated(
-                          key: PageStorageKey<String>(
-                            'tournament-detail-standings:$tabId',
-                          ),
-                          physics: const DesktopScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-                          itemCount: filtered.length + 1,
-                          separatorBuilder:
-                              (_, i) => Divider(
-                                color:
-                                    i == 0 ? Colors.transparent : kDividerColor,
-                                height: 1,
-                              ),
-                          itemBuilder: (context, i) {
-                            if (i == 0) {
-                              return _StandingsHeaderRow(
-                                columns: roundTable.columns,
-                              );
-                            }
-
-                            final p = filtered[i - 1];
-                            return _StandingsPlayerRow(
-                              player: p,
-                              rank: p.overallRank ?? players.indexOf(p) + 1,
-                              flagFederation: _flagFederation(
-                                ref,
-                                p.countryCode,
-                              ),
-                              rounds: roundTable,
-                              photoResolver:
-                                  photoResolver ??
-                                  (fideId) =>
-                                      FidePhotoService.getPhotoUrlOrNull(
-                                        fideId,
-                                      ),
-                              onOpenScoreCard: () => _openScoreCard(ref, p),
-                              onOpenGame:
-                                  (game) => _openGame(
-                                    ref,
-                                    game,
-                                    scopedGames,
-                                    openGeneration,
-                                  ),
-                            );
-                          },
-                        ),
+                        child: list,
                       ),
                     ),
                   );

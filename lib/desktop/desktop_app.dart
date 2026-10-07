@@ -78,16 +78,21 @@ class _DesktopAppState extends ConsumerState<DesktopApp> {
         // .sp / .br number extensions) pick up the desktop window's size.
         // A desktop window's diagonal > 1100 is treated as DeviceType.tablet,
         // which is exactly the layout we want on a 1440×900 desktop window.
-        ResponsiveHelper.init(context);
-        return FTheme(
-          data: FThemes.zinc.dark,
-          child: FToaster(
-            child: DesktopNativeUpdateMenuBridge(
-              navigatorKey: _desktopNavigatorKey,
-              child: DesktopPaywallHost(
+        //
+        // The init (and its MediaQuery dependency) lives in a small leaf
+        // widget so a window resize re-runs only that leaf, not this builder
+        // and every chrome wrapper below it.
+        return _ResponsiveHelperInit(
+          child: FTheme(
+            data: FThemes.zinc.dark,
+            child: FToaster(
+              child: DesktopNativeUpdateMenuBridge(
                 navigatorKey: _desktopNavigatorKey,
-                child: DesktopWindowFrame(
-                  child: child ?? const SizedBox.shrink(),
+                child: DesktopPaywallHost(
+                  navigatorKey: _desktopNavigatorKey,
+                  child: DesktopWindowFrame(
+                    child: child ?? const SizedBox.shrink(),
+                  ),
                 ),
               ),
             ),
@@ -96,5 +101,20 @@ class _DesktopAppState extends ConsumerState<DesktopApp> {
       },
       home: const DesktopAuthGate(),
     );
+  }
+}
+
+/// Re-runs [ResponsiveHelper.init] whenever the window's MediaQuery changes,
+/// before anything below it builds, and hands back the same [child] so the
+/// subtree is not rebuilt.
+class _ResponsiveHelperInit extends StatelessWidget {
+  const _ResponsiveHelperInit({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    ResponsiveHelper.init(context);
+    return child;
   }
 }

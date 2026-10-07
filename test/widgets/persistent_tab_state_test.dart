@@ -74,6 +74,91 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('abc'), findsOneWidget);
   });
+
+  testWidgets(
+    'PersistentIndexedStack does not re-lay-out or rebuild hidden tabs on resize',
+    (tester) async {
+      _SizeProbe.reset();
+      await tester.pumpWidget(const _ResizeStackHarness(index: 0, width: 500));
+      expect(_SizeProbe.layoutWidths['hidden'], [500]);
+      expect(_SizeProbe.mediaWidths['hidden'], [500]);
+
+      // A window resize: the visible tab follows, the hidden one stays put.
+      await tester.pumpWidget(const _ResizeStackHarness(index: 0, width: 600));
+      await tester.pumpWidget(const _ResizeStackHarness(index: 0, width: 700));
+      expect(_SizeProbe.layoutWidths['visible'], [500, 600, 700]);
+      expect(_SizeProbe.mediaWidths['visible'], [500, 600, 700]);
+      expect(_SizeProbe.layoutWidths['hidden'], [500]);
+      expect(_SizeProbe.mediaWidths['hidden'], [500]);
+
+      // Showing the hidden tab catches it up to the live size in one frame.
+      await tester.pumpWidget(const _ResizeStackHarness(index: 1, width: 700));
+      expect(_SizeProbe.layoutWidths['hidden'], [500, 700]);
+      expect(_SizeProbe.mediaWidths['hidden'], [500, 700]);
+      expect(
+        tester.getSize(find.byKey(const ValueKey('probe-hidden'))).width,
+        700,
+      );
+    },
+  );
+}
+
+class _ResizeStackHarness extends StatelessWidget {
+  const _ResizeStackHarness({required this.index, required this.width});
+
+  final int index;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return MediaQuery(
+      data: MediaQueryData(size: Size(width, 600)),
+      child: Directionality(
+        textDirection: TextDirection.ltr,
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: width,
+            height: 600,
+            child: PersistentIndexedStack(
+              index: index,
+              sizing: StackFit.expand,
+              children: const [
+                _SizeProbe(key: ValueKey('probe-visible'), label: 'visible'),
+                _SizeProbe(key: ValueKey('probe-hidden'), label: 'hidden'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Records each LayoutBuilder pass and each MediaQuery-driven rebuild.
+class _SizeProbe extends StatelessWidget {
+  const _SizeProbe({super.key, required this.label});
+
+  final String label;
+
+  static final Map<String, List<double>> layoutWidths = {};
+  static final Map<String, List<double>> mediaWidths = {};
+
+  static void reset() {
+    layoutWidths.clear();
+    mediaWidths.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    (mediaWidths[label] ??= []).add(MediaQuery.sizeOf(context).width);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        (layoutWidths[label] ??= []).add(constraints.maxWidth);
+        return const SizedBox.expand();
+      },
+    );
+  }
 }
 
 class _PersistentStackHarness extends StatelessWidget {

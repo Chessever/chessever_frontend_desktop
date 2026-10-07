@@ -276,59 +276,95 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
         i: _columnWidthFor(effectiveColumns[i]),
     };
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final hCtrl = horizontalScrollController ?? ScrollController();
-        final effectiveMinWidth =
-            minTableWidth == null || constraints.maxWidth >= minTableWidth!
-                ? constraints.maxWidth
-                : minTableWidth!;
-        return Scrollbar(
-          controller: hCtrl,
-          thumbVisibility: false,
-          // Horizontal scrollbar is opt-in: we only want it visible while
-          // the user is actively scrolling sideways. Default thumbVisibility
-          // off + interactive on = matches macOS Finder's column view.
-          interactive: true,
-          child: SingleChildScrollView(
-            controller: hCtrl,
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: effectiveMinWidth),
-              child: _SingleTableBody<T>(
-                columns: effectiveColumns,
-                rows: rows,
-                colWidths: colWidths,
-                headerHeight: headerHeight,
-                showHeader: showHeader,
-                rowMinHeight: rowMinHeight,
-                padding: padding,
-                rowSeparator: rowSeparator,
-                onRowTap: onRowTap,
-                onRowDoubleTap: onRowDoubleTap,
-                onRowSecondaryTap: onRowSecondaryTap,
-                onRowHover: onRowHover,
-                rowSublineBuilder: rowSublineBuilder,
-                rowDecorationBuilder: rowDecorationBuilder,
-                rowKeyBuilder: rowKeyBuilder,
-                enableRowHover: enableRowHover,
-                footer: footer,
-                sublineTargetWidth: effectiveMinWidth,
-                scrollController: scrollController,
-                useInternalVerticalScroll: !useFixedRowAlignment,
-                maxHeight: constraints.maxHeight,
-                sortState: sortState,
-                onSortChanged: onSortChanged,
-                enableColumnResizing: enableColumnResizing,
-                lazyRowExtent: lazyRowExtent,
-                lazyColumnWidths: lazyColumnWidths,
-              ),
-            ),
+    return _FallbackScrollController(
+      controller: horizontalScrollController,
+      builder:
+          (hCtrl) => LayoutBuilder(
+            builder: (context, constraints) {
+              final effectiveMinWidth =
+                  minTableWidth == null ||
+                          constraints.maxWidth >= minTableWidth!
+                      ? constraints.maxWidth
+                      : minTableWidth!;
+              return Scrollbar(
+                controller: hCtrl,
+                thumbVisibility: false,
+                // Horizontal scrollbar is opt-in: we only want it visible while
+                // the user is actively scrolling sideways. Default thumbVisibility
+                // off + interactive on = matches macOS Finder's column view.
+                interactive: true,
+                child: SingleChildScrollView(
+                  controller: hCtrl,
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: effectiveMinWidth),
+                    child: _SingleTableBody<T>(
+                      columns: effectiveColumns,
+                      rows: rows,
+                      colWidths: colWidths,
+                      headerHeight: headerHeight,
+                      showHeader: showHeader,
+                      rowMinHeight: rowMinHeight,
+                      padding: padding,
+                      rowSeparator: rowSeparator,
+                      onRowTap: onRowTap,
+                      onRowDoubleTap: onRowDoubleTap,
+                      onRowSecondaryTap: onRowSecondaryTap,
+                      onRowHover: onRowHover,
+                      rowSublineBuilder: rowSublineBuilder,
+                      rowDecorationBuilder: rowDecorationBuilder,
+                      rowKeyBuilder: rowKeyBuilder,
+                      enableRowHover: enableRowHover,
+                      footer: footer,
+                      sublineTargetWidth: effectiveMinWidth,
+                      scrollController: scrollController,
+                      useInternalVerticalScroll: !useFixedRowAlignment,
+                      maxHeight: constraints.maxHeight,
+                      sortState: sortState,
+                      onSortChanged: onSortChanged,
+                      enableColumnResizing: enableColumnResizing,
+                      lazyRowExtent: lazyRowExtent,
+                      lazyColumnWidths: lazyColumnWidths,
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
-        );
-      },
     );
   }
+}
+
+/// Supplies [controller], or a controller owned for this widget's lifetime
+/// when it is null. Creating the fallback inside a LayoutBuilder made a new
+/// controller on every resize frame, which leaked it and reset the
+/// horizontal scroll position.
+class _FallbackScrollController extends StatefulWidget {
+  const _FallbackScrollController({
+    required this.controller,
+    required this.builder,
+  });
+
+  final ScrollController? controller;
+  final Widget Function(ScrollController controller) builder;
+
+  @override
+  State<_FallbackScrollController> createState() =>
+      _FallbackScrollControllerState();
+}
+
+class _FallbackScrollControllerState extends State<_FallbackScrollController> {
+  ScrollController? _owned;
+
+  @override
+  void dispose() {
+    _owned?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      widget.builder(widget.controller ?? (_owned ??= ScrollController()));
 }
 
 TableColumnWidth _columnWidthFor<T>(AdaptiveColumn<T> column) {
@@ -420,6 +456,46 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   final Map<String, double> _resizedWidths = <String, double>{};
   final Map<String, GlobalKey> _headerCellKeys = <String, GlobalKey>{};
 
+  /// Every content-sized column's width while a column drag is in progress.
+  /// Without it each pointer move re-measured every other intrinsic column
+  /// over all rows.
+  Map<String, double>? _dragFrozenWidths;
+
+  /// Body rows of the non-lazy table. A window resize or sidebar animation
+  /// only changes [_SingleTableBody.maxHeight] and the subline width, so the
+  /// rows are reused and only re-laid out instead of rebuilt every frame.
+  List<TableRow>? _bodyRowsCache;
+
+  @override
+  void didUpdateWidget(covariant _SingleTableBody<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_sameBodyRowInputs(oldWidget, widget)) _bodyRowsCache = null;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Cells may read inherited values (theme, text scale) through this context.
+    _bodyRowsCache = null;
+  }
+
+  bool _sameBodyRowInputs(_SingleTableBody<T> a, _SingleTableBody<T> b) =>
+      identical(a.columns, b.columns) &&
+      identical(a.rows, b.rows) &&
+      a.rowMinHeight == b.rowMinHeight &&
+      a.padding == b.padding &&
+      a.rowSeparator == b.rowSeparator &&
+      identical(a.onRowTap, b.onRowTap) &&
+      identical(a.onRowDoubleTap, b.onRowDoubleTap) &&
+      identical(a.onRowSecondaryTap, b.onRowSecondaryTap) &&
+      identical(a.onRowHover, b.onRowHover) &&
+      identical(a.rowSublineBuilder, b.rowSublineBuilder) &&
+      identical(a.rowDecorationBuilder, b.rowDecorationBuilder) &&
+      identical(a.rowKeyBuilder, b.rowKeyBuilder) &&
+      a.enableRowHover == b.enableRowHover &&
+      (a.rowSublineBuilder == null ||
+          a.sublineTargetWidth == b.sublineTargetWidth);
+
   void _captureGestureModifiers(TapDownDetails _) {
     _lastPointerDownInNewTab = isNewTabModifierPressed();
     _lastPointerDownShiftPressed = HardwareKeyboard.instance.isShiftPressed;
@@ -442,6 +518,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   void _setHover(int? next) {
     if (!widget.enableRowHover) return;
     if (_hoveredIndex == next) return;
+    _bodyRowsCache = null;
     setState(() => _hoveredIndex = next);
     if (next == null || next < 0 || next >= widget.rows.length) return;
     widget.onRowHover?.call(widget.rows[next], next);
@@ -467,19 +544,14 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
         )) {
       return _buildLazyRows(lazyExtent, lazyWidths);
     }
-    // Pre-resolve sublines so we don't ask the builder twice per row.
-    final sublines = <int, Widget>{};
-    if (widget.rowSublineBuilder != null) {
-      for (var i = 0; i < widget.rows.length; i++) {
-        final s = widget.rowSublineBuilder!(context, widget.rows[i]);
-        if (s != null) sublines[i] = s;
-      }
-    }
-
+    final bodyRows = _bodyRowsCache ??= _buildBodyRows(context);
+    final frozen = _dragFrozenWidths;
     final effectiveColumnWidths = <int, TableColumnWidth>{
       ...widget.colWidths,
       for (var i = 0; i < widget.columns.length; i++)
-        if (_resizedWidths[widget.columns[i].id] case final width?)
+        if (_resizedWidths[widget.columns[i].id] ??
+                frozen?[widget.columns[i].id]
+            case final width?)
           i: FixedColumnWidth(width),
     };
 
@@ -494,10 +566,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       children: [
         if (widget.showHeader) _headerRow(),
-        for (var i = 0; i < widget.rows.length; i++) ...[
-          _bodyRow(i, hasSubline: sublines.containsKey(i)),
-          if (sublines.containsKey(i)) _sublineRow(i, sublines[i]!),
-        ],
+        ...bodyRows,
         if (widget.footer != null) _footerRow(),
       ],
     );
@@ -521,6 +590,23 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
     }
 
     return content;
+  }
+
+  List<TableRow> _buildBodyRows(BuildContext context) {
+    // Pre-resolve sublines so we don't ask the builder twice per row.
+    final sublines = <int, Widget>{};
+    if (widget.rowSublineBuilder != null) {
+      for (var i = 0; i < widget.rows.length; i++) {
+        final s = widget.rowSublineBuilder!(context, widget.rows[i]);
+        if (s != null) sublines[i] = s;
+      }
+    }
+    return [
+      for (var i = 0; i < widget.rows.length; i++) ...[
+        _bodyRow(i, hasSubline: sublines.containsKey(i)),
+        if (sublines.containsKey(i)) _sublineRow(i, sublines[i]!),
+      ],
+    ];
   }
 
   Widget _buildLazyRows(double extent, Map<String, double> widths) {
@@ -640,6 +726,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
                 active: _resizedWidths.containsKey(col.id),
                 onDragStart: () => _startColumnResize(col),
                 onDragUpdate: (delta) => _updateColumnResize(col, delta),
+                onDragEnd: _endColumnResize,
                 onReset: () => _resetColumnResize(col),
               ),
             ),
@@ -649,11 +736,30 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   }
 
   void _startColumnResize(AdaptiveColumn<T> col) {
+    // Flex columns (the trailing spacer included) are cheap and keep
+    // absorbing slack; only content-measured columns are frozen.
+    _dragFrozenWidths = {
+      for (final column in widget.columns)
+        if (column.flex == null)
+          if (_headerWidth(column) case final width?) column.id: width,
+    };
     if (_resizedWidths.containsKey(col.id)) return;
+    final width = _headerWidth(col);
+    if (width == null) return;
+    _resizedWidths[col.id] = width;
+  }
+
+  double? _headerWidth(AdaptiveColumn<T> col) {
     final renderObject =
         _headerCellKeys[col.id]?.currentContext?.findRenderObject();
-    if (renderObject is! RenderBox || !renderObject.hasSize) return;
-    _resizedWidths[col.id] = renderObject.size.width;
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+    return renderObject.size.width;
+  }
+
+  void _endColumnResize() {
+    if (_dragFrozenWidths == null) return;
+    // The other columns go back to sizing by their content.
+    setState(() => _dragFrozenWidths = null);
   }
 
   void _updateColumnResize(AdaptiveColumn<T> col, double delta) {
@@ -895,12 +1001,14 @@ class _ColumnResizeHandle extends StatefulWidget {
     required this.active,
     required this.onDragStart,
     required this.onDragUpdate,
+    required this.onDragEnd,
     required this.onReset,
   });
 
   final bool active;
   final VoidCallback onDragStart;
   final ValueChanged<double> onDragUpdate;
+  final VoidCallback onDragEnd;
   final VoidCallback onReset;
 
   @override
@@ -927,8 +1035,14 @@ class _ColumnResizeHandleState extends State<_ColumnResizeHandle> {
         },
         onHorizontalDragUpdate:
             (details) => widget.onDragUpdate(details.delta.dx),
-        onHorizontalDragEnd: (_) => setState(() => _dragging = false),
-        onHorizontalDragCancel: () => setState(() => _dragging = false),
+        onHorizontalDragEnd: (_) {
+          widget.onDragEnd();
+          setState(() => _dragging = false);
+        },
+        onHorizontalDragCancel: () {
+          widget.onDragEnd();
+          setState(() => _dragging = false);
+        },
         child: Align(
           alignment: Alignment.centerRight,
           child: AnimatedContainer(

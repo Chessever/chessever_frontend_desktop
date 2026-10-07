@@ -6,12 +6,12 @@ import 'package:chessever/desktop/auth/desktop_access_context.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/services/desktop_like_actions.dart';
+import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
 import 'package:chessever/desktop/widgets/library/my_likes/like_tags_dialog.dart';
 import 'package:chessever/repository/liked_games/liked_games_provider.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
@@ -25,7 +25,8 @@ import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
-import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart' show gameCardEvalScrollGate;
+import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart'
+    show gameCardEvalScrollGate;
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
@@ -687,8 +688,17 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
             )
           else
             Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
+              // Rebuilds only when the card column count changes, not on every
+              // resize frame; the grid itself still re-lays out at the new width.
+              child: BucketedLayoutBuilder<int>(
+                bucket:
+                    (constraints) => DesktopGameCardsFlow.columnCountForWidth(
+                      layout,
+                      (constraints.maxWidth - 48)
+                          .clamp(0, double.infinity)
+                          .toDouble(),
+                    ),
+                builder: (context, cardColumns) {
                   // Row stride for ArrowUp/ArrowDown must match the on-screen
                   // grid. Grid/list/compact rounds all render at the same column
                   // count (the ListView eats 24px of padding on each side).
@@ -699,14 +709,6 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                           knockoutPresentation ==
                               DesktopKnockoutGamesPresentation.matchSeries) ||
                       isTeamEvent;
-                  final contentWidth =
-                      (constraints.maxWidth - 48)
-                          .clamp(0, double.infinity)
-                          .toDouble();
-                  final cardColumns = DesktopGameCardsFlow.columnCountForWidth(
-                    layout,
-                    contentWidth,
-                  );
                   final keyboardColumns = isMatchStyle ? 1 : cardColumns;
                   return DesktopGroupedGameKeyboardFocus(
                     scopeId: tournamentScopeId,
@@ -748,9 +750,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                               // fast wheel scroll stays smooth without eagerly
                               // mounting several extra rows of chessboards.
                               scrollCacheExtent:
-                                  const ScrollCacheExtent.viewport(
-                                0.15,
-                              ),
+                                  const ScrollCacheExtent.viewport(0.15),
                               slivers: [
                                 SliverPadding(
                                   padding: const EdgeInsets.fromLTRB(
@@ -1297,20 +1297,20 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
             key: ValueKey<String>(
               'tournament-lazy-card:$scopeId:${game.gameId}',
             ),
-          child: DesktopGameKeyboardItem(
-            itemKey: keyForGame(game.gameId),
-            gameId: game.gameId,
-            onSelect: onSelectGame,
-            child: LiveDesktopGameCard(
-              game: game,
-              eventGames: eventGames,
-              tournamentTitle: tournamentTitle,
-              // DesktopGameKeyboardItem selects immediately on pointer-down;
-              // the child reserves activation for double-click.
-              selectionHandledByAncestor: true,
-              layout: layout,
-              selected: selectedGameId == game.gameId,
-              roundStartsAtById: roundStartsAtById,
+            child: DesktopGameKeyboardItem(
+              itemKey: keyForGame(game.gameId),
+              gameId: game.gameId,
+              onSelect: onSelectGame,
+              child: LiveDesktopGameCard(
+                game: game,
+                eventGames: eventGames,
+                tournamentTitle: tournamentTitle,
+                // DesktopGameKeyboardItem selects immediately on pointer-down;
+                // the child reserves activation for double-click.
+                selectionHandledByAncestor: true,
+                layout: layout,
+                selected: selectedGameId == game.gameId,
+                roundStartsAtById: roundStartsAtById,
                 roundNameById: roundNameById,
                 streamingEnabled:
                     streamingEnabled && !game.gameStatus.isFinished,
@@ -1319,7 +1319,7 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
                       eventGames.length,
                     ),
               ),
-          ),
+            ),
           );
         },
         childCount: games.length,
@@ -1382,15 +1382,17 @@ class _TeamMatchHeader extends StatelessWidget {
                 teamName: group.leftTeam,
                 players: group.leftPlayers,
               ),
-              fideId: group.leftPlayers
-                  .map((player) => player.fideId)
-                  .whereType<int>()
-                  .where((id) => id > 0)
-                  .firstOrNull,
-              playerName: group.leftPlayers
-                  .map((player) => player.name.trim())
-                  .where((name) => name.isNotEmpty)
-                  .firstOrNull,
+              fideId:
+                  group.leftPlayers
+                      .map((player) => player.fideId)
+                      .whereType<int>()
+                      .where((id) => id > 0)
+                      .firstOrNull,
+              playerName:
+                  group.leftPlayers
+                      .map((player) => player.name.trim())
+                      .where((name) => name.isNotEmpty)
+                      .firstOrNull,
               isRight: false,
             ),
           ),
@@ -1416,15 +1418,17 @@ class _TeamMatchHeader extends StatelessWidget {
                 teamName: group.rightTeam,
                 players: group.rightPlayers,
               ),
-              fideId: group.rightPlayers
-                  .map((player) => player.fideId)
-                  .whereType<int>()
-                  .where((id) => id > 0)
-                  .firstOrNull,
-              playerName: group.rightPlayers
-                  .map((player) => player.name.trim())
-                  .where((name) => name.isNotEmpty)
-                  .firstOrNull,
+              fideId:
+                  group.rightPlayers
+                      .map((player) => player.fideId)
+                      .whereType<int>()
+                      .where((id) => id > 0)
+                      .firstOrNull,
+              playerName:
+                  group.rightPlayers
+                      .map((player) => player.name.trim())
+                      .where((name) => name.isNotEmpty)
+                      .firstOrNull,
               isRight: true,
             ),
           ),
@@ -2772,7 +2776,9 @@ class LiveDesktopGameCard extends ConsumerWidget {
     }
 
     final resolvedAllowStockfishFallback =
-        streamingEnabled && allowStockfishFallback && shouldStream &&
+        streamingEnabled &&
+        allowStockfishFallback &&
+        shouldStream &&
         !liveCardsPaused;
     // WEB PARITY (RoundGameRow.tsx:294 `railRowEqual`, RoundGamesList.tsx:396):
     // the card subtree is memoized on the exact fields it renders, so a
@@ -2787,63 +2793,64 @@ class LiveDesktopGameCard extends ConsumerWidget {
         layout: layout,
         lockedReason: lockedReason,
       ),
-      builder: () => DesktopGameCard(
-      // Re-derive every rebuild so the eval bar's FEN, the status pill,
-      // and the "In play"/result label pick up Realtime deltas.
-      data: data,
-      onTap: selectionHandledByAncestor ? null : onSelect ?? openGame,
-      onDoubleTap:
-          selectionHandledByAncestor
-              ? openGame
-              : onSelect == null
-              ? null
-              : () {
-                onSelect!();
-                openGame();
-              },
-      onContextMenu:
-          enableContextMenu
-              ? (position) {
-                unawaited(
-                  _showLiveGameContextMenu(
-                    context: context,
-                    ref: ref,
-                    position: position,
-                    game: liveGame,
-                    tournamentTitle: tournamentTitle,
-                    eventGames: eventGames,
-                    routeTitle: routeTitle,
-                    routeGames: routeGames,
-                    eventGamesContinuation: eventGamesContinuation,
-                    routeGamesContinuation: routeGamesContinuation,
-                    roundStartsAtById: roundStartsAtById,
-                    roundNameById: roundNameById,
-                    viewSource: viewSource,
-                    eventBroadcastId: eventBroadcastId,
-                    accessContext: accessContext,
-                  ),
-                );
-              }
-              : null,
-      dragPayload: tournamentGameDragPayload(
-        liveGame,
-        tournamentTitle,
-        eventGames: eventGames,
-        routeTitle: routeTitle,
-        routeGames: routeGames,
-        eventGamesContinuation: eventGamesContinuation,
-        routeGamesContinuation: routeGamesContinuation,
-        roundStartsAtById: roundStartsAtById,
-        roundNameById: roundNameById,
-        viewSource: viewSource,
-        eventBroadcastId: eventBroadcastId,
-        accessContext: accessContext,
-      ),
-      layout: layout,
-      selected: selected,
-      lockedReason: lockedReason,
-      allowStockfishFallback: resolvedAllowStockfishFallback,
-      ),
+      builder:
+          () => DesktopGameCard(
+            // Re-derive every rebuild so the eval bar's FEN, the status pill,
+            // and the "In play"/result label pick up Realtime deltas.
+            data: data,
+            onTap: selectionHandledByAncestor ? null : onSelect ?? openGame,
+            onDoubleTap:
+                selectionHandledByAncestor
+                    ? openGame
+                    : onSelect == null
+                    ? null
+                    : () {
+                      onSelect!();
+                      openGame();
+                    },
+            onContextMenu:
+                enableContextMenu
+                    ? (position) {
+                      unawaited(
+                        _showLiveGameContextMenu(
+                          context: context,
+                          ref: ref,
+                          position: position,
+                          game: liveGame,
+                          tournamentTitle: tournamentTitle,
+                          eventGames: eventGames,
+                          routeTitle: routeTitle,
+                          routeGames: routeGames,
+                          eventGamesContinuation: eventGamesContinuation,
+                          routeGamesContinuation: routeGamesContinuation,
+                          roundStartsAtById: roundStartsAtById,
+                          roundNameById: roundNameById,
+                          viewSource: viewSource,
+                          eventBroadcastId: eventBroadcastId,
+                          accessContext: accessContext,
+                        ),
+                      );
+                    }
+                    : null,
+            dragPayload: tournamentGameDragPayload(
+              liveGame,
+              tournamentTitle,
+              eventGames: eventGames,
+              routeTitle: routeTitle,
+              routeGames: routeGames,
+              eventGamesContinuation: eventGamesContinuation,
+              routeGamesContinuation: routeGamesContinuation,
+              roundStartsAtById: roundStartsAtById,
+              roundNameById: roundNameById,
+              viewSource: viewSource,
+              eventBroadcastId: eventBroadcastId,
+              accessContext: accessContext,
+            ),
+            layout: layout,
+            selected: selected,
+            lockedReason: lockedReason,
+            allowStockfishFallback: resolvedAllowStockfishFallback,
+          ),
     );
   }
 }
@@ -2937,8 +2944,8 @@ class _TournamentLiveBatchScope extends InheritedWidget {
 
   final Map<String, LiveGamesBatchKey> keysByGameId;
 
-  static _TournamentLiveBatchScope? maybeOf(BuildContext context) => context
-      .dependOnInheritedWidgetOfExactType<_TournamentLiveBatchScope>();
+  static _TournamentLiveBatchScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_TournamentLiveBatchScope>();
 
   @override
   bool updateShouldNotify(_TournamentLiveBatchScope oldWidget) {
@@ -3017,8 +3024,7 @@ Future<void> _showLiveGameContextMenu({
       const DesktopContextMenuDivider(),
       DesktopContextMenuItem(
         value: _LiveGameContextAction.toggleLike,
-        icon:
-            isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+        icon: isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
         label: isLiked ? 'Remove from My Likes' : 'Like game',
       ),
       if (isLiked)

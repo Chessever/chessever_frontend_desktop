@@ -6,6 +6,7 @@ import '../../state/local_board_games.dart';
 import 'package:chessever/desktop/state/local_game_grid_layout.dart';
 import 'package:chessever/desktop/state/local_game_page_loader.dart';
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -3033,6 +3034,20 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
     with DeferredPointerStateMixin<_LocalGamesDataRow> {
   bool _hovered = false;
 
+  // The cells read only the game and the column order. Reusing the same cell
+  // widgets when neither changed means a resize, a column drag or a hover
+  // re-lays-out the row instead of rebuilding all eleven cells.
+  List<Widget>? _cachedCells;
+
+  @override
+  void didUpdateWidget(covariant _LocalGamesDataRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.game, widget.game) ||
+        !listEquals(oldWidget.columns, widget.columns)) {
+      _cachedCells = null;
+    }
+  }
+
   String _ratingText(int? value) =>
       value == null || value <= 0 ? '' : value.toString();
 
@@ -3070,75 +3085,81 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
             defaultVerticalAlignment: TableCellVerticalAlignment.middle,
             children: [
               TableRow(
-                children: _orderedLocalCells(widget.columns, [
-                  Padding(
-                    padding: _localGamesCellPadding(0),
-                    child: _LocalMonoRight('${widget.game.indexInFile + 1}'),
-                  ),
-                  Padding(
-                    padding: _localGamesCellPadding(1),
-                    child: LocalGamePlayerCell(
-                      metadata: md,
-                      side: 'White',
-                      padding: EdgeInsets.zero,
-                      // A record whose players are placeholders still names
-                      // its sides, so the row never reads as a blank/broken
-                      // entry next to games that carry full headers.
-                      unknownSideLabel: true,
-                    ),
-                  ),
-                  Padding(
-                    padding: _localGamesCellPadding(2),
-                    child: LibraryTableRatingCell(
-                      rating: _ratingText(_rating(md, 'WhiteElo')),
-                    ),
-                  ),
-                  Padding(
-                    padding: _localGamesCellPadding(3),
-                    child: LibraryTableResultPill(result: _result(md)),
-                  ),
-                  Padding(
-                    padding: _localGamesCellPadding(4),
-                    child: LocalGamePlayerCell(
-                      metadata: md,
-                      side: 'Black',
-                      padding: EdgeInsets.zero,
-                      unknownSideLabel: true,
-                    ),
-                  ),
-                  Padding(
-                    padding: _localGamesCellPadding(5),
-                    child: LibraryTableRatingCell(
-                      rating: _ratingText(_rating(md, 'BlackElo')),
-                    ),
-                  ),
-                  Padding(
-                    padding: _localGamesCellPadding(6),
-                    child: _LocalCellText(_event(md), color: kWhiteColor),
-                  ),
-                  Padding(
-                    padding: _localGamesCellPadding(7),
-                    child: LibraryTableEcoCell(eco: _meta(md, 'ECO')),
-                  ),
-                  Padding(
-                    padding: _localGamesCellPadding(8),
-                    child: _LocalCellText(_opening(md), color: kWhiteColor70),
-                  ),
-                  Padding(
-                    padding: _localGamesCellPadding(9),
-                    child: _LocalMonoRight(
-                      _date(md),
-                      textAlign: TextAlign.left,
-                    ),
-                  ),
-                  Padding(
-                    padding: _localGamesCellPadding(10),
-                    child: _LocalCellText(
-                      _meta(md, 'Annotator'),
-                      color: kWhiteColor70,
-                    ),
-                  ),
-                ]),
+                children:
+                    _cachedCells ??= _orderedLocalCells(widget.columns, [
+                      Padding(
+                        padding: _localGamesCellPadding(0),
+                        child: _LocalMonoRight(
+                          '${widget.game.indexInFile + 1}',
+                        ),
+                      ),
+                      Padding(
+                        padding: _localGamesCellPadding(1),
+                        child: LocalGamePlayerCell(
+                          metadata: md,
+                          side: 'White',
+                          padding: EdgeInsets.zero,
+                          // A record whose players are placeholders still names
+                          // its sides, so the row never reads as a blank/broken
+                          // entry next to games that carry full headers.
+                          unknownSideLabel: true,
+                        ),
+                      ),
+                      Padding(
+                        padding: _localGamesCellPadding(2),
+                        child: LibraryTableRatingCell(
+                          rating: _ratingText(_rating(md, 'WhiteElo')),
+                        ),
+                      ),
+                      Padding(
+                        padding: _localGamesCellPadding(3),
+                        child: LibraryTableResultPill(result: _result(md)),
+                      ),
+                      Padding(
+                        padding: _localGamesCellPadding(4),
+                        child: LocalGamePlayerCell(
+                          metadata: md,
+                          side: 'Black',
+                          padding: EdgeInsets.zero,
+                          unknownSideLabel: true,
+                        ),
+                      ),
+                      Padding(
+                        padding: _localGamesCellPadding(5),
+                        child: LibraryTableRatingCell(
+                          rating: _ratingText(_rating(md, 'BlackElo')),
+                        ),
+                      ),
+                      Padding(
+                        padding: _localGamesCellPadding(6),
+                        child: _LocalCellText(_event(md), color: kWhiteColor),
+                      ),
+                      Padding(
+                        padding: _localGamesCellPadding(7),
+                        child: LibraryTableEcoCell(eco: _meta(md, 'ECO')),
+                      ),
+                      Padding(
+                        padding: _localGamesCellPadding(8),
+                        child: _LocalCellText(
+                          _opening(md),
+                          color: kWhiteColor70,
+                        ),
+                      ),
+                      Padding(
+                        padding: _localGamesCellPadding(9),
+                        child: _LocalMonoRight(
+                          _date(md),
+                          textAlign: TextAlign.left,
+                        ),
+                      ),
+                      Padding(
+                        padding: _localGamesCellPadding(10),
+                        child: _LocalCellText(
+                          _meta(md, 'Annotator'),
+                          color: kWhiteColor70,
+                        ),
+                      ),
+                    ]),
               ),
             ],
           ),

@@ -13,6 +13,7 @@ import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
+import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_filter_dialog.dart';
@@ -498,13 +499,13 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
       // Compute column count first so PageUp/PageDown can stride by a full
       // page (~3 rows of `columns` cards) — `pageStride: 9` was hardcoded to
       // an assumed 3×3 grid and broke on every other window width.
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          const targetWidth = 280.0;
-          final columns = (constraints.maxWidth / targetWidth).floor().clamp(
-            2,
-            6,
-          );
+      // Rebuilds only when the column count changes, not on every resize
+      // frame; the grid itself still re-lays out at the new width.
+      return BucketedLayoutBuilder<int>(
+        bucket:
+            (constraints) =>
+                (constraints.maxWidth / 280.0).floor().clamp(2, 6).toInt(),
+        builder: (context, columns) {
           return DesktopGroupedGameKeyboardFocus(
             scopeId: 'favorites-games',
             groups: keyboardGroups,
@@ -1025,14 +1026,20 @@ class _WorldPlayersListState extends ConsumerState<_WorldPlayersList> {
           child: _PlayerTile(
             player: player,
             isFavorite: favorite,
-            onFavoriteTap: () => setDesktopPlayerFavorite(
-                            context, ref, favorite: !favorite,
-                            playerName: player.name, fideId: player.fideId?.toString(),
-                            countryCode: player.countryCode, rating: player.score, title: player.title,
-                            gamebasePlayerId: player.gamebasePlayerId,
-                            memorialSourceIdentity: player.memorialSourceIdentity,
-                            memorialRouteId: player.memorialRouteId,
-                          ),
+            onFavoriteTap:
+                () => setDesktopPlayerFavorite(
+                  context,
+                  ref,
+                  favorite: !favorite,
+                  playerName: player.name,
+                  fideId: player.fideId?.toString(),
+                  countryCode: player.countryCode,
+                  rating: player.score,
+                  title: player.title,
+                  gamebasePlayerId: player.gamebasePlayerId,
+                  memorialSourceIdentity: player.memorialSourceIdentity,
+                  memorialRouteId: player.memorialRouteId,
+                ),
           ),
         );
       },
@@ -1135,11 +1142,14 @@ class _PlayerTileState extends ConsumerState<_PlayerTile> {
       return;
     }
     final player = widget.player;
-    await setDesktopPlayerFavorite(context, ref,
-      favorite: false, playerName: player.name,
+    await setDesktopPlayerFavorite(
+      context,
+      ref,
+      favorite: false,
+      playerName: player.name,
       fideId: player.fideId?.toString(),
-      memorialSourceIdentity: player.memorialSourceIdentity);
-
+      memorialSourceIdentity: player.memorialSourceIdentity,
+    );
   }
 
   @override

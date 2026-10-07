@@ -1,6 +1,7 @@
 import 'package:chessever/desktop/services/shared_books.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
+import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
 import 'package:chessever/desktop/widgets/library/library_book_dialog.dart';
 import 'package:chessever/desktop/widgets/library/shared_book_dialogs.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
@@ -2040,9 +2041,11 @@ class _MyDatabasesHeader extends StatelessWidget {
     }
 
     return LibraryHomeBar(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final showActionLabels = constraints.maxWidth >= 1050;
+      // Rebuilds the bar only when the label breakpoint flips, not on every
+      // resize frame.
+      child: BucketedLayoutBuilder<bool>(
+        bucket: (constraints) => constraints.maxWidth >= 1050,
+        builder: (context, showActionLabels) {
           return Row(
             children: [
               const SizedBox(
@@ -2167,6 +2170,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cloudRevision = ref.watch(libraryCloudRevisionProvider);
+    // Column widths while a header drag is in flight, keyed by column. Kept
+    // out of the focus state so a drag does not write it on every pointer
+    // move; the final width is saved once on drag end.
+    final liveColumnWidths = useValueNotifier<Map<String, double>>(const {});
     final cloudCountsAsync = useFuture(
       useMemoized(
         () async {
@@ -3396,6 +3403,42 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       );
     }
 
+    final filteredOut = items.isNotEmpty && visibleItems.isEmpty;
+    final empty = _LibraryEmpty(
+      icon: filteredOut ? Icons.search_off_rounded : Icons.folder_open_outlined,
+      title: filteredOut ? 'No matching databases' : 'This section is empty',
+      message:
+          filteredOut
+              ? 'Try another search or source filter.'
+              : currentLocalGroup == null
+              ? 'Import PGN files or create a cloud database.'
+              : (currentLocalGroupIsPlayerWorkspace
+                  ? 'Import PGN files or add player sources from Players.'
+                  : 'Import PGN files here.'),
+    );
+    // Built outside the LayoutBuilder below: the grid never reads the width,
+    // so a resize frame hands back this same instance and no tile rebuilds.
+    final Widget? gridBody =
+        view == _DatabaseBoardView.grid
+            ? ListView(
+              physics: const DesktopScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 16),
+              children: [
+                if (visibleItems.isNotEmpty)
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      for (final row in visibleTreeRows)
+                        buildBoardTile(row.item, expanded: row.expanded),
+                    ],
+                  )
+                else
+                  Padding(padding: const EdgeInsets.only(top: 28), child: empty),
+              ],
+            )
+            : null;
+
     return DragTarget<LibraryDatabaseDragPayload>(
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (details) => onDropDatabase(details.data),
@@ -3413,58 +3456,22 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                     ),
                   )
                   : null,
-          child: LayoutBuilder(
+          child: gridBody ?? ValueListenableBuilder<Map<String, double>>(
+            valueListenable: liveColumnWidths,
+            builder: (context, liveWidths, _) => LayoutBuilder(
             builder: (context, constraints) {
               final columns = libraryDatabaseCatalogColumns(
                 math.max(0, constraints.maxWidth - 28),
-                savedWidths: focusState.catalogColumnWidths,
-              );
-              final filteredOut = items.isNotEmpty && visibleItems.isEmpty;
-              final empty = _LibraryEmpty(
-                icon:
-                    filteredOut
-                        ? Icons.search_off_rounded
-                        : Icons.folder_open_outlined,
-                title:
-                    filteredOut
-                        ? 'No matching databases'
-                        : 'This section is empty',
-                message:
-                    filteredOut
-                        ? 'Try another search or source filter.'
-                        : currentLocalGroup == null
-                        ? 'Import PGN files or create a cloud database.'
-                        : (currentLocalGroupIsPlayerWorkspace
-                            ? 'Import PGN files or add player sources from Players.'
-                            : 'Import PGN files here.'),
+                savedWidths:
+                    liveWidths.isEmpty
+                        ? focusState.catalogColumnWidths
+                        : {...focusState.catalogColumnWidths, ...liveWidths},
               );
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Expanded(
-                    child:
-                        view == _DatabaseBoardView.grid
-                            ? ListView(
-                              physics: const DesktopScrollPhysics(),
-                              padding: const EdgeInsets.fromLTRB(14, 0, 14, 16),
-                              children: [
-                                if (visibleItems.isNotEmpty)
-                                  Wrap(
-                                    spacing: 10,
-                                    runSpacing: 10,
-                                    children: [
-                                      for (final row in visibleTreeRows)
-                                        buildBoardTile(row.item, expanded: row.expanded),
-                                    ],
-                                  )
-                                else
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 28),
-                                    child: empty,
-                                  ),
-                              ],
-                            )
-                            : Container(
+                    child: Container(
                               margin: const EdgeInsets.fromLTRB(14, 0, 14, 14),
                               clipBehavior: Clip.antiAlias,
                               decoration: BoxDecoration(
@@ -3476,7 +3483,16 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                                 children: [
                                   _DatabaseBoardListHeader(
                                     columns: columns,
+                                    // A drag only moves the live width; the
+                                    // saved width (a full focus-state write)
+                                    // lands once, when the drag ends.
                                     onColumnWidthChanged: (key, width) {
+                                      liveColumnWidths.value = {
+                                        ...liveColumnWidths.value,
+                                        key: width,
+                                      };
+                                    },
+                                    onColumnWidthCommitted: (key, width) {
                                       unawaited(
                                         ref
                                             .read(
@@ -3490,6 +3506,15 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                                                   'persist failed: $error',
                                                 );
                                               }
+                                            })
+                                            .whenComplete(() {
+                                              // Cleared after the saved width
+                                              // lands so the column does not
+                                              // flash back for a frame.
+                                              final live = {
+                                                ...liveColumnWidths.value,
+                                              }..remove(key);
+                                              liveColumnWidths.value = live;
                                             }),
                                       );
                                     },
@@ -3549,6 +3574,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                 ],
               );
             },
+          ),
           ),
         );
       },
@@ -4684,11 +4710,17 @@ class _DatabaseBoardListHeader extends StatelessWidget {
   const _DatabaseBoardListHeader({
     required this.columns,
     required this.onColumnWidthChanged,
+    required this.onColumnWidthCommitted,
     required this.onResetWidths,
   });
 
   final LibraryDatabaseCatalogColumns columns;
+
+  /// Live width on each drag movement.
   final void Function(String key, double width) onColumnWidthChanged;
+
+  /// Final width once the drag ends.
+  final void Function(String key, double width) onColumnWidthCommitted;
   final VoidCallback onResetWidths;
 
   @override
@@ -4703,24 +4735,28 @@ class _DatabaseBoardListHeader extends StatelessWidget {
           width: columns.nameWidth,
           style: style,
           onChanged: (width) => onColumnWidthChanged('name', width),
+          onCommitted: (width) => onColumnWidthCommitted('name', width),
         ),
         details: _ResizableDatabaseHeaderCell(
           label: 'GAMES',
           width: columns.gamesWidth,
           style: style,
           onChanged: (width) => onColumnWidthChanged('games', width),
+          onCommitted: (width) => onColumnWidthCommitted('games', width),
         ),
         source: _ResizableDatabaseHeaderCell(
           label: 'SOURCE',
           width: columns.sourceWidth,
           style: style,
           onChanged: (width) => onColumnWidthChanged('source', width),
+          onCommitted: (width) => onColumnWidthCommitted('source', width),
         ),
         lastOpened: _ResizableDatabaseHeaderCell(
           label: 'LAST OPENED',
           width: columns.lastOpenedWidth,
           style: style,
           onChanged: (width) => onColumnWidthChanged('lastOpened', width),
+          onCommitted: (width) => onColumnWidthCommitted('lastOpened', width),
         ),
         trailing: DesktopHeaderIconButton(
           icon: Icons.restart_alt_rounded,
@@ -4738,12 +4774,14 @@ class _ResizableDatabaseHeaderCell extends StatefulWidget {
     required this.width,
     required this.style,
     required this.onChanged,
+    required this.onCommitted,
   });
 
   final String label;
   final double width;
   final TextStyle style;
   final ValueChanged<double> onChanged;
+  final ValueChanged<double> onCommitted;
 
   @override
   State<_ResizableDatabaseHeaderCell> createState() =>
@@ -4781,6 +4819,7 @@ class _ResizableDatabaseHeaderCellState
                 _dragWidth += details.delta.dx;
                 widget.onChanged(_dragWidth);
               },
+              onHorizontalDragEnd: (_) => widget.onCommitted(_dragWidth),
               child: const SizedBox(width: 7, height: double.infinity),
             ),
           ),
@@ -8079,23 +8118,35 @@ class _GamesTableHeader extends StatelessWidget {
   }
 }
 
-class _HeaderResizeGap extends StatelessWidget {
+class _HeaderResizeGap extends StatefulWidget {
   const _HeaderResizeGap({required this.enabled, required this.onDrag});
 
   final bool enabled;
   final ValueChanged<double> onDrag;
 
   @override
+  State<_HeaderResizeGap> createState() => _HeaderResizeGapState();
+}
+
+class _HeaderResizeGapState extends State<_HeaderResizeGap> {
+  // Movement below the 2 px step is carried over instead of dropped, so slow
+  // drags still move the column and fast ones do not jump in steps.
+  double _pendingDelta = 0;
+
+  @override
   Widget build(BuildContext context) {
-    if (!enabled) return const SizedBox(width: 10);
+    if (!widget.enabled) return const SizedBox(width: 10);
     return MouseRegion(
       cursor: SystemMouseCursors.resizeColumn,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (_) => _pendingDelta = 0,
         onHorizontalDragUpdate: (details) {
-          final delta = details.primaryDelta ?? 0;
-          if (delta.abs() < 2) return;
-          onDrag(delta);
+          _pendingDelta += details.primaryDelta ?? 0;
+          if (_pendingDelta.abs() < 2) return;
+          final delta = _pendingDelta;
+          _pendingDelta = 0;
+          widget.onDrag(delta);
         },
         child: const SizedBox(
           width: 10,
@@ -13436,6 +13487,30 @@ class _LibraryBoardPreviewPanelState
       widget.game,
       fallbackTitle: widget.title,
     );
+    // Built once per build, outside the LayoutBuilder: a resize frame then
+    // only re-lays-out the notation and board instead of rebuilding every
+    // move token.
+    final notation = _LibraryNotationPreview(
+      game: widget.game,
+      activePly: widget.ply,
+      isResolvingNotation: widget.isResolvingNotation,
+      layoutMode: NotationLayoutMode.inline,
+      useFigurine: settings.useFigurine,
+      pieceAssets: settings.pieceAssets,
+      onLayoutModeChanged: (_) {},
+      onPlyChanged: widget.onPlyChanged,
+      onFirst: () => widget.onPlyChanged(0),
+      onPrevious: () => widget.onPlyChanged(widget.ply - 1),
+      onNext: () => widget.onPlyChanged(widget.ply + 1),
+      onLast: () => widget.onPlyChanged(widget.totalPlies),
+      canGoBack: canGoBack,
+      canGoForward: canGoForward,
+    );
+    final board = _LibraryPreviewBoard(
+      fen: widget.fen,
+      lastMoveUci: widget.lastMoveUci,
+      settings: settings,
+    );
     return Padding(
       padding: const EdgeInsets.all(14),
       child: GestureDetector(
@@ -13455,27 +13530,6 @@ class _LibraryBoardPreviewPanelState
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final sideBySide = constraints.maxWidth >= 560;
-                  final notation = _LibraryNotationPreview(
-                    game: widget.game,
-                    activePly: widget.ply,
-                    isResolvingNotation: widget.isResolvingNotation,
-                    layoutMode: NotationLayoutMode.inline,
-                    useFigurine: settings.useFigurine,
-                    pieceAssets: settings.pieceAssets,
-                    onLayoutModeChanged: (_) {},
-                    onPlyChanged: widget.onPlyChanged,
-                    onFirst: () => widget.onPlyChanged(0),
-                    onPrevious: () => widget.onPlyChanged(widget.ply - 1),
-                    onNext: () => widget.onPlyChanged(widget.ply + 1),
-                    onLast: () => widget.onPlyChanged(widget.totalPlies),
-                    canGoBack: canGoBack,
-                    canGoForward: canGoForward,
-                  );
-                  final board = _LibraryPreviewBoard(
-                    fen: widget.fen,
-                    lastMoveUci: widget.lastMoveUci,
-                    settings: settings,
-                  );
                   if (!sideBySide) {
                     final notationHeight =
                         constraints.maxHeight < 220

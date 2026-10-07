@@ -5043,7 +5043,17 @@ class _BoardPaneContent extends HookConsumerWidget {
     // usable board width. Default to collapsed on first mount when the
     // window is below this threshold; persisted layout (via storageKey)
     // overrides this once the user has expressed a preference.
-    final screenWidth = MediaQuery.of(context).size.width;
+    //
+    // Read without registering a MediaQuery dependency: the value is only
+    // consulted on first mount, and a dependency rebuilt this whole pane
+    // (and every hidden Board tab) on each window-resize frame.
+    final screenWidth =
+        context
+            .getInheritedWidgetOfExactType<MediaQuery>()
+            ?.data
+            .size
+            .width ??
+        double.infinity;
     const smallScreenWidthThreshold = 1400.0;
     final gameRailInitialCollapsed = screenWidth < smallScreenWidthThreshold;
 
