@@ -355,6 +355,9 @@ class TourInfo {
   /// ChessEver `tours.info.teamScoring` — board points plus match points.
   final Map<String, dynamic>? teamScoring;
 
+  /// Complete organizer team table with source, round and fetch timestamp.
+  final Map<String, dynamic>? officialTeamStandings;
+
   const TourInfo({
     this.tc,
     this.fideTc,
@@ -369,6 +372,7 @@ class TourInfo {
     this.standingsUpdatedAt,
     this.customScoring,
     this.teamScoring,
+    this.officialTeamStandings,
   });
 
   factory TourInfo.fromJson(Map<String, dynamic> json) {
@@ -386,6 +390,7 @@ class TourInfo {
       standingsUpdatedAt: _parseTimestamp(json['standingsUpdatedAt']),
       customScoring: _asStringKeyMap(json['customScoring']),
       teamScoring: _asStringKeyMap(json['teamScoring']),
+      officialTeamStandings: _asStringKeyMap(json['officialTeamStandings']),
     );
   }
 
@@ -416,6 +421,8 @@ class TourInfo {
         'standingsUpdatedAt': standingsUpdatedAt!.toIso8601String(),
       if (customScoring != null) 'customScoring': customScoring,
       if (teamScoring != null) 'teamScoring': teamScoring,
+      if (officialTeamStandings != null)
+        'officialTeamStandings': officialTeamStandings,
     };
   }
 

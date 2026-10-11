@@ -7,6 +7,10 @@ class TeamStandingModel {
   final String teamName;
   final int rank;
 
+  /// Round the organizer's table was published after; null when the row was
+  /// computed from broadcast boards.
+  final int? officialRound;
+
   /// Match points — 2 win / 1 draw / 0 loss, counted only for completed
   /// matches. Primary ranking metric (chess team-event standard).
   final int matchPoints;
@@ -26,6 +30,7 @@ class TeamStandingModel {
   const TeamStandingModel({
     required this.teamName,
     required this.rank,
+    this.officialRound,
     required this.matchPoints,
     required this.gamePoints,
     required this.matchesWon,

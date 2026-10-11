@@ -109,7 +109,9 @@ class DesktopTeamStandingsTable extends ConsumerWidget {
                 height: 1,
               ),
           itemBuilder: (context, index) {
-            if (index == 0) return const _TeamHeaderRow();
+            if (index == 0) {
+              return _TeamHeaderRow(officialRound: teams.first.officialRound);
+            }
             final team = teams[index - 1];
             return _TeamRow(
               team: team,
@@ -149,7 +151,10 @@ class DesktopTeamStandingsTable extends ConsumerWidget {
 }
 
 class _TeamHeaderRow extends StatelessWidget {
-  const _TeamHeaderRow();
+  const _TeamHeaderRow({this.officialRound});
+
+  /// Set when the rows are the organizer's published table.
+  final int? officialRound;
 
   @override
   Widget build(BuildContext context) {
@@ -158,16 +163,29 @@ class _TeamHeaderRow extends StatelessWidget {
       fontSize: 12,
       fontWeight: FontWeight.w700,
     );
-    return const Padding(
-      padding: EdgeInsets.fromLTRB(8, 0, 8, 8),
-      child: Row(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 44, child: Text('#', style: style)),
-          Expanded(child: Text('Team', style: style)),
-          _Cell('MP', style: style),
-          _Cell('Board pts', style: style, width: 88),
-          _Cell('W · D · L', style: style, width: 96),
-          _Cell('Players', style: style),
+          if (officialRound != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Official standings · after round $officialRound',
+                style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+              ),
+            ),
+          const Row(
+            children: [
+              SizedBox(width: 44, child: Text('#', style: style)),
+              Expanded(child: Text('Team', style: style)),
+              _Cell('MP', style: style),
+              _Cell('Board pts', style: style, width: 88),
+              _Cell('W · D · L', style: style, width: 96),
+              _Cell('Players', style: style),
+            ],
+          ),
         ],
       ),
     );
