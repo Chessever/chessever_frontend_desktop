@@ -22,6 +22,7 @@ import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/collections_fakes.dart';
 
@@ -65,6 +66,9 @@ Future<(WidgetRef, ProviderContainer)> _ref(
 }
 
 void main() {
+  // A star is queued on disk until the server confirms it.
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   group('starring a collection', () {
     testWidgets('a guest is asked to sign in and nothing is written', (
       tester,

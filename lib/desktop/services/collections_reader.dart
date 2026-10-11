@@ -8,6 +8,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' show Random;
 
 import 'package:flutter/foundation.dart';
@@ -480,20 +481,7 @@ String newCollectionReaderId(Random random) {
 Future<void> trackCollectionRead(
   ProviderContainer container,
   Collection collection,
-) async {
-  if (collection.kind != CollectionKind.book) return;
-  try {
-    final id = await container.read(_collectionReaderIdProvider.future);
-    final counts = await container
-        .read(collectionsReaderProvider)
-        .recordView(collection.slug, id);
-    container
-        .read(collectionEngagementCountsProvider(collection.slug).notifier)
-        .state = counts;
-  } catch (_) {
-    // A missed count is not the reader's problem.
-  }
-}
+) => container.read(collectionEngagementProvider).trackRead(collection);
 
 /// The favorites identity of a collection. A starred collection is a plain
 /// favorite-events row, like a starred event, so it syncs with the phone;
@@ -550,6 +538,223 @@ final collectionStarAccountProvider = Provider<bool Function()>(
   (_) => _hasPermanentAccount,
 );
 
+/// The signed-in permanent account's id.
+String? _collectionStarAccountId() {
+  try {
+    final user = Supabase.instance.client.auth.currentUser;
+    return user == null || user.isAnonymous ? null : user.id;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// View and star counts as the server holds them, the phone app's
+/// `CollectionEngagement`.
+///
+/// Lives with the container, not a widget: a count answered after its page
+/// closed still belongs in the store, and a star the server has not yet
+/// confirmed waits here (and on disk) until it is.
+class CollectionEngagement {
+  CollectionEngagement(this._ref);
+
+  final Ref _ref;
+
+  /// When this device last heard a slug's counts from its own write. A
+  /// catalog read that started before then is older and must not win.
+  final _lastWrite = <String, DateTime>{};
+  bool _refreshing = false;
+  Future<void>? _flush;
+
+  /// The queue when this device has no storage to keep it in.
+  final _unsaved = <String, Map<String, bool>>{};
+
+  Future<SharedPreferences?> _preferences() async {
+    try {
+      return await SharedPreferences.getInstance();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String _pendingKey(String account) =>
+      'collection_star_pending_$account';
+  static String _backfilledKey(String account) =>
+      'collection_star_backfilled_$account';
+
+  /// The key this account's queue is stored under, or null when no
+  /// permanent account is signed in.
+  String? _account({bool? signedIn}) {
+    if (!(signedIn ?? _ref.read(collectionStarAccountProvider)())) return null;
+    return _collectionStarAccountId() ?? 'account';
+  }
+
+  void _apply(String slug, Map<String, dynamic> counts) {
+    _lastWrite[slug] = DateTime.now();
+    _ref.read(collectionEngagementCountsProvider(slug).notifier).state = counts;
+  }
+
+  /// Counts opening [collection] as a read. Books only, as on the phone;
+  /// counts never interrupt reading.
+  Future<void> trackRead(Collection collection) async {
+    if (collection.kind != CollectionKind.book) return;
+    try {
+      final id = await _ref.read(_collectionReaderIdProvider.future);
+      final counts = await _ref
+          .read(collectionsReaderProvider)
+          .recordView(collection.slug, id);
+      _apply(collection.slug, counts);
+    } catch (_) {
+      // A missed count is not the reader's problem.
+    }
+  }
+
+  /// Records this account's star on [slug] and sends it. A star the server
+  /// did not confirm stays queued and is sent again on the next refresh.
+  Future<void> setStar(String slug, bool starred, {bool? signedIn}) async {
+    final account = _account(signedIn: signedIn);
+    if (account == null) return;
+    final preferences = await _preferences();
+    final pending = _pending(preferences, account)..[slug] = starred;
+    await _store(preferences, account, pending);
+    await flushStars(account: account);
+  }
+
+  /// Sends every star the server has not confirmed yet.
+  Future<void> flushStars({String? account}) =>
+      _flush ??= _sendPendingStars(account).whenComplete(() => _flush = null);
+
+  Future<void> _sendPendingStars(String? known) async {
+    try {
+      final account = known ?? _account();
+      if (account == null) return;
+      final preferences = await _preferences();
+      await _queueEarlierStars(preferences, account);
+      final reader = _ref.read(collectionsReaderProvider);
+      final failed = <String>{};
+      // Re-read each round: a star pressed while this runs joins the queue.
+      while (true) {
+        final next =
+            _pending(
+              preferences,
+              account,
+            ).entries.where((e) => !failed.contains(e.key)).firstOrNull;
+        if (next == null) return;
+        var settled = false;
+        try {
+          _apply(next.key, await reader.recordStar(next.key, next.value));
+          settled = true;
+        } catch (e) {
+          // A collection that is gone, or a body the server will never
+          // take, is dropped. Anything else is tried again later.
+          final status = e is CollectionsRequestException ? e.statusCode : null;
+          settled = status == 400 || status == 404;
+        }
+        if (!settled) {
+          failed.add(next.key);
+          continue;
+        }
+        // Only what was sent is settled: a newer press stays queued.
+        final pending = _pending(preferences, account);
+        if (pending[next.key] == next.value) {
+          pending.remove(next.key);
+          await _store(preferences, account, pending);
+        }
+      }
+    } catch (_) {
+      // The queue is on disk; the next refresh sends it.
+    }
+  }
+
+  /// Stars made before the server counted them, queued once per account.
+  Future<void> _queueEarlierStars(
+    SharedPreferences? preferences,
+    String account,
+  ) async {
+    if (preferences == null) return;
+    if (preferences.getBool(_backfilledKey(account)) ?? false) return;
+    if (_ref.read(favoriteEventsProvider).valueOrNull == null) return;
+    final pending = _pending(preferences, account);
+    for (final slug in _ref.read(favoriteCollectionSlugsProvider)) {
+      if (slug.isNotEmpty) pending.putIfAbsent(slug, () => true);
+    }
+    await _store(preferences, account, pending);
+    await preferences.setBool(_backfilledKey(account), true);
+  }
+
+  Map<String, bool> _pending(SharedPreferences? preferences, String account) {
+    if (preferences == null) return {...?_unsaved[account]};
+    try {
+      final raw = preferences.getString(_pendingKey(account));
+      if (raw == null) return {};
+      return {
+        for (final entry in (jsonDecode(raw) as Map).entries)
+          if (entry.value is bool) entry.key as String: entry.value as bool,
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _store(
+    SharedPreferences? preferences,
+    String account,
+    Map<String, bool> pending,
+  ) async {
+    if (preferences == null) {
+      _unsaved[account] = pending;
+    } else if (pending.isEmpty) {
+      await preferences.remove(_pendingKey(account));
+    } else {
+      await preferences.setString(_pendingKey(account), jsonEncode(pending));
+    }
+  }
+
+  /// Reads every book's counts fresh. The catalog search is the one public
+  /// read the server never caches, so this is what other readers did since.
+  Future<void> refresh() async {
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      await flushStars();
+      final started = DateTime.now();
+      final reader = _ref.read(collectionsReaderProvider);
+      var offset = 0;
+      while (true) {
+        final page = await reader.searchBooks(
+          const CollectionSearchQuery(),
+          offset,
+        );
+        for (final book in page.items) {
+          final written = _lastWrite[book.slug];
+          if (written != null && written.isAfter(started)) continue;
+          final counts = _ref.read(
+            collectionEngagementCountsProvider(book.slug).notifier,
+          );
+          final current = counts.state;
+          if (current?['viewCount'] == book.viewCount &&
+              current?['starCount'] == book.starCount) {
+            continue;
+          }
+          counts.state = {
+            'viewCount': book.viewCount,
+            'starCount': book.starCount,
+          };
+        }
+        offset += page.items.length;
+        if (page.items.isEmpty || offset >= page.total) break;
+      }
+    } catch (_) {
+      // The counts on screen stay until the next refresh.
+    } finally {
+      _refreshing = false;
+    }
+  }
+}
+
+final collectionEngagementProvider = Provider<CollectionEngagement>(
+  CollectionEngagement.new,
+);
+
 /// Stars or unstars [collection]: the same favorite row and the same counter
 /// call as the phone app, so the star follows the account.
 ///
@@ -581,17 +786,9 @@ Future<CollectionStarOutcome> toggleCollectionStar(
     debugPrint('[Collections] star failed: $e');
     return CollectionStarOutcome.failed;
   }
-  try {
-    final counts = await container
-        .read(collectionsReaderProvider)
-        .recordStar(collection.slug, starred);
-    container
-        .read(collectionEngagementCountsProvider(collection.slug).notifier)
-        .state = counts;
-  } catch (_) {
-    // The favorite row is what pins the collection; the public count
-    // catches up on the next press.
-  }
+  await container
+      .read(collectionEngagementProvider)
+      .setStar(collection.slug, starred, signedIn: true);
   return starred
       ? CollectionStarOutcome.starred
       : CollectionStarOutcome.unstarred;

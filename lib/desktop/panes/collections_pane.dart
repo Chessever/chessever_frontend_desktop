@@ -17,6 +17,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/collections/collection_counts_refresher.dart';
 import 'package:chessever/desktop/panes/library_pane.dart'
     show
         LibraryEmptyState,
@@ -158,6 +159,7 @@ class CollectionsPane extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    useCollectionCountsRefresh(context, ref);
     final searchController = useTextEditingController();
     final typed = useState('');
     final text = _useDebounced(typed.value, const Duration(milliseconds: 300));
