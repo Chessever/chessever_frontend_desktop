@@ -20,6 +20,7 @@ class MoveNavigationBar extends StatelessWidget {
     super.key,
     required this.canGoBack,
     required this.canGoForward,
+    this.canStepForward,
     required this.onFirst,
     required this.onPrevious,
     required this.onNext,
@@ -44,6 +45,8 @@ class MoveNavigationBar extends StatelessWidget {
 
   final bool canGoBack;
   final bool canGoForward;
+  /// Manual-next capability only. Last move and autoplay retain [canGoForward].
+  final bool? canStepForward;
   final VoidCallback onFirst;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
@@ -157,7 +160,7 @@ class MoveNavigationBar extends StatelessWidget {
                   'Next move',
                   nextMoveShortcutLabel,
                 ),
-                enabled: canGoForward,
+                enabled: canStepForward ?? canGoForward,
                 onTap: onNext,
                 size: _kButtonSize,
               ),

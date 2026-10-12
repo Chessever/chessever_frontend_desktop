@@ -112,6 +112,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.onNotationJumpToTip,
     this.canGoBack = false,
     this.canGoForward = false,
+    this.canStepForward,
     this.onFirstMove,
     this.onPreviousMove,
     this.onNextMove,
@@ -173,6 +174,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// the Explorer is open.
   final bool canGoBack;
   final bool canGoForward;
+  final bool? canStepForward;
   final VoidCallback? onFirstMove;
   final VoidCallback? onPreviousMove;
   final VoidCallback? onNextMove;
@@ -734,6 +736,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               explorerScope: widget.explorerScope,
               canGoBack: widget.canGoBack,
               canGoForward: widget.canGoForward,
+              canStepForward: widget.canStepForward,
               onFirstMove: widget.onFirstMove,
               onPreviousMove: widget.onPreviousMove,
               onNextMove: widget.onNextMove,
@@ -1018,6 +1021,7 @@ class _SegmentBar extends ConsumerWidget {
     required this.explorerScope,
     required this.canGoBack,
     required this.canGoForward,
+    this.canStepForward,
     this.onFirstMove,
     this.onPreviousMove,
     this.onNextMove,
@@ -1044,6 +1048,7 @@ class _SegmentBar extends ConsumerWidget {
   final BoardExplorerScope? explorerScope;
   final bool canGoBack;
   final bool canGoForward;
+  final bool? canStepForward;
   final VoidCallback? onFirstMove;
   final VoidCallback? onPreviousMove;
   final VoidCallback? onNextMove;
@@ -1116,6 +1121,7 @@ class _SegmentBar extends ConsumerWidget {
                   child: _ExplorerNavigationCluster(
                     canGoBack: canGoBack,
                     canGoForward: canGoForward,
+                    canStepForward: canStepForward,
                     onFirstMove: onFirstMove,
                     onPreviousMove: onPreviousMove,
                     onNextMove: onNextMove,
@@ -1144,10 +1150,26 @@ class _SegmentBar extends ConsumerWidget {
   }
 }
 
+/// Exposes the actual Explorer navigation controls without remote providers.
+@visibleForTesting
+Widget explorerNavigationClusterForTesting({
+  required bool canGoForward,
+  bool? canStepForward,
+  required VoidCallback onNext,
+  required VoidCallback onLast,
+}) => _ExplorerNavigationCluster(
+  canGoBack: false,
+  canGoForward: canGoForward,
+  canStepForward: canStepForward,
+  onNextMove: onNext,
+  onLastMove: onLast,
+);
+
 class _ExplorerNavigationCluster extends StatelessWidget {
   const _ExplorerNavigationCluster({
     required this.canGoBack,
     required this.canGoForward,
+    this.canStepForward,
     this.onFirstMove,
     this.onPreviousMove,
     this.onNextMove,
@@ -1164,6 +1186,7 @@ class _ExplorerNavigationCluster extends StatelessWidget {
 
   final bool canGoBack;
   final bool canGoForward;
+  final bool? canStepForward;
   final VoidCallback? onFirstMove;
   final VoidCallback? onPreviousMove;
   final VoidCallback? onNextMove;
@@ -1218,7 +1241,7 @@ class _ExplorerNavigationCluster extends StatelessWidget {
           _RailIconButton(
             icon: Icons.chevron_right_rounded,
             tooltip: _tooltipWithShortcut('Next move', nextMoveShortcutLabel),
-            enabled: canGoForward,
+            enabled: canStepForward ?? canGoForward,
             onTap: onNextMove!,
           ),
           const SizedBox(width: 4),
