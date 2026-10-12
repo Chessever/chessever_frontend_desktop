@@ -170,6 +170,33 @@ void main() {
     expect(alpha.matchPoints, 2);
   });
 
+  test('team pair and round keys cannot collide through concatenation', () {
+    final rows = buildTeamStandings(
+      games: [
+        _game(
+          round: 'r1',
+          white: 'A 1',
+          whiteTeam: 'A',
+          black: 'BC 1',
+          blackTeam: 'BC',
+          status: GameStatus.whiteWins,
+        ),
+        _game(
+          round: 'r1',
+          white: 'AB 1',
+          whiteTeam: 'AB',
+          black: 'C 1',
+          blackTeam: 'C',
+          status: GameStatus.whiteWins,
+        ),
+      ],
+      playerStandings: const [],
+    );
+    expect(rows.length, 4);
+    expect(_row(rows, 'A').matchPoints, 2);
+    expect(_row(rows, 'AB').matchPoints, 2);
+  });
+
   test('a placeholder selection resolves to the computed standing', () {
     final rows = buildTeamStandings(
       games: _match('round-1', 'Alpha', 'Bravo', GameStatus.whiteWins, GameStatus.draw),

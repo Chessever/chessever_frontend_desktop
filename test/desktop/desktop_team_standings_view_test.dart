@@ -68,4 +68,66 @@ void main() {
     );
     expect(find.text('Carlsen'), findsNothing);
   });
+
+  TeamStandingModel row(String name, int rank, {int? officialRound}) =>
+      TeamStandingModel(
+        teamName: name,
+        rank: rank,
+        officialRound: officialRound,
+        matchPoints: 6,
+        gamePoints: 10.5,
+        matchesWon: 3,
+        matchesDrawn: 0,
+        matchesLost: 1,
+        boardsPlayed: 0,
+        players: const [],
+      );
+
+  Future<void> pumpTable(WidgetTester tester, List<TeamStandingModel> rows) {
+    return tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          teamStandingsProvider.overrideWith((ref) => AsyncValue.data(rows)),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 900,
+              height: 500,
+              child: DesktopTeamStandingsTable(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  testWidgets('official table names its round and keeps stored shared ranks', (
+    tester,
+  ) async {
+    await pumpTable(tester, [
+      row('India', 1, officialRound: 4),
+      row('Norway', 1, officialRound: 4),
+      row('Brazil', 3, officialRound: 4),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Official standings · after round 4'), findsOneWidget);
+    expect(find.text('Played'), findsOneWidget);
+    // Two teams share first place; the third row is 3, not its list position.
+    expect(find.text('1'), findsNWidgets(2));
+    expect(find.text('2'), findsNothing);
+    expect(find.text('3'), findsOneWidget);
+    expect(find.text('4'), findsNWidgets(3));
+    expect(find.text('3 · 0 · 1'), findsNWidgets(3));
+  });
+
+  testWidgets('computed table carries no official line', (tester) async {
+    await pumpTable(tester, [row('India', 1), row('Norway', 2)]);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('team-standings-official-line')), findsNothing);
+    expect(find.text('India'), findsOneWidget);
+    expect(find.text('Norway'), findsOneWidget);
+  });
 }

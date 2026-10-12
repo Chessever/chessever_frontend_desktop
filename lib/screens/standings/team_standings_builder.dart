@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/standings/team_standing_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
@@ -32,8 +34,8 @@ List<TeamStandingModel> buildTeamStandings({
     if (wTeam == null || wTeam.isEmpty || bTeam == null || bTeam.isEmpty) {
       continue;
     }
-    final pair = ([wTeam, bTeam]..sort()).join('');
-    final key = '${g.roundId}$pair';
+    final pair = [wTeam, bTeam]..sort();
+    final key = jsonEncode([g.roundId, ...pair]);
     final sides = matches.putIfAbsent(key, () => <String, _MatchSide>{});
     final wSide = sides.putIfAbsent(wTeam, () => _MatchSide());
     final bSide = sides.putIfAbsent(bTeam, () => _MatchSide());

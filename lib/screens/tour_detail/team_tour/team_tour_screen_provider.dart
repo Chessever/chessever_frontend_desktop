@@ -1,4 +1,5 @@
 import 'package:chessever/repository/supabase/tour/tour.dart';
+import 'package:chessever/screens/standings/official_team_standings.dart';
 import 'package:chessever/screens/standings/team_standing_model.dart';
 import 'package:chessever/screens/standings/team_standings_builder.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
@@ -108,11 +109,17 @@ final teamStandingsProvider =
     AutoDisposeProvider<AsyncValue<List<TeamStandingModel>>>((ref) {
       final playersAsync = ref.watch(playerTourScreenProvider);
       return playersAsync.whenData((players) {
+        final info = _selectedTourInfo(ref);
+        final official = buildOfficialTeamStandings(
+          info: info,
+          players: players,
+        );
+        if (official != null) return official;
         final games = _watchTeamGames(ref);
         return buildTeamStandings(
           games: games,
           playerStandings: players,
-          scoring: TeamScoringRules.fromTourInfo(_selectedTourInfo(ref)),
+          scoring: TeamScoringRules.fromTourInfo(info),
         );
       });
     });
@@ -133,10 +140,16 @@ final teamStandingsForTourProvider =
       }
 
       final playersAsync = ref.watch(tournamentRosterStandingsProvider(tourId));
-      final games = _watchTeamGamesForTour(ref, tourId);
-      final scoring = TeamScoringRules.fromTourInfo(
-        _tourInfoForTourId(ref, tourId),
+      final info = _tourInfoForTourId(ref, tourId);
+      // Same precedence as the Standings tab, so the rail and the tab never
+      // show two different tables for one event.
+      final official = buildOfficialTeamStandings(
+        info: info,
+        players: playersAsync.valueOrNull ?? const [],
       );
+      if (official != null) return AsyncValue.data(official);
+      final games = _watchTeamGamesForTour(ref, tourId);
+      final scoring = TeamScoringRules.fromTourInfo(info);
 
       if (playersAsync.hasValue) {
         return AsyncValue.data(
