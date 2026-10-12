@@ -87,6 +87,15 @@ void main() {
     (data['teams'] as List)[1]['matchPoints'] = -1;
     expect(buildOfficialTeamStandings(info: info(data), players: []), isNull);
   });
+  test('accepts a table scored 3-1-0 when the snapshot says so', () {
+    // Serbian Super League: three match points per win exceed 2 per round.
+    final data = snapshot();
+    (data['teams'] as List)[0]['matchPoints'] = 9;
+    expect(buildOfficialTeamStandings(info: info(data), players: []), isNull);
+    data['matchScoring'] = {'win': 3, 'draw': 1, 'loss': 0};
+    final rows = buildOfficialTeamStandings(info: info(data), players: []);
+    expect(rows!.first.matchPoints, 9);
+  });
   test('legacy tours keep their existing computed standings path', () {
     expect(
       buildOfficialTeamStandings(info: const TourInfo(), players: []),
