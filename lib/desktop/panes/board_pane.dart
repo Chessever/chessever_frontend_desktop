@@ -2311,6 +2311,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     final position = currentPly.position;
     final canBack = pointer.value.isNotEmpty;
     final canForward = _nextPointer(chessGame.value, pointer.value) != null;
+    final canStepForward = _nextManualPointer(chessGame.value, pointer.value) != null;
     // ---- Per-side clocks at the active pointer ---------------------
     // Walk the active line *backwards* once and pick up the most
     // recent `[%clk …]` annotation we find for each colour. Clock
@@ -2458,7 +2459,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         return;
       }
       final currentPointer = pointer.value;
-      final next = _nextPointer(chessGame.value, currentPointer);
+      final next = _nextManualPointer(chessGame.value, currentPointer);
       if (next == null) return;
       final options = resolveVariationForkOptions(
         game: chessGame.value,
@@ -2486,6 +2487,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       // the tree, in which case the saved pointer is stale and we fall
       // back to a plain step so the key press still feels live.
       if (!_isPointerValid(chessGame.value, picked)) {
+        // A refreshed tree may now end at the current variation. A manual
+        // fallback must not use replay's parent-line continuation in that case.
+        if (_nextManualPointer(chessGame.value, pointer.value) == null) return;
         goNext();
         return;
       }
@@ -5297,6 +5301,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                       MoveNavigationBar(
                         canGoBack: canBack,
                         canGoForward: canForward,
+                        canStepForward: canStepForward,
                         onFirst: goFirstManually,
                         onPrevious: goPrevManually,
                         onNext: () => unawaited(goNextManually()),
@@ -5442,6 +5447,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                       onNotationJumpToTip: goLast,
                       canGoBack: canBack,
                       canGoForward: canForward,
+                      canStepForward: canStepForward,
                       onFirstMove: goFirstManually,
                       onPreviousMove: goPrevManually,
                       onNextMove: () => unawaited(goNextManually()),
@@ -7555,6 +7561,28 @@ ChessMovePointer? _previousPointer(ChessMovePointer pointer) {
   }
 
   return const <int>[];
+}
+
+/// Exposes the production resolver used by manual forward and its button state.
+@visibleForTesting
+ChessMovePointer? manualBoardForwardPointerForTesting(
+  ChessGame game,
+  ChessMovePointer pointer,
+) => _nextManualPointer(game, pointer);
+
+@visibleForTesting
+ChessMovePointer? traversalBoardForwardPointerForTesting(
+  ChessGame game,
+  ChessMovePointer pointer,
+) => _nextPointer(game, pointer);
+
+// Separate the manual-forward policy from cross-line replay/navigation.
+ChessMovePointer? _nextManualPointer(ChessGame game, ChessMovePointer pointer) {
+  if (pointer.length >= 3) {
+    final line = _lineAt(game, pointer);
+    if (line == null || pointer.last + 1 >= line.length) return null;
+  }
+  return _nextPointer(game, pointer);
 }
 
 /// Step one move forward in the tree, walking up through parent lines
