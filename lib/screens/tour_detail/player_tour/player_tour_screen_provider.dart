@@ -1,3 +1,4 @@
+import 'package:chessever/screens/standings/player_standing_sections_provider.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -366,6 +367,24 @@ final tournamentRosterStandingsProvider = StreamProvider.autoDispose
         return Stream.value(const <PlayerStandingModel>[]);
       }
 
+      final officialInfo = ref.watch(
+        tourDetailScreenProvider.select((value) {
+          return value.valueOrNull?.tours
+              .where((item) => item.tour.id == tourId)
+              .firstOrNull
+              ?.tour
+              .info;
+        }),
+      );
+      final selectedSectionId = ref.watch(
+        selectedPlayerStandingSectionProvider(tourId),
+      );
+      final section = selectedOfficialPlayerSection(
+        officialInfo?.playerStandingSections ?? const [],
+        selectedSectionId,
+      );
+      final authoritative =
+          section != null || officialInfo?.standingsSource == 'chess-results';
       final repository = ref.read(tourRepositoryProvider);
       final refreshInterval = ref.read(tournamentRosterRefreshIntervalProvider);
       final retryDelay = ref.read(tournamentRosterRetryDelayProvider);
@@ -388,6 +407,13 @@ final tournamentRosterStandingsProvider = StreamProvider.autoDispose
       }) {
         if (disposed) return;
         final rows = standings.toList(growable: false);
+        if (authoritative) {
+          if (source == _StandingSnapshotSource.roster) {
+            controller.add(rows);
+          }
+          return;
+        }
+
         if (source == _StandingSnapshotSource.roster) {
           rosterAuthoritativelyEmpty = rows.isEmpty;
           if (rosterAuthoritativelyEmpty) {
@@ -411,12 +437,17 @@ final tournamentRosterStandingsProvider = StreamProvider.autoDispose
       Future<void> performRefresh() async {
         final generation = listenerGeneration;
         try {
-          final players = await repository.getTourPlayers(tourId);
+          final players =
+              section?.players ?? await repository.getTourPlayers(tourId);
           if (disposed || !hasListeners || generation != listenerGeneration) {
             return;
           }
           emit(
-            players.map(PlayerStandingModel.fromPlayer),
+            players.map(
+              (player) => PlayerStandingModel.fromPlayer(
+                player,
+              ).copyWith(overallRank: player.rank),
+            ),
             source: _StandingSnapshotSource.roster,
           );
           schedule(refreshInterval);
@@ -775,6 +806,24 @@ class PlayerTourScreenNotifier
       allPlayers.addAll(tourModel.tour.players);
     }
 
+    final sections =
+        relatedTours.length == 1
+            ? relatedTours.first.tour.info.playerStandingSections
+            : const <OfficialPlayerSection>[];
+    final section = selectedOfficialPlayerSection(
+      sections,
+      ref.watch(selectedPlayerStandingSectionProvider(aboutTourModel.id)),
+    );
+    if (section != null) {
+      allPlayers
+        ..clear()
+        ..addAll(section.players);
+    }
+    final scopedGames =
+        section == null
+            ? allGames
+            : scopeOfficialSectionGames(section, allGames);
+
     // Trust the server-side standings order only when scope is a single tour
     // that the data hub has flagged as canonically sorted (currently from
     // chess-results.com). Multi-tour pagination categories (e.g. "Boards 1-66"
@@ -782,11 +831,11 @@ class PlayerTourScreenNotifier
     // that case, fall back to client-side sort.
     final useExternalOrder =
         relatedTours.length == 1 &&
-        relatedTours.first.tour.usesExternalStandings;
+        (section != null || relatedTours.first.tour.usesExternalStandings);
 
     final builtStandings = await _buildStandingsFromData(
       tournamentPlayers: allPlayers,
-      gamesTourModels: allGames,
+      gamesTourModels: scopedGames,
       useExternalOrder: useExternalOrder,
       singleTourScope: relatedTours.length == 1,
     );
@@ -1183,7 +1232,7 @@ class PlayerTourScreenNotifier
       hasUniversalRank: hasUniversalRank,
       hasStaleExternalScores: hasStaleExternalScores,
     );
-    if (preserveExternalOrder) {
+    if (preserveExternalOrder && !useExternalOrder) {
       enrichedPlayers.sort((a, b) {
         final aRank = a.rank ?? 1 << 30;
         final bRank = b.rank ?? 1 << 30;
@@ -1194,7 +1243,7 @@ class PlayerTourScreenNotifier
         if (bScore != aScore) return bScore.compareTo(aScore);
         return (b.rating ?? 0).compareTo(a.rating ?? 0);
       });
-    } else {
+    } else if (!preserveExternalOrder) {
       enrichedPlayers.sort((a, b) {
         final aScore = a.score ?? 0.0;
         final bScore = b.score ?? 0.0;

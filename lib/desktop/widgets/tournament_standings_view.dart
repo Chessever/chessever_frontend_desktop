@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/widgets/player_standing_section_select.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -453,6 +455,14 @@ class TournamentStandingsView extends HookConsumerWidget {
           for (final tourId in standingsScope?.tourIds ?? const <String>{})
             tourId: ref.watch(tournamentRosterStandingsProvider(tourId)),
         };
+    final detail = ref.watch(tourDetailScreenProvider).valueOrNull;
+    final selectedTourId = detail?.aboutTourModel.id ?? '';
+    final selectedTour =
+        detail?.tours
+            .where((item) => item.tour.id == selectedTourId)
+            .firstOrNull
+            ?.tour;
+    final sections = selectedTour?.info.playerStandingSections ?? const [];
     // Source of truth lives in the provider so the search text restores
     // after the tab.kind flip to Board and back. The controller is local
     // because TextEditingController itself can't survive widget disposal,
@@ -475,6 +485,11 @@ class TournamentStandingsView extends HookConsumerWidget {
 
     return Column(
       children: [
+        if (sections.isNotEmpty)
+          PlayerStandingSectionSelect(
+            tourId: selectedTourId,
+            sections: sections,
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 4),
           child: DesktopSearchField(
