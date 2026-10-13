@@ -564,9 +564,9 @@ void main() {
   });
 
   group('shell registration', () {
-    test('Botvinnik is a sidebar action under Feedback, not a route', () {
+    test('Botvinnik follows Inbox in the sidebar, without a route', () {
       final labels = debugDesktopSidebarLabelsInOrder();
-      expect(labels[labels.indexOf('Feedback') + 1], 'Botvinnik');
+      expect(labels[labels.indexOf('Inbox') + 1], 'Botvinnik');
       expect(debugDesktopSidebarPaneForLabel('Botvinnik'), isNull);
       expect(
         desktopMainRoutes.map((route) => route.label),
