@@ -24,6 +24,7 @@ import 'package:chessever/desktop/services/local_pgn_atomic_write.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/player_identity_name.dart';
 import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
@@ -9511,9 +9512,16 @@ String? _localSideIdentityClause(
     parameters.addAll(normalizedFideIds);
   }
   if (normalizedNames.isNotEmpty) {
+    final normalizedName = playerIdentityNameSql(
+      "json_extract(g.headers_json, '\$.$jsonPrefix')",
+    );
+    // A known FIDE scope permits name fallback only on ID-less rows; a
+    // matching FIDE header is already covered by the identity clause above.
+    final idless = normalizedFideIds.isEmpty
+        ? ''
+        : " AND TRIM(COALESCE(json_extract(g.headers_json, '\$.${jsonPrefix}FideId'), json_extract(g.headers_json, '\$.${jsonPrefix}FideID'), '')) = ''";
     clauses.add(
-      "LOWER(TRIM(COALESCE(json_extract(g.headers_json, '\$.$jsonPrefix'), ''))) "
-      'IN (${_sqlPlaceholders(normalizedNames.length)})',
+      '($normalizedName IN (${_sqlPlaceholders(normalizedNames.length)})$idless)',
     );
     parameters.addAll(normalizedNames);
   }
@@ -9747,9 +9755,8 @@ Set<String> _normalizedPlayerNames(Iterable<Object?> values) {
 }
 
 String? _normalizePlayerName(String? value) {
-  final raw = value?.trim().toLowerCase();
-  if (raw == null || raw.isEmpty || raw == '?') return null;
-  return raw.replaceAll(RegExp(r'\s+'), ' ');
+  final key = playerIdentityNameKey(value);
+  return key.isEmpty ? null : key;
 }
 
 String? _localGameTimeControlCategory({
