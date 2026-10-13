@@ -17,6 +17,56 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  for (final mode in NotationLayoutMode.values) {
+    testWidgets('large PGN starts fully expanded in ${mode.name}', (
+      tester,
+    ) async {
+      final cycle = List.generate(
+        80,
+        (i) => '${i * 2 + 4}. Nf3 Nc6 ${i * 2 + 5}. Ng1 Nb8',
+      ).join(' ');
+      final game = ChessGame.fromPgn(
+        'large-expanded-default',
+        '[Result "*"]\n\n1. e4 e5 (1... c5 2. Nf3 Nc6 (2... d6 3. d4 cxd4) 3. Ng1 Nb8 $cycle) 2. Nf3 *',
+      );
+      final layout = ValueNotifier(mode);
+      final collapse = NotationVariationCollapseController();
+      final jumps = <ChessMovePointer>[];
+      addTearDown(layout.dispose);
+      final timer = Stopwatch()..start();
+      await tester.pumpWidget(
+        _host(
+          game: game,
+          onJump: jumps.add,
+          activePointer: const [],
+          width: 780,
+          height: 560,
+          layoutModeController: layout,
+          variationCollapseController: collapse,
+        ),
+      );
+      await tester.pumpAndSettle();
+      timer.stop();
+      debugPrint(
+        'LARGE_NOTATION_SMOKE ${mode.name} moves>300 elapsedMs=${timer.elapsedMilliseconds}',
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.text('c5', findRichText: true), findsOneWidget);
+      expect(find.text('d6', findRichText: true), findsOneWidget);
+      expect(find.text('d4', findRichText: true), findsOneWidget);
+      await tester.tap(find.text('d6', findRichText: true));
+      await tester.pump();
+      expect(jumps, isNotEmpty);
+      expect(jumps.single.length, greaterThan(3));
+      collapse.collapseAll();
+      await tester.pumpAndSettle();
+      expect(find.text('d6', findRichText: true), findsNothing);
+      collapse.expandAll();
+      await tester.pumpAndSettle();
+      expect(find.text('d6', findRichText: true), findsOneWidget);
+    });
+  }
+
   testWidgets('canonical correction renders no displaced feed variation', (
     tester,
   ) async {
