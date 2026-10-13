@@ -99,18 +99,32 @@ class DesktopTeamStandingsTable extends ConsumerWidget {
             ),
           );
         }
+        // Official rows all carry the round the organizer's table was
+        // published after; computed rows carry none.
+        final officialRound = teams.first.officialRound;
+        final lead = officialRound == null ? 1 : 2;
         return ListView.separated(
           physics: const DesktopScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-          itemCount: teams.length + 1,
+          itemCount: teams.length + lead,
           separatorBuilder:
               (_, index) => Divider(
-                color: index == 0 ? Colors.transparent : kDividerColor,
+                color: index < lead ? Colors.transparent : kDividerColor,
                 height: 1,
               ),
           itemBuilder: (context, index) {
-            if (index == 0) return const _TeamHeaderRow();
-            final team = teams[index - 1];
+            if (officialRound != null && index == 0) {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+                child: Text(
+                  'Official standings · after round $officialRound',
+                  key: const Key('team-standings-official-line'),
+                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+                ),
+              );
+            }
+            if (index == lead - 1) return const _TeamHeaderRow();
+            final team = teams[index - lead];
             return _TeamRow(
               team: team,
               onOpen:
@@ -164,6 +178,7 @@ class _TeamHeaderRow extends StatelessWidget {
         children: [
           SizedBox(width: 44, child: Text('#', style: style)),
           Expanded(child: Text('Team', style: style)),
+          _Cell('Played', style: style),
           _Cell('MP', style: style),
           _Cell('Board pts', style: style, width: 88),
           _Cell('W · D · L', style: style, width: 96),
@@ -230,6 +245,7 @@ class _TeamRowState extends State<_TeamRow> {
                     ),
                   ),
                 ),
+                _Cell('${team.matchesPlayed}', style: numberStyle),
                 _Cell(
                   '${team.matchPoints}',
                   style: const TextStyle(
@@ -241,7 +257,12 @@ class _TeamRowState extends State<_TeamRow> {
                 ),
                 _Cell(team.gamePointsLabel, style: numberStyle, width: 88),
                 _Cell(team.recordLabel, style: numberStyle, width: 96),
-                _Cell('${team.players.length}', style: numberStyle),
+                // An official row only lists players whose roster team name
+                // matches the organizer's spelling; no match is unknown, not 0.
+                _Cell(
+                  team.players.isEmpty ? '—' : '${team.players.length}',
+                  style: numberStyle,
+                ),
               ],
             ),
           ),

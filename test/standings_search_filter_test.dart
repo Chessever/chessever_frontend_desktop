@@ -21,6 +21,36 @@ PlayerStandingModel _player({
 }
 
 void main() {
+  test('keeps published shared ranks when assigning display ranks', () {
+    final ranked = assignOverallRanks([
+      PlayerStandingModel(
+        countryCode: '',
+        name: 'First',
+        score: 0,
+        scoreChange: 0,
+        matchScore: '0 / 0',
+        overallRank: 1,
+      ),
+      PlayerStandingModel(
+        countryCode: '',
+        name: 'Also first',
+        score: 0,
+        scoreChange: 0,
+        matchScore: '0 / 0',
+        overallRank: 1,
+      ),
+      PlayerStandingModel(
+        countryCode: '',
+        name: 'Third',
+        score: 0,
+        scoreChange: 0,
+        matchScore: '0 / 0',
+        overallRank: 3,
+      ),
+    ]);
+    expect(ranked.map((p) => p.overallRank), [1, 1, 3]);
+  });
+
   group('standings FIDE enrichment', () {
     test('waits for FIDE data only when loaded games can use it', () {
       expect(
@@ -163,6 +193,34 @@ void main() {
       expect(resolved.played, 4);
     });
 
+    test('keeps the published score when a forfeit adds a finished game', () {
+      // Slovenian league 2026, Subelj: chess-results lists 3.5 from 5; the
+      // board feed adds an unplayed forfeit win the player list leaves out.
+      final resolved = resolveStandingScore(
+        sourceScore: 3.5,
+        sourcePlayed: 5,
+        calculatedScore: 4.5,
+        calculatedPlayed: 6,
+        officialRow: true,
+      );
+
+      expect(resolved.score, 3.5);
+      expect(resolved.played, 5);
+    });
+
+    test('preserves zero games in a published row', () {
+      final resolved = resolveStandingScore(
+        sourceScore: 3.5,
+        sourcePlayed: 0,
+        calculatedScore: 3.5,
+        calculatedPlayed: 5,
+        officialRow: true,
+      );
+
+      expect(resolved.score, 3.5);
+      expect(resolved.played, 0);
+    });
+
     test('uses game-derived score when no server score exists', () {
       final resolved = resolveStandingScore(
         sourceScore: null,
@@ -173,6 +231,29 @@ void main() {
 
       expect(resolved.score, 1.5);
       expect(resolved.played, 2);
+    });
+  });
+
+  group('official standing rows', () {
+    test('a ranked, scored row of a published table is official', () {
+      expect(
+        isOfficialStandingRow(useExternalOrder: true, rank: 3, score: 4.5),
+        isTrue,
+      );
+    });
+
+    test('a player the published table does not list is not', () {
+      expect(
+        isOfficialStandingRow(useExternalOrder: true, rank: null, score: 3),
+        isFalse,
+      );
+    });
+
+    test('a Lichess-ranked row keeps the stale guard', () {
+      expect(
+        isOfficialStandingRow(useExternalOrder: false, rank: 3, score: 4.5),
+        isFalse,
+      );
     });
   });
 

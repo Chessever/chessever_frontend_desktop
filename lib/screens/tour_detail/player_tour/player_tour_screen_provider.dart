@@ -537,7 +537,7 @@ List<PlayerStandingModel> assignOverallRanks(
 ) {
   return [
     for (var i = 0; i < standings.length; i++)
-      standings[i].copyWith(overallRank: i + 1),
+      standings[i].copyWith(overallRank: standings[i].overallRank ?? i + 1),
   ];
 }
 
@@ -587,16 +587,25 @@ bool _matchesStandingSearch(String value, String normalizedQuery) {
 ///   whenever the source value is present and not demonstrably stale, surface
 ///   it verbatim. "Stale" = the loaded game feed proves more finished games
 ///   than the source row claims; in that case we trust the live calculation.
+///
+///   A row the organizer's published table ranks ([officialRow]) is never
+///   stale by that measure: chess-results leaves forfeits out of a team
+///   event's player list, and name matching can hand one player a namesake's
+///   games, so "more finished games" does not mean a newer score there.
 @visibleForTesting
 ({double? score, int played}) resolveStandingScore({
   required double? sourceScore,
   required int sourcePlayed,
   required double calculatedScore,
   required int calculatedPlayed,
+  bool officialRow = false,
 }) {
   // No source score: trust the live calculation.
   if (sourceScore == null) {
     return (score: calculatedScore, played: calculatedPlayed);
+  }
+  if (officialRow) {
+    return (score: sourceScore, played: sourcePlayed);
   }
   // Stale-source guard (preserved from main): when the loaded game feed proves
   // more finished games than the source row claims, the source score is lagging
@@ -615,6 +624,16 @@ bool _matchesStandingSearch(String value, String normalizedQuery) {
     preserveSourceScore: true,
   );
 }
+
+/// Whether a roster row carries the organizer's own rank and score, i.e. the
+/// tour's standings come from the published table and the table lists this
+/// player.
+@visibleForTesting
+bool isOfficialStandingRow({
+  required bool useExternalOrder,
+  required int? rank,
+  required double? score,
+}) => useExternalOrder && rank != null && score != null;
 
 /// Whether to skip the client-side resort and trust the server-supplied order.
 ///
@@ -1069,10 +1088,22 @@ class PlayerTourScreenNotifier
       //   - (custom-scoring) an external-order tour ships no source score for a
       //     player yet the feed has finished games, so the source order can't
       //     reflect them.
-      if ((player.score != null && gamesPlayed > player.played) ||
-          (useExternalOrder &&
-              player.score == null &&
-              gamesPlayed > player.played)) {
+      //
+      // Neither applies to a published table (`useExternalOrder`) row by row:
+      // a ranked row is the organizer's number, and a row the table does not
+      // list sorts after it whatever its games say.
+      final officialRow = isOfficialStandingRow(
+        useExternalOrder: useExternalOrder,
+        rank: player.rank,
+        score: player.score,
+      );
+      final outsideOfficialTable = useExternalOrder && player.rank == null;
+      if (!officialRow &&
+          !outsideOfficialTable &&
+          ((player.score != null && gamesPlayed > player.played) ||
+              (useExternalOrder &&
+                  player.score == null &&
+                  gamesPlayed > player.played))) {
         hasStaleExternalScores = true;
       }
 
@@ -1081,6 +1112,7 @@ class PlayerTourScreenNotifier
         sourcePlayed: player.played,
         calculatedScore: calculatedScore,
         calculatedPlayed: gamesPlayed,
+        officialRow: officialRow,
       );
 
       enrichedPlayers.add(
@@ -1177,7 +1209,12 @@ class PlayerTourScreenNotifier
     }
 
     return enrichedPlayers
-        .map((player) => PlayerStandingModel.fromPlayer(player))
+        .map(
+          (player) => PlayerStandingModel.fromPlayer(player).copyWith(
+            overallRank:
+                useExternalOrder && singleTourScope ? player.rank : null,
+          ),
+        )
         .toList();
   }
 

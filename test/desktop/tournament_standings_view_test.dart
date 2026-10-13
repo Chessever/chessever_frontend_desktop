@@ -21,6 +21,7 @@ import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/standings/score_card_screen.dart'
     show selectedPlayerProvider, scoreCardHasEventContextProvider;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/federation_flag.dart';
@@ -180,6 +181,23 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         _mergedGamesSourcesStateProvider.overrideWith((ref) => dataSources),
+        completeGamesTourProvider('event-1').overrideWith((ref) {
+          return ref
+              .watch(_mergedGamesSourcesStateProvider)
+              .gamesTour
+              .whenData(
+                (screen) => [
+                  for (final model in screen.gamesTourModels)
+                    Games(
+                      id: model.gameId,
+                      roundId: model.roundId,
+                      roundSlug: model.roundSlug ?? model.roundId,
+                      tourId: 'event-1',
+                      tourSlug: 'event-1',
+                    ),
+                ],
+              );
+        }),
         mergedTournamentGamesSourceProvider.overrideWith(
           (ref) => ref.watch(_mergedGamesSourcesStateProvider),
         ),

@@ -77,9 +77,21 @@ void main() {
     final rows = buildTeamStandings(
       games: [
         // Round 1 finished: Alpha wins board 1 and draws board 2.
-        ..._match('round-1', 'Alpha', 'Bravo', GameStatus.whiteWins, GameStatus.draw),
+        ..._match(
+          'round-1',
+          'Alpha',
+          'Bravo',
+          GameStatus.whiteWins,
+          GameStatus.draw,
+        ),
         // Round 2 still running: Alpha leads on board 1, board 2 ongoing.
-        ..._match('round-2', 'Alpha', 'Charlie', GameStatus.whiteWins, GameStatus.ongoing),
+        ..._match(
+          'round-2',
+          'Alpha',
+          'Charlie',
+          GameStatus.whiteWins,
+          GameStatus.ongoing,
+        ),
       ],
       playerStandings: const [],
     );
@@ -88,16 +100,29 @@ void main() {
     expect(alpha.matchPoints, 2, reason: 'only round 1 is complete');
     expect(alpha.gamePoints, 1.5 + 1, reason: 'finished boards still count');
     expect(alpha.boardsPlayed, 3);
-    expect((alpha.matchesWon, alpha.matchesDrawn, alpha.matchesLost), (1, 0, 0));
+    expect(
+      (alpha.matchesWon, alpha.matchesDrawn, alpha.matchesLost),
+      (1, 0, 0),
+    );
 
     final charlie = _row(rows, 'Charlie');
     expect(charlie.matchPoints, 0);
-    expect((charlie.matchesWon, charlie.matchesDrawn, charlie.matchesLost), (0, 0, 0));
+    expect(
+      (charlie.matchesWon, charlie.matchesDrawn, charlie.matchesLost),
+      (0, 0, 0),
+    );
 
-    final round2 = buildTeamMatches(
-      games: _match('round-2', 'Alpha', 'Charlie', GameStatus.whiteWins, GameStatus.ongoing),
-      teamName: 'Alpha',
-    ).single;
+    final round2 =
+        buildTeamMatches(
+          games: _match(
+            'round-2',
+            'Alpha',
+            'Charlie',
+            GameStatus.whiteWins,
+            GameStatus.ongoing,
+          ),
+          teamName: 'Alpha',
+        ).single;
     expect(round2.complete, isFalse);
     expect(round2.result, TeamMatchResult.ongoing);
     expect(round2.matchPoints, 0);
@@ -107,10 +132,28 @@ void main() {
     final rows = buildTeamStandings(
       games: [
         // Delta and Echo both win their match (2 MP each); Delta by more.
-        ..._match('round-1', 'Delta', 'Foxtrot', GameStatus.whiteWins, GameStatus.blackWins),
-        ..._match('round-1', 'Echo', 'Golf', GameStatus.whiteWins, GameStatus.draw),
+        ..._match(
+          'round-1',
+          'Delta',
+          'Foxtrot',
+          GameStatus.whiteWins,
+          GameStatus.blackWins,
+        ),
+        ..._match(
+          'round-1',
+          'Echo',
+          'Golf',
+          GameStatus.whiteWins,
+          GameStatus.draw,
+        ),
         // Bravo and Alpha draw each other: equal MP and equal GP.
-        ..._match('round-1', 'Bravo', 'Alpha', GameStatus.draw, GameStatus.draw),
+        ..._match(
+          'round-1',
+          'Bravo',
+          'Alpha',
+          GameStatus.draw,
+          GameStatus.draw,
+        ),
       ],
       playerStandings: const [],
     );
@@ -138,7 +181,13 @@ void main() {
     final rows = buildTeamStandings(
       games: [
         // Hotel sits out round 1; Alpha beats Bravo.
-        ..._match('round-1', 'Alpha', 'Bravo', GameStatus.whiteWins, GameStatus.blackWins),
+        ..._match(
+          'round-1',
+          'Alpha',
+          'Bravo',
+          GameStatus.whiteWins,
+          GameStatus.blackWins,
+        ),
       ],
       playerStandings: const [rosterOnly],
     );
@@ -153,7 +202,13 @@ void main() {
 
   test('a match is keyed by round and the unordered team pair', () {
     final games = [
-      ..._match('round-1', 'Alpha', 'Bravo', GameStatus.whiteWins, GameStatus.whiteWins),
+      ..._match(
+        'round-1',
+        'Alpha',
+        'Bravo',
+        GameStatus.whiteWins,
+        GameStatus.whiteWins,
+      ),
       ..._match('round-3', 'Bravo', 'Alpha', GameStatus.draw, GameStatus.draw),
     ];
     final matches = buildTeamMatches(games: games, teamName: 'Alpha');
@@ -164,15 +219,52 @@ void main() {
     final rows = buildTeamStandings(games: games, playerStandings: const []);
     final alpha = _row(rows, 'Alpha');
     expect(rows.map((row) => row.teamName).toSet(), {'Alpha', 'Bravo'});
-    expect((alpha.matchesWon, alpha.matchesDrawn, alpha.matchesLost), (0, 2, 0),
-        reason: 'round 1 is a 1-1 split and round 3 is a 1-1 draw: two '
-            'separate matches, not one merged pairing');
+    expect(
+      (alpha.matchesWon, alpha.matchesDrawn, alpha.matchesLost),
+      (0, 2, 0),
+      reason:
+          'round 1 is a 1-1 split and round 3 is a 1-1 draw: two '
+          'separate matches, not one merged pairing',
+    );
     expect(alpha.matchPoints, 2);
+  });
+
+  test('team pair and round keys cannot collide through concatenation', () {
+    final rows = buildTeamStandings(
+      games: [
+        _game(
+          round: 'r1',
+          white: 'A 1',
+          whiteTeam: 'A',
+          black: 'BC 1',
+          blackTeam: 'BC',
+          status: GameStatus.whiteWins,
+        ),
+        _game(
+          round: 'r1',
+          white: 'AB 1',
+          whiteTeam: 'AB',
+          black: 'C 1',
+          blackTeam: 'C',
+          status: GameStatus.whiteWins,
+        ),
+      ],
+      playerStandings: const [],
+    );
+    expect(rows.length, 4);
+    expect(_row(rows, 'A').matchPoints, 2);
+    expect(_row(rows, 'AB').matchPoints, 2);
   });
 
   test('a placeholder selection resolves to the computed standing', () {
     final rows = buildTeamStandings(
-      games: _match('round-1', 'Alpha', 'Bravo', GameStatus.whiteWins, GameStatus.draw),
+      games: _match(
+        'round-1',
+        'Alpha',
+        'Bravo',
+        GameStatus.whiteWins,
+        GameStatus.draw,
+      ),
       playerStandings: const [],
     );
     const placeholder = TeamStandingModel(

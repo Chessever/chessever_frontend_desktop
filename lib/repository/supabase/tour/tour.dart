@@ -12,6 +12,7 @@ class TournamentPlayer {
   final double? score;
   final int? performance;
   final String? team;
+
   /// Lichess-supplied 1-based standings position. Present whenever the
   /// broadcast feed has computed an official ranking (including custom
   /// scoring + official tiebreaks like DE/SB/KS that we cannot reproduce
@@ -355,6 +356,9 @@ class TourInfo {
   /// ChessEver `tours.info.teamScoring` — board points plus match points.
   final Map<String, dynamic>? teamScoring;
 
+  /// Complete organizer table with source, round and fetch timestamp.
+  final Map<String, dynamic>? officialTeamStandings;
+
   const TourInfo({
     this.tc,
     this.fideTc,
@@ -367,6 +371,7 @@ class TourInfo {
     this.teamTable,
     this.standingsSource,
     this.standingsUpdatedAt,
+    this.officialTeamStandings,
     this.customScoring,
     this.teamScoring,
   });
@@ -384,6 +389,7 @@ class TourInfo {
       teamTable: json['teamTable'] as bool?,
       standingsSource: json['standingsSource'] as String?,
       standingsUpdatedAt: _parseTimestamp(json['standingsUpdatedAt']),
+      officialTeamStandings: _asStringKeyMap(json['officialTeamStandings']),
       customScoring: _asStringKeyMap(json['customScoring']),
       teamScoring: _asStringKeyMap(json['teamScoring']),
     );
@@ -414,6 +420,8 @@ class TourInfo {
       if (standingsSource != null) 'standingsSource': standingsSource,
       if (standingsUpdatedAt != null)
         'standingsUpdatedAt': standingsUpdatedAt!.toIso8601String(),
+      if (officialTeamStandings != null)
+        'officialTeamStandings': officialTeamStandings,
       if (customScoring != null) 'customScoring': customScoring,
       if (teamScoring != null) 'teamScoring': teamScoring,
     };
