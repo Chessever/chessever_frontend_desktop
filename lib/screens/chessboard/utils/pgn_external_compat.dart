@@ -24,10 +24,10 @@ import 'package:chessever/screens/chessboard/utils/chessever_classification_head
 /// * maps every ChessEver classification NAG onto the nearest **standard** NAG
 ///   (see `kExternalNagForClassification`) and carries the exact class in the
 ///   private `[ChessEverClassification "…"]` **header tag**
-///   (`kChesseverClassificationHeaderTag`) for restoration when pasted back
-///   into ChessEver; target-app metadata display must be verified separately;
-/// * omits known CBH conversion archive/diagnostic headers from external copies
-///   without changing their native/local/cloud representation;
+///   (`kChesseverClassificationHeaderTag`), which restores the exact class
+///   when the copy is pasted back into ChessEver;
+/// * omits the archive/diagnostic headers written by the CBH converter
+///   (`_converterArchiveHeaderTags`); native, local and cloud PGN keep them;
 /// * drops the whole `$240`–`$248` block from the movetext;
 /// * wraps the movetext at [kExternalPgnColumns] with intact move numbering;
 /// * terminates the game with its Result token and a trailing newline.

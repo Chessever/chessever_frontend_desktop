@@ -115,9 +115,8 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
   int _sourceIndex = 0;
   PlayerStatsWindow _window = PlayerStatsWindow.all;
 
-  /// null = All; otherwise canonical category. Unset until user or source pick.
-  String? _timeControlOverride;
-  bool _userPickedTimeControl = false;
+  /// null = All (the complete source); otherwise canonical category.
+  String? _timeControl;
   PlayerStatsOutcomeFilter _outcome = PlayerStatsOutcomeFilter.all;
   String? _playerColor; // 'w' | 'b' | null
 
@@ -137,9 +136,8 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
     }
     final index = _sourceIndex.clamp(0, sources.length - 1);
     final source = sources[index];
-    // Start from the complete source; narrowing requires an explicit choice.
-    // The source preference still selects the rating ladder, not game scope.
-    final timeControl = _userPickedTimeControl ? _timeControlOverride : null;
+    // The source preference selects the rating ladder, not game scope.
+    final timeControl = _timeControl;
     final request = PlayerStatsRequest(
       databasePath: source.path,
       aliases: widget.aliases,
@@ -165,19 +163,13 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
       onSource: (i) {
         setState(() {
           _sourceIndex = i;
-          // Switching source resets to that source's default ladder.
-          _userPickedTimeControl = false;
-          _timeControlOverride = null;
+          _timeControl = null;
           _outcome = PlayerStatsOutcomeFilter.all;
           _playerColor = null;
         });
       },
       onWindow: (w) => setState(() => _window = w),
-      onTimeControl:
-          (tc) => setState(() {
-            _userPickedTimeControl = true;
-            _timeControlOverride = tc;
-          }),
+      onTimeControl: (tc) => setState(() => _timeControl = tc),
     );
 
     return async.when(
@@ -226,8 +218,7 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
               onSecondaryAction:
                   timeControl != null || _window != PlayerStatsWindow.all
                       ? () => setState(() {
-                        _userPickedTimeControl = true;
-                        _timeControlOverride = null; // All TCs
+                        _timeControl = null;
                         _window = PlayerStatsWindow.all;
                         _outcome = PlayerStatsOutcomeFilter.all;
                         _playerColor = null;
@@ -711,7 +702,8 @@ class _HeroStripe extends StatelessWidget {
         accent: kPrimaryColor,
         value: _formatInt(snapshot.games),
         label: 'Games analyzed',
-        sub: '${_formatInt(snapshot.games)} of ${_formatInt(sourceGameCount)} games',
+        sub:
+            '${_formatInt(snapshot.games)} of ${_formatInt(sourceGameCount)} games',
       ),
       _StatCard(
         icon: Icons.emoji_events_outlined,

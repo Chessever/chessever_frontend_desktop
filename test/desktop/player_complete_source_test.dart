@@ -18,8 +18,8 @@ void main() {
       await file.writeAsString(_sixGames());
       final stats = await PlayerStatsRepository().computePlayerStats(
         databasePath: file.path,
-        aliases: const ['Aarav Karthik'],
-        playerFideId: '39935140',
+        aliases: const ['Elise Moreau'],
+        playerFideId: '99999901',
       );
       expect(stats.games, 6);
       expect(stats.overall.wins, 1);
@@ -41,8 +41,8 @@ void main() {
       await file.writeAsString(_sixGames());
       final source = await PlayerPgnCatalog.instance.load(file.path);
       const criteria = PlayerOpeningTreeFilterCriteria(
-        playerFideIds: ['39935140'],
-        playerNames: ['Aarav Karthik'],
+        playerFideIds: ['99999901'],
+        playerNames: ['Elise Moreau'],
       );
       final matched = source.games.where((g) {
         final m = g.game.metadata;
@@ -79,8 +79,8 @@ void main() {
             (g) => localChessGameMatchesFilter(
               g,
               filter,
-              playerFideId: '39935140',
-              playerAliases: const ['Aarav Karthik'],
+              playerFideId: '99999901',
+              playerAliases: const ['Elise Moreau'],
             ),
           ),
           hasLength(entry.value),
@@ -88,27 +88,6 @@ void main() {
         );
       }
     },
-  );
-
-  final actual = Platform.environment['CHESSEVER_SIX_GAME_PGN'];
-  test(
-    'actual reported source computes all six games without rewriting it',
-    () async {
-      final file = File(actual!);
-      final before = await file.readAsBytes();
-      final stats = await PlayerStatsRepository().computePlayerStats(
-        databasePath: actual,
-        aliases: const ['Aarav Karthik'],
-        playerFideId: '39935140',
-      );
-      expect(stats.games, 6);
-      expect(stats.overall.wins, 1);
-      expect(stats.overall.draws, 3);
-      expect(stats.overall.losses, 2);
-      expect(await file.readAsBytes(), before);
-    },
-    skip:
-        actual == null ? 'Set CHESSEVER_SIX_GAME_PGN for private input' : false,
   );
 }
 
@@ -121,10 +100,10 @@ String _sixGames() {
 [White "${i == 3
           ? 'Other Player'
           : i < 2
-          ? 'Karthik,Aarav'
-          : 'Karthik, Aarav'}"]
-[Black "${i == 3 ? 'Karthik, Aarav' : 'Other Player'}"]
-${i < 2 ? '[WhiteFideId "39935140"]' : ''}
+          ? 'Moreau,Elise'
+          : 'Moreau, Elise'}"]
+[Black "${i == 3 ? 'Moreau, Elise' : 'Other Player'}"]
+${i < 2 ? '[WhiteFideId "99999901"]' : ''}
 [Result "${i < 2 || i == 3 ? '0-1' : '1/2-1/2'}"]
 [TimeControl "5400+30"]
 

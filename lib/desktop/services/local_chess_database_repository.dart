@@ -9497,6 +9497,11 @@ String? _localSideIdentityClause(
 
   final columnPrefix = side == 'white' ? 'white' : 'black';
   final jsonPrefix = side == 'white' ? 'White' : 'Black';
+  // Both header spellings occur in imported PGNs; the ID match and the ID-less
+  // name fallback must read the same value or a game can fall between them.
+  final fideIdSql =
+      "TRIM(COALESCE(NULLIF(TRIM(json_extract(g.headers_json, '\$.${jsonPrefix}FideId')), ''), "
+      "json_extract(g.headers_json, '\$.${jsonPrefix}FideID'), ''))";
   final clauses = <String>[];
   if (localNumericIds.isNotEmpty) {
     clauses.add(
@@ -9506,8 +9511,7 @@ String? _localSideIdentityClause(
   }
   if (normalizedFideIds.isNotEmpty) {
     clauses.add(
-      "LOWER(TRIM(COALESCE(json_extract(g.headers_json, '\$.${jsonPrefix}FideId'), ''))) "
-      'IN (${_sqlPlaceholders(normalizedFideIds.length)})',
+      'LOWER($fideIdSql) IN (${_sqlPlaceholders(normalizedFideIds.length)})',
     );
     parameters.addAll(normalizedFideIds);
   }
@@ -9517,9 +9521,7 @@ String? _localSideIdentityClause(
     );
     // A known FIDE scope permits name fallback only on ID-less rows; a
     // matching FIDE header is already covered by the identity clause above.
-    final idless = normalizedFideIds.isEmpty
-        ? ''
-        : " AND TRIM(COALESCE(json_extract(g.headers_json, '\$.${jsonPrefix}FideId'), json_extract(g.headers_json, '\$.${jsonPrefix}FideID'), '')) = ''";
+    final idless = normalizedFideIds.isEmpty ? '' : " AND $fideIdSql = ''";
     clauses.add(
       '($normalizedName IN (${_sqlPlaceholders(normalizedNames.length)})$idless)',
     );

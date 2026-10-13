@@ -12,7 +12,6 @@ enum _BoardContextAction {
   copyPgn,
   copyFen,
   saveGameToLibrary,
-
   savePgn,
   clearAnalysis,
   playFromHere,
@@ -32,7 +31,6 @@ Future<void> showBoardContextMenu(
   required VoidCallback onCopyFen,
   required VoidCallback onSavePgn,
   required VoidCallback onSaveGameToLibrary,
-
   required VoidCallback onOpenBoardSettings,
   required VoidCallback onOpenPositionSetup,
   required bool canCopyOrSavePgn,
@@ -109,7 +107,6 @@ Future<void> showBoardContextMenu(
         shortcut: hintFor(BoardActionKey.saveGameToLibrary),
         enabled: canCopyOrSavePgn,
       ),
-
       DesktopContextMenuItem(
         value: _BoardContextAction.savePgn,
         icon: Icons.save_alt_rounded,
@@ -165,7 +162,6 @@ Future<void> showBoardContextMenu(
       onCopyFen();
     case _BoardContextAction.saveGameToLibrary:
       onSaveGameToLibrary();
-
     case _BoardContextAction.savePgn:
       onSavePgn();
     case _BoardContextAction.clearAnalysis:

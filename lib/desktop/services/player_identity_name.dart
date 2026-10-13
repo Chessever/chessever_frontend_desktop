@@ -17,23 +17,32 @@ String playerIdentityNameKey(String? value) {
 
 /// SQLite equivalent of [playerIdentityNameKey], for existing query paths.
 /// [expression] is project-owned SQL, never user input.
+///
+/// Separators are stripped after the swap, so surrounding whitespace and an
+/// empty family/given part cannot change the key. Skipping those trims keeps
+/// [expression] (often a `json_extract`) to a few evaluations per row.
 String playerIdentityNameSql(String expression) {
-  const whitespace =
-      "' ' || CHAR(9) || CHAR(10) || CHAR(11) || CHAR(12) || CHAR(13)";
-  final name = "TRIM(COALESCE($expression, ''), $whitespace)";
-  final comma = "INSTR($name, ',')";
-  final family = 'TRIM(SUBSTR($name, 1, $comma - 1), $whitespace)';
-  final given = 'TRIM(SUBSTR($name, $comma + 1), $whitespace)';
-  var sql =
-      "LOWER(CASE WHEN $comma > 0 "
-      "AND INSTR(SUBSTR($name, $comma + 1), ',') = 0 "
-      "AND $family <> '' AND $given <> '' "
-      "THEN $given || ' ' || $family ELSE $name END)";
+  final raw = "COALESCE($expression, '')";
+  final comma = "INSTR($raw, ',')";
+  final swapped = "SUBSTR($raw, $comma + 1) || SUBSTR($raw, 1, $comma - 1)";
+  return 'CASE '
+      "WHEN $raw LIKE '%,%' AND $raw NOT LIKE '%,%,%' "
+      'THEN ${_strippedNameSql(swapped)} '
+      "WHEN TRIM($raw, $_whitespaceSql) = '?' THEN '' "
+      'ELSE ${_strippedNameSql(raw)} END';
+}
+
+const String _whitespaceSql =
+    "' ' || CHAR(9) || CHAR(10) || CHAR(11) || CHAR(12) || CHAR(13) || "
+    'CHAR(160)';
+
+String _strippedNameSql(String expression) {
+  var sql = 'LOWER($expression)';
   for (final token in const <String>[',', ' ', '_', '.', '-']) {
     sql = "REPLACE($sql, '$token', '')";
   }
-  for (final character in const <int>[9, 10, 11, 12, 13]) {
+  for (final character in const <int>[9, 10, 11, 12, 13, 160]) {
     sql = "REPLACE($sql, CHAR($character), '')";
   }
-  return "CASE WHEN $name = '?' THEN '' ELSE $sql END";
+  return sql;
 }

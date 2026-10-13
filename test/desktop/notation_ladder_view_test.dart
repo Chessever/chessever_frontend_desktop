@@ -33,7 +33,6 @@ void main() {
       final collapse = NotationVariationCollapseController();
       final jumps = <ChessMovePointer>[];
       addTearDown(layout.dispose);
-      final timer = Stopwatch()..start();
       await tester.pumpWidget(
         _host(
           game: game,
@@ -46,10 +45,6 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      timer.stop();
-      debugPrint(
-        'LARGE_NOTATION_SMOKE ${mode.name} moves>300 elapsedMs=${timer.elapsedMilliseconds}',
-      );
       expect(tester.takeException(), isNull);
       expect(find.text('c5', findRichText: true), findsOneWidget);
       expect(find.text('d6', findRichText: true), findsOneWidget);

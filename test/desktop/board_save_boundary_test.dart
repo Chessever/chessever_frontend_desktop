@@ -80,7 +80,7 @@ void main() {
       () {
     final board = File('lib/desktop/panes/board_pane.dart').readAsStringSync();
     expect(board, contains('boardSaveBoundary.tryRun(action)'));
-    expect(board, contains('runBoardSave(() async {'));
+    expect(board, contains('runBoardSave(saveGameToLibraryActionImpl)'));
     expect(board, contains('runBoardSave(savePgnActionImpl)'));
     expect(board, isNot(contains('boardCommittedSaveSequence')));
     expect(board, isNot(contains('await saveDesktopGameToLibrary(')));

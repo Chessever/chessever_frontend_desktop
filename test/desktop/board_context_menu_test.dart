@@ -24,9 +24,13 @@ void main() {
     // Keep the real single-game destination flow and existing save safeguards.
     expect(pane, contains('games: [gameSnapshot]'));
     expect(pane, contains('LibrarySaveDestinationMode.cloudAndLocal'));
-    expect(pane, contains('if (refuseCollectionExport()) return;'));
     expect(pane, contains('unawaited(saveGameToLibraryAction())'));
-    expect(pane, contains('runBoardSave'));
+    final saveEntry = pane.substring(
+      pane.indexOf('Future<void> saveGameToLibraryAction()'),
+      pane.indexOf('Future<void> savePgnAction()'),
+    );
+    expect(saveEntry, contains('if (refuseCollectionExport()) return;'));
+    expect(saveEntry, contains('runBoardSave(saveGameToLibraryActionImpl)'));
   });
 
   testWidgets(
