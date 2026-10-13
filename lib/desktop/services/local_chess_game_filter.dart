@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/player_identity_name.dart';
 import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 
@@ -712,17 +713,9 @@ String _playerSidePredicateSql({
   return 'COALESCE(${parts.join(', ')})';
 }
 
-String _normalizePlayerName(String value) {
-  return value.toLowerCase().replaceAll(RegExp(r'[\s,._-]+'), '').trim();
-}
+String _normalizePlayerName(String value) => playerIdentityNameKey(value);
 
-String _normalizedNameSql(String expression) {
-  var sql = 'LOWER(TRIM(COALESCE($expression, \'\')))';
-  for (final token in const <String>[',', ' ', '_', '.', '-']) {
-    sql = "REPLACE($sql, '$token', '')";
-  }
-  return sql;
-}
+String _normalizedNameSql(String expression) => playerIdentityNameSql(expression);
 
 String _escapeLike(String value) {
   final out = StringBuffer();

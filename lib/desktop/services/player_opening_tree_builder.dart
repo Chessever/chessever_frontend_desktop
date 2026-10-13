@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/desktop/services/time_control_classifier.dart';
+import 'package:chessever/desktop/services/player_identity_name.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
@@ -1741,11 +1742,18 @@ String? _playerColorForCriteria(
     if (black == fideId) return 'black';
   }
 
+  final wantedFideIds = _normalizedFilterValues(filters.playerFideIds);
   for (final name in _normalizedPlayerNames(filters.playerNames)) {
     final white = _normalizePlayerName(row['white']?.toString());
-    if (white == name) return 'white';
+    if (white == name &&
+        _allowsNameFallback(row['whiteFideId'], wantedFideIds)) {
+      return 'white';
+    }
     final black = _normalizePlayerName(row['black']?.toString());
-    if (black == name) return 'black';
+    if (black == name &&
+        _allowsNameFallback(row['blackFideId'], wantedFideIds)) {
+      return 'black';
+    }
   }
 
   return null;
@@ -1769,8 +1777,19 @@ bool _sideMatchesIdentity(
   if (fideId != null && _normalizedFilterValues(fideIds).contains(fideId)) {
     return true;
   }
+  if (!_allowsNameFallback(
+    row['${normalizedSide}FideId'], _normalizedFilterValues(fideIds),
+  )) {
+    return false;
+  }
   final name = _normalizePlayerName(row[normalizedSide]?.toString());
   return name != null && _normalizedPlayerNames(names).contains(name);
+}
+
+bool _allowsNameFallback(Object? sideFideId, Set<String> wantedFideIds) {
+  final actual = sideFideId?.toString().trim().toLowerCase() ?? '';
+  return wantedFideIds.isEmpty || actual.isEmpty ||
+      wantedFideIds.contains(actual);
 }
 
 Set<String> _normalizedFilterValues(Iterable<Object?> values) {
@@ -1790,9 +1809,8 @@ Set<String> _normalizedPlayerNames(Iterable<Object?> values) {
 }
 
 String? _normalizePlayerName(String? value) {
-  final raw = value?.trim().toLowerCase();
-  if (raw == null || raw.isEmpty || raw == '?') return null;
-  return raw.replaceAll(RegExp(r'\s+'), ' ');
+  final key = playerIdentityNameKey(value);
+  return key.isEmpty ? null : key;
 }
 
 int _readInt(Object? value) {
