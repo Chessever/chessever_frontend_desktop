@@ -1,3 +1,4 @@
+import 'package:chessever/screens/standings/player_standing_sections_provider.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/standings/official_team_standings.dart';
 import 'package:chessever/screens/standings/official_team_standings_provider.dart';
@@ -55,7 +56,12 @@ List<GamesTourModel> _watchTeamGamesForTour(Ref ref, String tourId) {
       games.add(GamesTourModel.fromGame(g));
     } catch (_) {}
   }
-  return games;
+  final info = _tourInfoForTourId(ref, tourId);
+  final section = selectedOfficialPlayerSection(
+    info?.playerStandingSections ?? const [],
+    ref.watch(selectedPlayerStandingSectionProvider(tourId)),
+  );
+  return section == null ? games : scopeOfficialSectionGames(section, games);
 }
 
 /// Reads the current tour's live games as [GamesTourModel]s, subscribing only
@@ -117,6 +123,16 @@ final teamStandingsProvider =
         final official = buildOfficialTeamStandings(
           info: info,
           players: players,
+          selectedSectionId: ref.watch(
+            selectedPlayerStandingSectionProvider(
+              ref
+                      .watch(tourDetailScreenProvider)
+                      .valueOrNull
+                      ?.aboutTourModel
+                      .id ??
+                  '',
+            ),
+          ),
         );
         if (official != null) return official;
         final games = _watchTeamGames(ref);
@@ -150,6 +166,7 @@ final teamStandingsForTourProvider =
       final official = buildOfficialTeamStandings(
         info: info,
         players: playersAsync.valueOrNull ?? const [],
+        selectedSectionId: ref.watch(selectedPlayerStandingSectionProvider(tourId)),
       );
       if (official != null) return AsyncValue.data(official);
       final games = _watchTeamGamesForTour(ref, tourId);

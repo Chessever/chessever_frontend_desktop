@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/widgets/player_standing_section_select.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -41,6 +43,13 @@ class DesktopTeamStandingsSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(teamStandingsModeByTabIdProvider(tabId));
+    final vm = ref.watch(tourDetailScreenProvider).valueOrNull;
+    final tourId = vm?.aboutTourModel.id ?? '';
+    final tours = vm?.tours.where((t) => t.tour.id == tourId).toList();
+    final sections =
+        tours == null || tours.isEmpty
+            ? null
+            : tours.first.tour.info.playerStandingSections;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -70,6 +79,10 @@ class DesktopTeamStandingsSection extends ConsumerWidget {
             ),
           ),
         ),
+        if (mode == DesktopTeamStandingsMode.teams &&
+            sections != null &&
+            sections.isNotEmpty)
+          PlayerStandingSectionSelect(tourId: tourId, sections: sections),
         Expanded(
           child:
               mode == DesktopTeamStandingsMode.players
