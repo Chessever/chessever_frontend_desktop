@@ -155,6 +155,63 @@ CollectionGame? collectionGameFromCard(CollectionGameCard card, int index) {
   }
 }
 
+/// The day [game] was played: the card's, else the PGN's own `Date` tag
+/// with an unknown month or day read as its first.
+DateTime? _collectionGameDay(CollectionGame game) {
+  final known = game.card.playedOn ?? game.card.playedAt?.toUtc();
+  if (known != null) return DateTime(known.year, known.month, known.day);
+  final parts =
+      (game.row.chessGame.metadata['Date']?.toString() ?? '').trim().split('.');
+  final year = int.tryParse(parts.first);
+  if (year == null) return null;
+  int part(int index) =>
+      (index < parts.length ? int.tryParse(parts[index]) : null) ?? 1;
+  return DateTime(year, part(1), part(2));
+}
+
+/// A book's games with the most recently played first. A book lists what its
+/// author filed, in filing order; the reader wants the latest game on top.
+/// Games on one day keep the later start first, then the book's own order.
+/// A game with no known day goes last. Rows are renumbered, so the Library
+/// table's "#" order is this order.
+List<CollectionGame> collectionGamesNewestFirst(List<CollectionGame> games) {
+  if (games.length < 2) return games;
+  final indexed = [
+    for (var i = 0; i < games.length; i++)
+      (i, _collectionGameDay(games[i]), games[i]),
+  ];
+  indexed.sort((a, b) {
+    final dayA = a.$2;
+    final dayB = b.$2;
+    if (dayA == null || dayB == null) {
+      if (dayA != null) return -1;
+      if (dayB != null) return 1;
+      return a.$1.compareTo(b.$1);
+    }
+    final byDay = dayB.compareTo(dayA);
+    if (byDay != 0) return byDay;
+    final atA = a.$3.card.playedAt;
+    final atB = b.$3.card.playedAt;
+    if (atA != null && atB != null) {
+      final byStart = atB.compareTo(atA);
+      if (byStart != 0) return byStart;
+    }
+    return a.$1.compareTo(b.$1);
+  });
+  return [
+    for (var i = 0; i < indexed.length; i++)
+      () {
+        final game = indexed[i].$3;
+        final at = _rowEpoch.add(Duration(seconds: i));
+        return CollectionGame(
+          card: game.card,
+          pgn: game.pgn,
+          row: game.row.copyWith(createdAt: at, updatedAt: at),
+        );
+      }(),
+  ];
+}
+
 /// Reads published collections. Everyone may read the catalog, the covers
 /// and the tables of contents; a Premium collection's games and players are
 /// answered only for an entitled account (the proxy forwards this account's

@@ -527,6 +527,28 @@ void main() {
     },
   );
 
+  testWidgets('large game opens with variations expanded by default', (
+    tester,
+  ) async {
+    final layoutMode = ValueNotifier(NotationLayoutMode.inline);
+    addTearDown(layoutMode.dispose);
+
+    await tester.pumpWidget(
+      _host(
+        game: _largeGameWithVariation(),
+        onJump: (_) {},
+        layoutModeController: layoutMode,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The second move of the variation is only rendered when the
+    // variation is expanded; a collapsed variation shows its head
+    // move plus a `+N` remainder count instead.
+    expect(find.text('Bb5', findRichText: true), findsOneWidget);
+    expect(find.text('[+]', findRichText: true), findsNothing);
+  });
+
   testWidgets('keeps expanded variation closing bracket inline with moves', (
     tester,
   ) async {
@@ -1373,6 +1395,50 @@ ChessGame _longGame() {
         san: whiteToMove ? 'e4' : 'e5',
         uci: whiteToMove ? 'e2e4' : 'e7e5',
         turn: whiteToMove ? ChessColor.white : ChessColor.black,
+      );
+    }),
+  );
+}
+
+ChessGame _largeGameWithVariation() {
+  ChessMove move(int index, {List<ChessLine>? variations}) {
+    final whiteToMove = index.isEven;
+    return ChessMove(
+      num: index ~/ 2 + 1,
+      fen: Chess.initial.fen,
+      san: whiteToMove ? 'e4' : 'e5',
+      uci: whiteToMove ? 'e2e4' : 'e7e5',
+      turn: whiteToMove ? ChessColor.white : ChessColor.black,
+      variations: variations,
+    );
+  }
+
+  return ChessGame(
+    gameId: 'notation-large-expanded-test',
+    startingFen: Chess.initial.fen,
+    metadata: const <String, dynamic>{},
+    mainline: List<ChessMove>.generate(320, (index) {
+      if (index != 0) return move(index);
+      return move(
+        index,
+        variations: [
+          [
+            ChessMove(
+              num: 1,
+              fen: Chess.initial.fen,
+              san: 'c5',
+              uci: 'c7c5',
+              turn: ChessColor.black,
+            ),
+            ChessMove(
+              num: 2,
+              fen: Chess.initial.fen,
+              san: 'Bb5',
+              uci: 'f1b5',
+              turn: ChessColor.white,
+            ),
+          ],
+        ],
       );
     }),
   );

@@ -975,7 +975,13 @@ class _CollectionGames extends ConsumerWidget {
       },
       data: (games) {
         final sectionId = section?.id;
-        final scoped = _scopeGames(games, player: player, section: section);
+        final inScope = _scopeGames(games, player: player, section: section);
+        // A book opens on its latest game; a sort the reader asked the
+        // server for, and an event's round order, stay as they arrive.
+        final scoped =
+            collection.kind == CollectionKind.book && query.sort == 'default'
+                ? collectionGamesNewestFirst(inScope)
+                : inScope;
         if (scoped.isEmpty) {
           return LibraryEmptyState(
             icon:

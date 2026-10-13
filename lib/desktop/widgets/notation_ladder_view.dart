@@ -357,38 +357,10 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   String? _lastTreeSignature;
   NotationLayoutMode _layoutMode = NotationLayoutMode.ladder;
   bool _annotationsHidden = false;
-  ChessLine? _measuredMainline;
-  bool _largeNotationTree = false;
   ChessLine? _indexedMainline;
   String? _indexedStartingFen;
   String? _indexedSignature;
   _TranspositionIndex _cachedTranspositions = const {};
-
-  bool _isLargeNotationTree(ChessLine mainline) {
-    if (identical(_measuredMainline, mainline)) return _largeNotationTree;
-    _measuredMainline = mainline;
-    // Stop counting once the tree is clearly too large to unfold in one
-    // Flutter frame. The full game remains available as branches are opened.
-    var moves = 0;
-    bool exceedsLimit(ChessLine line) {
-      for (final move in line) {
-        if (++moves > 300) return true;
-        for (final variation in move.variations ?? const <ChessLine>[]) {
-          if (exceedsLimit(variation)) return true;
-        }
-      }
-      return false;
-    }
-
-    _largeNotationTree = exceedsLimit(mainline);
-    if (_largeNotationTree) {
-      LocalPgnPerformanceLog.event(
-        'notation_large_tree',
-        'mainline=${mainline.length} autoCollapseDepth=1',
-      );
-    }
-    return _largeNotationTree;
-  }
 
   @override
   void initState() {
@@ -610,12 +582,9 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   @override
   Widget build(BuildContext context) {
     final mainline = widget.game.mainline;
-    final autoCollapseDepth =
-        widget.autoCollapseDepth == 1 << 30 &&
-                widget.autoCollapseMoveThreshold == 1 << 30 &&
-                _isLargeNotationTree(mainline)
-            ? 1
-            : widget.autoCollapseDepth;
+    // Variations open expanded by default. Only a caller that passes
+    // finite auto-collapse thresholds opts into folding on open.
+    final autoCollapseDepth = widget.autoCollapseDepth;
     final startingPly = _startingPlyFromFen(widget.game.startingFen);
     final gameResult = _formatGameResult(
       widget.game.metadata['Result'] as String?,
