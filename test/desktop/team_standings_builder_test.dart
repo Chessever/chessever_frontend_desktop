@@ -1,3 +1,5 @@
+import 'package:chessever/repository/supabase/tour/tour.dart';
+import 'package:chessever/utils/team_scoring_rules.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/standings/team_standings_builder.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
@@ -73,6 +75,69 @@ TeamStandingModel _row(List<TeamStandingModel> rows, String name) =>
     rows.singleWhere((row) => row.teamName == name);
 
 void main() {
+  test('half-point match draw survives standings and scorecards', () {
+    final scoring = TeamScoringRules.fromTourInfo(
+      const TourInfo(
+        teamScoring: {
+          'gamePoints': {'whiteWin': 1, 'blackWin': 1, 'draw': 0.5, 'loss': 0},
+          'matchPoints': {'win': 1, 'draw': 0.5, 'loss': 0},
+        },
+      ),
+    );
+    final games = _match(
+      'round-1',
+      'Alpha',
+      'Bravo',
+      GameStatus.draw,
+      GameStatus.draw,
+    );
+    expect(scoring.matchDraw, 0.5);
+    final rows = buildTeamStandings(
+      games: games,
+      playerStandings: [],
+      scoring: scoring,
+    );
+    expect(rows.map((row) => row.matchPoints), [0.5, 0.5]);
+    final matches = buildTeamMatches(
+      games: games,
+      teamName: 'Alpha',
+      scoring: scoring,
+    );
+    expect(matches.single.matchPoints, 0.5);
+  });
+
+  test('two half-point match draws read as a whole match point', () {
+    final scoring = TeamScoringRules.fromTourInfo(
+      const TourInfo(
+        teamScoring: {
+          'gamePoints': {'whiteWin': 1, 'blackWin': 1, 'draw': 0.5, 'loss': 0},
+          'matchPoints': {'win': 1, 'draw': 0.5, 'loss': 0},
+        },
+      ),
+    );
+    final rows = buildTeamStandings(
+      games: [
+        ..._match(
+          'round-1',
+          'Alpha',
+          'Bravo',
+          GameStatus.draw,
+          GameStatus.draw,
+        ),
+        ..._match(
+          'round-2',
+          'Alpha',
+          'Bravo',
+          GameStatus.draw,
+          GameStatus.draw,
+        ),
+      ],
+      playerStandings: [],
+      scoring: scoring,
+    );
+    expect(rows.map((row) => '${row.matchPoints}'), ['1', '1']);
+  });
+
   test('match points only for completed matches', () {
     final rows = buildTeamStandings(
       games: [

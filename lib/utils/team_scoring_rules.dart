@@ -1,5 +1,12 @@
 import 'package:chessever/repository/supabase/tour/tour.dart';
 
+/// Whole match points stay `int` so a table reads `1`, not `1.0`, after two
+/// half-point match draws.
+num normalizeMatchPoints(num value) =>
+    value is double && value.isFinite && value == value.roundToDouble()
+        ? value.toInt()
+        : value;
+
 /// Event-scoped team scoring, matching broadcasting `tours.info.teamScoring`
 /// and Lichess `customScoring`.
 ///
@@ -11,9 +18,9 @@ class TeamScoringRules {
   final double blackWin;
   final double draw;
   final double loss;
-  final int matchWin;
-  final int matchDraw;
-  final int matchLoss;
+  final num matchWin;
+  final num matchDraw;
+  final num matchLoss;
 
   const TeamScoringRules({
     required this.whiteWin,
@@ -59,9 +66,9 @@ class TeamScoringRules {
         blackWin: blackWin,
         draw: draw,
         loss: loss,
-        matchWin: matchWin.round(),
-        matchDraw: matchDraw.round(),
-        matchLoss: matchLoss.round(),
+        matchWin: normalizeMatchPoints(matchWin),
+        matchDraw: normalizeMatchPoints(matchDraw),
+        matchLoss: normalizeMatchPoints(matchLoss),
       );
     }
 

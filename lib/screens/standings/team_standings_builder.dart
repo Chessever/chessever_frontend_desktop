@@ -111,7 +111,7 @@ List<TeamStandingModel> buildTeamStandings({
         return TeamStandingModel(
           teamName: name,
           rank: 0,
-          matchPoints: a.mp,
+          matchPoints: normalizeMatchPoints(a.mp),
           gamePoints: a.gamePoints,
           matchesWon: a.won,
           matchesDrawn: a.drawn,
@@ -209,7 +209,7 @@ class TeamMatch {
     return TeamMatchResult.draw;
   }
 
-  int get matchPoints {
+  num get matchPoints {
     switch (result) {
       case TeamMatchResult.win:
         return scoring.matchWin;
@@ -419,7 +419,7 @@ String _half(double v) =>
 class _TeamAgg {
   double gamePoints = 0;
   int boardsPlayed = 0;
-  int mp = 0;
+  num mp = 0;
   int won = 0;
   int drawn = 0;
   int lost = 0;

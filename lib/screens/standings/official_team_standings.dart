@@ -1,6 +1,7 @@
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/standings/team_standing_model.dart';
+import 'package:chessever/utils/team_scoring_rules.dart';
 
 /// A complete official snapshot takes precedence over PGN-derived standings:
 /// organizer tiebreaks, byes and adjudications are absent from board feeds.
@@ -33,19 +34,19 @@ List<TeamStandingModel>? buildOfficialTeamStandings({
       scoring == null
           ? 2
           : scoring is Map
-          ? _integer(scoring['win'])
+          ? _points(scoring['win'])
           : null;
   final drawPoints =
       scoring == null
           ? 1
           : scoring is Map
-          ? _integer(scoring['draw'])
+          ? _points(scoring['draw'])
           : null;
   final lossPoints =
       scoring == null
           ? 0
           : scoring is Map
-          ? _integer(scoring['loss'])
+          ? _points(scoring['loss'])
           : null;
   if (winPoints == null ||
       drawPoints == null ||
@@ -70,7 +71,7 @@ List<TeamStandingModel>? buildOfficialTeamStandings({
     if (raw is! Map) return null;
     final name = raw['name'];
     final rank = _integer(raw['rank']);
-    final mp = _integer(raw['matchPoints']);
+    final mp = _points(raw['matchPoints']);
     final gp = raw['gamePoints'];
     final played = _integer(raw['matchesPlayed']);
     final wins = _integer(raw['wins']);
@@ -119,6 +120,11 @@ List<TeamStandingModel>? buildOfficialTeamStandings({
   }
   return rows;
 }
+
+num? _points(dynamic value) =>
+    value is num && value.isFinite && value >= 0
+        ? normalizeMatchPoints(value)
+        : null;
 
 int? _integer(dynamic value) =>
     value is num && value.isFinite && value == value.roundToDouble()

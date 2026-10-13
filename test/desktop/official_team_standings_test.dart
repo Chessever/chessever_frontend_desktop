@@ -71,6 +71,13 @@ void main() {
     final rows = buildOfficialTeamStandings(info: info(data), players: []);
     expect(rows!.first.matchPoints, 9);
   });
+  test('accepts fractional organizer match points', () {
+    final data = snapshot();
+    data['matchScoring'] = {'win': 1, 'draw': 0.5, 'loss': 0};
+    (data['teams'] as List)[0]['matchPoints'] = 2.5;
+    final rows = buildOfficialTeamStandings(info: info(data), players: []);
+    expect(rows!.first.matchPoints, 2.5);
+  });
   test('rejects malformed scoring and negative points', () {
     final data = snapshot();
     data['matchScoring'] = {'win': 1, 'draw': 2, 'loss': 0};

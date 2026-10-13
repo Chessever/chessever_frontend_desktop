@@ -12,7 +12,7 @@ class TeamStandingModel {
 
   /// Match points — 2 win / 1 draw / 0 loss, counted only for completed
   /// matches. Primary ranking metric (chess team-event standard).
-  final int matchPoints;
+  final num matchPoints;
 
   /// Board (game) points — sum of finished individual board results. Tiebreak.
   final double gamePoints;
