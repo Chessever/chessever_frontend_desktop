@@ -99,11 +99,19 @@ class _TidySpacesFormatter extends TextInputFormatter {
   }
 }
 
-/// The fields this dialog edits, in the order they read on the collection
-/// page. Foreword and publisher are not edited here: the publisher is always
-/// ChessEver's own editor, and a foreword belongs to a printed book, not to a
-/// folder of games. Whatever the server already holds for them is kept.
-enum _Field { title, subtitle, author, year, about, authorAbout }
+/// The author-editable metadata shared by mobile, desktop and web.
+enum _Field {
+  title,
+  subtitle,
+  author,
+  year,
+  about,
+  authorAbout,
+  publisher,
+  foreword,
+  slug,
+  annotator,
+}
 
 /// Which preview a field is drawn in: the list row (0) or the page (1).
 const _listFields = {_Field.title, _Field.author};
@@ -261,6 +269,10 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       _Field.year: m.publishedYear?.toString() ?? '',
       _Field.about: m.about,
       _Field.authorAbout: m.authorAbout ?? '',
+      _Field.publisher: m.publisher,
+      _Field.slug: m.slug ?? '',
+      _Field.annotator: m.annotator ?? '',
+      _Field.foreword: m.foreword,
     };
     for (final entry in values.entries) {
       _write(entry.key, entry.value);
@@ -595,9 +607,15 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                   _text(_Field.authorAbout).trim().isNotEmpty
               ? _text(_Field.authorAbout).trim()
               : null,
-      // Not editable here; carried through so a save never erases them.
-      foreword: saved?.foreword ?? '',
-      publisher: saved?.publisher ?? '',
+      foreword: _text(_Field.foreword).trim(),
+      publisher: _text(_Field.publisher).trim(),
+      slug:
+          _text(_Field.slug).trim().isEmpty ? null : _text(_Field.slug).trim(),
+      annotator:
+          _publication?.metadata.annotator != null ||
+                  _text(_Field.annotator).trim().isNotEmpty
+              ? _text(_Field.annotator).trim()
+              : null,
       publishedYear: int.tryParse(_text(_Field.year).trim()),
       // Set by the cover upload, never typed; carried through on save.
       coverUrl: _coverUrl,
@@ -1525,7 +1543,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                       focusNode: row.focus,
                       enabled: enabled,
                       hint: 'e.g. Judit Polgar',
-                      maxLength: 60,
+                      maxLength: 80,
                       maxLengthEnforcement: MaxLengthEnforcement.enforced,
                       counterBuilder:
                           (context, current, max, focused) =>
@@ -1699,7 +1717,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                   ? 'The person who wrote or compiled it, credited as “by …” in the list and on the page. Pick a name below if they’re already on ChessEver, so their collections stay together.'
                   : 'Credited as “by …” in the list and on the page.',
           hint: 'e.g. Magnus Carlsen',
-          limit: 60,
+          limit: 80,
         ),
         // The match, the suggestions and the "Me" row all follow the name.
         ListenableBuilder(
@@ -2104,7 +2122,15 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
         return _validateForPublish && value.isEmpty
             ? 'Describe this collection.'
             : null;
+      case _Field.slug:
+        return value.isEmpty ||
+                RegExp(r'^[a-z0-9]+(?:-[a-z0-9]+)*$').hasMatch(value)
+            ? null
+            : 'Use lowercase letters, numbers and hyphens.';
+      case _Field.annotator:
       case _Field.authorAbout:
+      case _Field.publisher:
+      case _Field.foreword:
         return null;
     }
   }
@@ -2336,7 +2362,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             label: 'Title',
             where: 'The name readers see in the list and on top of the page.',
             hint: 'e.g. Carlsen’s Best Endgames',
-            limit: 80,
+            limit: 300,
           ),
           _field(
             _Field.subtitle,
@@ -2346,7 +2372,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             where:
                 'One short line under the title on the collection page. It adds detail the title leaves out.',
             hint: 'e.g. 40 annotated wins, 2013–2023',
-            limit: 120,
+            limit: 300,
             counter: true,
           ),
           _authorSection(stage),
@@ -2388,8 +2414,46 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             hint:
                 'What’s inside, who it’s for, and what readers will take away.',
             lines: 4,
-            limit: 1500,
+            limit: 20000,
             counter: true,
+          ),
+          _field(
+            _Field.publisher,
+            stage: stage,
+            label: 'Publisher',
+            optional: true,
+            where: 'The publisher credited on the collection page.',
+            hint: 'Publisher name',
+            limit: 200,
+          ),
+          _field(
+            _Field.foreword,
+            stage: stage,
+            label: 'Foreword',
+            optional: true,
+            where: 'Your introduction, on the collection About tab.',
+            hint: 'Introduce this collection and how to use it.',
+            lines: 5,
+            limit: 50000,
+          ),
+          _field(
+            _Field.slug,
+            stage: stage,
+            label: 'Link',
+            optional: true,
+            where:
+                'The collection URL name. Leave empty to use the generated link.',
+            hint: 'my-collection',
+            limit: 120,
+          ),
+          _field(
+            _Field.annotator,
+            stage: stage,
+            label: 'Annotator',
+            optional: true,
+            where: 'Who wrote the game annotations.',
+            hint: 'Annotator name',
+            limit: 300,
           ),
           _coverPicker(stage),
         ],
@@ -2503,7 +2567,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   );
 
   Widget _actions(LibraryBookStage stage) {
-    final idle = !_busy && !_coverBusy && !_authorPhotoBusy;
+    final idle = !_busy && !_coverBusy && !_anyPhotoBusy;
     // Submitting always sends the folder's current games along; "Submit
     // changes" sends the details only.
     final submitLatest =
@@ -2657,7 +2721,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                         cover: _coverUri(_coverUrl),
                         coverBytes: _coverPreview,
                         coverLit: _coverBusy,
-                        publisher: publication.metadata.publisher.trim(),
+                        publisher: _text(_Field.publisher).trim(),
                         gameCount: publication.gameCount,
                         focused: _focused,
                       ),
@@ -2781,7 +2845,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             const _TidySpacesFormatter(),
           ],
           _Field.about ||
-          _Field.authorAbout => [const _TidySpacesFormatter(multiline: true)],
+          _Field.authorAbout ||
+          _Field.foreword => [const _TidySpacesFormatter(multiline: true)],
           _ => [const _TidySpacesFormatter()],
         },
         // Author is a proper name: every word starts upper-case.

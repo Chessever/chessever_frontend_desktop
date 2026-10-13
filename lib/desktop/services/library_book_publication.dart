@@ -232,6 +232,8 @@ class LibraryBookMetadata {
   const LibraryBookMetadata({
     required this.title,
     this.subtitle = '',
+    this.slug,
+    this.annotator,
     this.author = '',
     this.about = '',
     this.foreword = '',
@@ -249,6 +251,8 @@ class LibraryBookMetadata {
 
   final String title;
   final String subtitle;
+  final String? slug;
+  final String? annotator;
   final String author;
   final String about;
   final String foreword;
@@ -332,6 +336,11 @@ class LibraryBookMetadata {
     return LibraryBookMetadata(
       title: json['title'] as String? ?? '',
       subtitle: json['subtitle'] as String? ?? '',
+      slug: json['slug'] as String?,
+      annotator:
+          json.containsKey('annotator')
+              ? json['annotator'] as String? ?? ''
+              : null,
       author:
           listed.isNotEmpty
               ? listed.first.name
@@ -376,6 +385,8 @@ class LibraryBookMetadata {
   }) => LibraryBookMetadata(
     title: title,
     subtitle: subtitle,
+    slug: slug,
+    annotator: annotator,
     author: author ?? this.author,
     about: about,
     foreword: foreword,
@@ -396,6 +407,8 @@ class LibraryBookMetadata {
   Map<String, dynamic> toJson() => {
     'title': title.trim(),
     'subtitle': _nullable(subtitle),
+    if (slug != null && slug!.trim().isNotEmpty) 'slug': slug!.trim(),
+    if (annotator != null) 'annotator': _nullable(annotator!),
     'author': _nullable(author),
     'about': _nullable(about),
     'foreword': _nullable(foreword),

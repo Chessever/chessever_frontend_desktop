@@ -377,7 +377,7 @@ void main() {
   }
 
   testWidgets(
-    'foreword and publisher are not asked for but survive a save',
+    'foreword and publisher are editable and survive a save',
     semanticsEnabled: false,
     (tester) async {
       final publisher =
@@ -393,14 +393,35 @@ void main() {
               ),
             );
       await _pump(tester, publisher);
-      // Field labels for Foreword and Publisher are gone from the editor.
-      expect(find.text('Foreword'), findsNothing);
-      expect(find.text('Publisher'), findsNothing);
-      // Four optional parts: Subtitle, More authors, Year, Cover.
-      expect(find.text('Optional'), findsNWidgets(5));
+      // Shared metadata fields are now present in every author editor.
+      expect(find.text('Foreword'), findsOneWidget);
+      expect(find.text('Publisher'), findsOneWidget);
+      // Every optional metadata field remains distinct from required copy.
+      expect(find.text('Optional'), findsNWidgets(9));
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Kept foreword'),
+        'First paragraph.\n\nSecond paragraph.',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'ChessEver'),
+        'Study Press',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'my-collection'),
+        'shared-study',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Annotator name'),
+        'Notes Writer',
+      );
       await _tap(tester, 'Save draft');
-      expect(publisher.saves.single.metadata.foreword, 'Kept foreword');
-      expect(publisher.saves.single.metadata.publisher, 'ChessEver');
+      expect(
+        publisher.saves.single.metadata.foreword,
+        'First paragraph.\n\nSecond paragraph.',
+      );
+      expect(publisher.saves.single.metadata.publisher, 'Study Press');
+      expect(publisher.saves.single.metadata.slug, 'shared-study');
+      expect(publisher.saves.single.metadata.annotator, 'Notes Writer');
       expect(tester.takeException(), isNull);
     },
   );

@@ -69,6 +69,8 @@ void main() {
     () {
       final metadata = LibraryBookMetadata.fromJson(const {
         'title': 'A shared collection',
+        'slug': 'shared-study',
+        'annotator': 'Notes Writer',
         'authorCredit': 'self',
         'authors': [
           {
@@ -89,6 +91,8 @@ void main() {
         ],
       });
       expect(metadata.authorAbout, 'First biography.');
+      expect(metadata.toJson()['slug'], 'shared-study');
+      expect(metadata.toJson()['annotator'], 'Notes Writer');
       expect(metadata.toJson()['authors'], [
         {
           'name': 'First',
