@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import '../state/event_player_board_games.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
@@ -2434,13 +2435,23 @@ class _BoardPaneContent extends HookConsumerWidget {
       };
     }, const []);
 
+    // Events can refresh the game and pointer objects without changing the
+    // selected position or its continuations. Keep that chooser alive.
+    final variationForkScopeKey = useMemoized(
+      () => boardVariationForkScopeKey(
+        game: chessGame.value,
+        pointer: pointer.value,
+        sourceGameId: activeGameId,
+      ),
+      [activeGameId, chessGame.value, pointer.value],
+    );
     useEffect(() {
       return () {
         if (variationForkChooserOpen.value) {
           variationForkDismissSignal.value += 1;
         }
       };
-    }, [isForegroundTab, chessGame.value, pointer.value]);
+    }, [isForegroundTab, reportActivation.value, variationForkScopeKey]);
 
     void dismissVariationForkChooser() {
       if (!variationForkChooserOpen.value) return;
@@ -7575,6 +7586,33 @@ ChessMovePointer? traversalBoardForwardPointerForTesting(
   ChessGame game,
   ChessMovePointer pointer,
 ) => _nextPointer(game, pointer);
+
+/// Stable ownership of the selected position and offered fork choices.
+/// Metadata/NAG refreshes and equal-value pointer copies are not navigation.
+@visibleForTesting
+String boardVariationForkScopeKey({
+  required ChessGame game,
+  required ChessMovePointer pointer,
+  String? sourceGameId,
+}) {
+  final next = _nextManualPointer(game, pointer);
+  final options = next == null
+      ? null
+      : resolveVariationForkOptions(game: game, current: pointer, next: next);
+  return jsonEncode(<Object?>[
+    sourceGameId ?? game.gameId,
+    game.startingFen,
+    pointer,
+    _pathFromPointer(game, pointer).map((move) => move.uci).toList(),
+    next,
+    if (options != null)
+      for (final option in options)
+        <Object?>[
+          option.pointer,
+          _pathFromPointer(game, option.pointer).map((move) => move.uci).toList(),
+        ],
+  ]);
+}
 
 // Separate the manual-forward policy from cross-line replay/navigation.
 ChessMovePointer? _nextManualPointer(ChessGame game, ChessMovePointer pointer) {
