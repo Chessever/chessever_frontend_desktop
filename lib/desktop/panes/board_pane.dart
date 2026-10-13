@@ -44,9 +44,9 @@ import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
-import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+
 import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
-import 'package:chessever/desktop/services/local_database_save_source.dart';
+
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
     hide mergeGameReportAnnotationsForGif;
@@ -85,7 +85,7 @@ import 'package:chessever/desktop/widgets/board_actions_popover.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_panel.dart';
 import 'package:chessever/desktop/services/play/play_from_here.dart';
 import 'package:chessever/desktop/widgets/board_context_menu.dart';
-import 'package:chessever/desktop/widgets/board_save_scope_dialog.dart';
+
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
@@ -3188,64 +3188,10 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
     }
 
-    Future<void> saveSourceDatabaseToCloudImpl({String? sourcePath}) async {
-      final path =
-          sourcePath ??
-          attachedLibrarySaveOrigin?.sourcePath ??
-          boardArgs?.librarySaveOrigin?.sourcePath;
-      if (path == null || !path.toLowerCase().endsWith('.pgn')) return;
-      showToast('Reading all games in the PGN...');
-      LocalDatabaseSaveEnumeration? source;
-      try {
-        source = await openLocalDatabaseSaveEnumerationFromPgn(path: path);
-        if (!context.mounted) return;
-        if (source.totalCount == 0) {
-          showToast('This PGN has no games to save.', error: true);
-          return;
-        }
-        final outcome = await showLibrarySaveToFolderDialog(
-          context: context,
-          ref: ref,
-          gameSource: source,
-          sourceLabel: io.File(path).uri.pathSegments.last,
-          destinationMode: LibrarySaveDestinationMode.cloudOnly,
-          newDatabaseName: localChessDatabaseStemForPath(path),
-        );
-        if (context.mounted && outcome != null && outcome.didSave) {
-          showToast(outcome.toToastMessage());
-        }
-      } catch (error) {
-        if (context.mounted) {
-          showToast('Could not save the whole PGN: $error', error: true);
-        }
-      } finally {
-        source?.release();
-      }
-    }
     Future<void> saveGameToLibraryAction() => runBoardSave(() async {
       if (refuseCollectionExport()) return;
-      final sourceOrigin = boardArgs?.librarySaveOrigin;
-      final sourcePath = sourceOrigin?.kind ==
-              BoardTabLibrarySaveOriginKind.localPgnFile
-          ? sourceOrigin?.sourcePath
-          : null;
-      if (sourcePath != null && sourcePath.toLowerCase().endsWith('.pgn')) {
-        final saveCompletion = captureBoardSaveCompletion();
-        final scope = await showBoardSaveScopeDialog(context);
-        if (!context.mounted ||
-            !saveCompletion.ownsActivation() ||
-            scope == null) {
-          return;
-        }
-        if (scope == BoardSaveScope.wholePgnFile) {
-          await saveSourceDatabaseToCloudImpl(sourcePath: sourcePath);
-          return;
-        }
-      }
       await saveGameToLibraryActionImpl();
     });
-    Future<void> saveSourceDatabaseToCloud() =>
-        runBoardSave(saveSourceDatabaseToCloudImpl);
     Future<void> savePgnAction() async {
       if (refuseCollectionExport()) return;
       await runBoardSave(savePgnActionImpl);
@@ -5021,13 +4967,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         onCopyFen: copyFenAction,
         onSavePgn: savePgnAction,
         onSaveGameToLibrary: () => unawaited(saveGameToLibraryAction()),
-        onSaveSourceDatabaseToCloud:
-            (attachedLibrarySaveOrigin?.sourcePath ??
-                        boardArgs?.librarySaveOrigin?.sourcePath)
-                    ?.toLowerCase()
-                    .endsWith('.pgn') == true
-                ? () => unawaited(saveSourceDatabaseToCloud())
-                : null,
+
         onOpenBoardSettings: openBoardSettingsTab,
         onOpenPositionSetup: openPositionSetup,
         onClearAnalysis:
