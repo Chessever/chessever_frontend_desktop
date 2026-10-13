@@ -116,6 +116,8 @@ class AuthorSuggestion {
     required this.name,
     this.bookCount = 0,
     this.avatarUrl,
+    this.userId,
+    this.authProject,
   });
 
   final String id;
@@ -123,12 +125,22 @@ class AuthorSuggestion {
   final int bookCount;
   final String? avatarUrl;
 
+  /// The ChessEver account behind an account author, so picking the match
+  /// can file the collection under that same author. Null for a name that
+  /// is only ever credited.
+  final String? userId;
+  final String? authProject;
+
+  bool get hasAccount => userId != null && authProject != null;
+
   factory AuthorSuggestion.fromJson(Map<String, dynamic> json) =>
       AuthorSuggestion(
         id: json['id'] as String? ?? '',
         name: (json['name'] as String? ?? '').trim(),
         bookCount: (json['bookCount'] as num?)?.toInt() ?? 0,
         avatarUrl: _httpsOrNull(json['avatarUrl']),
+        userId: json['userId'] as String?,
+        authProject: json['authProject'] as String?,
       );
 
   static String? _httpsOrNull(Object? raw) {
@@ -148,20 +160,58 @@ bool libraryFolderCanPublish(LibraryFolder folder) =>
     folder.id != kTwicBookId;
 
 /// One credited author of a collection: the name readers see and, when one
-/// was uploaded, their own photo.
+/// was uploaded, their own photo. Every author carries their own credit,
+/// like the first author always could: [AuthorCredit.self] is their own
+/// ChessEver account (linked by [userId]/[authProject] when it is not the
+/// publishing account), pictured by its profile photo; [AuthorCredit.other]
+/// credits the person, pictured by [photoUrl].
 @immutable
 class BookAuthor {
-  const BookAuthor({required this.name, this.photoUrl = ''});
+  const BookAuthor({
+    required this.name,
+    this.photoUrl = '',
+    this.id = '',
+    this.about,
+    this.credit,
+    this.userId,
+    this.authProject,
+  });
 
   final String name;
   final String photoUrl;
 
-  @override
-  bool operator ==(Object other) =>
-      other is BookAuthor && other.name == name && other.photoUrl == photoUrl;
+  /// The catalog identity (`account:`/`credit:`) the author's collections
+  /// are filed under, when the server sent one.
+  final String id;
+
+  /// This author's description, when the payload carries one (a book's own
+  /// detail and editor answers; list rows omit it). Null leaves it alone.
+  final String? about;
+
+  /// This author's own credit, when the payload carries one.
+  final AuthorCredit? credit;
+
+  /// The ChessEver account a `self` author is linked to (editor answers
+  /// only; never on a public one).
+  final String? userId;
+  final String? authProject;
+
+  bool get hasAccountLink => userId != null && authProject != null;
 
   @override
-  int get hashCode => Object.hash(name, photoUrl);
+  bool operator ==(Object other) =>
+      other is BookAuthor &&
+      other.name == name &&
+      other.photoUrl == photoUrl &&
+      other.id == id &&
+      other.about == about &&
+      other.credit == credit &&
+      other.userId == userId &&
+      other.authProject == authProject;
+
+  @override
+  int get hashCode =>
+      Object.hash(name, photoUrl, id, about, credit, userId, authProject);
 }
 
 /// How several authors read on one line: "A", "A and B", "A, B and C".
@@ -193,6 +243,8 @@ class LibraryBookMetadata {
     this.coAuthors = const [],
     this.sendAuthorList = false,
     this.authorAbout,
+    this.authorUserId,
+    this.authorAuthProject,
   });
 
   final String title;
@@ -232,10 +284,25 @@ class LibraryBookMetadata {
   /// written.
   final String? authorAbout;
 
+  /// The ChessEver account the first author is linked to when they are
+  /// credited as themselves but are not the publishing account.
+  final String? authorUserId;
+  final String? authorAuthProject;
+
+  bool get authorHasAccountLink =>
+      authorUserId != null && authorAuthProject != null;
+
   /// Every credited author, the first one included.
   List<BookAuthor> get authors => [
     if (author.trim().isNotEmpty || coAuthors.isNotEmpty)
-      BookAuthor(name: author.trim(), photoUrl: authorPhotoUrl),
+      BookAuthor(
+        name: author.trim(),
+        photoUrl: authorPhotoUrl,
+        about: authorAbout,
+        credit: authorHasAccountLink ? AuthorCredit.self : authorCredit,
+        userId: authorUserId,
+        authProject: authorAuthProject,
+      ),
     ...coAuthors,
   ];
 
@@ -249,6 +316,11 @@ class LibraryBookMetadata {
             BookAuthor(
               name: (item['name'] as String).trim(),
               photoUrl: item['photoUrl'] as String? ?? '',
+              id: item['id'] as String? ?? '',
+              about: item['about'] as String?,
+              credit: AuthorCredit.maybeParse(item['credit']),
+              userId: item['userId'] as String?,
+              authProject: item['authProject'] as String?,
             ),
     ];
   }
@@ -278,11 +350,16 @@ class LibraryBookMetadata {
               ? listed.first.photoUrl
               : json['authorPhotoUrl'] as String? ?? '',
       coAuthors: listed.skip(1).toList(growable: false),
-      sendAuthorList: listed.length > 1,
+      sendAuthorList:
+          listed.length > 1 || listed.any((author) => author.hasAccountLink),
       authorAbout:
           json.containsKey('authorBio')
               ? json['authorBio'] as String? ?? ''
+              : listed.isNotEmpty
+              ? listed.first.about
               : null,
+      authorUserId: listed.isNotEmpty ? listed.first.userId : null,
+      authorAuthProject: listed.isNotEmpty ? listed.first.authProject : null,
     );
   }
 
@@ -293,6 +370,9 @@ class LibraryBookMetadata {
     String? authorPhotoUrl,
     List<BookAuthor>? coAuthors,
     bool? sendAuthorList,
+    String? authorUserId,
+    String? authorAuthProject,
+    bool clearAuthorLink = false,
   }) => LibraryBookMetadata(
     title: title,
     subtitle: subtitle,
@@ -308,6 +388,9 @@ class LibraryBookMetadata {
     coAuthors: coAuthors ?? this.coAuthors,
     sendAuthorList: sendAuthorList ?? this.sendAuthorList,
     authorAbout: authorAbout,
+    authorUserId: clearAuthorLink ? null : (authorUserId ?? this.authorUserId),
+    authorAuthProject:
+        clearAuthorLink ? null : (authorAuthProject ?? this.authorAuthProject),
   );
 
   Map<String, dynamic> toJson() => {
@@ -325,13 +408,21 @@ class LibraryBookMetadata {
     if (authorCredit != null) 'authorCredit': authorCredit!.wire,
     // Null clears what this collection wrote about its first author.
     if (authorAbout != null) 'authorAbout': _nullable(authorAbout!),
-    // Names only: each photo is changed through the author-photo endpoints,
-    // and the server keeps a photo with its name when the list is edited.
-    // An empty list is refused; with nobody left to credit, the null `author`
-    // above is what clears the credit.
+    // Each photo is changed through the author-photo endpoints, and the
+    // server keeps a photo with its name when the list is edited. An empty
+    // list is refused; with nobody left to credit, the null `author` above
+    // is what clears the credit.
     if (sendAuthorList && _creditedNames.isNotEmpty)
       'authors': [
-        for (final name in _creditedNames) {'name': name},
+        for (final credited in authors)
+          if (credited.name.trim().isNotEmpty)
+            {
+              'name': credited.name.trim(),
+              if (credited.about != null) 'about': _nullable(credited.about!),
+              if (credited.credit != null) 'credit': credited.credit!.wire,
+              if (credited.hasAccountLink) 'userId': credited.userId,
+              if (credited.hasAccountLink) 'authProject': credited.authProject,
+            },
       ],
   };
 

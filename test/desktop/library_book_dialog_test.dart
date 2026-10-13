@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show ImageByteFormat;
 
 import 'package:chessever/desktop/widgets/library/cover_crop_dialog.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
@@ -10,6 +11,7 @@ import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -217,9 +219,13 @@ Future<void> _pump(
         ),
       ],
       child: MaterialApp(
+        theme: ThemeData(fontFamily: 'Geist'),
         home: FTheme(
           data: FThemes.zinc.dark,
-          child: Scaffold(body: LibraryBookDialog(folder: _folder())),
+          child: RepaintBoundary(
+            key: const ValueKey('book_capture'),
+            child: Scaffold(body: LibraryBookDialog(folder: _folder())),
+          ),
         ),
       ),
     ),
@@ -1514,8 +1520,8 @@ void main() {
       await _tap(tester, 'Save draft');
       expect(publisher.saves.single.metadata.toJson()['authors'], [
         {'name': 'Owner'},
-        {'name': 'Judit Polgar'},
-        {'name': 'Vasif Durarbayli'},
+        {'name': 'Judit Polgar', 'about': null, 'credit': 'other'},
+        {'name': 'Vasif Durarbayli', 'about': null, 'credit': 'other'},
       ]);
       expect(tester.takeException(), isNull);
     },
@@ -1716,6 +1722,224 @@ void main() {
       final title = tester.getRect(find.byType(FTextFormField).first);
       expect(photo.left, moreOrLessEquals(title.left, epsilon: 0.5));
       expect(remove.right, lessThanOrEqualTo(title.right + 0.5));
+    },
+  );
+
+  testWidgets(
+    'coauthor account selection and biography survive a save',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..suggestions = const [
+              AuthorSuggestion(
+                id: 'account:writer',
+                name: 'Writer',
+                userId: '11111111-1111-4111-8111-111111111111',
+                authProject: 'production',
+              ),
+            ];
+      await _pump(tester, publisher);
+      await _tap(tester, 'Add an author');
+      await tester.enterText(
+        find.byKey(const ValueKey('book_coauthor_name_0')).first,
+        'Wri',
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      await _tapSegment(tester, 'Writer');
+      final biography =
+          find.byKey(const ValueKey('book_coauthor_about_0')).first;
+      await tester.ensureVisible(biography);
+      await tester.enterText(biography, 'A chess coach.');
+      await _tap(tester, 'Save draft');
+      final author = publisher.saves.single.metadata.coAuthors.single;
+      expect(author.credit, AuthorCredit.self);
+      expect(author.userId, '11111111-1111-4111-8111-111111111111');
+      expect(author.about, 'A chess coach.');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'changing a linked coauthor name clears its account',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..publication = const LibraryBookPublication(
+              status: 'draft',
+              metadata: LibraryBookMetadata(
+                title: 'Study',
+                author: 'Owner',
+                coAuthors: [
+                  BookAuthor(
+                    name: 'Writer',
+                    credit: AuthorCredit.self,
+                    userId: 'writer-id',
+                    authProject: 'project',
+                    about: 'A coach.',
+                  ),
+                ],
+              ),
+            );
+      await _pump(tester, publisher);
+      final field = find.byKey(const ValueKey('book_coauthor_name_0')).first;
+      await tester.ensureVisible(field);
+      await tester.enterText(field, 'New Writer');
+      await _tap(tester, 'Save draft');
+      final author = publisher.saves.single.metadata.coAuthors.single;
+      expect(author.userId, isNull);
+      expect(author.credit, AuthorCredit.other);
+      expect(author.about, 'A coach.');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'resuming a draft preserves coauthor accounts and biographies',
+    semanticsEnabled: false,
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'library_book.draft.folder': jsonEncode({
+          'authorCredit': 'self',
+          'coAuthors': [
+            {
+              'name': 'Writer',
+              'credit': 'self',
+              'userId': 'writer-id',
+              'authProject': 'project',
+              'about': 'A coach.',
+            },
+          ],
+        }),
+      });
+      final publisher = _Publisher();
+      await _pump(tester, publisher);
+      await _tap(tester, 'Continue');
+      await _tap(tester, 'Save draft');
+      final author = publisher.saves.single.metadata.coAuthors.single;
+      expect(author.userId, 'writer-id');
+      expect(author.credit, AuthorCredit.self);
+      expect(author.about, 'A coach.');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'an exact primary author suggestion keeps the account identity',
+    semanticsEnabled: false,
+    (tester) async {
+      final publisher =
+          _Publisher()
+            ..suggestions = const [
+              AuthorSuggestion(
+                id: 'account:writer',
+                name: 'Writer',
+                userId: 'writer-id',
+                authProject: 'project',
+              ),
+            ];
+      await _pump(tester, publisher);
+      await _tapSegment(tester, 'Someone else');
+      await tester.enterText(find.byType(FTextFormField).at(2), 'Writer');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      await _tapSegment(tester, 'Writer');
+      await _tap(tester, 'Save draft');
+      final metadata = publisher.saves.single.metadata;
+      expect(metadata.authorUserId, 'writer-id');
+      expect(metadata.authorCredit, AuthorCredit.self);
+      expect(metadata.toJson()['authors'], [
+        {
+          'name': 'Writer',
+          'credit': 'self',
+          'userId': 'writer-id',
+          'authProject': 'project',
+        },
+      ]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'coauthor controls fit both desktop layouts',
+    semanticsEnabled: false,
+    (tester) async {
+      final captureDir = Platform.environment['COAUTHOR_CAPTURE_DIR'];
+      if (captureDir != null) {
+        await tester.runAsync(() async {
+          for (final family in ['Geist', 'Roboto']) {
+            await (FontLoader(family)..addFont(
+              rootBundle.load('assets/fonts/Geist-VariableFont_wght.ttf'),
+            )).load();
+          }
+          await (FontLoader(FThemes.zinc.dark.typography.defaultFontFamily)
+                ..addFont(
+                  rootBundle.load(
+                    'packages/forui/assets/fonts/inter/Inter-Regular.ttf',
+                  ),
+                )
+                ..addFont(
+                  rootBundle.load(
+                    'packages/forui/assets/fonts/inter/Inter-Medium.ttf',
+                  ),
+                )
+                ..addFont(
+                  rootBundle.load(
+                    'packages/forui/assets/fonts/inter/Inter-SemiBold.ttf',
+                  ),
+                ))
+              .load();
+          await (FontLoader('MaterialIcons')..addFont(
+            rootBundle.load('fonts/MaterialIcons-Regular.otf'),
+          )).load();
+        });
+      }
+      for (final size in [const Size(1440, 1000), const Size(850, 800)]) {
+        final publisher =
+            _Publisher()
+              ..publication = const LibraryBookPublication(
+                status: 'draft',
+                metadata: LibraryBookMetadata(
+                  title: 'Sicilian preparation',
+                  author: 'Owner',
+                  coAuthors: [
+                    BookAuthor(
+                      name: 'Judit Polgar',
+                      about: 'Grandmaster and chess educator.',
+                    ),
+                  ],
+                ),
+              );
+        await _pump(tester, publisher, size: size);
+        final biography =
+            find.byKey(const ValueKey('book_coauthor_about_0')).first;
+        await tester.ensureVisible(biography);
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('book_coauthor_name_0')).first,
+        );
+        await tester.pumpAndSettle();
+        final rect = tester.getRect(biography);
+        expect(rect.left, greaterThanOrEqualTo(12));
+        expect(rect.right, lessThanOrEqualTo(size.width - 12));
+        if (captureDir != null) {
+          final boundary = tester.renderObject<RenderRepaintBoundary>(
+            find.byKey(const ValueKey('book_capture')),
+          );
+          await tester.runAsync(() async {
+            final image = await boundary.toImage();
+            final bytes = await image.toByteData(format: ImageByteFormat.png);
+            await Directory(captureDir).create(recursive: true);
+            await File(
+              '$captureDir/coauthors-${size.width.toInt()}.png',
+            ).writeAsBytes(bytes!.buffer.asUint8List());
+            image.dispose();
+          });
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        expect(tester.takeException(), isNull);
+      }
     },
   );
 

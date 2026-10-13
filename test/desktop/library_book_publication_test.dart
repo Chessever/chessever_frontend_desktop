@@ -65,6 +65,56 @@ class _Adapter implements HttpClientAdapter {
 
 void main() {
   test(
+    'account links and each author biography round trip without photos in writes',
+    () {
+      final metadata = LibraryBookMetadata.fromJson(const {
+        'title': 'A shared collection',
+        'authorCredit': 'self',
+        'authors': [
+          {
+            'name': 'First',
+            'credit': 'self',
+            'userId': 'first-id',
+            'authProject': 'project',
+            'about': 'First biography.',
+          },
+          {
+            'name': 'Second',
+            'credit': 'self',
+            'userId': 'second-id',
+            'authProject': 'project',
+            'about': 'Second biography.',
+            'photoUrl': 'https://example.test/photo.webp',
+          },
+        ],
+      });
+      expect(metadata.authorAbout, 'First biography.');
+      expect(metadata.toJson()['authors'], [
+        {
+          'name': 'First',
+          'credit': 'self',
+          'userId': 'first-id',
+          'authProject': 'project',
+          'about': 'First biography.',
+        },
+        {
+          'name': 'Second',
+          'credit': 'self',
+          'userId': 'second-id',
+          'authProject': 'project',
+          'about': 'Second biography.',
+        },
+      ]);
+      expect(metadata.copyWith(author: 'Edited').authorUserId, 'first-id');
+      expect(metadata.copyWith(clearAuthorLink: true).authorUserId, isNull);
+      expect(
+        const BookAuthor(name: 'A', about: 'one'),
+        isNot(const BookAuthor(name: 'A', about: 'two')),
+      );
+    },
+  );
+
+  test(
     'the author description is read as authorBio and sent as authorAbout',
     () {
       // An older server never sent it: the key stays out of the save.

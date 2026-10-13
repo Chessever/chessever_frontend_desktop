@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -165,6 +166,11 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   /// Whether the loaded book already carried the authorCredit key, so a save
   /// keeps sending it even when the user leaves the credit on Me.
   bool _hadCreditKey = false;
+  String? _authorUserId;
+  String? _authorAuthProject;
+  String _authorLinkedName = '';
+  bool get _authorHasLink =>
+      _authorUserId != null && _authorAuthProject != null;
 
   /// The credited author's own photo on the server. Uploaded as soon as it is
   /// chosen, like the cover; empty when none is set.
@@ -260,7 +266,13 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       _write(entry.key, entry.value);
     }
     // New books start on Me; a loaded book keeps whatever it was credited to.
-    _credit = m.authorCredit ?? AuthorCredit.self;
+    _authorUserId = m.authorUserId;
+    _authorAuthProject = m.authorAuthProject;
+    _authorLinkedName = m.authorHasAccountLink ? m.author : '';
+    _credit =
+        m.authorHasAccountLink
+            ? AuthorCredit.other
+            : m.authorCredit ?? AuthorCredit.self;
     _hadCreditKey = value.hadAuthorCreditKey;
     _authorPhotoUrl = m.authorPhotoUrl;
     _authorPhotoPreview = null;
@@ -279,6 +291,10 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       _confirmUnpublish = false;
       _dirty = false;
     });
+    if (_authorHasLink) _scheduleSuggestions();
+    for (final row in _coAuthors) {
+      if (row.hasLink) _scheduleCoAuthorSuggestions(row);
+    }
   }
 
   /// The signed-in account's profile photo for the "Me" preview: an https
@@ -339,7 +355,20 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     // The draft remembers which side of the Me / Someone-else choice the work
     // was on; the photo uploads immediately, so it is not in the draft.
     values['authorCredit'] = _credit.wire;
-    values['coAuthors'] = _coAuthorNames;
+    if (_authorHasLink) {
+      values['authorUserId'] = _authorUserId!;
+      values['authorAuthProject'] = _authorAuthProject!;
+    }
+    values['coAuthors'] = [
+      for (final row in _coAuthors)
+        {
+          'name': row.text,
+          'about': row.aboutText,
+          'credit': row.credit.wire,
+          if (row.hasLink) 'userId': row.userId,
+          if (row.hasLink) 'authProject': row.authProject,
+        },
+    ];
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_draftKey, jsonEncode(values));
@@ -375,14 +404,30 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     final draftCoAuthors =
         rawCoAuthors is List
             ? [
-              for (final name in rawCoAuthors)
-                if (name is String && name.trim().isNotEmpty) name.trim(),
+              for (final entry in rawCoAuthors)
+                if (entry is String && entry.trim().isNotEmpty)
+                  BookAuthor(
+                    name: entry.trim(),
+                    photoUrl: _rowNamed(entry)?.photoUrl ?? '',
+                  )
+                else if (entry is Map && entry['name'] is String)
+                  BookAuthor(
+                    name: (entry['name'] as String).trim(),
+                    photoUrl:
+                        _rowNamed(entry['name'] as String)?.photoUrl ?? '',
+                    about: entry['about'] as String?,
+                    credit: AuthorCredit.maybeParse(entry['credit']),
+                    userId: entry['userId'] as String?,
+                    authProject: entry['authProject'] as String?,
+                  ),
             ]
             : null;
     final differs =
         draftCredit != _credit ||
         (draftCoAuthors != null &&
-            draftCoAuthors.join('\n') != _coAuthorNames.join('\n')) ||
+            !listEquals(draftCoAuthors, _metadata.coAuthors)) ||
+        draft['authorUserId'] != _authorUserId ||
+        draft['authorAuthProject'] != _authorAuthProject ||
         values.entries.any((e) => e.value.trim() != _text(e.key).trim());
     if (!differs) {
       await _clearDraft();
@@ -396,16 +441,19 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
           _write(e.key, e.value);
         }
         _credit = draftCredit;
+        _authorUserId = draft!['authorUserId'] as String?;
+        _authorAuthProject = draft['authorAuthProject'] as String?;
+        _authorLinkedName = _authorHasLink ? _authorTerm : '';
         if (draftCoAuthors != null) {
-          _syncCoAuthors([
-            for (final name in draftCoAuthors)
-              BookAuthor(name: name, photoUrl: _rowNamed(name)?.photoUrl ?? ''),
-          ]);
+          _syncCoAuthors(draftCoAuthors);
         }
         _authorPrefilled = false;
         _dirty = true;
       });
       _scheduleSuggestions();
+      for (final row in _coAuthors) {
+        _scheduleCoAuthorSuggestions(row);
+      }
     } else if (resume == false) {
       await _clearDraft();
     }
@@ -528,6 +576,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   /// on Me; otherwise null, so the key is absent — the only safe body for an
   /// old server that rejects unknown keys.
   AuthorCredit? get _authorCreditToSend {
+    if (_authorHasLink) return AuthorCredit.self;
     if (_credit == AuthorCredit.other) return AuthorCredit.other;
     return _hadCreditKey ? AuthorCredit.self : null;
   }
@@ -558,9 +607,19 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       coAuthors: [
         for (final row in _coAuthors)
           if (row.text.isNotEmpty)
-            BookAuthor(name: row.text, photoUrl: row.photoUrl),
+            BookAuthor(
+              name: row.text,
+              photoUrl: row.photoUrl,
+              about: row.aboutText,
+              credit: row.credit,
+              userId: row.userId,
+              authProject: row.authProject,
+            ),
       ],
-      sendAuthorList: _hadAuthorList || _coAuthorNames.isNotEmpty,
+      sendAuthorList:
+          _hadAuthorList || _coAuthorNames.isNotEmpty || _authorHasLink,
+      authorUserId: _authorUserId,
+      authorAuthProject: _authorAuthProject,
     );
   }
 
@@ -762,6 +821,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     final author = _fields[_Field.author]!;
     setState(() {
       _credit = credit;
+      _authorUserId = null;
+      _authorAuthProject = null;
+      _authorLinkedName = '';
       _dirty = true;
       if (credit == AuthorCredit.other && _authorPrefilled) {
         _write(_Field.author, '');
@@ -802,6 +864,14 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       _text(_Field.author).trim().replaceAll(RegExp(r'\s+'), ' ');
 
   void _onAuthorChanged(String value) {
+    if (_authorHasLink &&
+        _authorTerm.toLowerCase() != _authorLinkedName.toLowerCase()) {
+      setState(() {
+        _authorUserId = null;
+        _authorAuthProject = null;
+        _authorLinkedName = '';
+      });
+    }
     _authorPrefilled = false;
     if (!_dirty) setState(() => _dirty = true);
     _scheduleStash();
@@ -862,6 +932,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   void _useSuggestion(AuthorSuggestion suggestion) {
     setState(() {
       _write(_Field.author, suggestion.name);
+      _authorUserId = suggestion.userId;
+      _authorAuthProject = suggestion.authProject;
+      _authorLinkedName = suggestion.hasAccount ? suggestion.name : '';
       _authorPrefilled = false;
       _suggestions = [suggestion];
       _suggestionsFor = suggestion.name;
@@ -892,6 +965,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       _authorPhotoBusy = true;
       _authorPhotoPreview = image;
       _credit = AuthorCredit.other;
+      _authorUserId = null;
+      _authorAuthProject = null;
+      _authorLinkedName = '';
       _error = null;
       _notice = null;
     });
@@ -996,8 +1072,21 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
         (row) => row.text.toLowerCase() == author.name.toLowerCase(),
       );
       final row =
-          at < 0 ? _CoAuthor(name: author.name) : _coAuthors.removeAt(at);
+          at < 0
+              ? _CoAuthor(
+                name: author.name,
+                about: author.about ?? '',
+                credit: author.credit ?? AuthorCredit.other,
+                userId: author.userId,
+                authProject: author.authProject,
+              )
+              : _coAuthors.removeAt(at);
       row.photoUrl = author.photoUrl;
+      row.about.text = author.about ?? '';
+      row.credit = author.credit ?? AuthorCredit.other;
+      row.userId = author.userId;
+      row.authProject = author.authProject;
+      row.linkedName = author.hasAccountLink ? author.name : '';
       kept.add(row);
     }
     final gone = List.of(_coAuthors);
@@ -1063,7 +1152,88 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     setState(() {
       _dirty = true;
       row.error = null;
+      if (row.hasLink &&
+          row.text.toLowerCase() != row.linkedName.toLowerCase()) {
+        row.userId = null;
+        row.authProject = null;
+        row.linkedName = '';
+        row.credit = AuthorCredit.other;
+      }
     });
+    _scheduleStash();
+    _scheduleCoAuthorSuggestions(row);
+  }
+
+  void _scheduleCoAuthorSuggestions(_CoAuthor row) {
+    row.suggestTimer?.cancel();
+    final seq = ++row.suggestSeq;
+    final term = row.text;
+    if (term.length < 2) {
+      setState(() {
+        row.suggestions = const [];
+        row.suggestionsFor = '';
+      });
+      return;
+    }
+    row.suggestTimer = Timer(const Duration(milliseconds: 300), () async {
+      final items = await ref
+          .read(libraryBookPublisherProvider)
+          .suggestAuthors(term);
+      if (!mounted ||
+          !_coAuthors.contains(row) ||
+          seq != row.suggestSeq ||
+          row.text != term) {
+        return;
+      }
+      setState(() {
+        if (row.hasLink) {
+          for (final item in items) {
+            if (item.userId == row.userId &&
+                item.authProject == row.authProject) {
+              row.avatarUrl = item.avatarUrl;
+            }
+          }
+        }
+        row.suggestions = row.hasLink ? const [] : items;
+        row.suggestionsFor = term;
+      });
+    });
+  }
+
+  void _useCoAuthorSuggestion(_CoAuthor row, AuthorSuggestion suggestion) {
+    row.suggestTimer?.cancel();
+    row.suggestSeq++;
+    setState(() {
+      row.name.text = suggestion.name;
+      row.seen = suggestion.name;
+      row.userId = suggestion.userId;
+      row.authProject = suggestion.authProject;
+      row.linkedName = suggestion.hasAccount ? suggestion.name : '';
+      row.credit =
+          suggestion.hasAccount ? AuthorCredit.self : AuthorCredit.other;
+      row.avatarUrl = suggestion.avatarUrl;
+      row.suggestions = const [];
+      row.suggestionsFor = '';
+      row.error = null;
+      _dirty = true;
+    });
+    _scheduleStash();
+  }
+
+  void _setCoAuthorCredit(_CoAuthor row, AuthorCredit credit) {
+    setState(() {
+      row.credit = credit;
+      if (credit == AuthorCredit.other) {
+        row.userId = null;
+        row.authProject = null;
+        row.linkedName = '';
+      }
+      row.error = null;
+      _dirty = true;
+    });
+    if (credit == AuthorCredit.self && !row.hasLink) {
+      _scheduleCoAuthorSuggestions(row);
+    }
     _scheduleStash();
   }
 
@@ -1085,6 +1255,12 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     final value = row.text;
     // A row left empty credits nobody and is dropped on save.
     if (value.isEmpty) return null;
+    if (row.credit == AuthorCredit.self && !row.hasLink) {
+      return 'Select a ChessEver account below.';
+    }
+    if (row.aboutText.length > 4000) {
+      return 'Keep the author description within 4,000 characters.';
+    }
     if (!_authorNamed(value)) return 'Enter the author’s name.';
     final lower = value.toLowerCase();
     final above = [
@@ -1123,6 +1299,10 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     final wasPublished = _publication?.isPublished ?? false;
     setState(() {
       row.busy = true;
+      row.credit = AuthorCredit.other;
+      row.userId = null;
+      row.authProject = null;
+      row.linkedName = '';
       row.preview = image;
       _error = null;
       _notice = null;
@@ -1236,7 +1416,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
           const _OptionalLabel('More authors'),
           const SizedBox(height: 4),
           const Text(
-            'Credited after the first author, in this order. Each can have a photo.',
+            'Choose an existing author to keep their collections together. Each author has their own credit and description.',
             style: _noteStyle,
           ),
           const SizedBox(height: 6),
@@ -1269,9 +1449,15 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     required bool enabled,
   }) {
     final at = _coAuthors.indexOf(row);
-    final uri = _httpsUri(row.photoUrl);
+    final uri = _httpsUri(
+      row.credit == AuthorCredit.self ? row.avatarUrl ?? '' : row.photoUrl,
+    );
     final hasPhoto = row.preview != null || uri != null;
-    final canPhoto = enabled && !_anyPhotoBusy && !_coverBusy;
+    final canPhoto =
+        enabled &&
+        !_anyPhotoBusy &&
+        !_coverBusy &&
+        row.credit != AuthorCredit.self;
     final Widget face =
         row.preview != null
             ? Image.memory(row.preview!, fit: BoxFit.cover)
@@ -1306,20 +1492,31 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
               // field has; what follows the name sits under the field.
               Row(
                 children: [
-                  _PhotoButton(
-                    key: ValueKey('book_coauthor_photo_$at'),
-                    tooltip:
-                        phase == ImageDropPhase.dragging
-                            ? 'Drop to use this photo'
-                            : hasPhoto
-                            ? 'Replace photo'
-                            : 'Choose photo',
-                    onPress: canPhoto ? () => _pickCoAuthorPhoto(row) : null,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [face, if (row.busy) const _Uploading()],
+                  if (row.credit == AuthorCredit.self)
+                    Semantics(
+                      image: true,
+                      label: 'ChessEver account profile photo',
+                      child: SizedBox.square(
+                        key: ValueKey('book_coauthor_photo_$at'),
+                        dimension: _coAuthorPhoto,
+                        child: ClipOval(child: face),
+                      ),
+                    )
+                  else
+                    _PhotoButton(
+                      key: ValueKey('book_coauthor_photo_$at'),
+                      tooltip:
+                          phase == ImageDropPhase.dragging
+                              ? 'Drop to use this photo'
+                              : hasPhoto
+                              ? 'Replace photo'
+                              : 'Choose photo',
+                      onPress: canPhoto ? () => _pickCoAuthorPhoto(row) : null,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [face, if (row.busy) const _Uploading()],
+                      ),
                     ),
-                  ),
                   const SizedBox(width: _coAuthorGap),
                   Expanded(
                     child: FTextField(
@@ -1355,6 +1552,59 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                   ),
                 ],
               ),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 330),
+                  child: _Segmented(
+                    key: ValueKey('book_coauthor_credit_$at'),
+                    semanticsLabel: 'How is author ${at + 2} credited?',
+                    labels: const ['Named author', 'ChessEver account'],
+                    index: row.credit == AuthorCredit.self ? 1 : 0,
+                    enabled: enabled && !_anyPhotoBusy && !_coverBusy,
+                    onChanged:
+                        (i) => _setCoAuthorCredit(
+                          row,
+                          i == 1 ? AuthorCredit.self : AuthorCredit.other,
+                        ),
+                  ),
+                ),
+              ),
+              if (row.hasLink)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Linked to their ChessEver author page. Their profile photo is shown.',
+                    style: _noteStyle,
+                  ),
+                ),
+              if (row.suggestionsFor == row.text)
+                for (final suggestion in row.suggestions)
+                  _SuggestionRow(
+                    suggestion: suggestion,
+                    onTap:
+                        enabled && !row.busy
+                            ? () => _useCoAuthorSuggestion(row, suggestion)
+                            : null,
+                  ),
+              const SizedBox(height: 12),
+              FTextField(
+                key: ValueKey('book_coauthor_about_$at'),
+                controller: row.about,
+                enabled: enabled && !row.busy,
+                label: const Text('About this author'),
+                hint: 'Their background, experience or approach.',
+                minLines: 2,
+                maxLines: 5,
+                maxLength: 4000,
+                counterBuilder:
+                    (context, current, max, focused) => const SizedBox.shrink(),
+                onChange: (_) {
+                  setState(() => _dirty = true);
+                  _scheduleStash();
+                },
+              ),
               Padding(
                 padding: const EdgeInsets.only(
                   left: _coAuthorPhoto + _coAuthorGap,
@@ -1375,34 +1625,35 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                           ),
                         ),
                       ),
-                    Wrap(
-                      spacing: 14,
-                      children: [
-                        _QuietAction(
-                          key: ValueKey('book_coauthor_choose_$at'),
-                          label:
-                              row.busy
-                                  ? 'Saving photo…'
-                                  : phase == ImageDropPhase.dragging
-                                  ? 'Drop to use this photo'
-                                  : hasPhoto
-                                  ? 'Replace photo'
-                                  : 'Drop a photo here, or choose one…',
-                          lit: phase == ImageDropPhase.dragging,
-                          onPress:
-                              canPhoto ? () => _pickCoAuthorPhoto(row) : null,
-                        ),
-                        if (hasPhoto && !row.busy)
+                    if (row.credit != AuthorCredit.self)
+                      Wrap(
+                        spacing: 14,
+                        children: [
                           _QuietAction(
-                            key: ValueKey('book_coauthor_photo_remove_$at'),
-                            label: 'Remove photo',
+                            key: ValueKey('book_coauthor_choose_$at'),
+                            label:
+                                row.busy
+                                    ? 'Saving photo…'
+                                    : phase == ImageDropPhase.dragging
+                                    ? 'Drop to use this photo'
+                                    : hasPhoto
+                                    ? 'Replace photo'
+                                    : 'Drop a photo here, or choose one…',
+                            lit: phase == ImageDropPhase.dragging,
                             onPress:
-                                canPhoto
-                                    ? () => _removeCoAuthorPhoto(row)
-                                    : null,
+                                canPhoto ? () => _pickCoAuthorPhoto(row) : null,
                           ),
-                      ],
-                    ),
+                          if (hasPhoto && !row.busy)
+                            _QuietAction(
+                              key: ValueKey('book_coauthor_photo_remove_$at'),
+                              label: 'Remove photo',
+                              onPress:
+                                  canPhoto
+                                      ? () => _removeCoAuthorPhoto(row)
+                                      : null,
+                            ),
+                        ],
+                      ),
                   ],
                 ),
               ),
@@ -1464,6 +1715,27 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   /// someone else, existing ChessEver names to match and their own photo.
   Widget _authorExtras(LibraryBookStage stage) {
     final name = _text(_Field.author).trim();
+    if (_authorHasLink) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 20),
+        child: Row(
+          children: [
+            _AuthorAvatar(
+              url: _matchedAuthor?.avatarUrl,
+              size: 40,
+              semanticsLabel: 'Linked author profile photo',
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Linked to their ChessEver author page. Their profile photo is shown.',
+                style: _noteStyle,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     if (!_creditsOther) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 20),
@@ -1522,7 +1794,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     final matched = _matchedAuthor;
     // The last answer stays while the next lookup is on its way, so the form
     // below does not jump on every keystroke. Only a match hides it.
-    final showList = matched == null && _suggestions.isNotEmpty;
+    final showList =
+        (matched == null || (matched.hasAccount && !_authorHasLink)) &&
+        _suggestions.isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2539,13 +2813,22 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
 const _coAuthorPhoto = 40.0;
 const _coAuthorGap = 12.0;
 
-/// One more credited author in the form: their name field and their photo.
+/// One more credited author in the form: configured exactly like the first
+/// author (name with suggestions, their own credit and account link, a
+/// description, and a photo when they are credited rather than an account).
 class _CoAuthor {
-  _CoAuthor({String name = ''})
-    : name = TextEditingController(text: name),
-      seen = name;
+  _CoAuthor({
+    String name = '',
+    String about = '',
+    this.credit = AuthorCredit.other,
+    this.userId,
+    this.authProject,
+  }) : name = TextEditingController(text: name),
+       about = TextEditingController(text: about),
+       seen = name;
 
   final TextEditingController name;
+  final TextEditingController about;
   final FocusNode focus = FocusNode();
 
   /// The text the field last held as far as the dialog knows (forui reports
@@ -2555,14 +2838,38 @@ class _CoAuthor {
   Uint8List? preview;
   bool busy = false;
 
+  /// Their own credit: themselves (a ChessEver account) or a credited name.
+  AuthorCredit credit;
+
+  /// The ChessEver account they are filed under when [credit] is
+  /// [AuthorCredit.self]; picked from the suggestions, never typed.
+  String? userId;
+  String? authProject;
+  String? avatarUrl;
+
+  /// The name [userId] was picked for; typing a different name drops it.
+  String linkedName = '';
+
+  List<AuthorSuggestion> suggestions = const [];
+  String suggestionsFor = '';
+  Timer? suggestTimer;
+  int suggestSeq = 0;
+
+  bool get hasLink => userId != null && authProject != null;
+
   /// What is wrong with the name, shown under the field after a save tries.
   String? error;
 
   /// The name as it is saved: trimmed, single-spaced.
   String get text => name.text.trim().replaceAll(RegExp(r'\s+'), ' ');
 
+  /// The description as it is saved: trimmed, empty when none is written.
+  String get aboutText => about.text.trim();
+
   void dispose() {
+    suggestTimer?.cancel();
     name.dispose();
+    about.dispose();
     focus.dispose();
   }
 }
@@ -3161,15 +3468,22 @@ class _SuggestionRowState extends State<_SuggestionRow> {
                   _AuthorAvatar(url: suggestion.avatarUrl, size: 28),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      suggestion.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: kWhiteColor,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          suggestion.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        if (suggestion.hasAccount)
+                          const Text('ChessEver account', style: _noteStyle),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 8),
