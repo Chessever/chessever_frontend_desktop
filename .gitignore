@@ -233,3 +233,5 @@ sparkle_priv.pem
 !lib/desktop/services/engine/desktop_engine_assets.md
 # Agent instructions split out of AGENTS.md (read on demand; binding like AGENTS.md itself).
 !docs/agents/*.md
+# Kiro CLI runtime lock (machine-local).
+.kiro/settings/*.lock
