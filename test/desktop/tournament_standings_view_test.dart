@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'dart:async';
 
 import 'package:flutter/gestures.dart';
@@ -342,6 +343,18 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      expect(find.text('TB1'), findsOneWidget);
+      final firstTie = find.byKey(const Key('standings-tiebreak-1503014-TB1'));
+      final missingTie = find.byKey(
+        const Key('standings-tiebreak-46616543-TB1'),
+      );
+      expect(tester.widget<Text>(firstTie).data, '9.5');
+      expect(tester.widget<Text>(missingTie).data, '');
+      expect(tester.getTopLeft(firstTie).dx, tester.getTopLeft(missingTie).dx);
+      expect(
+        tester.getTopLeft(firstTie).dx,
+        tester.getTopLeft(find.text('TB1')).dx,
+      );
       expect(find.byKey(const Key('standings-round-header-1')), findsOneWidget);
       expect(
         find.byKey(const Key('standings-round-1503014-1')),
@@ -435,6 +448,16 @@ void main() {
       expect(flagX, lessThan(titleX));
       expect(titleX, lessThan(nameX));
       expect(nameX, lessThan(firstRatingX));
+      final tiebreakMouse = await tester.createGesture(
+        kind: PointerDeviceKind.mouse,
+      );
+      await tiebreakMouse.addPointer();
+      await tiebreakMouse.moveTo(tester.getCenter(find.text('TB1')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(find.text('Buchholz Cut-1'), findsOneWidget);
+      await tiebreakMouse.removePointer();
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     },
   );
@@ -975,7 +998,16 @@ class _LayoutStandingsNotifier extends PlayerTourScreenNotifier {
           fideId: 1503014,
           rating: 2830,
           rank: 1,
-        ).copyWith(matchScore: '1 / 1'),
+        ).copyWith(
+          matchScore: '1 / 1',
+          tiebreaks: const [
+            PublishedTiebreak(
+              points: 9.5,
+              description: 'Buchholz Cut-1',
+              extendedCode: 'TB1',
+            ),
+          ],
+        ),
         _standing(
           name: 'A Very Long Opponent Name That Must Not Move Rating',
           fideId: 46616543,
