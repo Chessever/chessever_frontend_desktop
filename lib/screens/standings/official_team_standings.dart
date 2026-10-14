@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/info64_source.dart';
 import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
@@ -56,11 +57,14 @@ List<TeamStandingModel>? _buildOfficialTeamSnapshot(
   String? standingsUrl,
   List<PlayerStandingModel> players,
 ) {
-  if (snapshot == null || snapshot['source'] != 'chess-results') return null;
+  if (snapshot == null ||
+      !['chess-results', 'info64'].contains(snapshot['source'])) {
+    return null;
+  }
   final round = _integer(snapshot['round']);
   final teams = snapshot['teams'];
   final fetchedAt = snapshot['fetchedAt'];
-  final event = _eventId(standingsUrl);
+  final event = _eventId(standingsUrl, source: snapshot['source']);
   if (round == null ||
       round < 1 ||
       round > 100 ||
@@ -69,7 +73,7 @@ List<TeamStandingModel>? _buildOfficialTeamSnapshot(
       fetchedAt is! String ||
       DateTime.tryParse(fetchedAt) == null ||
       event == null ||
-      event != _eventId(snapshot['sourceUrl'])) {
+      event != _eventId(snapshot['sourceUrl'], source: snapshot['source'])) {
     return null;
   }
 
@@ -180,7 +184,8 @@ int? _integer(dynamic value) =>
         ? value.toInt()
         : null;
 
-String? _eventId(dynamic value) {
+String? _eventId(dynamic value, {dynamic source = 'chess-results'}) {
+  if (source == 'info64') return info64EventUrl(value, team: true);
   if (value is! String) return null;
   final uri = Uri.tryParse(value);
   if (uri == null ||

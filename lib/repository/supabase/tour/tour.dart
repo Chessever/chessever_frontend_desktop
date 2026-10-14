@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/info64_source.dart';
 import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:intl/intl.dart';
@@ -648,7 +649,9 @@ class Tour {
   }
 
   bool get usesExternalStandings =>
-      info.standingsSource == 'chess-results' &&
+      (info.standingsSource == 'chess-results' ||
+          (info.standingsSource == 'info64' &&
+              info64EventUrl(info.standings) != null)) &&
       info.standingsUpdatedAt != null;
 
   // Format time until start
