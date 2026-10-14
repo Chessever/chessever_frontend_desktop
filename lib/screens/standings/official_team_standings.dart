@@ -39,9 +39,7 @@ List<TeamStandingModel>? buildOfficialTeamStandings({
       final rows = _buildOfficialTeamSnapshot(
         Map<String, dynamic>.from(raw),
         matches.single.sourceUrl,
-        matches.single.players
-            .map(PlayerStandingModel.fromPlayer)
-            .toList(),
+        matches.single.players.map(PlayerStandingModel.fromPlayer).toList(),
       );
       if (rows == null) return null;
       first ??= rows;
@@ -112,6 +110,8 @@ List<TeamStandingModel>? _buildOfficialTeamSnapshot(
   }
   final rows = <TeamStandingModel>[];
   final names = <String>{};
+  // Published knockout ranks can skip places; preserve their order rather
+  // than impose competition-ranking ordinals on the organizer table.
   var lastRank = 0;
   for (final raw in teams) {
     if (raw is! Map) return null;
@@ -129,7 +129,8 @@ List<TeamStandingModel>? _buildOfficialTeamSnapshot(
         rank == null ||
         rank < 1 ||
         rank < lastRank ||
-        (rank != lastRank && rank != rows.length + 1) ||
+        (rows.isEmpty && rank != 1) ||
+        rank > teams.length ||
         mp == null ||
         mp < 0 ||
         gp is! num ||
