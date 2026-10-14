@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/standings/team_standing_model.dart';
@@ -154,6 +155,7 @@ List<TeamStandingModel>? _buildOfficialTeamSnapshot(
         teamName: name,
         rank: rank,
         officialRound: round,
+        tiebreaks: PublishedTiebreak.parse(raw['tiebreaks']),
         matchPoints: mp,
         gamePoints: gp.toDouble(),
         matchesWon: wins,
