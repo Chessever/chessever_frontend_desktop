@@ -65,7 +65,8 @@ TournamentStandingsRoundTable buildTournamentStandingsRoundTable({
   for (final game in games) {
     final existing = uniqueGames[game.gameId];
     if (existing == null ||
-        (!existing.gameStatus.isFinished && game.gameStatus.isFinished)) {
+        (!(existing.gameStatus.isFinished || existing.isDoubleForfeit) &&
+            (game.gameStatus.isFinished || game.isDoubleForfeit))) {
       uniqueGames[game.gameId] = game;
     }
   }
@@ -99,14 +100,18 @@ TournamentStandingsRoundTable buildTournamentStandingsRoundTable({
       final candidate = TournamentStandingsRoundCell(
         game: game,
         round: stage.round,
-        resultText: _resultForPlayer(game.gameStatus, playedWhite),
+        resultText:
+            game.isDoubleForfeit
+                ? '0'
+                : _resultForPlayer(game.gameStatus, playedWhite),
         playedWhite: playedWhite,
         opponentName: opponentStanding?.name ?? opponentCard.name,
         opponentRank: opponentRank,
         opponentRating: opponentRating,
         isOngoing:
-            game.gameStatus == GameStatus.ongoing ||
-            game.gameStatus == GameStatus.unknown,
+            !game.isDoubleForfeit &&
+            (game.gameStatus == GameStatus.ongoing ||
+                game.gameStatus == GameStatus.unknown),
       );
       playerStages.putIfAbsent(stage.key, () => []).add(candidate);
     }

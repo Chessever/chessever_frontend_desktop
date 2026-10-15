@@ -33,6 +33,36 @@ final _mergedGamesSourcesStateProvider =
     );
 
 void main() {
+  test('double forfeits replace live rows and show zero for both players', () {
+    final white = _standing(name: 'White', fideId: 1, rating: 2000, rank: 1);
+    final black = _standing(name: 'Black', fideId: 2, rating: 2000, rank: 2);
+    final live = _game(
+      id: 'adjudicated',
+      round: 'Round 1',
+      white: _card('White', 1, 2000),
+      black: _card('Black', 2, 2000),
+      status: GameStatus.ongoing,
+    );
+    final adjudicated = live.copyWith(
+      gameStatus: GameStatus.unknown,
+      isDoubleForfeit: true,
+    );
+    for (final games in [
+      [live, adjudicated],
+      [adjudicated, live],
+    ]) {
+      final table = buildTournamentStandingsRoundTable(
+        standings: [white, black],
+        games: games,
+      );
+      for (final player in [white, black]) {
+        final cell = table.cellsFor(player).single;
+        expect(cell.resultText, '0');
+        expect(cell.isOngoing, isFalse);
+      }
+    }
+  });
+
   test(
     'maps round results and opponent tooltip from the player perspective',
     () {
