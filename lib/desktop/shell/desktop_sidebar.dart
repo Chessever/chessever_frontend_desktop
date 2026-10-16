@@ -1,7 +1,5 @@
 import 'dart:io';
-import 'package:forui/forui.dart';
-import 'package:chessever/desktop/widgets/editorial/inbox_dialog.dart';
-import 'package:chessever/desktop/widgets/editorial/nudge_anchor.dart';
+import 'package:chessever/desktop/widgets/editorial/inbox_unread_anchor.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -103,16 +101,13 @@ class DesktopSidebar extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           for (final entry in _primaryNav) ...[
-            DesktopNudgeAnchor(
-              ids: desktopNudgeAnchors(entry.pane!),
-              child: _SidebarItem(
-                entry: entry,
-                expanded: expanded,
-                selected: entry.pane == current,
-                onTap:
-                    ({required bool inNewTab}) =>
-                        onSelect(entry.pane!, inNewTab: inNewTab),
-              ),
+            _SidebarItem(
+              entry: entry,
+              expanded: expanded,
+              selected: entry.pane == current,
+              onTap:
+                  ({required bool inNewTab}) =>
+                      onSelect(entry.pane!, inNewTab: inNewTab),
             ),
             if (entry.pane == DesktopPane.play) ...[
               _SidebarItem(
@@ -137,23 +132,14 @@ class DesktopSidebar extends StatelessWidget {
                       screenshotKey: feedbackScreenshotKey,
                     ),
               ),
-              FTheme(
-                data: FThemes.zinc.dark,
-                child: Builder(
-                  builder:
-                      (context) => DesktopNudgeAnchor(
-                        ids: const ['desktop.nav.inbox', 'drawer.inbox'],
-                        child: DesktopInboxUnreadAnchor(
-                          child: _SidebarItem(
-                            entry: _inboxEntry,
-                            expanded: expanded,
-                            selected: false,
-                            onTap:
-                                ({required bool inNewTab}) =>
-                                    DesktopInboxDialog.show(context),
-                          ),
-                        ),
-                      ),
+              DesktopInboxUnreadAnchor(
+                child: _SidebarItem(
+                  entry: _inboxEntry,
+                  expanded: expanded,
+                  selected: current == DesktopPane.inbox,
+                  onTap:
+                      ({required bool inNewTab}) =>
+                          onSelect(DesktopPane.inbox, inNewTab: inNewTab),
                 ),
               ),
               _BotvinnikSidebarItem(expanded: expanded),
@@ -165,16 +151,13 @@ class DesktopSidebar extends StatelessWidget {
             onPress: () => onSelect(DesktopPane.settings, inNewTab: false),
           ),
           const Divider(height: 1, color: kDividerColor),
-          DesktopNudgeAnchor(
-            ids: const ['desktop.nav.settings', 'drawer.settings'],
-            child: _SidebarItem(
-              entry: _settingsEntry,
-              expanded: expanded,
-              selected: current == DesktopPane.settings,
-              onTap:
-                  ({required bool inNewTab}) =>
-                      onSelect(DesktopPane.settings, inNewTab: inNewTab),
-            ),
+          _SidebarItem(
+            entry: _settingsEntry,
+            expanded: expanded,
+            selected: current == DesktopPane.settings,
+            onTap:
+                ({required bool inNewTab}) =>
+                    onSelect(DesktopPane.settings, inNewTab: inNewTab),
           ),
           const SizedBox(height: 8),
           _VersionFooter(expanded: expanded),
@@ -578,10 +561,12 @@ const _NavEntry _searchEntry = _NavEntry(
 );
 
 final List<_NavEntry> _primaryNav = desktopMainRoutes
+    .where((route) => route.pane != DesktopPane.inbox)
     .map(_NavEntry.fromMainRoute)
     .toList(growable: false);
 
 const _NavEntry _inboxEntry = _NavEntry(
+  pane: DesktopPane.inbox,
   label: 'Inbox',
   icon: Icons.inbox_outlined,
 );
@@ -753,21 +738,3 @@ class _ChessboardIconPainter extends CustomPainter {
   bool shouldRepaint(covariant _ChessboardIconPainter old) =>
       old.color != color;
 }
-
-List<String> desktopNudgeAnchors(DesktopPane pane) => switch (pane) {
-  DesktopPane.tournaments => ['desktop.nav.events', 'home.nav.events'],
-  DesktopPane.library => ['desktop.nav.library', 'my_space.tile.library'],
-  DesktopPane.collections => [
-    'desktop.nav.collections',
-    'home.nav.collections',
-  ],
-  DesktopPane.players => ['desktop.nav.prep', 'my_space.tile.my_prep'],
-  DesktopPane.rankings => ['desktop.nav.rankings', 'drawer.rankings'],
-  DesktopPane.calendar => ['desktop.nav.calendar', 'drawer.calendar'],
-  DesktopPane.board => ['desktop.nav.board', 'drawer.board'],
-  DesktopPane.countrymen => ['desktop.nav.countrymen'],
-  DesktopPane.favorites => ['desktop.nav.favorites'],
-  DesktopPane.play => ['desktop.nav.play'],
-  DesktopPane.settings => ['desktop.nav.settings', 'drawer.settings'],
-  _ => [],
-};

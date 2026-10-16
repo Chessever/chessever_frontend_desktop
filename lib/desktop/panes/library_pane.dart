@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/library_destination.dart';
 import 'package:chessever/desktop/services/shared_books.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
@@ -200,6 +201,16 @@ class LibraryPane extends HookConsumerWidget {
     final selectedFolderId = useState<String?>(null);
     final selectedLocalPath = useState<String?>(null);
     final localFullViewPath = useState<String?>(null);
+    final requestedDestination = ref.watch(libraryDestinationRequestProvider);
+    useEffect(() {
+      if (requestedDestination != null) {
+        selectedFolderId.value = requestedDestination.$2;
+        currentLibraryFolderId.value = null;
+        selectedLocalPath.value = null;
+      }
+      return null;
+    }, [requestedDestination]);
+
     // Default Library landing is still the user's database home, with TWIC
     // selected for the bottom reference-style preview until they pick another
     // cloud database tile.

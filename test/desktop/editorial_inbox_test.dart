@@ -4,7 +4,8 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/services/editorial/inbox_message.dart';
 import 'package:chessever/desktop/services/editorial/inbox_provider.dart';
-import 'package:chessever/desktop/widgets/editorial/inbox_dialog.dart';
+import 'package:chessever/desktop/widgets/editorial/inbox_unread_anchor.dart';
+import 'package:chessever/desktop/panes/inbox_pane.dart';
 import '../inbox_fakes.dart';
 
 void main() {
@@ -23,7 +24,7 @@ void main() {
           const DesktopInboxUnreadAnchor(
             child: SizedBox(width: 34, height: 34),
           ),
-          const Expanded(child: DesktopInboxDialog()),
+          const Expanded(child: InboxPane()),
         ],
       );
       await tester.pumpWidget(
@@ -73,9 +74,7 @@ void main() {
           overrides: [inboxProvider.overrideWith((ref) => controller)],
           child: FTheme(
             data: FThemes.zinc.dark,
-            child: const MaterialApp(
-              home: Scaffold(body: DesktopInboxDialog()),
-            ),
+            child: const MaterialApp(home: Scaffold(body: InboxPane())),
           ),
         ),
       );

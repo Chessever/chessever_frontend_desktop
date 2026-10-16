@@ -1502,6 +1502,8 @@ class _CloseButtonState extends State<_CloseButton>
 // + filled glyphs.
 IconData _iconFor(TabKind kind) {
   switch (kind) {
+    case TabKind.inbox:
+      return Icons.inbox_outlined;
     case TabKind.board:
       return Icons.grid_4x4_outlined;
     case TabKind.tournaments:
