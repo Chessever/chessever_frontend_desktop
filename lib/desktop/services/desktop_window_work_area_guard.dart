@@ -25,9 +25,24 @@ import 'package:chessever/desktop/services/desktop_window_geometry.dart';
 /// display, and never while a move or resize is in progress.
 class DesktopWindowWorkAreaGuard
     with WindowListener, ScreenListener, WidgetsBindingObserver {
-  DesktopWindowWorkAreaGuard._();
+  DesktopWindowWorkAreaGuard._()
+    : _windowScale = windowManager.getDevicePixelRatio,
+      _perMonitorScaling = (() => desktopUsesPerMonitorScaling);
+
+  /// A guard driven directly by tests, with the window's scale and the
+  /// platform's coordinate model supplied instead of read from the engine.
+  @visibleForTesting
+  DesktopWindowWorkAreaGuard.forTesting({
+    required double Function() windowScale,
+    required bool perMonitorScaling,
+  }) : _windowScale = windowScale,
+       _perMonitorScaling = (() => perMonitorScaling);
+
   static final DesktopWindowWorkAreaGuard instance =
       DesktopWindowWorkAreaGuard._();
+
+  final double Function() _windowScale;
+  final bool Function() _perMonitorScaling;
 
   static const Duration _settleDelay = Duration(milliseconds: 350);
 
@@ -100,6 +115,13 @@ class DesktopWindowWorkAreaGuard
   @override
   void didChangeMetrics() => _schedule();
 
+  /// Runs one check now, as if [environmentChanged] had just been reported.
+  @visibleForTesting
+  Future<void> debugCheck({bool environmentChanged = false}) {
+    if (environmentChanged) _environmentChanged = true;
+    return _check();
+  }
+
   void _holdForInteraction() {
     _interactingUntil = DateTime.now().add(_interactionHold);
     _schedule();
@@ -156,8 +178,8 @@ class DesktopWindowWorkAreaGuard
       return;
     }
 
-    final perMonitorScaling = desktopUsesPerMonitorScaling;
-    final scale = windowManager.getDevicePixelRatio();
+    final perMonitorScaling = _perMonitorScaling();
+    final scale = _windowScale();
     final bounds = await windowManager.getBounds();
     final index = displayIndexForPoint(
       point: bounds.center,
