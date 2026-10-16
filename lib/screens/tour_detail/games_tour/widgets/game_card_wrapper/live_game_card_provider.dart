@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:chessever/utils/awarded_points.dart';
 
 import 'package:collection/collection.dart';
+import 'package:dartchess/dartchess.dart' show Chess, PgnGame;
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
@@ -705,81 +706,96 @@ GamesTourModel _mergeLiveUpdate({
     authoritativeFullRow: authoritativeFullRow,
   );
 
-  final mergedPgn =
-      includePosition
-          ? (authoritativeFullRow ? update.pgn : update.pgn ?? baseGame.pgn)
-          : baseGame.pgn;
-  final mergedLastMove =
-      includePosition
-          ? (authoritativeFullRow
-              ? update.lastMove
-              : update.lastMove ?? baseGame.lastMove)
-          : baseGame.lastMove;
-  final mergedStatus =
-      includePosition || mode == _LiveGameMergeMode.clock
-          ? _parseGameStatus(update.status, baseGame.gameStatus)
-          : baseGame.gameStatus;
-  final mergedFen =
-      includePosition
-          ? resolveFreshestGameFen(
-            fen: authoritativeFullRow ? update.fen : update.fen ?? baseGame.fen,
-            pgn: mergedPgn,
-            lastMove: mergedLastMove,
-          )
-          : baseGame.fen;
+  final mergedPgn = includePosition
+      ? (authoritativeFullRow ? update.pgn : update.pgn ?? baseGame.pgn)
+      : baseGame.pgn;
+  final mergedLastMove = includePosition
+      ? (authoritativeFullRow
+            ? update.lastMove
+            : update.lastMove ?? baseGame.lastMove)
+      : baseGame.lastMove;
+  final mergedStatus = includePosition || mode == _LiveGameMergeMode.clock
+      ? _parseGameStatus(update.status, baseGame.gameStatus)
+      : baseGame.gameStatus;
+  final mergedFen = includePosition
+      ? resolveFreshestGameFen(
+          fen: authoritativeFullRow ? update.fen : update.fen ?? baseGame.fen,
+          pgn: mergedPgn,
+          lastMove: mergedLastMove,
+        )
+      : baseGame.fen;
 
-  final normalizedWhiteClock =
-      includeClock
-          ? (authoritativeFullRow
-              ? update.lastClockWhite?.round()
-              : GamesTourModel.normalizeClockSeconds(
+  final normalizedWhiteClock = includeClock
+      ? (authoritativeFullRow
+            ? update.lastClockWhite?.round()
+            : GamesTourModel.normalizeClockSeconds(
                 clockSeconds: update.lastClockWhite?.round(),
                 clockCentiseconds: baseGame.whiteClockCentiseconds,
               ))
-          : baseGame.whiteClockSeconds;
-  final normalizedBlackClock =
-      includeClock
-          ? (authoritativeFullRow
-              ? update.lastClockBlack?.round()
-              : GamesTourModel.normalizeClockSeconds(
+      : baseGame.whiteClockSeconds;
+  final normalizedBlackClock = includeClock
+      ? (authoritativeFullRow
+            ? update.lastClockBlack?.round()
+            : GamesTourModel.normalizeClockSeconds(
                 clockSeconds: update.lastClockBlack?.round(),
                 clockCentiseconds: baseGame.blackClockCentiseconds,
               ))
-          : baseGame.blackClockSeconds;
-  final mergedLastMoveTime =
-      includePosition
-          ? (update.lastMoveTime == null
-              ? (authoritativeFullRow ? null : baseGame.lastMoveTime)
-              : DateTime.tryParse(update.lastMoveTime!))
-          : baseGame.lastMoveTime;
+      : baseGame.blackClockSeconds;
+  final mergedLastMoveTime = includePosition
+      ? (update.lastMoveTime == null
+            ? (authoritativeFullRow ? null : baseGame.lastMoveTime)
+            : DateTime.tryParse(update.lastMoveTime!))
+      : baseGame.lastMoveTime;
+
+  // A full row is authoritative for metadata, but an absent/placeholder
+  // position cannot prove that a played broadcast was intentionally reset.
+  // Keep its entire position tuple, including the clock anchor. This shared
+  // boundary also protects focused Boards and exact-row confirmations.
+  final retainPlayedPosition =
+      includePosition &&
+      _isIncompletePositionReset(baseGame, mergedPgn, mergedFen);
 
   return baseGame.copyWith(
     whitePlayer: livePlayers?.white ?? baseGame.whitePlayer,
     blackPlayer: livePlayers?.black ?? baseGame.blackPlayer,
-    whiteClockCentiseconds:
-        includeClock
-            ? (authoritativeFullRow
-                ? livePlayers?.whiteClockCentiseconds ?? 0
-                : livePlayers?.whiteClockCentiseconds ??
+    whiteClockCentiseconds: includeClock
+        ? (authoritativeFullRow
+              ? livePlayers?.whiteClockCentiseconds ?? 0
+              : livePlayers?.whiteClockCentiseconds ??
                     baseGame.whiteClockCentiseconds)
-            : baseGame.whiteClockCentiseconds,
-    blackClockCentiseconds:
-        includeClock
-            ? (authoritativeFullRow
-                ? livePlayers?.blackClockCentiseconds ?? 0
-                : livePlayers?.blackClockCentiseconds ??
+        : baseGame.whiteClockCentiseconds,
+    blackClockCentiseconds: includeClock
+        ? (authoritativeFullRow
+              ? livePlayers?.blackClockCentiseconds ?? 0
+              : livePlayers?.blackClockCentiseconds ??
                     baseGame.blackClockCentiseconds)
-            : baseGame.blackClockCentiseconds,
-    pgn: mergedPgn,
-    clearPgn: includePosition && authoritativeFullRow && mergedPgn == null,
-    fen: mergedFen,
-    clearFen: includePosition && authoritativeFullRow && mergedFen == null,
-    lastMove: mergedLastMove,
+        : baseGame.blackClockCentiseconds,
+    pgn: retainPlayedPosition ? baseGame.pgn : mergedPgn,
+    clearPgn:
+        !retainPlayedPosition &&
+        includePosition &&
+        authoritativeFullRow &&
+        mergedPgn == null,
+    fen: retainPlayedPosition ? baseGame.fen : mergedFen,
+    clearFen:
+        !retainPlayedPosition &&
+        includePosition &&
+        authoritativeFullRow &&
+        mergedFen == null,
+    lastMove: retainPlayedPosition ? baseGame.lastMove : mergedLastMove,
     clearLastMove:
-        includePosition && authoritativeFullRow && mergedLastMove == null,
-    lastMoveTime: mergedLastMoveTime,
+        !retainPlayedPosition &&
+        includePosition &&
+        authoritativeFullRow &&
+        mergedLastMove == null,
+    lastMoveTime: retainPlayedPosition
+        ? baseGame.lastMoveTime
+        : mergedLastMoveTime,
     clearLastMoveTime:
-        includePosition && authoritativeFullRow && mergedLastMoveTime == null,
+        !retainPlayedPosition &&
+        includePosition &&
+        authoritativeFullRow &&
+        mergedLastMoveTime == null,
     whiteClockSeconds: normalizedWhiteClock,
     clearWhiteClockSeconds:
         includeClock && authoritativeFullRow && normalizedWhiteClock == null,
@@ -788,6 +804,46 @@ GamesTourModel _mergeLiveUpdate({
         includeClock && authoritativeFullRow && normalizedBlackClock == null,
     gameStatus: mergedStatus,
   );
+}
+
+bool _isIncompletePositionReset(
+  GamesTourModel current,
+  String? incomingPgn,
+  String? incomingFen,
+) {
+  final retainedFen = resolveFreshestGameFen(
+    fen: current.fen,
+    pgn: current.pgn,
+    lastMove: current.lastMove,
+  );
+  if (!isValidGameFen(retainedFen)) return false;
+  String positionKey(String fen) =>
+      fen.trim().split(RegExp(r'\s+')).take(4).join(' ');
+  final initial = positionKey(Chess.initial.fen);
+  final hasPlayedPosition =
+      (_knownPly(current) ?? 0) > 0 || positionKey(retainedFen!) != initial;
+  if (!hasPlayedPosition) return false;
+  if (resolveFinalPositionFromPgn(incomingPgn) != null) return false;
+  if (isValidGameFen(incomingFen) && positionKey(incomingFen!) != initial) {
+    return false;
+  }
+  // Explicit setup PGNs are a coherent source position even at ply zero.
+  // A bare `*`, missing row fields or an implicit starting-FEN fallback are
+  // not equivalent to this deliberate reset contract.
+  if (incomingPgn != null && isValidGameFen(incomingFen)) {
+    try {
+      final parsed = PgnGame.parsePgn(incomingPgn);
+      final setupFen = parsed.headers['FEN'];
+      if (parsed.headers['SetUp'] == '1' &&
+          isValidGameFen(setupFen) &&
+          positionKey(setupFen!) == positionKey(incomingFen!)) {
+        return false;
+      }
+    } catch (_) {
+      // Malformed source text cannot erase the retained playable position.
+    }
+  }
+  return true;
 }
 
 GameStatus _parseGameStatus(String? status, GameStatus fallback) {
@@ -1124,6 +1180,18 @@ bool _shouldUseIncomingGame(
 }) {
   if (current == null) return true;
   if (current == incoming) return false;
+  if (_isIncompletePositionReset(current, incoming.pgn, incoming.fen)) {
+    return false;
+  }
+
+  // A refreshed timestamp is not proof that a played position is newer.
+  // Reconnects/partial source resets must take the exact-confirmation path
+  // before they can replace a retained game, just like older-time takebacks.
+  final currentPly = _knownPly(current);
+  final incomingPly = _knownPly(incoming);
+  if (currentPly != null && (incomingPly == null || incomingPly < currentPly)) {
+    return false;
+  }
 
   final currentTime = current.lastMoveTime;
   final incomingTime = incoming.lastMoveTime;
@@ -1167,8 +1235,6 @@ bool _shouldUseIncomingGame(
     return _clockChangesAreMonotonic(current, incoming);
   }
 
-  final currentPly = _knownPly(current);
-  final incomingPly = _knownPly(incoming);
   if (currentPly != null && incomingPly != null) {
     if (incomingPly < currentPly) return false;
     if (incomingPly > currentPly) return true;
