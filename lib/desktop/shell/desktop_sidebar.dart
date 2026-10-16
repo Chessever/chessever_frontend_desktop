@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:chessever/desktop/widgets/editorial/inbox_unread_anchor.dart';
 
 import 'package:flutter/material.dart';
@@ -24,6 +25,119 @@ import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/app_version_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
+/// Vertical rhythm of the sidebar rail.
+///
+/// At the designed spacing ([regular], 44 px rows) the rail needs about
+/// 920 px for its 14–15 rows plus the pinned Premium / Settings / version
+/// footer. That is taller than a maximized window on 1366×768 at 100 % or
+/// 1920×1080 at 125 % / 150 % Windows scaling, where the footer used to be
+/// pushed off the window. On a shorter window the rows and gaps tighten in
+/// whole pixels, down to 30 px rows, so the rail fills exactly the height it
+/// has. Icons and labels keep their sizes at every density, so the interface
+/// never shrinks. Below the [tightest] density the nav rows scroll and the
+/// footer stays pinned.
+@immutable
+class DesktopSidebarDensity {
+  const DesktopSidebarDensity._(this.rowHeight);
+
+  static const double maxRowHeight = 44;
+  static const double minRowHeight = 30;
+
+  /// The designed spacing, used whenever the window is tall enough.
+  static const DesktopSidebarDensity regular = DesktopSidebarDensity._(
+    maxRowHeight,
+  );
+
+  /// The tightest spacing; on shorter windows the nav rows scroll.
+  static const DesktopSidebarDensity tightest = DesktopSidebarDensity._(
+    minRowHeight,
+  );
+
+  static const double versionLineHeight = 14;
+
+  /// The expanded Get Premium button keeps its designed 36 px height unless
+  /// the row is shorter.
+  static const double _premiumExpandedMaxHeight = 36;
+
+  /// Height of one row's hover / selection pill.
+  final double rowHeight;
+
+  /// Space above and below each row's pill.
+  double get rowGap => rowHeight >= 40 ? 2 : 1;
+
+  /// Space above the first and below the last nav row.
+  double get navGap => _gap(tightest: 4, regular: 8);
+
+  /// Space above and below the Get Premium button.
+  double get premiumGap => _gap(tightest: 4, regular: 8);
+  double get versionTopGap => _gap(tightest: 4, regular: 8);
+  double get versionBottomGap => _gap(tightest: 6, regular: 10);
+
+  double get rowExtent => rowHeight + rowGap * 2;
+
+  double get premiumExpandedHeight =>
+      math.min(_premiumExpandedMaxHeight, rowHeight);
+
+  /// Height of [navRows] nav rows including the gaps around them.
+  double navExtent(int navRows) => navGap * 2 + navRows * rowExtent;
+
+  /// Height of the pinned footer: Get Premium, divider, Settings, version.
+  /// The Premium term uses [rowHeight], which is never shorter than either
+  /// the collapsed or the expanded button.
+  double footerExtent({required bool showPremium}) =>
+      (showPremium ? rowHeight + premiumGap * 2 : 0) +
+      1 +
+      rowExtent +
+      versionTopGap +
+      versionLineHeight +
+      versionBottomGap;
+
+  double bodyExtent({required int navRows, required bool showPremium}) =>
+      navExtent(navRows) + footerExtent(showPremium: showPremium);
+
+  /// Gaps scale with the row height so every density keeps the regular
+  /// proportions.
+  double _gap({required double tightest, required double regular}) {
+    final t = (rowHeight - minRowHeight) / (maxRowHeight - minRowHeight);
+    return (tightest + (regular - tightest) * t).roundToDouble();
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is DesktopSidebarDensity && other.rowHeight == rowHeight;
+
+  @override
+  int get hashCode => rowHeight.hashCode;
+
+  @override
+  String toString() => 'DesktopSidebarDensity(${rowHeight.toInt()} px rows)';
+}
+
+/// Loosest [DesktopSidebarDensity] whose rows and footer fit [bodyHeight],
+/// the rail height below the chrome header. Falls back to
+/// [DesktopSidebarDensity.tightest], where the nav rows scroll.
+DesktopSidebarDensity desktopSidebarDensityFor({
+  required double bodyHeight,
+  required int navRows,
+  required bool showPremium,
+}) {
+  for (
+    var rowHeight = DesktopSidebarDensity.maxRowHeight;
+    rowHeight >= DesktopSidebarDensity.minRowHeight;
+    rowHeight--
+  ) {
+    final density = DesktopSidebarDensity._(rowHeight);
+    if (bodyHeight >=
+        density.bodyExtent(navRows: navRows, showPremium: showPremium)) {
+      return density;
+    }
+  }
+  return DesktopSidebarDensity.tightest;
+}
+
+Future<EntitlementSnapshot?> _loadCurrentEntitlement() =>
+    DesktopBillingService.instance.currentEntitlement();
+
 /// Persistent left navigation rail for the desktop shell.
 ///
 /// Differs from the mobile bottom-nav in three ways:
@@ -32,6 +146,9 @@ import 'package:chessever/theme/app_theme.dart';
 ///    owns "what content is showing".
 /// 3. Compact (72 px) or expanded (240 px) depending on shell width and
 ///    user preference.
+///
+/// Vertically it adapts to the window height (see [DesktopSidebarDensity]):
+/// Settings and the footer are pinned below the nav rows and never clip.
 class DesktopSidebar extends StatelessWidget {
   const DesktopSidebar({
     super.key,
@@ -43,6 +160,7 @@ class DesktopSidebar extends StatelessWidget {
     required this.onHowToUse,
     this.expanded = true,
     this.autoCollapsed = false,
+    this.loadEntitlement = _loadCurrentEntitlement,
   });
 
   final DesktopPane? current;
@@ -57,6 +175,9 @@ class DesktopSidebar extends StatelessWidget {
   final VoidCallback onHowToUse;
   final bool expanded;
   final bool autoCollapsed;
+
+  /// Resolves whether the Get Premium button shows. Tests inject a stub.
+  final Future<EntitlementSnapshot?> Function() loadEntitlement;
 
   static const double collapsedWidth = 72;
   static const double expandedWidth = 240;
@@ -99,70 +220,249 @@ class DesktopSidebar extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 8),
-          for (final entry in _primaryNav) ...[
-            _SidebarItem(
-              entry: entry,
+          Expanded(
+            child: _SidebarBody(
+              current: current,
               expanded: expanded,
-              selected: entry.pane == current,
-              onTap:
-                  ({required bool inNewTab}) =>
-                      onSelect(entry.pane!, inNewTab: inNewTab),
+              onSelect: onSelect,
+              onSearch: onSearch,
+              onHowToUse: onHowToUse,
+              feedbackScreenshotKey: feedbackScreenshotKey,
+              loadEntitlement: loadEntitlement,
             ),
-            if (entry.pane == DesktopPane.play) ...[
-              _SidebarItem(
-                entry: _searchEntry,
-                expanded: expanded,
-                selected: false,
-                onTap: ({required bool inNewTab}) => onSearch(),
-              ),
-              _SidebarItem(
-                entry: _howToUseEntry,
-                expanded: expanded,
-                selected: false,
-                onTap: ({required bool inNewTab}) => onHowToUse(),
-              ),
-              _SidebarItem(
-                entry: _feedbackEntry,
-                expanded: expanded,
-                selected: false,
-                onTap:
-                    ({required bool inNewTab}) => DesktopFeedbackDialog.show(
-                      context,
-                      screenshotKey: feedbackScreenshotKey,
-                    ),
-              ),
-              DesktopInboxUnreadAnchor(
-                child: _SidebarItem(
-                  entry: _inboxEntry,
-                  expanded: expanded,
-                  selected: current == DesktopPane.inbox,
-                  onTap:
-                      ({required bool inNewTab}) =>
-                          onSelect(DesktopPane.inbox, inNewTab: inNewTab),
-                ),
-              ),
-              _BotvinnikSidebarItem(expanded: expanded),
-            ],
-          ],
-          const Spacer(),
-          _PremiumSidebarSlot(
-            expanded: expanded,
-            onPress: () => onSelect(DesktopPane.settings, inNewTab: false),
           ),
-          const Divider(height: 1, color: kDividerColor),
-          _SidebarItem(
-            entry: _settingsEntry,
-            expanded: expanded,
-            selected: current == DesktopPane.settings,
-            onTap:
-                ({required bool inNewTab}) =>
-                    onSelect(DesktopPane.settings, inNewTab: inNewTab),
-          ),
-          const SizedBox(height: 8),
-          _VersionFooter(expanded: expanded),
-          const SizedBox(height: 10),
         ],
+      ),
+    );
+  }
+}
+
+/// Everything below the header: the nav rows in a viewport that scrolls only
+/// when even the densest spacing cannot fit them, then the pinned footer.
+class _SidebarBody extends ConsumerStatefulWidget {
+  const _SidebarBody({
+    required this.current,
+    required this.expanded,
+    required this.onSelect,
+    required this.onSearch,
+    required this.onHowToUse,
+    required this.feedbackScreenshotKey,
+    required this.loadEntitlement,
+  });
+
+  final DesktopPane? current;
+  final bool expanded;
+  final void Function(DesktopPane pane, {required bool inNewTab}) onSelect;
+  final VoidCallback onSearch;
+  final VoidCallback onHowToUse;
+  final GlobalKey feedbackScreenshotKey;
+  final Future<EntitlementSnapshot?> Function() loadEntitlement;
+
+  @override
+  ConsumerState<_SidebarBody> createState() => _SidebarBodyState();
+}
+
+class _SidebarBodyState extends ConsumerState<_SidebarBody> {
+  late final Future<EntitlementSnapshot?> _entitlementFuture =
+      widget.loadEntitlement();
+
+  @override
+  Widget build(BuildContext context) {
+    final botvinnikVisible =
+        ChatApi.buildEnabled &&
+        (ref.watch(botvinnikEnabledProvider).valueOrNull ?? true);
+    final entries = _navEntriesInOrder(botvinnikVisible: botvinnikVisible);
+    return FutureBuilder<EntitlementSnapshot?>(
+      future: _entitlementFuture,
+      builder: (context, snapshot) {
+        final showPremium = !(snapshot.data?.isActive ?? false);
+        // Rebuilds only when the density tier flips, not on every frame of a
+        // window resize.
+        return BucketedLayoutBuilder<DesktopSidebarDensity>(
+          bucket:
+              (constraints) => desktopSidebarDensityFor(
+                bodyHeight: constraints.maxHeight,
+                navRows: entries.length,
+                showPremium: showPremium,
+              ),
+          builder:
+              (context, density) => Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: _SidebarNavViewport(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: density.navGap),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final entry in entries)
+                              _navRow(context, entry, density),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (showPremium)
+                    DesktopSidebarPremiumButton(
+                      expanded: widget.expanded,
+                      collapsedSize: density.rowHeight,
+                      expandedHeight: density.premiumExpandedHeight,
+                      verticalPadding: density.premiumGap,
+                      onPress:
+                          () => widget.onSelect(
+                            DesktopPane.settings,
+                            inNewTab: false,
+                          ),
+                    ),
+                  const Divider(height: 1, color: kDividerColor),
+                  _SidebarItem(
+                    entry: _settingsEntry,
+                    expanded: widget.expanded,
+                    density: density,
+                    selected: widget.current == DesktopPane.settings,
+                    onTap:
+                        ({required bool inNewTab}) => widget.onSelect(
+                          DesktopPane.settings,
+                          inNewTab: inNewTab,
+                        ),
+                  ),
+                  SizedBox(height: density.versionTopGap),
+                  _VersionFooter(expanded: widget.expanded),
+                  SizedBox(height: density.versionBottomGap),
+                ],
+              ),
+        );
+      },
+    );
+  }
+
+  Widget _navRow(
+    BuildContext context,
+    _NavEntry entry,
+    DesktopSidebarDensity density,
+  ) {
+    if (identical(entry, _botvinnikEntry)) {
+      return _BotvinnikSidebarItem(expanded: widget.expanded, density: density);
+    }
+    // Search, How to use and Feedback are actions, never a selected pane.
+    final VoidCallback? action = switch (entry) {
+      _ when identical(entry, _searchEntry) => widget.onSearch,
+      _ when identical(entry, _howToUseEntry) => widget.onHowToUse,
+      _ when identical(entry, _feedbackEntry) =>
+        () => DesktopFeedbackDialog.show(
+          context,
+          screenshotKey: widget.feedbackScreenshotKey,
+        ),
+      _ => null,
+    };
+    final item = _SidebarItem(
+      entry: entry,
+      expanded: widget.expanded,
+      density: density,
+      selected: action == null && entry.pane == widget.current,
+      onTap: ({required bool inNewTab}) {
+        if (action != null) {
+          action();
+          return;
+        }
+        widget.onSelect(entry.pane!, inNewTab: inNewTab);
+      },
+    );
+    return identical(entry, _inboxEntry)
+        ? DesktopInboxUnreadAnchor(child: item)
+        : item;
+  }
+}
+
+/// Nav rows top to bottom. Settings is not here: it lives in the pinned
+/// footer.
+List<_NavEntry> _navEntriesInOrder({required bool botvinnikVisible}) => [
+  for (final entry in _primaryNav) ...[
+    entry,
+    if (entry.pane == DesktopPane.play) ...[
+      _searchEntry,
+      _howToUseEntry,
+      _feedbackEntry,
+      _inboxEntry,
+      if (botvinnikVisible) _botvinnikEntry,
+    ],
+  ],
+];
+
+/// Scroll viewport for the nav rows. While every row fits it is inert; once
+/// the rows overflow, the edge that hides rows fades into the rail colour so
+/// the cut reads as "more this way" rather than a sliced row.
+class _SidebarNavViewport extends StatefulWidget {
+  const _SidebarNavViewport({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_SidebarNavViewport> createState() => _SidebarNavViewportState();
+}
+
+class _SidebarNavViewportState extends State<_SidebarNavViewport> {
+  static const double _fadeExtent = 24;
+
+  bool _moreAbove = false;
+  bool _moreBelow = false;
+
+  bool _onMetrics(ScrollMetrics metrics) {
+    final moreAbove = metrics.extentBefore > 0.5;
+    final moreBelow = metrics.extentAfter > 0.5;
+    if (moreAbove != _moreAbove || moreBelow != _moreBelow) {
+      setState(() {
+        _moreAbove = moreAbove;
+        _moreBelow = moreBelow;
+      });
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationListener<ScrollMetricsNotification>(
+      onNotification: (notification) => _onMetrics(notification.metrics),
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) => _onMetrics(notification.metrics),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: SingleChildScrollView(
+                key: const ValueKey('desktop-sidebar-nav-scroll'),
+                child: widget.child,
+              ),
+            ),
+            _edgeFade(top: true, visible: _moreAbove),
+            _edgeFade(top: false, visible: _moreBelow),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _edgeFade({required bool top, required bool visible}) {
+    return Positioned(
+      left: 0,
+      right: 0,
+      top: top ? 0 : null,
+      bottom: top ? null : 0,
+      height: _fadeExtent,
+      child: IgnorePointer(
+        child: AnimatedOpacity(
+          opacity: visible ? 1 : 0,
+          duration: const Duration(milliseconds: 140),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: top ? Alignment.topCenter : Alignment.bottomCenter,
+                end: top ? Alignment.bottomCenter : Alignment.topCenter,
+                colors: [kBlack2Color, kBlack2Color.withValues(alpha: 0)],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -176,60 +476,31 @@ class _VersionFooter extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final version = ref.watch(appVersionProvider).valueOrNull;
-    if (version == null) return const SizedBox(height: 14);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Align(
-        alignment: expanded ? Alignment.centerLeft : Alignment.center,
-        child: Text(
-          'v$version',
-          maxLines: 1,
-          softWrap: false,
-          overflow: TextOverflow.visible,
-          style: const TextStyle(
-            color: kLightGreyColor,
-            fontSize: 11,
-            fontFeatures: [FontFeature.tabularFigures()],
+    // A fixed line height keeps DesktopSidebarDensity.footerExtent exact
+    // whatever font metrics the platform resolves.
+    if (version == null) {
+      return const SizedBox(height: DesktopSidebarDensity.versionLineHeight);
+    }
+    return SizedBox(
+      height: DesktopSidebarDensity.versionLineHeight,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Align(
+          alignment: expanded ? Alignment.centerLeft : Alignment.center,
+          child: Text(
+            'v$version',
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.visible,
+            style: const TextStyle(
+              color: kLightGreyColor,
+              fontSize: 11,
+              height: 1.2,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
           ),
         ),
       ),
-    );
-  }
-}
-
-class _PremiumSidebarSlot extends StatefulWidget {
-  const _PremiumSidebarSlot({required this.expanded, required this.onPress});
-
-  final bool expanded;
-  final VoidCallback onPress;
-
-  @override
-  State<_PremiumSidebarSlot> createState() => _PremiumSidebarSlotState();
-}
-
-class _PremiumSidebarSlotState extends State<_PremiumSidebarSlot> {
-  late Future<EntitlementSnapshot?> _entitlementFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _entitlementFuture = DesktopBillingService.instance.currentEntitlement();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<EntitlementSnapshot?>(
-      future: _entitlementFuture,
-      builder: (context, snapshot) {
-        if (snapshot.data?.isActive ?? false) {
-          return const SizedBox.shrink();
-        }
-
-        return DesktopSidebarPremiumButton(
-          expanded: widget.expanded,
-          onPress: widget.onPress,
-        );
-      },
     );
   }
 }
@@ -375,12 +646,14 @@ class _SidebarItem extends StatefulWidget {
   const _SidebarItem({
     required this.entry,
     required this.expanded,
+    required this.density,
     required this.selected,
     required this.onTap,
   });
 
   final _NavEntry entry;
   final bool expanded;
+  final DesktopSidebarDensity density;
   final bool selected;
 
   /// Tap handler. `inNewTab` is `true` when the user holds Cmd/Ctrl
@@ -408,6 +681,26 @@ class _SidebarItemState extends State<_SidebarItem>
   String _modifierHintLabel() => Platform.isMacOS ? '⌘' : 'Ctrl';
 
   @override
+  void didUpdateWidget(covariant _SidebarItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A pane selected by shortcut or tab switch may sit in the scrolled-away
+    // part of a short rail. Bring it into view with the least movement.
+    if (widget.selected && !oldWidget.selected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || Scrollable.maybeOf(context) == null) return;
+        Scrollable.ensureVisible(
+          context,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        );
+        Scrollable.ensureVisible(
+          context,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+        );
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
     final shortcut = _shortcutLabelForEntry(widget.entry);
@@ -425,7 +718,10 @@ class _SidebarItemState extends State<_SidebarItem>
     // cursor" rather than "the whole pill jiggled."
     final nudgeX = _pressed ? -1.5 : (_hovered ? 3.0 : 0.0);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      padding: EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: widget.density.rowGap,
+      ),
       child: CursorAware(
         mode: CursorMode.hover,
         child: MouseRegion(
@@ -449,7 +745,7 @@ class _SidebarItemState extends State<_SidebarItem>
                   () => setStateAfterPointerEvent(() => _pressed = false),
               onTap: () => widget.onTap(inNewTab: _modifierHeld()),
               child: Container(
-                height: 44,
+                height: widget.density.rowHeight,
                 padding:
                     widget.expanded
                         ? const EdgeInsets.symmetric(horizontal: 12)
@@ -585,20 +881,18 @@ const _NavEntry _botvinnikEntry = _NavEntry(
 /// Toggles the shell's Botvinnik dock. Not a tab route, so it takes no
 /// Cmd/Ctrl+number shortcut and never reshuffles the route list.
 class _BotvinnikSidebarItem extends ConsumerWidget {
-  const _BotvinnikSidebarItem({required this.expanded});
+  const _BotvinnikSidebarItem({required this.expanded, required this.density});
 
   final bool expanded;
+  final DesktopSidebarDensity density;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final enabled =
-        ChatApi.buildEnabled &&
-        (ref.watch(botvinnikEnabledProvider).valueOrNull ?? true);
-    if (!enabled) return const SizedBox.shrink();
     final open = ref.watch(botvinnikDockProvider.select((dock) => dock.open));
     return _SidebarItem(
       entry: _botvinnikEntry,
       expanded: expanded,
+      density: density,
       selected: open,
       onTap: ({required bool inNewTab}) => toggleBotvinnikDock(ref),
     );
@@ -629,21 +923,10 @@ String? _shortcutLabelForEntry(_NavEntry entry, {bool? isMacOS}) {
 }
 
 @visibleForTesting
-List<String> debugDesktopSidebarLabelsInOrder() {
-  final labels = <String>[];
-  for (final entry in _primaryNav) {
-    labels.add(entry.label);
-    if (entry.pane == DesktopPane.play) {
-      labels.add(_searchEntry.label);
-      labels.add(_howToUseEntry.label);
-      labels.add(_feedbackEntry.label);
-      labels.add(_inboxEntry.label);
-      labels.add(_botvinnikEntry.label);
-    }
-  }
-  labels.add(_settingsEntry.label);
-  return labels;
-}
+List<String> debugDesktopSidebarLabelsInOrder() => [
+  for (final entry in _navEntriesInOrder(botvinnikVisible: true)) entry.label,
+  _settingsEntry.label,
+];
 
 @visibleForTesting
 DesktopPane? debugDesktopSidebarPaneForLabel(String label) {
