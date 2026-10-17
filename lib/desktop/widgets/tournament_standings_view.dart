@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/desktop/widgets/player_standing_section_select.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'dart:async';
@@ -64,7 +65,8 @@ TournamentStandingsRoundTable buildTournamentStandingsRoundTable({
   for (final game in games) {
     final existing = uniqueGames[game.gameId];
     if (existing == null ||
-        (!existing.gameStatus.isFinished && game.gameStatus.isFinished)) {
+        (!(existing.gameStatus.isFinished || existing.isDoubleForfeit) &&
+            (game.gameStatus.isFinished || game.isDoubleForfeit))) {
       uniqueGames[game.gameId] = game;
     }
   }
@@ -98,14 +100,18 @@ TournamentStandingsRoundTable buildTournamentStandingsRoundTable({
       final candidate = TournamentStandingsRoundCell(
         game: game,
         round: stage.round,
-        resultText: _resultForPlayer(game.gameStatus, playedWhite),
+        resultText:
+            game.isDoubleForfeit
+                ? '0'
+                : _resultForPlayer(game.gameStatus, playedWhite),
         playedWhite: playedWhite,
         opponentName: opponentStanding?.name ?? opponentCard.name,
         opponentRank: opponentRank,
         opponentRating: opponentRating,
         isOngoing:
-            game.gameStatus == GameStatus.ongoing ||
-            game.gameStatus == GameStatus.unknown,
+            !game.isDoubleForfeit &&
+            (game.gameStatus == GameStatus.ongoing ||
+                game.gameStatus == GameStatus.unknown),
       );
       playerStages.putIfAbsent(stage.key, () => []).add(candidate);
     }
@@ -578,6 +584,18 @@ class TournamentStandingsView extends HookConsumerWidget {
                   ),
                 );
               }
+              final tiebreakColumns = <String, PublishedTiebreak>{};
+              for (final player in players) {
+                for (final tiebreak in player.tiebreaks) {
+                  tiebreakColumns.putIfAbsent(
+                    tiebreak.identity,
+                    () => tiebreak,
+                  );
+                }
+              }
+              final publishedTiebreaks = tiebreakColumns.values.toList(
+                growable: false,
+              );
               // Built once outside the LayoutBuilder: the rows never depend on
               // the width, so a resize frame only re-lays them out.
               final list = ListView.separated(
@@ -594,7 +612,10 @@ class TournamentStandingsView extends HookConsumerWidget {
                     ),
                 itemBuilder: (context, i) {
                   if (i == 0) {
-                    return _StandingsHeaderRow(columns: roundTable.columns);
+                    return _StandingsHeaderRow(
+                      columns: roundTable.columns,
+                      tiebreaks: publishedTiebreaks,
+                    );
                   }
 
                   final p = filtered[i - 1];
@@ -603,6 +624,7 @@ class TournamentStandingsView extends HookConsumerWidget {
                     rank: p.overallRank ?? players.indexOf(p) + 1,
                     flagFederation: _flagFederation(ref, p.countryCode),
                     rounds: roundTable,
+                    tiebreaks: publishedTiebreaks,
                     photoResolver:
                         photoResolver ??
                         (fideId) => FidePhotoService.getPhotoUrlOrNull(fideId),
@@ -617,6 +639,8 @@ class TournamentStandingsView extends HookConsumerWidget {
                 builder: (context, constraints) {
                   final requiredWidth =
                       _StandingsLayout.tableWidth(roundTable.columns) +
+                      publishedTiebreaks.length *
+                          _StandingsLayout.tiebreakWidth +
                       _StandingsLayout.horizontalPadding;
                   final contentWidth = math.max(
                     constraints.maxWidth,
@@ -986,6 +1010,7 @@ abstract final class _StandingsLayout {
   static const playerWidth = 300.0;
   static const ratingWidth = 72.0;
   static const pointsWidth = 62.0;
+  static const tiebreakWidth = 96.0;
 
   static double tableWidth(List<TournamentStandingsColumn> columns) {
     return rankWidth +
@@ -998,9 +1023,10 @@ abstract final class _StandingsLayout {
 }
 
 class _StandingsHeaderRow extends StatelessWidget {
-  const _StandingsHeaderRow({required this.columns});
+  const _StandingsHeaderRow({required this.columns, required this.tiebreaks});
 
   final List<TournamentStandingsColumn> columns;
+  final List<PublishedTiebreak> tiebreaks;
 
   @override
   Widget build(BuildContext context) {
@@ -1029,6 +1055,18 @@ class _StandingsHeaderRow extends StatelessWidget {
             width: _StandingsLayout.ratingWidth,
           ),
           const _HeaderCell(label: 'Pts.', width: _StandingsLayout.pointsWidth),
+          for (final tiebreak in tiebreaks)
+            DesktopTooltip(
+              message: tiebreak.description,
+              child: SizedBox(
+                width: _StandingsLayout.tiebreakWidth,
+                child: Text(
+                  tiebreak.label,
+                  textAlign: TextAlign.center,
+                  style: style.copyWith(color: kWhiteColor70),
+                ),
+              ),
+            ),
           for (final column in columns)
             SizedBox(
               key: Key('standings-round-header-${column.id}'),
@@ -1075,6 +1113,7 @@ class _StandingsPlayerRow extends StatelessWidget {
     required this.rank,
     required this.flagFederation,
     required this.rounds,
+    required this.tiebreaks,
     required this.photoResolver,
     required this.onOpenScoreCard,
     required this.onOpenGame,
@@ -1084,6 +1123,7 @@ class _StandingsPlayerRow extends StatelessWidget {
   final int rank;
   final String flagFederation;
   final TournamentStandingsRoundTable rounds;
+  final List<PublishedTiebreak> tiebreaks;
   final StandingsPhotoResolver photoResolver;
   final VoidCallback onOpenScoreCard;
   final ValueChanged<GamesTourModel> onOpenGame;
@@ -1093,6 +1133,10 @@ class _StandingsPlayerRow extends StatelessWidget {
     final points = _standingsPoints(player.matchScore);
     final rating = player.score > 0 ? player.score.toString() : '';
     final playerKey = _standingWidgetKey(player);
+    final publishedValues = {
+      for (final value in player.tiebreaks)
+        value.identity: value.formattedPoints,
+    };
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1188,6 +1232,22 @@ class _StandingsPlayerRow extends StatelessWidget {
               ),
             ),
           ),
+          for (final tiebreak in tiebreaks)
+            SizedBox(
+              width: _StandingsLayout.tiebreakWidth,
+              child: Text(
+                publishedValues[tiebreak.identity] ?? '',
+                key: Key('standings-tiebreak-$playerKey-${tiebreak.label}'),
+                textAlign: TextAlign.center,
+                semanticsLabel:
+                    '${tiebreak.description}: ${publishedValues[tiebreak.identity] ?? "unpublished"}',
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 13,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
           for (final column in rounds.columns)
             SizedBox(
               key: Key('standings-round-$playerKey-${column.id}'),

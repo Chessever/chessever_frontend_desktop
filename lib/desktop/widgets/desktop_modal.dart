@@ -140,27 +140,34 @@ class _DesktopModalShell extends StatelessWidget {
   final double maxHeight;
   final String? title;
 
+  /// Keeps a modal off the window edges when its max size is larger than a
+  /// short laptop window; on bigger windows the modal is smaller anyway.
+  static const EdgeInsets _windowMargin = EdgeInsets.all(16);
+
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
-        child: Material(
-          // forui-feel dark chrome — same surface palette the rest of
-          // the desktop shell uses so the modal sits in the design
-          // system rather than next to it.
-          color: kBlack2Color,
-          elevation: 12,
-          shadowColor: Colors.black.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(12),
-          clipBehavior: Clip.antiAlias,
-          child: _EscDismissable(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (title != null) _ModalTitleBar(title: title!),
-                Flexible(child: child),
-              ],
+      child: Padding(
+        padding: _windowMargin,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
+          child: Material(
+            // forui-feel dark chrome — same surface palette the rest of
+            // the desktop shell uses so the modal sits in the design
+            // system rather than next to it.
+            color: kBlack2Color,
+            elevation: 12,
+            shadowColor: Colors.black.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(12),
+            clipBehavior: Clip.antiAlias,
+            child: _EscDismissable(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (title != null) _ModalTitleBar(title: title!),
+                  Flexible(child: child),
+                ],
+              ),
             ),
           ),
         ),

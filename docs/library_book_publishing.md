@@ -14,10 +14,10 @@ until a ChessEver superadmin approves it from the account page on the website.
 
 | Stage | What the dialog shows | What can be done |
 | --- | --- | --- |
-| Private draft | "Publish collection" and a checklist of what a submission still needs | Save draft, Submit for approval |
-| In review | When it was submitted; it stays private | Withdraw from review, Submit changes, Submit with latest games |
-| Changes requested | The note staff sent back | Save draft, Resubmit for approval |
-| Live in Collections | A warning that a change takes it out of Collections until it is approved again | Unpublish, Submit changes, Submit with latest games |
+| Private draft | "Publish collection" and a checklist of what a submission still needs | Submit, Cancel |
+| In review | When it was submitted; it stays private | Submit, Cancel; Withdraw from review beside the status |
+| Changes requested | The note staff sent back | Submit, Cancel |
+| Live in Collections | A warning that a change takes it out of Collections until it is approved again | Submit, Cancel; Unpublish beside the status |
 | Taken down | That ChessEver took it down | Nothing; ask ChessEver |
 
 The stage is derived, never stored: the publication `status` plus, for a draft,
@@ -25,12 +25,12 @@ the server's `review` object (`LibraryBookPublication.stage`). A server that
 predates reviews sends no `review`; a draft then always reads as a private
 draft, as before.
 
-- **Save draft** saves the details privately.
-- **Submit for approval** sends the details and the folder's current games to
-  ChessEver. It needs a title, an author credit and a description; the
-  checklist beside the preview says what is missing and takes the cursor there.
-- **Submit changes** resubmits the details only; **Submit with latest games**
-  also replaces the games with the folder's current contents.
+- **Submit** sends the edited details and the folder's current games to
+  ChessEver for approval, whether the collection is new, in review, live or
+  returned for changes. It needs a title, an author credit and a description;
+  the checklist beside the preview says what is missing and focuses that field.
+- **Cancel** closes the editor without saving or submitting to the server.
+  Unsubmitted edits remain on this device and can be resumed on the next visit.
 - **Withdraw from review** takes a waiting draft back out of the queue. It was
   never public, so nothing else changes.
 - **Unpublish** asks first, removes it from Collections, and keeps the private
@@ -45,7 +45,9 @@ Title, Subtitle, Author, Year, Description and Cover, in the order they read on
 the collection page, with the phone app's limits and input tidying. The author
 is credited to **Me** (pictured by the account's profile photo) or **Someone
 else** (existing ChessEver authors are suggested so one person keeps one
-spelling, and they may have their own photo). The last author saved under "Me"
+spelling, and they may have their own photo). More authors uses the same selectable
+results, photos and collection counts as Author; choosing an account links
+that coauthor to their existing author page. The last author saved under "Me"
 pre-fills a fresh collection; crediting someone else clears a name that was
 only pre-filled. Unsubmitted edits are kept per folder on this device and
 offered back on the next visit.
@@ -114,12 +116,12 @@ the folder is kept and the reason is shown.
 
 1. Open an owned nested folder's context menu and its header upload action.
    Both open the same editor.
-2. Save a draft; the folder stays absent from Collections. Reopen it: the
-   details persist and the stage reads Private draft.
+2. Edit details and Cancel; no submission is sent. Reopen and resume the
+   unsubmitted edits kept on this device.
 3. Submit it. The dialog turns to "Collection in review" and the collection is
    still absent from Collections. Withdraw it, then submit again.
 4. As a superadmin on the website account page, send it back with a note.
-   Reopen the dialog: the note is shown, and Resubmit for approval is offered.
+   Reopen the dialog: the note is shown, and the same Submit action is offered.
 5. Approve it on the website. The dialog reads "Edit collection", live.
 6. Disconnect while saving and retry after reconnecting. Input remains, the
    controls prevent double submission, and errors never imply success.

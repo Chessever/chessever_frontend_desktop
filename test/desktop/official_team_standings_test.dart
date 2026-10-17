@@ -48,6 +48,27 @@ TourInfo info(Map<String, dynamic> value, {String id = '1469896'}) =>
 
 void main() {
   test(
+    'keeps published team tiebreaks in source priority without reranking',
+    () {
+      final data = snapshot();
+      (data['teams'] as List)[0]['tiebreaks'] = [
+        {'extendedCode': 'TB1', 'description': 'Game points', 'points': 10},
+        {'extendedCode': 'TB2', 'description': 'Direct encounter', 'points': 0},
+        {
+          'extendedCode': 'TB3',
+          'description': 'Sonneborn-Berger',
+          'points': 42.75,
+        },
+      ];
+      final rows = buildOfficialTeamStandings(info: info(data), players: []);
+      expect(rows!.first.tiebreaks.map((t) => t.label), ['TB1', 'TB2', 'TB3']);
+      expect(rows.first.tiebreaks.last.formattedPoints, '42.75');
+      expect(rows.map((t) => t.rank), [1, 2, 3]);
+      expect(rows[1].tiebreaks, isEmpty);
+    },
+  );
+
+  test(
     'uses official order and points, including awarded points absent from games',
     () {
       final source = info(snapshot());
@@ -98,6 +119,36 @@ void main() {
     final rows = buildOfficialTeamStandings(info: info(data), players: []);
     expect(rows!.map((t) => t.rank), [1, 1, 3]);
   });
+  test('preserves published skipped team ranks', () {
+    final data = snapshot();
+    (data['teams'] as List)[1]['rank'] = 3;
+    final rows = buildOfficialTeamStandings(info: info(data), players: []);
+    expect(rows, isNotNull);
+    expect(rows!.map((t) => t.rank), [1, 3, 3]);
+  });
+
+  test(
+    'rejects ranks outside membership, descending ranks and missing first',
+    () {
+      for (final ranks in [
+        [2, 2, 3],
+        [1, 4, 4],
+        [1, 3, 2],
+        [1, 0, 3],
+      ]) {
+        final data = snapshot();
+        final teams = data['teams'] as List;
+        for (var i = 0; i < ranks.length; i++) {
+          teams[i]['rank'] = ranks[i];
+        }
+        expect(
+          buildOfficialTeamStandings(info: info(data), players: []),
+          isNull,
+        );
+      }
+    },
+  );
+
   test('does not use another event snapshot', () {
     expect(
       buildOfficialTeamStandings(

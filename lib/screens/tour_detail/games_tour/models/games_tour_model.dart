@@ -17,7 +17,9 @@ int tournamentGamesSourceFingerprint(Iterable<Games> games) {
         game.roundSlug,
         game.boardNr,
         GameStatus.fromString(game.status),
-        game.players?.isNotEmpty == true ? game.players!.first.customPoints : null,
+        game.players?.isNotEmpty == true
+            ? game.players!.first.customPoints
+            : null,
         (game.players?.length ?? 0) >= 2 ? game.players![1].customPoints : null,
       ),
     ),
@@ -124,6 +126,9 @@ class GamesTourModel {
   final int? whiteClockSeconds; // New: time in seconds from last_clock_white
   final int? blackClockSeconds; // New: time in seconds from last_clock_black
   final GameStatus gameStatus;
+
+  /// Published 0-0 adjudication, separate from played win/draw/loss results.
+  final bool isDoubleForfeit;
   final String? fen;
   final String? pgn;
   final String? lastMove;
@@ -173,6 +178,7 @@ class GamesTourModel {
     this.whiteClockSeconds,
     this.blackClockSeconds,
     required this.gameStatus,
+    this.isDoubleForfeit = false,
     required this.roundId, // Make required
     this.roundSlug,
     required this.tourId, // Make required
@@ -229,6 +235,7 @@ class GamesTourModel {
     bool clearWhiteClockSeconds = false,
     bool clearBlackClockSeconds = false,
     GameStatus? gameStatus,
+    bool? isDoubleForfeit,
     String? lastMove,
     bool clearLastMove = false,
     String? fen,
@@ -276,6 +283,11 @@ class GamesTourModel {
               ? null
               : blackClockSeconds ?? this.blackClockSeconds,
       gameStatus: gameStatus ?? this.gameStatus,
+      isDoubleForfeit:
+          isDoubleForfeit ??
+          (gameStatus != null && gameStatus != this.gameStatus
+              ? false
+              : this.isDoubleForfeit),
       lastMove: clearLastMove ? null : lastMove ?? this.lastMove,
       fen: clearFen ? null : fen ?? this.fen,
       pgn: clearPgn ? null : pgn ?? this.pgn,
@@ -416,6 +428,7 @@ class GamesTourModel {
         whiteClockSeconds: whiteClockSecondsToUse,
         blackClockSeconds: blackClockSecondsToUse,
         gameStatus: GameStatus.fromString(game.status),
+        isDoubleForfeit: game.status?.trim() == '0-0',
         roundId: game.roundId, // Include roundId in model
         roundSlug: game.roundSlug, // Include roundSlug for display
         tourId: game.tourId, // Include tourId in model
@@ -638,6 +651,7 @@ class GamesTourModel {
         other.dateStart == dateStart &&
         other.gameDay == gameDay &&
         other.gameStatus == gameStatus &&
+        other.isDoubleForfeit == isDoubleForfeit &&
         other.lastMove == lastMove &&
         other.fen == fen &&
         other.pgn == pgn &&
@@ -673,6 +687,7 @@ class GamesTourModel {
       dateStart,
       gameDay,
       gameStatus,
+      isDoubleForfeit,
       lastMove,
       fen,
       pgn,
@@ -756,7 +771,8 @@ class PlayerCard {
       fideId: fideId ?? this.fideId,
       team: team ?? this.team,
       gamebasePlayerId: gamebasePlayerId ?? this.gamebasePlayerId,
-      customPoints: clearCustomPoints ? null : customPoints ?? this.customPoints,
+      customPoints:
+          clearCustomPoints ? null : customPoints ?? this.customPoints,
     );
   }
 

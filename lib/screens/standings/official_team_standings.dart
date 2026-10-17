@@ -1,3 +1,5 @@
+import 'package:chessever/repository/supabase/tour/info64_source.dart';
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/standings/team_standing_model.dart';
@@ -39,9 +41,7 @@ List<TeamStandingModel>? buildOfficialTeamStandings({
       final rows = _buildOfficialTeamSnapshot(
         Map<String, dynamic>.from(raw),
         matches.single.sourceUrl,
-        matches.single.players
-            .map(PlayerStandingModel.fromPlayer)
-            .toList(),
+        matches.single.players.map(PlayerStandingModel.fromPlayer).toList(),
       );
       if (rows == null) return null;
       first ??= rows;
@@ -57,11 +57,14 @@ List<TeamStandingModel>? _buildOfficialTeamSnapshot(
   String? standingsUrl,
   List<PlayerStandingModel> players,
 ) {
-  if (snapshot == null || snapshot['source'] != 'chess-results') return null;
+  if (snapshot == null ||
+      !['chess-results', 'info64'].contains(snapshot['source'])) {
+    return null;
+  }
   final round = _integer(snapshot['round']);
   final teams = snapshot['teams'];
   final fetchedAt = snapshot['fetchedAt'];
-  final event = _eventId(standingsUrl);
+  final event = _eventId(standingsUrl, source: snapshot['source']);
   if (round == null ||
       round < 1 ||
       round > 100 ||
@@ -70,7 +73,7 @@ List<TeamStandingModel>? _buildOfficialTeamSnapshot(
       fetchedAt is! String ||
       DateTime.tryParse(fetchedAt) == null ||
       event == null ||
-      event != _eventId(snapshot['sourceUrl'])) {
+      event != _eventId(snapshot['sourceUrl'], source: snapshot['source'])) {
     return null;
   }
 
@@ -112,6 +115,8 @@ List<TeamStandingModel>? _buildOfficialTeamSnapshot(
   }
   final rows = <TeamStandingModel>[];
   final names = <String>{};
+  // Published knockout ranks can skip places; preserve their order rather
+  // than impose competition-ranking ordinals on the organizer table.
   var lastRank = 0;
   for (final raw in teams) {
     if (raw is! Map) return null;
@@ -129,7 +134,8 @@ List<TeamStandingModel>? _buildOfficialTeamSnapshot(
         rank == null ||
         rank < 1 ||
         rank < lastRank ||
-        (rank != lastRank && rank != rows.length + 1) ||
+        (rows.isEmpty && rank != 1) ||
+        rank > teams.length ||
         mp == null ||
         mp < 0 ||
         gp is! num ||
@@ -153,6 +159,7 @@ List<TeamStandingModel>? _buildOfficialTeamSnapshot(
         teamName: name,
         rank: rank,
         officialRound: round,
+        tiebreaks: PublishedTiebreak.parse(raw['tiebreaks']),
         matchPoints: mp,
         gamePoints: gp.toDouble(),
         matchesWon: wins,
@@ -177,7 +184,8 @@ int? _integer(dynamic value) =>
         ? value.toInt()
         : null;
 
-String? _eventId(dynamic value) {
+String? _eventId(dynamic value, {dynamic source = 'chess-results'}) {
+  if (source == 'info64') return info64EventUrl(value, team: true);
   if (value is! String) return null;
   final uri = Uri.tryParse(value);
   if (uri == null ||

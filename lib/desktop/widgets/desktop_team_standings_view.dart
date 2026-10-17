@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/player_standing_section_select.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:flutter/material.dart';
@@ -116,40 +119,69 @@ class DesktopTeamStandingsTable extends ConsumerWidget {
         // published after; computed rows carry none.
         final officialRound = teams.first.officialRound;
         final lead = officialRound == null ? 1 : 2;
-        return ListView.separated(
-          physics: const DesktopScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-          itemCount: teams.length + lead,
-          separatorBuilder:
-              (_, index) => Divider(
-                color: index < lead ? Colors.transparent : kDividerColor,
-                height: 1,
-              ),
-          itemBuilder: (context, index) {
-            if (officialRound != null && index == 0) {
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-                child: Text(
-                  'Official standings · after round $officialRound',
-                  key: const Key('team-standings-official-line'),
-                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
-                ),
-              );
-            }
-            if (index == lead - 1) return const _TeamHeaderRow();
-            final team = teams[index - lead];
-            return _TeamRow(
-              team: team,
-              onOpen:
-                  () => openTeamScoreCard(
-                    ref,
-                    TeamScoreCardTabArgs(
-                      teamName: team.teamName,
-                      selectedBroadcast: ref.read(
-                        selectedBroadcastModelProvider,
+        final definitions = <String, PublishedTiebreak>{};
+        for (final team in teams) {
+          for (final value in team.tiebreaks) {
+            definitions.putIfAbsent(value.identity, () => value);
+          }
+        }
+        final tiebreaks = definitions.values.toList(growable: false);
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final width = math.max(
+              constraints.maxWidth,
+              720.0 + tiebreaks.length * 80,
+            );
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: width,
+                height: constraints.maxHeight,
+                child: ListView.separated(
+                  physics: const DesktopScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+                  itemCount: teams.length + lead,
+                  separatorBuilder:
+                      (_, index) => Divider(
+                        color:
+                            index < lead ? Colors.transparent : kDividerColor,
+                        height: 1,
                       ),
-                    ),
-                  ),
+                  itemBuilder: (context, index) {
+                    if (officialRound != null && index == 0) {
+                      return Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+                        child: Text(
+                          'Official standings · after round $officialRound',
+                          key: const Key('team-standings-official-line'),
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      );
+                    }
+                    if (index == lead - 1) {
+                      return _TeamHeaderRow(tiebreaks: tiebreaks);
+                    }
+                    final team = teams[index - lead];
+                    return _TeamRow(
+                      team: team,
+                      tiebreaks: tiebreaks,
+                      onOpen:
+                          () => openTeamScoreCard(
+                            ref,
+                            TeamScoreCardTabArgs(
+                              teamName: team.teamName,
+                              selectedBroadcast: ref.read(
+                                selectedBroadcastModelProvider,
+                              ),
+                            ),
+                          ),
+                    );
+                  },
+                ),
+              ),
             );
           },
         );
@@ -176,7 +208,8 @@ class DesktopTeamStandingsTable extends ConsumerWidget {
 }
 
 class _TeamHeaderRow extends StatelessWidget {
-  const _TeamHeaderRow();
+  const _TeamHeaderRow({required this.tiebreaks});
+  final List<PublishedTiebreak> tiebreaks;
 
   @override
   Widget build(BuildContext context) {
@@ -185,8 +218,8 @@ class _TeamHeaderRow extends StatelessWidget {
       fontSize: 12,
       fontWeight: FontWeight.w700,
     );
-    return const Padding(
-      padding: EdgeInsets.fromLTRB(8, 0, 8, 8),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
       child: Row(
         children: [
           SizedBox(width: 44, child: Text('#', style: style)),
@@ -196,6 +229,11 @@ class _TeamHeaderRow extends StatelessWidget {
           _Cell('Board pts', style: style, width: 88),
           _Cell('W · D · L', style: style, width: 96),
           _Cell('Players', style: style),
+          for (final value in tiebreaks)
+            DesktopTooltip(
+              message: value.description,
+              child: _Cell(value.label, style: style, width: 80),
+            ),
         ],
       ),
     );
@@ -203,7 +241,13 @@ class _TeamHeaderRow extends StatelessWidget {
 }
 
 class _TeamRow extends StatefulWidget {
-  const _TeamRow({required this.team, required this.onOpen});
+  const _TeamRow({
+    required this.team,
+    required this.tiebreaks,
+    required this.onOpen,
+  });
+
+  final List<PublishedTiebreak> tiebreaks;
 
   final TeamStandingModel team;
   final VoidCallback onOpen;
@@ -218,6 +262,9 @@ class _TeamRowState extends State<_TeamRow> {
   @override
   Widget build(BuildContext context) {
     final team = widget.team;
+    final values = {
+      for (final value in team.tiebreaks) value.identity: value.formattedPoints,
+    };
     const numberStyle = TextStyle(
       color: kWhiteColor70,
       fontSize: 13,
@@ -276,6 +323,12 @@ class _TeamRowState extends State<_TeamRow> {
                   team.players.isEmpty ? '—' : '${team.players.length}',
                   style: numberStyle,
                 ),
+                for (final definition in widget.tiebreaks)
+                  _Cell(
+                    values[definition.identity] ?? '',
+                    style: numberStyle,
+                    width: 80,
+                  ),
               ],
             ),
           ),

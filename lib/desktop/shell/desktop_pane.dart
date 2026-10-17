@@ -24,11 +24,14 @@ enum DesktopPane {
   boardEditor,
   play,
   settings,
+  inbox,
 }
 
 /// Maps a sidebar pane identifier to its corresponding tab kind.
 TabKind tabKindForPane(DesktopPane pane) {
   switch (pane) {
+    case DesktopPane.inbox:
+      return TabKind.inbox;
     case DesktopPane.board:
       return TabKind.board;
     case DesktopPane.tournaments:
@@ -63,6 +66,8 @@ TabKind tabKindForPane(DesktopPane pane) {
 /// the new-tab menu).
 DesktopPane? paneForTabKind(TabKind kind) {
   switch (kind) {
+    case TabKind.inbox:
+      return DesktopPane.inbox;
     case TabKind.board:
       return DesktopPane.board;
     case TabKind.tournaments:

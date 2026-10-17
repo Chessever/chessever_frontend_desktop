@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 
 class PlayerStandingModel {
@@ -20,6 +21,7 @@ class PlayerStandingModel {
   /// search so filtered results still display the player's overall standing
   /// (e.g. "#42") instead of re-numbering the filtered list from 1.
   final int? overallRank;
+  final List<PublishedTiebreak> tiebreaks;
 
   const PlayerStandingModel({
     required this.countryCode,
@@ -34,6 +36,7 @@ class PlayerStandingModel {
     this.memorialRouteId,
     this.team,
     this.overallRank,
+    this.tiebreaks = const [],
   });
 
   factory PlayerStandingModel.fromPlayer(TournamentPlayer player) {
@@ -47,6 +50,7 @@ class PlayerStandingModel {
       fideId: player.fideId,
       gamebasePlayerId: null,
       team: player.team,
+      tiebreaks: player.tiebreaks,
     );
   }
 
@@ -76,6 +80,7 @@ class PlayerStandingModel {
     String? memorialRouteId,
     String? team,
     int? overallRank,
+    List<PublishedTiebreak>? tiebreaks,
   }) {
     return PlayerStandingModel(
       countryCode: countryCode ?? this.countryCode,
@@ -91,6 +96,7 @@ class PlayerStandingModel {
       memorialRouteId: memorialRouteId ?? this.memorialRouteId,
       team: team ?? this.team,
       overallRank: overallRank ?? this.overallRank,
+      tiebreaks: tiebreaks ?? this.tiebreaks,
     );
   }
 
@@ -108,6 +114,7 @@ class PlayerStandingModel {
       memorialRouteId: json['memorialRouteId'] as String?,
       team: json['team'] as String?,
       overallRank: json['overallRank'] as int?,
+      tiebreaks: PublishedTiebreak.parse(json['tiebreaks']),
     );
   }
 
@@ -126,6 +133,8 @@ class PlayerStandingModel {
       'memorialRouteId': memorialRouteId,
       'team': team,
       'overallRank': overallRank,
+      if (tiebreaks.isNotEmpty)
+        'tiebreaks': tiebreaks.map((t) => t.toJson()).toList(),
     };
   }
 
@@ -144,7 +153,8 @@ class PlayerStandingModel {
         other.memorialSourceIdentity == memorialSourceIdentity &&
         other.memorialRouteId == memorialRouteId &&
         other.team == team &&
-        other.overallRank == overallRank;
+        other.overallRank == overallRank &&
+        PublishedTiebreak.same(other.tiebreaks, tiebreaks);
   }
 
   @override
@@ -162,6 +172,7 @@ class PlayerStandingModel {
       memorialRouteId,
       team,
       overallRank,
+      Object.hashAll(tiebreaks),
     );
   }
 }
