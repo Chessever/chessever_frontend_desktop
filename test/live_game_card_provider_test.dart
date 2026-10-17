@@ -424,7 +424,7 @@ void main() {
     );
 
     test(
-      'full canonical row preserves zeroes and clears nullable live fields',
+      'full canonical row preserves zeroes and player clears without erasing a played position',
       () {
         final base = _game(
           id: 'game-1',
@@ -469,10 +469,10 @@ void main() {
           ),
         );
 
-        expect(merged.pgn, isNull);
-        expect(merged.fen, isNull);
-        expect(merged.lastMove, isNull);
-        expect(merged.lastMoveTime, isNull);
+        expect(merged.pgn, base.pgn);
+        expect(merged.fen, base.fen);
+        expect(merged.lastMove, base.lastMove);
+        expect(merged.lastMoveTime, base.lastMoveTime);
         expect(merged.whiteClockSeconds, 0);
         expect(merged.blackClockSeconds, 0);
         expect(merged.whiteClockCentiseconds, 0);
