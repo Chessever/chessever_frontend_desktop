@@ -55,10 +55,14 @@ class DesktopWindow {
       fittedSize: initialSize,
     );
 
+    // The main window is centred on the chosen display in the ready callback;
+    // window_manager's own centring picks the display by comparing the cursor
+    // with per-monitor logical rects, which disagree on mixed-DPI Windows.
+    final centeredBounds = displayGeometry.centeredBounds;
     final options = WindowOptions(
       size: initialSize,
       minimumSize: effectiveMinSize,
-      center: !pictureInPicture,
+      center: !pictureInPicture && centeredBounds == null,
       alwaysOnTop: pictureInPicture ? true : null,
       fullScreen: pictureInPicture ? false : null,
       title: windowTitle,
@@ -92,36 +96,63 @@ class DesktopWindow {
         if (Platform.isMacOS || Platform.isWindows) {
           await windowManager.setMaximizable(false);
         }
+      } else if (centeredBounds != null) {
+        await windowManager.setBounds(centeredBounds);
       }
       await windowManager.show();
       await windowManager.focus();
     });
   }
 
-  static Future<({Size size, Rect? visibleBounds})>
+  static Future<({Size size, Rect? visibleBounds, Rect? centeredBounds})>
   _initialGeometryForCurrentDisplay({required bool pictureInPicture}) async {
     final preferredSize =
         pictureInPicture ? pictureInPictureDefaultSize : defaultSize;
     final desiredMinSize = pictureInPicture ? pictureInPictureMinSize : minSize;
     try {
-      final primaryDisplay = await screenRetriever.getPrimaryDisplay();
-      final allDisplays = await screenRetriever.getAllDisplays();
-      final cursorPosition = await screenRetriever.getCursorScreenPoint();
-      final currentDisplay = allDisplays.firstWhere(
-        (display) => visibleBoundsForDisplay(display).contains(cursorPosition),
-        orElse: () => primaryDisplay,
+      final primaryDisplay = DesktopDisplayArea.fromDisplay(
+        await screenRetriever.getPrimaryDisplay(),
       );
-      final visibleBounds = visibleBoundsForDisplay(currentDisplay);
-      return (
-        size: fitWindowSizeToVisibleBounds(
-          preferredSize: preferredSize,
-          minimumSize: desiredMinSize,
-          visibleBounds: visibleBounds,
-        ),
+      final displays = [
+        for (final display in await screenRetriever.getAllDisplays())
+          DesktopDisplayArea.fromDisplay(display),
+      ];
+      final cursorPosition = await screenRetriever.getCursorScreenPoint();
+      final perMonitorScaling = desktopUsesPerMonitorScaling;
+      final windowScale = windowManager.getDevicePixelRatio();
+      final index = displayIndexForPoint(
+        point: cursorPosition,
+        windowScale: windowScale,
+        displays: displays,
+        perMonitorScaling: perMonitorScaling,
+      );
+      final currentDisplay = index < 0 ? primaryDisplay : displays[index];
+      final visibleBounds = currentDisplay.visibleBounds;
+      final size = fitWindowSizeToVisibleBounds(
+        preferredSize: preferredSize,
+        minimumSize: desiredMinSize,
         visibleBounds: visibleBounds,
       );
+      return (
+        size: size,
+        // PiP placement keeps its existing top-right logic.
+        visibleBounds: visibleBounds,
+        centeredBounds:
+            pictureInPicture
+                ? null
+                : windowBoundsForDisplayRect(
+                  rect: Rect.fromCenter(
+                    center: visibleBounds.center,
+                    width: size.width,
+                    height: size.height,
+                  ),
+                  display: currentDisplay,
+                  windowScale: windowScale,
+                  perMonitorScaling: perMonitorScaling,
+                ),
+      );
     } catch (_) {
-      return (size: preferredSize, visibleBounds: null);
+      return (size: preferredSize, visibleBounds: null, centeredBounds: null);
     }
   }
 }

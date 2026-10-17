@@ -69,11 +69,16 @@ enum TabKind {
   /// One opened collection: its About, games and players. The collection
   /// lives per tab in `collectionWorkspaceArgsByTabIdProvider`.
   collectionWorkspace,
+
+  /// Editorial messages shared with the phone Inbox.
+  inbox,
 }
 
 extension TabKindLabel on TabKind {
   String get defaultTitle {
     switch (this) {
+      case TabKind.inbox:
+        return 'Inbox';
       case TabKind.board:
         return 'Board';
       case TabKind.tournaments:

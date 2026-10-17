@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -101,6 +102,57 @@ void main() {
       ),
     );
   }
+
+  testWidgets(
+    'published team columns align and scroll without fabricated values',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(600, 500));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      const values = [
+        PublishedTiebreak(
+          points: 42.75,
+          description: 'Sonneborn-Berger',
+          extendedCode: 'TB1',
+        ),
+        PublishedTiebreak(
+          points: 0,
+          description: 'Direct encounter',
+          extendedCode: 'TB2',
+        ),
+      ];
+      await pumpTable(tester, [
+        const TeamStandingModel(
+          teamName: 'Published team',
+          rank: 1,
+          officialRound: 4,
+          matchPoints: 6,
+          gamePoints: 10.5,
+          matchesWon: 3,
+          matchesDrawn: 0,
+          matchesLost: 1,
+          boardsPlayed: 0,
+          players: [],
+          tiebreaks: values,
+        ),
+        row('Unpublished values', 2, officialRound: 4),
+      ]);
+      await tester.pumpAndSettle();
+      final scroll = find.byWidgetPredicate(
+        (w) =>
+            w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
+      );
+      await tester.drag(scroll, const Offset(-500, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('TB1'), findsOneWidget);
+      expect(find.text('42.75'), findsOneWidget);
+      expect(find.text('0'), findsOneWidget);
+      expect(
+        tester.getCenter(find.text('TB1')).dx,
+        closeTo(tester.getCenter(find.text('42.75')).dx, 0.1),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('official table names its round and keeps stored shared ranks', (
     tester,

@@ -1170,6 +1170,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     setState(() {
       _dirty = true;
       row.error = null;
+      row.matched = null;
+      row.avatarUrl = null;
       if (row.hasLink &&
           row.text.toLowerCase() != row.linkedName.toLowerCase()) {
         row.userId = null;
@@ -1222,14 +1224,18 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     row.suggestTimer?.cancel();
     row.suggestSeq++;
     setState(() {
-      row.name.text = suggestion.name;
       row.seen = suggestion.name;
+      row.name.value = TextEditingValue(
+        text: suggestion.name,
+        selection: TextSelection.collapsed(offset: suggestion.name.length),
+      );
       row.userId = suggestion.userId;
       row.authProject = suggestion.authProject;
       row.linkedName = suggestion.hasAccount ? suggestion.name : '';
       row.credit =
           suggestion.hasAccount ? AuthorCredit.self : AuthorCredit.other;
       row.avatarUrl = suggestion.avatarUrl;
+      row.matched = suggestion;
       row.suggestions = const [];
       row.suggestionsFor = '';
       row.error = null;
@@ -1241,6 +1247,7 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   void _setCoAuthorCredit(_CoAuthor row, AuthorCredit credit) {
     setState(() {
       row.credit = credit;
+      row.matched = null;
       if (credit == AuthorCredit.other) {
         row.userId = null;
         row.authProject = null;
@@ -1468,7 +1475,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
   }) {
     final at = _coAuthors.indexOf(row);
     final uri = _httpsUri(
-      row.credit == AuthorCredit.self ? row.avatarUrl ?? '' : row.photoUrl,
+      row.credit == AuthorCredit.self || row.photoUrl.isEmpty
+          ? row.avatarUrl ?? ''
+          : row.photoUrl,
     );
     final hasPhoto = row.preview != null || uri != null;
     final canPhoto =
@@ -1571,6 +1580,12 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                 ],
               ),
               const SizedBox(height: 10),
+              if (row.suggestionsFor == row.text && row.suggestions.isNotEmpty)
+                _suggestionList(
+                  row.suggestions,
+                  (suggestion) => _useCoAuthorSuggestion(row, suggestion),
+                  enabled: enabled && !row.busy,
+                ),
               Align(
                 alignment: Alignment.centerLeft,
                 child: ConstrainedBox(
@@ -1589,6 +1604,18 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                   ),
                 ),
               ),
+              if (!row.hasLink && row.matched != null)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Matches an existing ChessEver author.',
+                    style: TextStyle(
+                      color: kGreenColor2,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
               if (row.hasLink)
                 const Padding(
                   padding: EdgeInsets.only(top: 8),
@@ -1597,15 +1624,6 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                     style: _noteStyle,
                   ),
                 ),
-              if (row.suggestionsFor == row.text)
-                for (final suggestion in row.suggestions)
-                  _SuggestionRow(
-                    suggestion: suggestion,
-                    onTap:
-                        enabled && !row.busy
-                            ? () => _useCoAuthorSuggestion(row, suggestion)
-                            : null,
-                  ),
               const SizedBox(height: 12),
               FTextField(
                 key: ValueKey('book_coauthor_about_$at'),
@@ -1818,7 +1836,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (showList) _suggestionList(),
+        if (showList)
+          _suggestionList(_suggestions, _useSuggestion, enabled: !_busy),
         if (matched != null)
           const Padding(
             padding: EdgeInsets.only(bottom: 14),
@@ -1836,7 +1855,11 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     );
   }
 
-  Widget _suggestionList() {
+  Widget _suggestionList(
+    List<AuthorSuggestion> suggestions,
+    ValueChanged<AuthorSuggestion> onPick, {
+    required bool enabled,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: DecoratedBox(
@@ -1853,10 +1876,10 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                 padding: EdgeInsets.fromLTRB(14, 0, 14, 2),
                 child: Text('Already on ChessEver', style: _noteStyle),
               ),
-              for (final suggestion in _suggestions)
+              for (final suggestion in suggestions)
                 _SuggestionRow(
                   suggestion: suggestion,
-                  onTap: _busy ? null : () => _useSuggestion(suggestion),
+                  onTap: enabled ? () => onPick(suggestion) : null,
                 ),
             ],
           ),
@@ -2231,7 +2254,21 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                       if (stage != LibraryBookStage.draft)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(28, 0, 28, 16),
-                          child: _StageBand(publication: publication),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _StageBand(publication: publication),
+                              if (_confirmUnpublish) ...[
+                                const SizedBox(height: 12),
+                                _unpublishConfirm(),
+                              ] else if (stage == LibraryBookStage.live ||
+                                  stage == LibraryBookStage.inReview)
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: _publicationAction(stage),
+                                ),
+                            ],
+                          ),
                         ),
                       Flexible(
                         child: _body(
@@ -2513,15 +2550,13 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
                   ),
                   const SizedBox(height: 12),
                 ],
-                _confirmUnpublish
-                    ? _unpublishConfirm()
-                    : Wrap(
-                      alignment: WrapAlignment.spaceBetween,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 20,
-                      runSpacing: 12,
-                      children: [_StageTrack(stage: stage), _actions(stage)],
-                    ),
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 20,
+                  runSpacing: 12,
+                  children: [_StageTrack(stage: stage), _actions(stage)],
+                ),
               ],
             ),
           ),
@@ -2566,88 +2601,52 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     ],
   );
 
+  Future<void> _cancel() async {
+    if (_busy || _coverBusy || _anyPhotoBusy) return;
+    if (_dirty) await _stashDraft();
+    if (!mounted) return;
+    _dirty = false;
+    Navigator.of(context).maybePop();
+  }
+
+  Widget _publicationAction(LibraryBookStage stage) {
+    final idle = !_busy && !_coverBusy && !_anyPhotoBusy;
+    return DesktopDialogButton(
+      label:
+          stage == LibraryBookStage.live ? 'Unpublish' : 'Withdraw from review',
+      tone: DesktopDialogButtonTone.ghost,
+      onPress:
+          !idle
+              ? null
+              : stage == LibraryBookStage.live
+              ? () => setState(() => _confirmUnpublish = true)
+              : () => _leaveCollections(
+                done:
+                    'Withdrawn from review. This collection is a private draft.',
+              ),
+    );
+  }
+
   Widget _actions(LibraryBookStage stage) {
     final idle = !_busy && !_coverBusy && !_anyPhotoBusy;
-    // Submitting always sends the folder's current games along; "Submit
-    // changes" sends the details only.
-    final submitLatest =
-        idle ? () => _save(publish: true, refreshGames: true) : null;
-    final submitDetails = idle ? () => _save(publish: true) : null;
-    final saveDraft = idle ? () => _save() : null;
     return Wrap(
       alignment: WrapAlignment.end,
       spacing: 8,
       runSpacing: 8,
-      children: switch (stage) {
-        LibraryBookStage.draft => [
+      children: [
+        DesktopDialogButton(
+          label: 'Cancel',
+          tone: DesktopDialogButtonTone.ghost,
+          onPress: idle ? _cancel : null,
+        ),
+        if (!_frozen(stage))
           DesktopDialogButton(
-            label: 'Save draft',
-            tone: DesktopDialogButtonTone.ghost,
-            onPress: saveDraft,
-          ),
-          DesktopDialogButton(
-            label: 'Submit for approval',
-            icon: Icons.north_east_rounded,
+            label: 'Submit',
             tone: DesktopDialogButtonTone.primary,
-            onPress: submitLatest,
-          ),
-        ],
-        LibraryBookStage.changesRequested => [
-          DesktopDialogButton(
-            label: 'Save draft',
-            tone: DesktopDialogButtonTone.ghost,
-            onPress: saveDraft,
-          ),
-          DesktopDialogButton(
-            label: 'Resubmit for approval',
-            icon: Icons.north_east_rounded,
-            tone: DesktopDialogButtonTone.primary,
-            onPress: submitLatest,
-          ),
-        ],
-        // Not public yet: taking it back only leaves the review queue.
-        LibraryBookStage.inReview => [
-          DesktopDialogButton(
-            label: 'Withdraw from review',
-            tone: DesktopDialogButtonTone.ghost,
             onPress:
-                idle
-                    ? () => _leaveCollections(
-                      done:
-                          'Withdrawn from review. This collection is a private draft.',
-                    )
-                    : null,
+                idle ? () => _save(publish: true, refreshGames: true) : null,
           ),
-          DesktopDialogButton(label: 'Submit changes', onPress: submitDetails),
-          DesktopDialogButton(
-            label: 'Submit with latest games',
-            tone: DesktopDialogButtonTone.primary,
-            onPress: submitLatest,
-          ),
-        ],
-        // A live collection cannot keep a private edit: the server returns
-        // any change to review, so every save here is a submission.
-        LibraryBookStage.live => [
-          DesktopDialogButton(
-            label: 'Unpublish',
-            tone: DesktopDialogButtonTone.ghost,
-            onPress:
-                idle ? () => setState(() => _confirmUnpublish = true) : null,
-          ),
-          DesktopDialogButton(label: 'Submit changes', onPress: submitDetails),
-          DesktopDialogButton(
-            label: 'Submit with latest games',
-            tone: DesktopDialogButtonTone.primary,
-            onPress: submitLatest,
-          ),
-        ],
-        LibraryBookStage.takenDown => [
-          DesktopDialogButton(
-            label: 'Close',
-            onPress: () => Navigator.of(context).maybePop(),
-          ),
-        ],
-      },
+      ],
     );
   }
 
@@ -2915,6 +2914,7 @@ class _CoAuthor {
   /// The name [userId] was picked for; typing a different name drops it.
   String linkedName = '';
 
+  AuthorSuggestion? matched;
   List<AuthorSuggestion> suggestions = const [];
   String suggestionsFor = '';
   Timer? suggestTimer;

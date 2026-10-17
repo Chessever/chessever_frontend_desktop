@@ -7,6 +7,25 @@ import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 void main() {
   final currentScheme = DesktopBuildIdentity.current.urlScheme;
 
+  test('Inbox links enter the native reading workspace', () {
+    for (final url in [
+      'https://chessever.com/inbox',
+      'https://chessever.com/app/inbox/',
+      '$currentScheme://inbox',
+    ]) {
+      expect(
+        parseDesktopIncomingLink(Uri.parse(url))?.target,
+        DesktopIncomingLinkTarget.inbox,
+      );
+    }
+    expect(
+      parseDesktopIncomingLink(
+        Uri.parse('https://chessever.com.evil.test/inbox'),
+      ),
+      null,
+    );
+  });
+
   group('parseDesktopBroadcastDeepLink', () {
     test('parses chessever.com broadcast slug and tour id links', () {
       final parsed = parseDesktopBroadcastDeepLink(

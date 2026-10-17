@@ -152,6 +152,7 @@ DesktopBroadcastDeepLink? parseDesktopBroadcastDeepLink(Uri uri) {
 /// game, book, folder, player scorecard, team scorecard, broadcast, player
 /// profile.
 enum DesktopIncomingLinkTarget {
+  inbox,
   game,
   book,
   folder,
@@ -203,6 +204,20 @@ DesktopIncomingLink? parseDesktopIncomingLink(Uri uri) {
   final isWeb = _isChesseverWebUri(uri);
   final isScheme = _isChesseverSchemeUri(uri);
   if (!isWeb && !isScheme) return null;
+
+  if (uri.userInfo.isEmpty &&
+      ((isWeb &&
+              const [
+                '/inbox',
+                '/inbox/',
+                '/app/inbox',
+                '/app/inbox/',
+              ].contains(uri.path)) ||
+          (isScheme &&
+              uri.host == 'inbox' &&
+              (uri.path.isEmpty || uri.path == '/')))) {
+    return const DesktopIncomingLink._(DesktopIncomingLinkTarget.inbox);
+  }
 
   final segs = uri.pathSegments;
   String? shareToken;
@@ -358,6 +373,9 @@ class DesktopDeepLinkRouter {
       return false;
     }
     switch (link.target) {
+      case DesktopIncomingLinkTarget.inbox:
+        container.read(desktopTabsProvider.notifier).open(TabKind.inbox);
+        return true;
       case DesktopIncomingLinkTarget.game:
         return _handleGame(uri, link.game!, container);
       case DesktopIncomingLinkTarget.broadcast:

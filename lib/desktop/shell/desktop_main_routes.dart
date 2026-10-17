@@ -90,6 +90,13 @@ const List<DesktopMainRoute> desktopMainRoutes = [
     paletteSubtitle: 'Play the engine and manage local tournaments',
     icon: Icons.sports_esports_outlined,
   ),
+  DesktopMainRoute(
+    pane: DesktopPane.inbox,
+    label: 'Inbox',
+    paletteTitle: 'Open Inbox',
+    paletteSubtitle: 'Updates and chess tips from the ChessEver team',
+    icon: Icons.inbox_outlined,
+  ),
 ];
 
 const List<LogicalKeyboardKey> desktopMainRouteShortcutKeys = [
@@ -110,7 +117,9 @@ const List<LogicalKeyboardKey> desktopMainRouteShortcutKeys = [
 /// tenth key (0) instead of renumbering every route below it.
 List<DesktopMainRoute> get _routesInShortcutOrder => [
   for (final route in desktopMainRoutes)
-    if (route.pane != DesktopPane.collections) route,
+    if (route.pane != DesktopPane.collections &&
+        route.pane != DesktopPane.inbox)
+      route,
   for (final route in desktopMainRoutes)
     if (route.pane == DesktopPane.collections) route,
 ];

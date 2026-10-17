@@ -53,19 +53,31 @@ String openCollectionWorkspaceTab(
   required String slug,
   required String title,
   String? subtitle,
+}) => openCollectionWorkspaceTabFromContainer(
+  ProviderScope.containerOf(ref.context, listen: false),
+  slug: slug,
+  title: title,
+  subtitle: subtitle,
+);
+
+String openCollectionWorkspaceTabFromContainer(
+  ProviderContainer container, {
+  required String slug,
+  required String title,
+  String? subtitle,
 }) {
-  final tabs = ref.read(desktopTabsProvider);
-  final argsByTabId = ref.read(collectionWorkspaceArgsByTabIdProvider);
+  final tabs = container.read(desktopTabsProvider);
+  final argsByTabId = container.read(collectionWorkspaceArgsByTabIdProvider);
   final existing = tabs.tabs.firstWhereOrNull(
     (tab) =>
         tab.kind == TabKind.collectionWorkspace &&
         argsByTabId[tab.id]?.slug == slug,
   );
   if (existing != null) {
-    ref.read(desktopTabsProvider.notifier).activate(existing.id);
+    container.read(desktopTabsProvider.notifier).activate(existing.id);
     return existing.id;
   }
-  final tabId = ref
+  final tabId = container
       .read(desktopTabsProvider.notifier)
       .open(
         TabKind.collectionWorkspace,
@@ -73,7 +85,9 @@ String openCollectionWorkspaceTab(
         subtitle: subtitle ?? 'Collection',
         reuseExisting: false,
       );
-  ref.read(collectionWorkspaceArgsByTabIdProvider.notifier).update((current) {
+  container.read(collectionWorkspaceArgsByTabIdProvider.notifier).update((
+    current,
+  ) {
     return <String, CollectionWorkspaceArgs>{
       ...current,
       tabId: CollectionWorkspaceArgs(slug: slug, title: title),

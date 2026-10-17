@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:chessever/desktop/widgets/editorial/inbox_unread_anchor.dart';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -40,7 +41,9 @@ class DesktopUserProfileButton extends ConsumerWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            DesktopUserAvatar(size: size, displayName: name),
+            DesktopInboxUnreadAnchor(
+              child: DesktopUserAvatar(size: size, displayName: name),
+            ),
             if (showLabel) ...[
               const SizedBox(width: 9),
               ConstrainedBox(
