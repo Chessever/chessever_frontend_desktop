@@ -1001,7 +1001,10 @@ GamesTourModel watchLiveGame(
   // Subscribe to the card's own visible content instead; `read` still returns
   // the newest value whenever that content really changed.
   ref.watch(provider.select(liveGameCardContentKey));
-  return ref.read(provider) ?? game;
+  final liveGame = ref.read(provider);
+  // Seed publication is deferred out of build. Paint the coherent finished
+  // parent row immediately instead of flashing the retained starting board.
+  return _canRecoverFinishedPosition(liveGame, game) ? game : liveGame ?? game;
 }
 
 /// Everything a tournament card renders. Kept beside the card providers so a
@@ -1173,6 +1176,30 @@ void _storeLatestBaseGame(
   });
 }
 
+bool _canRecoverFinishedPosition(
+  GamesTourModel? current,
+  GamesTourModel incoming,
+) {
+  if (current == null ||
+      current.gameId != incoming.gameId ||
+      current.source != incoming.source ||
+      !incoming.gameStatus.isFinished ||
+      !_isIncompletePositionReset(incoming, current.pgn, current.fen)) {
+    return false;
+  }
+
+  // A summary can restore a finished board without carrying its PGN. Require
+  // real played-position evidence, not just an inflated FEN move counter.
+  final position = resolveFreshestGameFen(
+    fen: incoming.fen,
+    pgn: incoming.pgn,
+    lastMove: incoming.lastMove,
+  );
+  return isValidGameFen(position) &&
+      (resolveFinalPositionFromPgn(incoming.pgn) != null ||
+          position!.split(' ').first != Chess.initial.fen.split(' ').first);
+}
+
 bool _shouldUseIncomingGame(
   GamesTourModel? current,
   GamesTourModel incoming, {
@@ -1180,6 +1207,9 @@ bool _shouldUseIncomingGame(
 }) {
   if (current == null) return true;
   if (current == incoming) return false;
+  // Finished cards intentionally have no live channel. A retained placeholder
+  // must not outrank their complete parent row merely by its metadata time.
+  if (_canRecoverFinishedPosition(current, incoming)) return true;
   if (_isIncompletePositionReset(current, incoming.pgn, incoming.fen)) {
     return false;
   }

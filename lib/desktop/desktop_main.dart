@@ -40,6 +40,7 @@ import 'package:chessever/desktop/services/desktop_ui_stall_monitor.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/desktop/services/desktop_updater_startup.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
+import 'package:chessever/desktop/services/desktop_window_work_area_guard.dart';
 import 'package:chessever/desktop/services/window_state_persistence.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -291,6 +292,9 @@ Future<void> _desktopBoot({
   try {
     await WindowStatePersistence.instance.restore();
     await WindowStatePersistence.instance.startTracking();
+    // Keeps the window inside the work area when the display, its scaling or
+    // the display set changes after launch.
+    await DesktopWindowWorkAreaGuard.instance.start();
     print('[desktop] window-state persistence wired');
   } catch (e, stack) {
     print('[desktop] ⚠️ window-state persistence failed');

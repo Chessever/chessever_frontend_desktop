@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
@@ -9,27 +11,57 @@ class DesktopSidebarPremiumButton extends StatelessWidget {
     super.key,
     required this.expanded,
     required this.onPress,
+    this.collapsedSize = 44,
+    this.expandedHeight = 36,
+    this.verticalPadding = 8,
   });
 
   final bool expanded;
   final VoidCallback? onPress;
 
+  /// Edge of the square icon button on the collapsed rail.
+  final double collapsedSize;
+
+  /// Height of the labelled button on the expanded rail.
+  final double expandedHeight;
+
+  /// Space above and below the button.
+  final double verticalPadding;
+
+  static const double _expandedIconSize = 16;
+  static const double _collapsedIconSize = 18;
+
   @override
   Widget build(BuildContext context) {
+    // Padding is derived from the box so the glyph stays centred at every
+    // sidebar density.
     final button =
         expanded
-            ? FButton(
-              style: _premiumButtonStyle(),
-              onPress: onPress,
-              mainAxisSize: MainAxisSize.max,
-              prefix: const Icon(Icons.workspace_premium_rounded),
-              child: const Text('Get Premium'),
+            ? SizedBox(
+              height: expandedHeight,
+              child: FButton(
+                style: _premiumButtonStyle(
+                  verticalPadding: math.max(
+                    0,
+                    (expandedHeight - _expandedIconSize) / 2,
+                  ),
+                ),
+                onPress: onPress,
+                mainAxisSize: MainAxisSize.max,
+                prefix: const Icon(Icons.workspace_premium_rounded),
+                child: const Text('Get Premium'),
+              ),
             )
             : SizedBox(
-              width: 44,
-              height: 44,
+              width: collapsedSize,
+              height: collapsedSize,
               child: FButton.icon(
-                style: _premiumIconButtonStyle(),
+                style: _premiumIconButtonStyle(
+                  padding: math.max(
+                    0,
+                    (collapsedSize - _collapsedIconSize) / 2,
+                  ),
+                ),
                 onPress: onPress,
                 child: const Icon(Icons.workspace_premium_rounded),
               ),
@@ -38,7 +70,10 @@ class DesktopSidebarPremiumButton extends StatelessWidget {
     return FTheme(
       data: FThemes.zinc.dark,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: verticalPadding,
+        ),
         child: DesktopTooltip(
           message: expanded ? '' : 'Get Premium',
           child: button,
@@ -48,29 +83,40 @@ class DesktopSidebarPremiumButton extends StatelessWidget {
   }
 }
 
-FBaseButtonStyle Function(FButtonStyle style) _premiumButtonStyle() {
+FBaseButtonStyle Function(FButtonStyle style) _premiumButtonStyle({
+  required double verticalPadding,
+}) {
   return FButtonStyle.primary(
     (style) => style.copyWith(
       decoration: _premiumDecoration(radius: 8),
       contentStyle:
           (content) => content.copyWith(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: verticalPadding,
+            ),
             spacing: 8,
             textStyle: _premiumTextStyle(),
-            iconStyle: _premiumIconStyle(size: 16),
+            iconStyle: _premiumIconStyle(
+              size: DesktopSidebarPremiumButton._expandedIconSize,
+            ),
           ),
     ),
   );
 }
 
-FBaseButtonStyle Function(FButtonStyle style) _premiumIconButtonStyle() {
+FBaseButtonStyle Function(FButtonStyle style) _premiumIconButtonStyle({
+  required double padding,
+}) {
   return FButtonStyle.primary(
     (style) => style.copyWith(
       decoration: _premiumDecoration(radius: 8),
       iconContentStyle:
           (content) => content.copyWith(
-            padding: const EdgeInsets.all(11),
-            iconStyle: _premiumIconStyle(size: 18),
+            padding: EdgeInsets.all(padding),
+            iconStyle: _premiumIconStyle(
+              size: DesktopSidebarPremiumButton._collapsedIconSize,
+            ),
           ),
     ),
   );
