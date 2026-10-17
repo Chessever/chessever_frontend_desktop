@@ -492,6 +492,141 @@ void main() {
     },
   );
 
+  Future<void> pumpIdentityTable(
+    WidgetTester tester,
+    List<PlayerStandingModel> rows,
+  ) async {
+    final container = ProviderContainer(
+      overrides: [
+        playerTourStandingsSnapshotProvider.overrideWith(
+          () => _RowsStandingsNotifier(rows),
+        ),
+        mergedTournamentGamesProvider.overrideWith((ref) => const []),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1100,
+              height: 480,
+              child: TournamentStandingsView(
+                tabId: 'identity-tab',
+                tournamentId: 'event-1',
+                photoResolver: (_) async => null,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('shows SNo and Club/City in Chess-Results column order', (
+    tester,
+  ) async {
+    await pumpIdentityTable(tester, [
+      _standing(
+        name: 'Carlsen, Magnus',
+        fideId: 1503014,
+        rating: 2830,
+        rank: 1,
+      ).copyWith(
+        matchScore: '4.5',
+        startNumber: 3,
+        club: 'Offerspill Sjakklubb Oslo And A Much Longer Club Name Than Fits',
+      ),
+      _standing(name: 'Gukesh D', fideId: 46616543, rating: 2750, rank: 2),
+    ]);
+
+    double x(String key) => tester.getTopLeft(find.byKey(Key(key))).dx;
+    expect(find.text('SNo'), findsOneWidget);
+    expect(find.text('Club/City'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('standings-start-number-1503014')))
+          .data,
+      '3',
+    );
+    expect(
+      tester
+          .widget<Text>(
+            find.byKey(const Key('standings-start-number-46616543')),
+          )
+          .data,
+      '',
+    );
+    final club = tester.widget<Text>(
+      find.byKey(const Key('standings-club-1503014')),
+    );
+    expect(club.maxLines, 1);
+    expect(club.overflow, TextOverflow.ellipsis);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('standings-club-46616543')))
+          .data,
+      '',
+    );
+    // Rk, SNo, Title, Name, (FED flag in the identity cell), Rtg, Club, Pts.
+    expect(
+      tester.getTopLeft(find.text('1').first).dx,
+      lessThan(x('standings-start-number-1503014')),
+    );
+    expect(
+      x('standings-start-number-1503014'),
+      lessThan(x('standings-title-1503014')),
+    );
+    expect(
+      x('standings-title-1503014'),
+      lessThan(tester.getTopLeft(find.text('Carlsen, Magnus')).dx),
+    );
+    expect(
+      x('standings-rating-1503014'),
+      lessThan(x('standings-club-1503014')),
+    );
+    expect(
+      x('standings-club-1503014'),
+      lessThan(x('standings-points-1503014')),
+    );
+    expect(
+      x('standings-header-start-number'),
+      x('standings-start-number-1503014'),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('hides SNo and Club/City when no row publishes them', (
+    tester,
+  ) async {
+    await pumpIdentityTable(tester, [
+      _standing(
+        name: 'Carlsen, Magnus',
+        fideId: 1503014,
+        rating: 2830,
+        rank: 1,
+      ),
+      _standing(
+        name: 'Gukesh D',
+        fideId: 46616543,
+        rating: 2750,
+        rank: 2,
+      ).copyWith(club: '   '),
+    ]);
+
+    expect(find.text('SNo'), findsNothing);
+    expect(find.text('Club/City'), findsNothing);
+    expect(
+      find.byKey(const Key('standings-start-number-1503014')),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('standings-club-1503014')), findsNothing);
+    expect(find.text('Rating'), findsOneWidget);
+  });
+
   testWidgets(
     'compact event rail standings keep identity rating and points in 44px rows',
     (tester) async {
@@ -1013,6 +1148,20 @@ class _FakeStandingsNotifier extends PlayerTourScreenNotifier {
           overallRank: 1,
         ),
       ],
+    );
+  }
+}
+
+class _RowsStandingsNotifier extends PlayerTourScreenNotifier {
+  _RowsStandingsNotifier(this.rows);
+
+  final List<PlayerStandingModel> rows;
+
+  @override
+  Future<PlayerTourStandingsSnapshot> build() async {
+    return PlayerTourStandingsSnapshot(
+      tourIds: const {'event-1'},
+      standings: rows,
     );
   }
 }

@@ -119,13 +119,9 @@ class DesktopTeamStandingsTable extends ConsumerWidget {
         // published after; computed rows carry none.
         final officialRound = teams.first.officialRound;
         final lead = officialRound == null ? 1 : 2;
-        final definitions = <String, PublishedTiebreak>{};
-        for (final team in teams) {
-          for (final value in team.tiebreaks) {
-            definitions.putIfAbsent(value.identity, () => value);
-          }
-        }
-        final tiebreaks = definitions.values.toList(growable: false);
+        // Published MP/GP tiebreaks that repeat the MP and GP columns are
+        // dropped; derived ones (BH:MP, EMMSB, ...) stay.
+        final tiebreaks = TeamStandingModel.tableTiebreakColumns(teams);
         return LayoutBuilder(
           builder: (context, constraints) {
             final width = math.max(
