@@ -47,22 +47,29 @@ class WindowStatePersistence with WindowListener {
       final y = (json['y'] as num?)?.toDouble();
 
       final currentBounds = await windowManager.getBounds();
-      final preferredRect = Rect.fromLTWH(
+      final windowScale = windowManager.getDevicePixelRatio();
+      // States saved before the scale was recorded were written at whatever
+      // scale the window had; the current one is the best guess.
+      final savedScale = _validScale(json['scale']) ?? windowScale;
+      final savedRect = Rect.fromLTWH(
         x ?? currentBounds.left,
         y ?? currentBounds.top,
         _validDimension(width) ? width! : currentBounds.width,
         _validDimension(height) ? height! : currentBounds.height,
       );
-      final visibleBounds = await _visibleBoundsFor(preferredRect);
-      final restoredRect = fitWindowRectToVisibleBounds(
-        preferredRect: preferredRect,
+      final displays = await _displays();
+      final restoredRect = restoredWindowBounds(
+        savedRect: savedRect,
+        savedScale: savedScale,
+        windowScale: windowScale,
         minimumSize: DesktopWindow.minSize,
-        visibleBounds: visibleBounds,
+        displays: displays,
+        perMonitorScaling: desktopUsesPerMonitorScaling,
       );
       await windowManager.setMinimumSize(
-        effectiveMinimumWindowSize(
+        minimumWindowSizeForDisplays(
           desiredMinimumSize: DesktopWindow.minSize,
-          fittedSize: restoredRect.size,
+          visibleBounds: displays.map((display) => display.visibleBounds),
         ),
       );
       await windowManager.setBounds(restoredRect);
@@ -110,6 +117,9 @@ class WindowStatePersistence with WindowListener {
         'height': size.height,
         'x': position.dx,
         'y': position.dy,
+        // On Windows the bounds above are in the window's current monitor's
+        // logical pixels; the scale lets restore find that monitor again.
+        'scale': windowManager.getDevicePixelRatio(),
         'maximized': isMaximized,
       });
       await AppDatabase.instance.setString(_kvKey, payload);
@@ -121,18 +131,74 @@ class WindowStatePersistence with WindowListener {
   bool get _isDesktop =>
       Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
-  Future<Rect> _visibleBoundsFor(Rect preferredRect) async {
-    final primaryDisplay = await screenRetriever.getPrimaryDisplay();
-    final allDisplays = await screenRetriever.getAllDisplays();
-    final primaryBounds = visibleBoundsForDisplay(primaryDisplay);
-    return pickVisibleBoundsForRect(
-      preferredRect: preferredRect,
-      primaryBounds: primaryBounds,
-      allBounds: allDisplays.map(visibleBoundsForDisplay),
-    );
+  Future<List<DesktopDisplayArea>> _displays() async {
+    final displays = [
+      for (final display in await screenRetriever.getAllDisplays())
+        DesktopDisplayArea.fromDisplay(display),
+    ];
+    if (displays.isNotEmpty) return displays;
+    return [
+      DesktopDisplayArea.fromDisplay(await screenRetriever.getPrimaryDisplay()),
+    ];
   }
 
   bool _validDimension(double? value) {
     return value != null && value > 200;
   }
+
+  double? _validScale(Object? value) {
+    if (value is! num) return null;
+    final scale = value.toDouble();
+    return scale > 0 ? scale : null;
+  }
+}
+
+/// window_manager bounds for a saved window rect, fitted into the work area
+/// of the display it was saved on (or the nearest one).
+///
+/// [savedRect] is in logical pixels at [savedScale], the window's scale when
+/// it was saved. On Windows that space belongs to the monitor the window was
+/// on, so the saved monitor is found through physical pixels, the rect is
+/// fitted in that monitor's logical pixels, and the result is mapped into the
+/// window's current coordinates at [windowScale]. On a single monitor, or
+/// with every monitor at one scale, this is the plain fit.
+@visibleForTesting
+Rect restoredWindowBounds({
+  required Rect savedRect,
+  required double savedScale,
+  required double windowScale,
+  required Size minimumSize,
+  required List<DesktopDisplayArea> displays,
+  required bool perMonitorScaling,
+}) {
+  final index = displayIndexForPoint(
+    point: savedRect.center,
+    windowScale: savedScale,
+    displays: displays,
+    perMonitorScaling: perMonitorScaling,
+  );
+  if (index < 0) return savedRect;
+  final display = displays[index];
+
+  // Saved position in the display's own logical pixels. The size stays
+  // logical: it was the user's size on that display.
+  final positionScale =
+      perMonitorScaling ? savedScale / display.scaleFactor : 1.0;
+  final preferredRect = Rect.fromLTWH(
+    savedRect.left * positionScale,
+    savedRect.top * positionScale,
+    savedRect.width,
+    savedRect.height,
+  );
+  final fitted = fitWindowRectToVisibleBounds(
+    preferredRect: preferredRect,
+    minimumSize: minimumSize,
+    visibleBounds: display.visibleBounds,
+  );
+  return windowBoundsForDisplayRect(
+    rect: fitted,
+    display: display,
+    windowScale: windowScale,
+    perMonitorScaling: perMonitorScaling,
+  );
 }

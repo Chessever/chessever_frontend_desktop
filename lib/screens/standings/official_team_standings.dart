@@ -1,3 +1,5 @@
+import 'package:chessever/repository/supabase/tour/info64_source.dart';
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/standings/team_standing_model.dart';
@@ -9,13 +11,60 @@ import 'package:chessever/utils/team_scoring_rules.dart';
 List<TeamStandingModel>? buildOfficialTeamStandings({
   required TourInfo? info,
   required List<PlayerStandingModel> players,
+  String? selectedSectionId,
 }) {
   final snapshot = info?.officialTeamStandings;
-  if (snapshot == null || snapshot['source'] != 'chess-results') return null;
+  final sections = snapshot?['sections'];
+  if (sections != null) {
+    if (snapshot?['source'] != 'chess-results' ||
+        _eventId(snapshot?['sourceUrl']) != _eventId(info?.standings)) {
+      return null;
+    }
+    if (sections is! List || sections.length < 2 || sections.length > 32) {
+      return null;
+    }
+    final definitions = info?.playerStandingSections ?? const [];
+    if (definitions.length != sections.length) return null;
+    final ids = <String>{};
+    List<TeamStandingModel>? selected;
+    List<TeamStandingModel>? first;
+    for (final raw in sections) {
+      if (raw is! Map || raw['id'] is! String || !ids.add(raw['id'])) {
+        return null;
+      }
+      final matches = definitions.where((s) => s.id == raw['id']).toList();
+      if (matches.length != 1 ||
+          matches.single.name != raw['name'] ||
+          _eventId(matches.single.sourceUrl) != _eventId(raw['sourceUrl'])) {
+        return null;
+      }
+      final rows = _buildOfficialTeamSnapshot(
+        Map<String, dynamic>.from(raw),
+        matches.single.sourceUrl,
+        matches.single.players.map(PlayerStandingModel.fromPlayer).toList(),
+      );
+      if (rows == null) return null;
+      first ??= rows;
+      if (raw['id'] == selectedSectionId) selected = rows;
+    }
+    return selected ?? first;
+  }
+  return _buildOfficialTeamSnapshot(snapshot, info?.standings, players);
+}
+
+List<TeamStandingModel>? _buildOfficialTeamSnapshot(
+  Map<String, dynamic>? snapshot,
+  String? standingsUrl,
+  List<PlayerStandingModel> players,
+) {
+  if (snapshot == null ||
+      !['chess-results', 'info64'].contains(snapshot['source'])) {
+    return null;
+  }
   final round = _integer(snapshot['round']);
   final teams = snapshot['teams'];
   final fetchedAt = snapshot['fetchedAt'];
-  final event = _eventId(info?.standings);
+  final event = _eventId(standingsUrl, source: snapshot['source']);
   if (round == null ||
       round < 1 ||
       round > 100 ||
@@ -24,7 +73,7 @@ List<TeamStandingModel>? buildOfficialTeamStandings({
       fetchedAt is! String ||
       DateTime.tryParse(fetchedAt) == null ||
       event == null ||
-      event != _eventId(snapshot['sourceUrl'])) {
+      event != _eventId(snapshot['sourceUrl'], source: snapshot['source'])) {
     return null;
   }
 
@@ -66,6 +115,8 @@ List<TeamStandingModel>? buildOfficialTeamStandings({
   }
   final rows = <TeamStandingModel>[];
   final names = <String>{};
+  // Published knockout ranks can skip places; preserve their order rather
+  // than impose competition-ranking ordinals on the organizer table.
   var lastRank = 0;
   for (final raw in teams) {
     if (raw is! Map) return null;
@@ -83,7 +134,8 @@ List<TeamStandingModel>? buildOfficialTeamStandings({
         rank == null ||
         rank < 1 ||
         rank < lastRank ||
-        (rank != lastRank && rank != rows.length + 1) ||
+        (rows.isEmpty && rank != 1) ||
+        rank > teams.length ||
         mp == null ||
         mp < 0 ||
         gp is! num ||
@@ -107,6 +159,7 @@ List<TeamStandingModel>? buildOfficialTeamStandings({
         teamName: name,
         rank: rank,
         officialRound: round,
+        tiebreaks: PublishedTiebreak.parse(raw['tiebreaks']),
         matchPoints: mp,
         gamePoints: gp.toDouble(),
         matchesWon: wins,
@@ -131,7 +184,8 @@ int? _integer(dynamic value) =>
         ? value.toInt()
         : null;
 
-String? _eventId(dynamic value) {
+String? _eventId(dynamic value, {dynamic source = 'chess-results'}) {
+  if (source == 'info64') return info64EventUrl(value, team: true);
   if (value is! String) return null;
   final uri = Uri.tryParse(value);
   if (uri == null ||

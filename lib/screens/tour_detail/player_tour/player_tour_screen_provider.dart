@@ -367,15 +367,15 @@ final tournamentRosterStandingsProvider = StreamProvider.autoDispose
         return Stream.value(const <PlayerStandingModel>[]);
       }
 
-      final officialInfo = ref.watch(
+      final officialTour = ref.watch(
         tourDetailScreenProvider.select((value) {
           return value.valueOrNull?.tours
               .where((item) => item.tour.id == tourId)
               .firstOrNull
-              ?.tour
-              .info;
+              ?.tour;
         }),
       );
+      final officialInfo = officialTour?.info;
       final selectedSectionId = ref.watch(
         selectedPlayerStandingSectionProvider(tourId),
       );
@@ -384,7 +384,9 @@ final tournamentRosterStandingsProvider = StreamProvider.autoDispose
         selectedSectionId,
       );
       final authoritative =
-          section != null || officialInfo?.standingsSource == 'chess-results';
+          section != null ||
+          officialTour?.usesExternalStandings == true ||
+          officialInfo?.standingsSource == 'chess-results';
       final repository = ref.read(tourRepositoryProvider);
       final refreshInterval = ref.read(tournamentRosterRefreshIntervalProvider);
       final retryDelay = ref.read(tournamentRosterRetryDelayProvider);

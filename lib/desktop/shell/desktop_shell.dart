@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/panes/inbox_pane.dart';
 import 'dart:async';
 
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
@@ -1019,6 +1020,8 @@ Widget resolveDesktopTabContent(
     );
   }
   switch (tab.kind) {
+    case TabKind.inbox:
+      return InboxPane(tabId: tab.id);
     case TabKind.board:
       return BoardPane(tabId: tab.id);
     case TabKind.tournaments:
