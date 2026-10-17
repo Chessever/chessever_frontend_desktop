@@ -1,5 +1,6 @@
 import 'package:chessever/screens/chessboard/notation/pgn_move_number_repair.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_source_credit.dart';
 
 /// PGN text that is about to leave the app for another program.
 ///
@@ -29,6 +30,8 @@ import 'package:chessever/screens/chessboard/utils/chessever_classification_head
 /// * omits the archive/diagnostic headers written by the CBH converter
 ///   (`_converterArchiveHeaderTags`); native, local and cloud PGN keep them;
 /// * drops the whole `$240`–`$248` block from the movetext;
+/// * renders private inserted-game `[%src …]` credit as ordinary readable
+///   commentary, without changing the native source data;
 /// * wraps the movetext at [kExternalPgnColumns] with intact move numbering;
 /// * terminates the game with its Result token and a trailing newline.
 ///
@@ -236,8 +239,9 @@ List<String> externalCompatibleMovetextLines(
     }
 
     if (token.startsWith('{')) {
-      // Comments travel byte-identical; only the NAG run they end is reset.
-      out.add(token);
+      // Foreign readers print unknown source directives literally. Expose
+      // their readable credit only; leave every other comment byte-identical.
+      out.add(externalSourceCreditComment(token));
       written.clear();
       continue;
     }
