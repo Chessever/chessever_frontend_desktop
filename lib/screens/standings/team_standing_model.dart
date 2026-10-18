@@ -76,7 +76,11 @@ class TeamStandingModel {
             description == 'points (game-points)');
   }
 
-  static final _publishedMatchPoints = RegExp(r'^Matchpoints \(\d+ for wins');
+  // "Matchpoints (2 for wins, …)" or the organizer's own scale,
+  // "Matchpoints (variabel)".
+  static final _publishedMatchPoints = RegExp(
+    r'^Matchpoints \((\d+ for wins|variabel\))',
+  );
 
   /// Tiebreak columns for a table of [teams], in first-seen published order.
   /// A column is dropped only when every team publishing it repeats that
