@@ -479,6 +479,26 @@ class TourInfo {
   final Map<String, dynamic>? officialTeamStandings;
   final Map<String, dynamic>? officialPlayerStandingsSections;
 
+  /// A finished event's complete organizer table, pinned by the data hub
+  /// (`{url, source, pinnedAt}`): every roster row then carries the
+  /// organizer's own rank, score and games count.
+  final Map<String, dynamic>? standingsPin;
+
+  /// Whether the roster is a pinned organizer table for this event's own
+  /// standings link. Organizer tables do not count forfeits as played, so the
+  /// broadcast games can never prove such a table stale.
+  bool get hasPinnedStandings {
+    final pin = standingsPin;
+    if (pin == null) return false;
+    final url = pin['url'];
+    final source = pin['source'];
+    return url is String &&
+        url.isNotEmpty &&
+        url == standings &&
+        source is String &&
+        source.isNotEmpty;
+  }
+
   List<OfficialPlayerSection> get playerStandingSections =>
       OfficialPlayerSection.parse(officialPlayerStandingsSections, standings);
 
@@ -496,6 +516,7 @@ class TourInfo {
     this.standingsUpdatedAt,
     this.officialTeamStandings,
     this.officialPlayerStandingsSections,
+    this.standingsPin,
     this.customScoring,
     this.teamScoring,
   });
@@ -517,6 +538,7 @@ class TourInfo {
       officialPlayerStandingsSections: _asStringKeyMap(
         json['officialPlayerStandingsSections'],
       ),
+      standingsPin: _asStringKeyMap(json['standingsPin']),
       customScoring: _asStringKeyMap(json['customScoring']),
       teamScoring: _asStringKeyMap(json['teamScoring']),
     );
@@ -551,6 +573,7 @@ class TourInfo {
         'officialTeamStandings': officialTeamStandings,
       if (officialPlayerStandingsSections != null)
         'officialPlayerStandingsSections': officialPlayerStandingsSections,
+      if (standingsPin != null) 'standingsPin': standingsPin,
       if (customScoring != null) 'customScoring': customScoring,
       if (teamScoring != null) 'teamScoring': teamScoring,
     };
@@ -649,10 +672,11 @@ class Tour {
   }
 
   bool get usesExternalStandings =>
-      (info.standingsSource == 'chess-results' ||
-          (info.standingsSource == 'info64' &&
-              info64EventUrl(info.standings) != null)) &&
-      info.standingsUpdatedAt != null;
+      ((info.standingsSource == 'chess-results' ||
+              (info.standingsSource == 'info64' &&
+                  info64EventUrl(info.standings) != null)) &&
+          info.standingsUpdatedAt != null) ||
+      info.hasPinnedStandings;
 
   // Format time until start
   static String timeUntilStart(List<DateTime> dates) {

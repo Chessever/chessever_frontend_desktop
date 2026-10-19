@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:chessever/desktop/services/desktop_sentry_filter.dart';
 import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
 import 'package:chessever/desktop/state/desktop_window_role.dart';
@@ -240,6 +241,8 @@ Future<void> _desktopMainWithSentry({
         options.enableUserInteractionBreadcrumbs = true;
         options.enableAutoSessionTracking = false;
         options.sampleRate = 1.0;
+        options.beforeSend = (event, hint) =>
+            shouldDropDesktopSentryEvent(event) ? null : event;
       },
       appRunner: () => _desktopBootOnce(initialArguments: initialArguments),
     ).timeout(

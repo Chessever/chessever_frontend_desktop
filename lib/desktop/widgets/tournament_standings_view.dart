@@ -526,8 +526,11 @@ class TournamentStandingsView extends HookConsumerWidget {
             skipLoadingOnRefresh: true,
             skipLoadingOnReload: true,
             data: (snapshot) {
+              // Pagination categories ("Boards 1-66" + "Boards 67-126") carry
+              // independent 1..n tables; concatenating them interleaves
+              // duplicate ranks, so they use the combined snapshot instead.
               final hasCompleteOfficialRoster =
-                  officialRosterByTourId.isNotEmpty &&
+                  officialRosterByTourId.length == 1 &&
                   officialRosterByTourId.values.every(
                     (value) => value.hasValue,
                   );

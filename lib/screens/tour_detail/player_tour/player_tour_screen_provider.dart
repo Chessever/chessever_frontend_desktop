@@ -445,11 +445,13 @@ final tournamentRosterStandingsProvider = StreamProvider.autoDispose
             return;
           }
           emit(
-            players.map(
-              (player) => PlayerStandingModel.fromPlayer(
-                player,
-              ).copyWith(overallRank: player.rank),
-            ),
+            authoritative
+                ? publishedStandingRows(players)
+                : players.map(
+                  (player) => PlayerStandingModel.fromPlayer(
+                    player,
+                  ).copyWith(overallRank: player.rank),
+                ),
             source: _StandingSnapshotSource.roster,
           );
           schedule(refreshInterval);
@@ -563,6 +565,34 @@ String _standingCategoryBaseName(String name) {
         '',
       )
       .trim();
+}
+
+/// Rows of a published (official) table in published order. Roster players
+/// the source does not rank — byes, withdrawals, feed-only names — are not
+/// official rows; ranking them by list position would invent places.
+@visibleForTesting
+List<PlayerStandingModel> publishedStandingRows(
+  Iterable<TournamentPlayer> players,
+) {
+  final ranked =
+      players
+          .where(
+            (p) =>
+                p.rank != null &&
+                p.rank! > 0 &&
+                p.score != null &&
+                p.score!.isFinite,
+          )
+          .indexed
+          .toList()
+        ..sort((a, b) {
+          final byRank = a.$2.rank!.compareTo(b.$2.rank!);
+          return byRank == 0 ? a.$1.compareTo(b.$1) : byRank;
+        });
+  return [
+    for (final (_, player) in ranked)
+      PlayerStandingModel.fromPlayer(player).copyWith(overallRank: player.rank),
+  ];
 }
 
 List<PlayerStandingModel> assignOverallRanks(

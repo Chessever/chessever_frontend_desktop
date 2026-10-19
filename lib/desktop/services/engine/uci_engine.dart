@@ -214,9 +214,15 @@ class UciEngine {
     }
   }
 
+  // Engines are third-party binaries: an author or option name in Latin-1
+  // is not valid UTF-8, and the strict decoder threw "Missing extension
+  // byte" into the zone from the stderr listener, which has no onError
+  // (CHESSEVER-23M). Malformed bytes become U+FFFD instead.
+  static const _engineOutputDecoder = Utf8Decoder(allowMalformed: true);
+
   void _bindProcessStreams() {
     _stdoutSub = _process.stdout
-        .transform(utf8.decoder)
+        .transform(_engineOutputDecoder)
         .transform(const LineSplitter())
         .listen(
           _stdoutLines.add,
@@ -225,7 +231,7 @@ class UciEngine {
           },
         );
     _stderrSub = _process.stderr
-        .transform(utf8.decoder)
+        .transform(_engineOutputDecoder)
         .transform(const LineSplitter())
         .listen((line) {
           if (kDebugMode) debugPrint('UCI stderr: $line');

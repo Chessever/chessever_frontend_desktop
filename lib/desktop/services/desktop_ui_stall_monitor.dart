@@ -20,6 +20,13 @@ class DesktopUiStallMonitor with WidgetsBindingObserver {
   static const Duration stallThreshold = Duration(seconds: 5);
   static const Duration reportCooldown = Duration(seconds: 30);
 
+  /// Windows sends no lifecycle change for sleep, hibernate or a locked
+  /// session, so the first tick after waking looks like a stall of minutes
+  /// with nothing in the breadcrumbs before it (CHESSEVER-1S6: 73s to 429s,
+  /// each after minutes of silence, while real stalls ran 5s to 36s). No
+  /// genuine freeze runs this long without the user closing the app.
+  static const Duration suspendThreshold = Duration(seconds: 60);
+
   Timer? _timer;
   Stopwatch? _clock;
   Duration _lastTick = Duration.zero;
@@ -59,6 +66,18 @@ class DesktopUiStallMonitor with WidgetsBindingObserver {
 
     final stall = elapsed - pollInterval;
     if (stall < stallThreshold) return;
+    if (stall >= suspendThreshold) {
+      unawaited(
+        Sentry.addBreadcrumb(
+          Breadcrumb(
+            category: 'ui.suspend',
+            message: 'Windows UI isolate resumed after a probable suspend',
+            data: <String, Object>{'gap_ms': stall.inMilliseconds},
+          ),
+        ),
+      );
+      return;
+    }
     final lastReport = _lastReport;
     if (lastReport != null && now - lastReport < reportCooldown) return;
     _lastReport = now;

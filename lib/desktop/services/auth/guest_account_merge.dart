@@ -210,6 +210,16 @@ String deriveGuestMergeRowId({
 
 bool _isLikedGamesFolder(GuestMergeRow row) => row['is_liked_games'] == true;
 
+/// [name] when nobody holds it yet, else the first free "[name] N" from 2.
+/// Claims the result in [taken].
+String _unusedFolderName(String name, Set<String> taken) {
+  if (taken.add(name)) return name;
+  for (var n = 2; ; n++) {
+    final candidate = '$name $n';
+    if (taken.add(candidate)) return candidate;
+  }
+}
+
 GuestMergeRow _copyColumns(GuestMergeRow row) => {
   for (final entry in row.entries)
     if (!kGuestMergeNeverCopiedColumns.contains(entry.key))
@@ -289,6 +299,13 @@ GuestMergePlan planGuestAccountMerge({
     for (final row in rows.folders)
       if (_text(row['id']).isNotEmpty) _text(row['id']): row,
   };
+  // `user_folders` is UNIQUE(user_id, name) across the whole tree. A copied
+  // guest folder whose name the destination already uses would fail the
+  // write with 23505 and abort the merge before any analysis is carried
+  // (CHESSEVER-1Z7), so the copy takes the first free "<name> N".
+  final takenFolderNames = {
+    for (final row in destination.folders) _text(row['name']),
+  };
   final folderIdMap = <String, String>{};
   final likedFolderIds = <String>{};
   final folders = <GuestMergeRow>[];
@@ -338,6 +355,7 @@ GuestMergePlan planGuestAccountMerge({
           'id': derived,
           'user_id': target,
           'parent_id': parentId,
+          'name': _unusedFolderName(name, takenFolderNames),
         });
       }
       return derived;

@@ -18,7 +18,53 @@ Tour event(String source, String url) => Tour.fromJson({
   },
 });
 
+Tour pinned(Map<String, dynamic>? pin, {String? standings}) => Tour.fromJson({
+  'id': 'fixture',
+  'name': 'Fixture',
+  'slug': 'fixture',
+  'created_at': '2026-10-17T00:00:00Z',
+  'url': '',
+  'tier': 1,
+  'dates': [],
+  'players': [],
+  'info': {
+    'standings':
+        standings ??
+        'https://www.chessmanager.com/tournaments/5841081857736704',
+    'standingsPin': pin,
+  },
+});
+
 void main() {
+  test('a pinned organizer table is published standings for its own link', () {
+    const url = 'https://www.chessmanager.com/tournaments/5841081857736704';
+    final pin = {
+      'url': url,
+      'source': 'chessmanager',
+      'pinnedAt': '2026-10-17T05:31:13+00:00',
+    };
+    final tour = pinned(pin);
+    expect(tour.info.hasPinnedStandings, isTrue);
+    // Forfeits are not games played in the organizer table, so the pin
+    // must not depend on the broadcast games agreeing with it.
+    expect(tour.usesExternalStandings, isTrue);
+    expect(tour.info.toJson()['standingsPin'], pin);
+
+    expect(pinned(null).usesExternalStandings, isFalse);
+    expect(
+      pinned(
+        pin,
+        standings: 'https://www.chessmanager.com/tournaments/1',
+      ).usesExternalStandings,
+      isFalse,
+    );
+    expect(pinned({'url': url}).usesExternalStandings, isFalse);
+    expect(
+      pinned({'url': '', 'source': 'chessmanager'}).usesExternalStandings,
+      isFalse,
+    );
+  });
+
   test(
     'Info64 individual standings are authoritative only for an exact supported source',
     () {
