@@ -7,6 +7,7 @@ import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test(
     'packaged helper to durable PGN to persistent My Databases',
     () async {

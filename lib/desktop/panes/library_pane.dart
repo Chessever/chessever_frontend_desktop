@@ -1,3 +1,4 @@
+import '../services/converted_database_names.dart';
 import 'package:chessever/desktop/state/library_destination.dart';
 import 'package:chessever/desktop/services/shared_books.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
@@ -1422,28 +1423,33 @@ enum DatabaseWorkspaceSource { twic, folder, local }
 class DatabaseWorkspaceArgs {
   const DatabaseWorkspaceArgs.folder({
     required this.folderId,
-    required this.title,
+    required String title,
     required this.isSubscribed,
-  }) : source = DatabaseWorkspaceSource.folder,
+  }) : _title = title,
+       source = DatabaseWorkspaceSource.folder,
        localPath = null;
 
   const DatabaseWorkspaceArgs.twic()
     : source = DatabaseWorkspaceSource.twic,
       folderId = kTwicBookId,
-      title = 'ChessEver',
+      _title = 'ChessEver',
       isSubscribed = true,
       localPath = null;
 
   const DatabaseWorkspaceArgs.local({
     required this.localPath,
-    required this.title,
-  }) : source = DatabaseWorkspaceSource.local,
+    required String title,
+  }) : _title = title,
+       source = DatabaseWorkspaceSource.local,
        folderId = '',
        isSubscribed = false;
 
   final DatabaseWorkspaceSource source;
   final String folderId;
-  final String title;
+  final String _title;
+  String get title => localPath != null
+      ? convertedDatabaseDisplayLabel(localPath!, _title)
+      : _title;
   final bool isSubscribed;
   final String? localPath;
 
