@@ -3795,6 +3795,11 @@ class _LadderChipState extends State<_LadderChip>
         annotationsHidden
             ? null
             : annotationTypeFromClassificationNags(widget.nags);
+    final hasClassificationBadge =
+        classificationType != null ||
+        (!annotationsHidden &&
+            !widget.userHasQualityNag &&
+            widget.annotation?.useClassificationIcon == true);
     final firstQualityNag = nags.cast<NagDisplay?>().firstWhere(
       (d) => d?.isQuality == true,
       orElse: () => null,
@@ -3906,7 +3911,11 @@ class _LadderChipState extends State<_LadderChip>
           onTap: () => markers?.onJump(transpositionTarget),
         ),
       ],
-      for (final d in nags) ...[
+      // Portable quality NAGs remain stored and still supply SAN styling/menu
+      // state, but the visible classification badge already conveys them.
+      for (final d in nags.where(
+        (d) => !hasClassificationBadge || !d.isQuality,
+      )) ...[
         const SizedBox(width: 3),
         DesktopTooltip(
           message: d.description ?? d.symbol,
@@ -4218,7 +4227,6 @@ class _MoveCommentEditorState extends State<_MoveCommentEditor> {
                   focusNode: _focusNode,
                   minLines: 4,
                   maxLines: 8,
-                  maxLength: 600,
                   style: const TextStyle(
                     color: kWhiteColor,
                     fontSize: 13,
