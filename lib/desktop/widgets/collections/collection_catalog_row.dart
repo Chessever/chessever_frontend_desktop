@@ -8,10 +8,12 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/collections_reader.dart';
+import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/collections_catalog.dart';
 import 'package:chessever/desktop/widgets/collections/collection_text.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
+import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_icon.dart';
 import 'package:chessever/desktop/widgets/desktop_locked_content.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -91,8 +93,25 @@ class CollectionStarButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final starred = ref.watch(collectionStarredProvider(collection.slug));
-    final star = _StarGlyphButton(
-      starred: starred,
+    final star = _GlyphButton(
+      tooltip: starred ? 'Unstar collection' : 'Star collection',
+      debugLabel: 'collection-star',
+      glyph:
+          (lit) =>
+              starred
+                  // Gold, as the phone draws it.
+                  ? const DesktopIcon(SvgAsset.starFilledIcon, size: _glyphSize)
+                  : TweenAnimationBuilder<Color?>(
+                    tween: ColorTween(end: lit ? kWhiteColor : kWhiteColor70),
+                    duration: const Duration(milliseconds: 120),
+                    curve: Curves.easeOut,
+                    builder:
+                        (context, color, _) => _LineGlyph(
+                          SvgAsset.starIcon,
+                          size: _glyphSize,
+                          color: color ?? kWhiteColor70,
+                        ),
+                  ),
       onPress: () => unawaited(pressCollectionStar(context, collection)),
     );
     if (!showCount) return star;
@@ -108,6 +127,108 @@ class CollectionStarButton extends ConsumerWidget {
       ],
     );
   }
+}
+
+/// A collection's share control, beside its star: the same bare glyph, and
+/// a menu under it to share or copy the collection's chessever.com link.
+class CollectionShareButton extends StatelessWidget {
+  const CollectionShareButton({super.key, required this.collection});
+
+  final Collection collection;
+
+  @override
+  Widget build(BuildContext context) {
+    return Builder(
+      builder:
+          (buttonContext) => _GlyphButton(
+            tooltip: 'Share collection',
+            debugLabel: 'collection-share',
+            glyph:
+                (lit) => TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(end: lit ? kWhiteColor : kWhiteColor70),
+                  duration: const Duration(milliseconds: 120),
+                  curve: Curves.easeOut,
+                  builder:
+                      (context, color, _) => Icon(
+                        Icons.ios_share_rounded,
+                        size: _glyphSize,
+                        color: color ?? kWhiteColor70,
+                      ),
+                ),
+            onPress: () {
+              final box = buttonContext.findRenderObject() as RenderBox?;
+              final position =
+                  box == null || !box.hasSize
+                      ? Offset.zero
+                      : box.localToGlobal(Offset(0, box.size.height + 4));
+              unawaited(
+                showCollectionShareMenu(
+                  buttonContext,
+                  collection,
+                  position: position,
+                ),
+              );
+            },
+          ),
+    );
+  }
+}
+
+enum CollectionShareAction { share, copyLink }
+
+/// The two ways to send a collection, as entries any collection menu can
+/// list; [runCollectionShareAction] carries out the one picked.
+List<DesktopContextMenuEntry<T>> collectionShareMenuEntries<T>({
+  required T share,
+  required T copyLink,
+}) => [
+  DesktopContextMenuItem(
+    value: share,
+    icon: Icons.ios_share_rounded,
+    label: 'Share collection',
+  ),
+  DesktopContextMenuItem(
+    value: copyLink,
+    icon: Icons.copy_rounded,
+    label: 'Copy collection link',
+  ),
+];
+
+Future<void> runCollectionShareAction(
+  BuildContext context,
+  Collection collection,
+  CollectionShareAction action,
+) async {
+  switch (action) {
+    case CollectionShareAction.share:
+      await shareDesktopCollection(context, collection.slug);
+    case CollectionShareAction.copyLink:
+      await copyDesktopShareUrl(
+        context,
+        buildDesktopCollectionShareUrl(collection.slug),
+        copiedLabel: 'Collection link copied to clipboard',
+        missingLabel: 'This collection has no shareable link.',
+      );
+  }
+}
+
+/// [collectionShareMenuEntries] on their own, at [position].
+Future<void> showCollectionShareMenu(
+  BuildContext context,
+  Collection collection, {
+  required Offset position,
+}) async {
+  final action = await showDesktopContextMenu<CollectionShareAction>(
+    context: context,
+    position: position,
+    width: 224,
+    entries: collectionShareMenuEntries(
+      share: CollectionShareAction.share,
+      copyLink: CollectionShareAction.copyLink,
+    ),
+  );
+  if (action == null || !context.mounted) return;
+  await runCollectionShareAction(context, collection, action);
 }
 
 /// Whether [event] presses the focused control: Enter or Space.
@@ -160,25 +281,32 @@ class _EagerTapGestureRecognizer extends TapGestureRecognizer {
   }
 }
 
-/// The star itself: the phone's gold star while starred, its outline
-/// otherwise. A bare glyph in every state; hovering brightens the outline
-/// and a press dips it, nothing is drawn behind it.
-class _StarGlyphButton extends StatefulWidget {
-  const _StarGlyphButton({required this.starred, required this.onPress});
+const double _glyphSize = 16;
 
-  final bool starred;
+/// A collection's star or share control: a bare glyph in every state
+/// ([glyph] is told whether it is hovered or focused, to brighten an
+/// outline); a press dips it, nothing is drawn behind it.
+class _GlyphButton extends StatefulWidget {
+  const _GlyphButton({
+    required this.tooltip,
+    required this.debugLabel,
+    required this.glyph,
+    required this.onPress,
+  });
+
+  final String tooltip;
+  final String debugLabel;
+  final Widget Function(bool lit) glyph;
   final VoidCallback onPress;
 
   @override
-  State<_StarGlyphButton> createState() => _StarGlyphButtonState();
+  State<_GlyphButton> createState() => _GlyphButtonState();
 }
 
-class _StarGlyphButtonState extends State<_StarGlyphButton>
+class _GlyphButtonState extends State<_GlyphButton>
     with
         SingleTickerProviderStateMixin,
-        DeferredPointerStateMixin<_StarGlyphButton> {
-  static const double _glyphSize = 16;
-
+        DeferredPointerStateMixin<_GlyphButton> {
   late final AnimationController _press = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 120),
@@ -229,32 +357,16 @@ class _StarGlyphButtonState extends State<_StarGlyphButton>
 
   @override
   Widget build(BuildContext context) {
-    final tooltip = widget.starred ? 'Unstar collection' : 'Star collection';
-    final Widget glyph =
-        widget.starred
-            // Gold, as the phone draws it.
-            ? const DesktopIcon(SvgAsset.starFilledIcon, size: _glyphSize)
-            : TweenAnimationBuilder<Color?>(
-              tween: ColorTween(
-                end: _hovered || _focused ? kWhiteColor : kWhiteColor70,
-              ),
-              duration: const Duration(milliseconds: 120),
-              curve: Curves.easeOut,
-              builder:
-                  (context, color, _) => _LineGlyph(
-                    SvgAsset.starIcon,
-                    size: _glyphSize,
-                    color: color ?? kWhiteColor70,
-                  ),
-            );
+    final tooltip = widget.tooltip;
+    final glyph = widget.glyph(_hovered || _focused);
     return DesktopTooltip(
       message: tooltip,
-      // The star stands at a right edge: the tip is set from its right, so
-      // it never has to be pushed back in from the edge of the window.
+      // These glyphs stand at a right edge: the tip is set from its right,
+      // so it never has to be pushed back in from the edge of the window.
       tipAnchor: Alignment.bottomRight,
       childAnchor: Alignment.topRight,
       child: Focus(
-        debugLabel: 'collection-star',
+        debugLabel: widget.debugLabel,
         onFocusChange: (focused) => setState(() => _focused = focused),
         onKeyEvent: (_, event) {
           if (!_isActivation(event)) return KeyEventResult.ignored;

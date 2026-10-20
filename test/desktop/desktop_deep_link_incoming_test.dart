@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -10,9 +11,11 @@ DesktopIncomingLink _parse(String link) {
 void main() {
   test('dispatch priority matches the phone', () {
     expect(DesktopIncomingLinkTarget.values, [
+      DesktopIncomingLinkTarget.inbox,
       DesktopIncomingLinkTarget.game,
       DesktopIncomingLinkTarget.book,
       DesktopIncomingLinkTarget.folder,
+      DesktopIncomingLinkTarget.collection,
       DesktopIncomingLinkTarget.playerScoreCard,
       DesktopIncomingLinkTarget.teamScoreCard,
       DesktopIncomingLinkTarget.broadcast,
@@ -50,6 +53,23 @@ void main() {
       expect(parsed.target, DesktopIncomingLinkTarget.folder, reason: link);
       expect(parsed.folderId, 'folder-1', reason: link);
     }
+  });
+
+  test('shared collections carry the slug', () {
+    for (final link in [
+      'https://chessever.com/collections/tata-steel-2026',
+      'https://www.chessever.com/collections/tata-steel-2026/',
+      '${DesktopBuildIdentity.current.urlScheme}://collections/tata-steel-2026',
+      'com.chessever.app://collections/tata-steel-2026',
+    ]) {
+      final parsed = _parse(link);
+      expect(parsed.target, DesktopIncomingLinkTarget.collection, reason: link);
+      expect(parsed.collectionSlug, 'tata-steel-2026', reason: link);
+    }
+    expect(
+      parseDesktopIncomingLink(Uri.parse('https://chessever.com/collections')),
+      isNull,
+    );
   });
 
   group('player profile', () {
@@ -144,11 +164,15 @@ void main() {
     for (final link in [
       'https://chessever.com/books/aB3dE5fG7h',
       'https://chessever.com/databases/folder-1',
+      'https://chessever.com/collections/tata-steel-2026',
       'https://chessever.com/player/magnus-carlsen/1503014',
       'https://chessever.com/broadcast/olympiad/4TdB92Cj/team/Team%20Norway',
     ]) {
-      expect(isDesktopRoutableWebDeepLink(Uri.parse(link)), isTrue,
-          reason: link);
+      expect(
+        isDesktopRoutableWebDeepLink(Uri.parse(link)),
+        isTrue,
+        reason: link,
+      );
     }
     expect(
       isDesktopRoutableWebDeepLink(Uri.parse('https://chessever.com/account')),
