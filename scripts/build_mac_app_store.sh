@@ -10,6 +10,13 @@ cd "$REPO_ROOT"
 : "${STORE_APPLICATION_IDENTITY:?Set STORE_APPLICATION_IDENTITY to the Mac app signing identity SHA-1}"
 : "${STORE_INSTALLER_IDENTITY:?Set STORE_INSTALLER_IDENTITY to the installer identity SHA-1}"
 
+unlock_release_keychain() {
+  python3 scripts/unlock_release_keychain.py \
+    "$STORE_KEYCHAIN" "${STORE_KEYCHAIN_PASSWORD_FILE:-}"
+}
+# Fail before compiling instead of showing an unexpected macOS password prompt.
+unlock_release_keychain
+
 STORE_OUTPUT="${STORE_OUTPUT:-$REPO_ROOT/build/mac-app-store}"
 mkdir -p "$STORE_OUTPUT"
 STORE_OUTPUT="$(cd "$STORE_OUTPUT" && pwd)"
@@ -65,6 +72,8 @@ info['GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS'] = False
 info_path.write_bytes(plistlib.dumps(info))
 PY
 
+# A long compile may have outlasted the keychain's normal auto-lock interval.
+unlock_release_keychain
 sign_code() {
   codesign --force --timestamp --options runtime --keychain "$STORE_KEYCHAIN" \
     --sign "$STORE_APPLICATION_IDENTITY" "$@"
