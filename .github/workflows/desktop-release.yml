@@ -63,8 +63,31 @@ env:
   CM_BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 jobs:
+  preflight:
+    name: Verify desktop release recipe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the production branch
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          if [ "$RELEASE_REF" != refs/heads/main ]; then
+            echo '::error::Desktop releases must run from main.'
+            exit 1
+          fi
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify parity with the Codemagic desktop recipes
+        run: ruby scripts/ci/check_codemagic_parity.rb
+
   macos:
     name: macOS ${{ matrix.arch == 'arm64' && 'Apple Silicon' || 'Intel' }}
+    needs: preflight
     if: inputs.macos_arm64 || inputs.macos_x64
     runs-on: macos-26
     timeout-minutes: 180
@@ -91,25 +114,26 @@ jobs:
           persist-credentials: false
 
       - name: Select Xcode 26.6
+        background: true
         # Codemagic's "latest" resolved to 26.6 (17F113) when this was ported.
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.6.app
           xcodebuild -version
 
       - name: Set up Flutter (stable)
+        background: true
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
 
       - name: Set up Python
+        background: true
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Install R2 publisher and Codemagic CLI tools
-        # scripts/requirements-release.txt plus codemagic-cli-tools 0.70.0,
-        # hash-locked with every dependency (they handle the signing keys).
-        run: python -m pip install --require-hashes -r scripts/ci/release-tools.txt
+      - name: Wait for macOS toolchains
+        wait-all:
 
       - name: Notify Telegram release started
         continue-on-error: true
@@ -161,6 +185,10 @@ jobs:
 
       - name: Get Flutter packages
         run: flutter pub get
+
+      - name: Install R2 publisher and Codemagic CLI tools
+        # Same dependency stage as Codemagic, with a complete hash lock.
+        run: python -m pip install --require-hashes -r scripts/ci/release-tools.txt
 
       - name: Test macOS updater framework repair
         run: bash ./scripts/test_macos_updater_framework_repair.sh
@@ -285,6 +313,7 @@ jobs:
 
   windows:
     name: Windows
+    needs: preflight
     if: inputs.windows
     runs-on: windows-2022
     timeout-minutes: 150
@@ -301,17 +330,19 @@ jobs:
           persist-credentials: false
 
       - name: Set up Flutter (stable)
+        background: true
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
 
       - name: Set up Python
+        background: true
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Install R2 publisher dependencies
-        run: python -m pip install --require-hashes -r scripts\ci\release-tools.txt
+      - name: Wait for Windows toolchains
+        wait-all:
 
       - name: Notify Telegram release started
         continue-on-error: true
@@ -350,6 +381,9 @@ jobs:
 
       - name: Get Flutter packages
         run: flutter pub get
+
+      - name: Install R2 publisher dependencies
+        run: python -m pip install --require-hashes -r scripts\ci\release-tools.txt
 
       - name: Test Windows native bundle verifier
         run: flutter test --no-pub test/desktop/windows_release_bundle_verifier_test.dart
@@ -435,6 +469,7 @@ jobs:
 
   linux:
     name: Linux
+    needs: preflight
     if: inputs.linux
     # Codemagic's linux_x2 is Ubuntu 24.04; keep the same glibc floor for the .deb.
     runs-on: ubuntu-24.04
@@ -449,17 +484,19 @@ jobs:
           persist-credentials: false
 
       - name: Set up Flutter (stable)
+        background: true
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
 
       - name: Set up Python
+        background: true
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Install R2 publisher dependencies
-        run: python -m pip install --require-hashes -r scripts/ci/release-tools.txt
+      - name: Wait for Linux toolchains
+        wait-all:
 
       - name: Notify Telegram release started
         continue-on-error: true
@@ -501,6 +538,9 @@ jobs:
 
       - name: Get Flutter packages
         run: flutter pub get
+
+      - name: Install R2 publisher dependencies
+        run: python -m pip install --require-hashes -r scripts/ci/release-tools.txt
 
       - name: Test Linux updater archive aliases
         run: flutter test --no-pub test/desktop/desktop_updater_archive_symlink_test.dart

@@ -36,9 +36,19 @@ jobs:
           persist-credentials: false
 
       - name: Set up Flutter (master)
+        background: true
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: master
+
+      - name: Select Xcode 26.6
+        background: true
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      - name: Wait for macOS toolchains
+        wait-all:
 
       - name: Verify build environment
         env:

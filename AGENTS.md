@@ -167,6 +167,12 @@ The Ralph loop will keep waking you. Make every iteration land a verifiable, con
 ## 2. Branching and commits
 
 - Stay on `main` unless the user gave you a branch.
+- Desktop CI/CD uses GitHub Actions, not the Codemagic hosted service.
+  Keep the five recipes in `codemagic.yaml` as the behavior reference and run
+  `ruby scripts/ci/check_codemagic_parity.rb` when changing either workflow.
+  Release workflows stay manually dispatched, with signing and R2 credentials
+  behind the `main`-only `release` environment. Publishing to R2 is a manual
+  release choice, not an automatic consequence of a push or store approval.
 - Push commits and open a pull request only when the user explicitly asks.
 - One commit per coherent chunk. Imperative subject, focused body.
 - **Every commit that changes shipped code bumps `version:` in `pubspec.yaml`** — patch segment and build number together, both by one (`20.27.6+276` → `20.27.7+277`). The bump rides with the change that earned it; never leave it for a separate `chore: bump` commit. Put the resulting version at the end of the subject: `Suppress Game Report errors in retained decisive wins (20.27.7).` Docs-only, test-only, CI-only and tooling-only commits are exempt. The phone repo (`chessever-frontend`) follows the same rule, so shared logic ported to both — the Game Report classifier above all — bumps both.
