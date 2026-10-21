@@ -148,8 +148,8 @@ jobs:
         run: |
           umask 077
           mkdir -p "$RUNNER_TEMP/store-profiles"
-          app-store-connect --profiles-dir "$RUNNER_TEMP/store-profiles" \
-            profiles get WR4MCF5FY6 --save
+          app-store-connect profiles get WR4MCF5FY6 \
+            --profiles-dir "$RUNNER_TEMP/store-profiles" --save
           profile="$(find "$RUNNER_TEMP/store-profiles" -type f -name '*.provisionprofile')"
           test -n "$profile"
           cp "$profile" "$STORE_PROFILE"
