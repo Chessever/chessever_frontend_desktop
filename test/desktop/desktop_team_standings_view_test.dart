@@ -154,6 +154,56 @@ void main() {
     },
   );
 
+  testWidgets('drops published MP and GP columns that repeat the table', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 500));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    TeamStandingModel published(String name, int rank, num bh) =>
+        TeamStandingModel(
+          teamName: name,
+          rank: rank,
+          officialRound: 4,
+          matchPoints: 6,
+          gamePoints: 10.5,
+          matchesWon: 3,
+          matchesDrawn: 0,
+          matchesLost: 1,
+          boardsPlayed: 0,
+          players: const [],
+          tiebreaks: [
+            const PublishedTiebreak(
+              points: 6,
+              description:
+                  'Matchpoints (2 for wins, 1 for Draws, 0 for Losses)',
+              extendedCode: 'TB1',
+            ),
+            const PublishedTiebreak(
+              points: 10.5,
+              description: 'points (game-points)',
+              extendedCode: 'TB2',
+            ),
+            PublishedTiebreak(
+              points: bh,
+              description: 'Buchholz Tie-Breaks (variable with parameter)',
+              extendedCode: 'TB3',
+            ),
+          ],
+        );
+    await pumpTable(tester, [
+      published('India', 1, 31.5),
+      published('Norway', 2, 29),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('TB1'), findsNothing);
+    expect(find.text('TB2'), findsNothing);
+    expect(find.text('TB3'), findsOneWidget);
+    expect(find.text('31.5'), findsOneWidget);
+    expect(find.text('29'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('official table names its round and keeps stored shared ranks', (
     tester,
   ) async {

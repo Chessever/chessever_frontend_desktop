@@ -9,9 +9,14 @@ import 'package:chessever/desktop/desktop_app.dart'
     show desktopRootNavigatorKey;
 import 'package:chessever/desktop/panes/library_pane.dart'
     show DatabaseWorkspaceArgs, openDatabaseWorkspaceTabForContainer;
+import 'package:chessever/desktop/services/collections_reader.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_team.dart';
+import 'package:chessever/desktop/widgets/collections/collection_actions.dart'
+    show openCollectionWorkspaceTabFromContainer;
+import 'package:chessever/desktop/widgets/collections/collection_text.dart'
+    show collectionKindLabel;
 import 'package:chessever/desktop/widgets/desktop_team_standings_view.dart'
     show DesktopTeamStandingsMode, teamStandingsModeByTabIdProvider;
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -149,13 +154,14 @@ DesktopBroadcastDeepLink? parseDesktopBroadcastDeepLink(Uri uri) {
 }
 
 /// Destinations an incoming link can open, in mobile dispatch priority:
-/// game, book, folder, player scorecard, team scorecard, broadcast, player
-/// profile.
+/// game, book, folder, collection, player scorecard, team scorecard,
+/// broadcast, player profile.
 enum DesktopIncomingLinkTarget {
   inbox,
   game,
   book,
   folder,
+  collection,
   playerScoreCard,
   teamScoreCard,
   broadcast,
@@ -171,6 +177,7 @@ class DesktopIncomingLink {
     this.broadcast,
     this.shareToken,
     this.folderId,
+    this.collectionSlug,
     this.fideId,
     this.teamName,
     this.profileId,
@@ -181,6 +188,9 @@ class DesktopIncomingLink {
   final DesktopBroadcastDeepLink? broadcast;
   final String? shareToken;
   final String? folderId;
+
+  /// A published collection's slug (`/collections/<slug>`), percent-decoded.
+  final String? collectionSlug;
   final int? fideId;
 
   /// Already percent-decoded (`Uri.pathSegments` decodes).
@@ -222,6 +232,7 @@ DesktopIncomingLink? parseDesktopIncomingLink(Uri uri) {
   final segs = uri.pathSegments;
   String? shareToken;
   String? folderId;
+  String? collectionSlug;
   String? broadcastId;
   String? broadcastSlug;
   int? fideId;
@@ -232,6 +243,9 @@ DesktopIncomingLink? parseDesktopIncomingLink(Uri uri) {
     if (segs.length >= 2 && segs[0] == 'books') shareToken = segs[1];
     if (segs.length >= 2 && (segs[0] == 'databases' || segs[0] == 'folders')) {
       folderId = segs[1];
+    }
+    if (segs.length >= 2 && segs[0] == 'collections') {
+      collectionSlug = _trimmedOrNull(segs[1]);
     }
     if (segs.isNotEmpty && segs[0] == 'broadcast') {
       if (segs.length >= 3) {
@@ -256,6 +270,9 @@ DesktopIncomingLink? parseDesktopIncomingLink(Uri uri) {
     if (uri.host == 'books' && segs.isNotEmpty) shareToken = segs[0];
     if ((uri.host == 'databases' || uri.host == 'folders') && segs.isNotEmpty) {
       folderId = segs[0];
+    }
+    if (uri.host == 'collections' && segs.isNotEmpty) {
+      collectionSlug = _trimmedOrNull(segs[0]);
     }
     if (uri.host == 'broadcast' && segs.isNotEmpty) {
       final playerIdx = segs.indexOf('player');
@@ -293,6 +310,12 @@ DesktopIncomingLink? parseDesktopIncomingLink(Uri uri) {
     return DesktopIncomingLink._(
       DesktopIncomingLinkTarget.folder,
       folderId: folderId,
+    );
+  }
+  if (collectionSlug != null) {
+    return DesktopIncomingLink._(
+      DesktopIncomingLinkTarget.collection,
+      collectionSlug: collectionSlug,
     );
   }
   final broadcast =
@@ -391,6 +414,12 @@ class DesktopDeepLinkRouter {
           uri,
           'folder',
           () => _openFolder(link.folderId!, container),
+        );
+      case DesktopIncomingLinkTarget.collection:
+        return _route(
+          uri,
+          'collection',
+          () => _openCollection(link.collectionSlug!, container),
         );
       case DesktopIncomingLinkTarget.playerScoreCard:
         return _route(
@@ -524,6 +553,36 @@ class DesktopDeepLinkRouter {
         title: folder.name,
         isSubscribed: folder.isSubscribed,
       ),
+    );
+    return null;
+  }
+
+  /// Opens the collection in its own tab, as the catalog does (a locked
+  /// Premium one opens on its About, with the unlock). One that is
+  /// unpublished (or unreadable right now) lands on the catalog.
+  Future<String?> _openCollection(
+    String slug,
+    ProviderContainer container,
+  ) async {
+    Collection? collection;
+    try {
+      collection = await container
+          .read(collectionsReaderProvider)
+          .fetchCollection(slug)
+          .timeout(_linkFetchTimeout);
+    } catch (_) {
+      collection = null;
+    }
+    if (collection == null) {
+      container.read(desktopTabsProvider.notifier).open(TabKind.collections);
+      _notify("That collection isn't available.", error: true);
+      return 'collection_not_found';
+    }
+    openCollectionWorkspaceTabFromContainer(
+      container,
+      slug: collection.slug,
+      title: collection.title,
+      subtitle: collectionKindLabel(collection.kind),
     );
     return null;
   }

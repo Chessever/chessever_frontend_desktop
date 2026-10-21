@@ -698,6 +698,25 @@ bool isOfficialStandingRow({
   required double? score,
 }) => useExternalOrder && rank != null && score != null;
 
+/// A published table owns its membership, as on chess-results.com and mobile.
+/// Feed players it does not list are dropped, so they get no invented rank
+/// and add no game-derived tiebreak columns. A table with no ranked row yet
+/// is not published, and keeps every player.
+@visibleForTesting
+List<TournamentPlayer> publishedTableMembers(
+  List<TournamentPlayer> players, {
+  required bool useExternalOrder,
+  required bool singleTourScope,
+}) {
+  bool official(TournamentPlayer p) => isOfficialStandingRow(
+    useExternalOrder: useExternalOrder && singleTourScope,
+    rank: p.rank,
+    score: p.score,
+  );
+  if (!players.any(official)) return players;
+  return players.where(official).toList(growable: false);
+}
+
 /// Whether to skip the client-side resort and trust the server-supplied order.
 ///
 /// Two sources qualify: chess-results tours (`useExternalOrder`) and Lichess
@@ -1289,7 +1308,11 @@ class PlayerTourScreenNotifier
       });
     }
 
-    return enrichedPlayers
+    return publishedTableMembers(
+          enrichedPlayers,
+          useExternalOrder: useExternalOrder,
+          singleTourScope: singleTourScope,
+        )
         .map(
           (player) => PlayerStandingModel.fromPlayer(player).copyWith(
             overallRank:

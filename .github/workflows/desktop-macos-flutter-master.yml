@@ -84,12 +84,9 @@ jobs:
           GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
           GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
           SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
-          TELEGRAM_FEEDBACK_BOT_TOKEN: ${{ secrets.TELEGRAM_FEEDBACK_BOT_TOKEN }}
-          TELEGRAM_FEEDBACK_CHAT_ID: ${{ secrets.TELEGRAM_FEEDBACK_CHAT_ID }}
         run: |
           bash ./scripts/ci/mask_dart_defines.sh SUPABASE_URL SUPABASE_ANON_KEY \
-            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER \
-            TELEGRAM_FEEDBACK_BOT_TOKEN TELEGRAM_FEEDBACK_CHAT_ID
+            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
 
       - name: Build macOS release (unsigned, ad-hoc)
         env:
@@ -98,8 +95,6 @@ jobs:
           GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
           GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
           SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
-          TELEGRAM_FEEDBACK_BOT_TOKEN: ${{ secrets.TELEGRAM_FEEDBACK_BOT_TOKEN }}
-          TELEGRAM_FEEDBACK_CHAT_ID: ${{ secrets.TELEGRAM_FEEDBACK_CHAT_ID }}
         run: |
           DART_DEFINES=(
             --dart-define=SUPABASE_URL="$SUPABASE_URL"
@@ -110,7 +105,7 @@ jobs:
             --dart-define=CHESSEVER_CLOUDFLARE_API_BASE="$CHESSEVER_CLOUDFLARE_API_BASE"
             --dart-define=ANALYSIS_API_BASE=https://chessever-analysis.young-sun-69a8.workers.dev
           )
-          for name in GOOGLE_WEB_CLIENT_ID BILLING_API_BASE GAMEBASE_PROXY_BASE TELEGRAM_FEEDBACK_BOT_TOKEN TELEGRAM_FEEDBACK_CHAT_ID; do
+          for name in GOOGLE_WEB_CLIENT_ID BILLING_API_BASE GAMEBASE_PROXY_BASE; do
             if [ -n "${!name:-}" ]; then
               DART_DEFINES+=(--dart-define="$name=${!name}")
             fi

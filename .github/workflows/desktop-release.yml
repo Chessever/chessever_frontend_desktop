@@ -49,7 +49,6 @@ defaults:
 
 env:
   CHESSEVER_CLOUDFLARE_API_BASE: ${{ vars.CHESSEVER_CLOUDFLARE_API_BASE }}
-  TELEGRAM_CHAT_ID: "-1003954728178"
   PUBLISH: ${{ inputs.publish }}
   # Appended to the Telegram platform label so a dry run is never announced
   # as a release.
@@ -116,6 +115,7 @@ jobs:
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: bash ./scripts/codemagic_notify_telegram.sh "$NOTIFY_LABEL" started
 
       - name: Verify release environment
@@ -204,12 +204,9 @@ jobs:
           GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
           GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
           SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
-          TELEGRAM_FEEDBACK_BOT_TOKEN: ${{ secrets.TELEGRAM_FEEDBACK_BOT_TOKEN }}
-          TELEGRAM_FEEDBACK_CHAT_ID: ${{ secrets.TELEGRAM_FEEDBACK_CHAT_ID }}
         run: |
           bash ./scripts/ci/mask_dart_defines.sh SUPABASE_URL SUPABASE_ANON_KEY \
-            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER \
-            TELEGRAM_FEEDBACK_BOT_TOKEN TELEGRAM_FEEDBACK_CHAT_ID
+            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
 
       - name: Build and publish macOS package
         env:
@@ -218,8 +215,6 @@ jobs:
           GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
           GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
           SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
-          TELEGRAM_FEEDBACK_BOT_TOKEN: ${{ secrets.TELEGRAM_FEEDBACK_BOT_TOKEN }}
-          TELEGRAM_FEEDBACK_CHAT_ID: ${{ secrets.TELEGRAM_FEEDBACK_CHAT_ID }}
           APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
@@ -238,7 +233,7 @@ jobs:
             --dart-define=CHESSEVER_CLOUDFLARE_API_BASE="$CHESSEVER_CLOUDFLARE_API_BASE"
             --dart-define=ANALYSIS_API_BASE=https://chessever-analysis.young-sun-69a8.workers.dev
           )
-          for name in GOOGLE_WEB_CLIENT_ID BILLING_API_BASE GAMEBASE_PROXY_BASE TELEGRAM_FEEDBACK_BOT_TOKEN TELEGRAM_FEEDBACK_CHAT_ID; do
+          for name in GOOGLE_WEB_CLIENT_ID BILLING_API_BASE GAMEBASE_PROXY_BASE; do
             if [ -n "${!name:-}" ]; then
               DART_DEFINES+=(--dart-define="$name=${!name}")
             fi
@@ -278,6 +273,7 @@ jobs:
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: bash ./scripts/codemagic_notify_telegram.sh "$NOTIFY_LABEL" finished
 
       - name: Remove signing material
@@ -321,6 +317,7 @@ jobs:
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_notify_telegram.ps1 -Platform "Windows$env:RUN_SUFFIX" -Event started
 
       - name: Verify release environment
@@ -365,12 +362,9 @@ jobs:
           GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
           GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
           SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
-          TELEGRAM_FEEDBACK_BOT_TOKEN: ${{ secrets.TELEGRAM_FEEDBACK_BOT_TOKEN }}
-          TELEGRAM_FEEDBACK_CHAT_ID: ${{ secrets.TELEGRAM_FEEDBACK_CHAT_ID }}
         run: |
           bash ./scripts/ci/mask_dart_defines.sh SUPABASE_URL SUPABASE_ANON_KEY \
-            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER \
-            TELEGRAM_FEEDBACK_BOT_TOKEN TELEGRAM_FEEDBACK_CHAT_ID
+            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
 
       - name: Build Windows release
         env:
@@ -379,8 +373,6 @@ jobs:
           GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
           GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
           SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
-          TELEGRAM_FEEDBACK_BOT_TOKEN: ${{ secrets.TELEGRAM_FEEDBACK_BOT_TOKEN }}
-          TELEGRAM_FEEDBACK_CHAT_ID: ${{ secrets.TELEGRAM_FEEDBACK_CHAT_ID }}
         run: powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_build_windows_release.ps1
 
       - name: Upload Windows native symbols
@@ -408,8 +400,6 @@ jobs:
           GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
           GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
           SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
-          TELEGRAM_FEEDBACK_BOT_TOKEN: ${{ secrets.TELEGRAM_FEEDBACK_BOT_TOKEN }}
-          TELEGRAM_FEEDBACK_CHAT_ID: ${{ secrets.TELEGRAM_FEEDBACK_CHAT_ID }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -440,6 +430,7 @@ jobs:
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_notify_telegram.ps1 -Platform "Windows$env:RUN_SUFFIX" -Event finished
 
   linux:
@@ -474,6 +465,7 @@ jobs:
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: bash ./scripts/codemagic_notify_telegram.sh "Linux$RUN_SUFFIX" started
 
       - name: Verify release environment
@@ -520,12 +512,9 @@ jobs:
           GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
           GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
           SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
-          TELEGRAM_FEEDBACK_BOT_TOKEN: ${{ secrets.TELEGRAM_FEEDBACK_BOT_TOKEN }}
-          TELEGRAM_FEEDBACK_CHAT_ID: ${{ secrets.TELEGRAM_FEEDBACK_CHAT_ID }}
         run: |
           bash ./scripts/ci/mask_dart_defines.sh SUPABASE_URL SUPABASE_ANON_KEY \
-            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER \
-            TELEGRAM_FEEDBACK_BOT_TOKEN TELEGRAM_FEEDBACK_CHAT_ID
+            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
 
       - name: Build Linux release
         env:
@@ -534,8 +523,6 @@ jobs:
           GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
           GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
           SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
-          TELEGRAM_FEEDBACK_BOT_TOKEN: ${{ secrets.TELEGRAM_FEEDBACK_BOT_TOKEN }}
-          TELEGRAM_FEEDBACK_CHAT_ID: ${{ secrets.TELEGRAM_FEEDBACK_CHAT_ID }}
         run: bash ./scripts/codemagic_build_linux_release.sh
 
       - name: Publish Linux desktop archive
@@ -545,8 +532,6 @@ jobs:
           GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
           GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
           SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
-          TELEGRAM_FEEDBACK_BOT_TOKEN: ${{ secrets.TELEGRAM_FEEDBACK_BOT_TOKEN }}
-          TELEGRAM_FEEDBACK_CHAT_ID: ${{ secrets.TELEGRAM_FEEDBACK_CHAT_ID }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -581,4 +566,5 @@ jobs:
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: bash ./scripts/codemagic_notify_telegram.sh "Linux$RUN_SUFFIX" finished
