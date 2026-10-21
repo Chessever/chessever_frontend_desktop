@@ -51,7 +51,7 @@ recipes.each do |source_id, job_id|
   end
   verify(positions == positions.sort, "#{source_id} changed the release step order")
 
-  flutter = steps.find { |step| step.fetch('uses', '').start_with?('subosito/flutter-action@') }
+  flutter = steps.find { |step| step['uses'] == './.github/actions/setup-flutter' }
   verify(flutter.fetch('with').fetch('channel') == source.fetch('environment').fetch('flutter'),
          "#{source_id} changed Flutter channel")
   source_body = body(source_steps, 'script')
@@ -100,7 +100,8 @@ end
   workflow.fetch('jobs').each_value do |job|
     job.fetch('steps').each do |step|
       next unless step['uses']
-      verify(step['uses'].match?(/@[0-9a-f]{40}\z/), 'an action is not pinned to a full commit')
+      verify(step['uses'] == './.github/actions/setup-flutter' ||
+             step['uses'].match?(/@[0-9a-f]{40}\z/), 'an action is not pinned to a full commit')
       if step['uses'].start_with?('actions/checkout@')
         verify(step.fetch('with')['persist-credentials'] == false, 'checkout persists credentials')
       end
@@ -135,3 +136,8 @@ store_submit = File.read(File.join(ROOT, 'scripts/ci/mac_app_store_submit.sh'))
 verify(store_submit.include?('--platform MAC_OS --release-type MANUAL') &&
        !store_submit.include?('AFTER_APPROVAL'), 'store review can release automatically')
 puts 'Mac App Store edition, signing separation and manual release verified.'
+flutter_setup = YAML.load_file(File.join(ROOT, '.github/actions/setup-flutter/action.yaml'))
+flutter_setup.fetch('runs').fetch('steps').each do |step|
+  next unless step['uses']
+  verify(step['uses'].match?(/@[0-9a-f]{40}\z/), 'Flutter setup contains an unpinned nested action')
+end
