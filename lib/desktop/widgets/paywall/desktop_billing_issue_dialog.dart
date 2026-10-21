@@ -7,6 +7,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
@@ -113,9 +114,14 @@ class _BillingIssueBody extends StatelessWidget {
   /// (apple/google/revenuecat) can only be fixed on the device that owns
   /// the store account — desktop can't deep-link a phone, so we instruct
   /// instead of pretending a web page would help.
-  bool get _isStripe => provider == 'stripe';
+  bool get _isStripe => provider == 'stripe' && !isMacAppStore;
 
   String _bodyCopy() {
+    if (isMacAppStore) {
+      return 'There is a billing issue with your ChessEver Premium membership. '
+          'Update your payment method with the provider you used to subscribe. '
+          'For Apple purchases, open App Store account settings.';
+    }
     if (!_isStripe) {
       final store = provider == 'google' ? 'Google Play' : 'the App Store';
       return "We couldn't process your latest ChessEver Premium payment. "

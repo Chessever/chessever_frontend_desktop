@@ -380,7 +380,8 @@ void main() {
     // A purchase made elsewhere still unlocks as soon as the response lands.
     backend.requests.last.complete(_active(backend.clock));
     await _settle();
-    expect(desktopPremiumAccess(notifier.state), DesktopAccess.allowed);
+    expect(desktopPremiumAccess(notifier.state, now: backend.clock),
+        DesktopAccess.allowed);
   });
 
   test('a re-check after a failed lookup shows checking, never Premium',

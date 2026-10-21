@@ -7,6 +7,7 @@ ROOT = File.expand_path('../..', __dir__)
 codemagic = YAML.load_file(File.join(ROOT, 'codemagic.yaml')).fetch('workflows')
 release = YAML.load_file(File.join(ROOT, '.github/workflows/desktop-release.yml'))
 master = YAML.load_file(File.join(ROOT, '.github/workflows/desktop-macos-flutter-master.yml'))
+store = YAML.load_file(File.join(ROOT, '.github/workflows/desktop-app-store.yml'))
 
 def verify(condition, message)
   abort "Desktop workflow parity failed: #{message}" unless condition
@@ -92,7 +93,7 @@ release.fetch('jobs').each do |id, job|
          "#{id} changed completion notification behavior")
 end
 
-[release, master].each do |workflow|
+[release, master, store].each do |workflow|
   events = workflow['on'] || workflow[true]
   verify(events.keys == ['workflow_dispatch'], 'a desktop workflow runs without manual dispatch')
   verify(workflow['permissions'] == { 'contents' => 'read' }, 'token permissions expanded')
@@ -117,3 +118,20 @@ verify(body(master.fetch('jobs').fetch('build').fetch('steps'), 'run').include?(
          'export FLUTTER_XCODE_CODE_SIGNING_ALLOWED=NO'),
        'the Flutter master build became signed')
 puts 'All five desktop Codemagic recipes and GitHub release safeguards verified.'
+
+store_job = store.fetch('jobs').fetch('mac_app_store')
+verify(store_job['environment'] == 'release' && store_job['needs'] == 'preflight',
+       'the Mac App Store lane lost production approval')
+store_steps = store_job.fetch('steps')
+verify(store_steps.count { |step| step['background'] } == 3 &&
+       store_steps.any? { |step| step.key?('wait-all') }, 'store toolchains are not parallel')
+store_text = File.read(File.join(ROOT, '.github/workflows/desktop-app-store.yml'))
+verify(!store_text.match?(/secrets\.(?:R2_|TELEGRAM_|MACOS_DEVELOPER_ID)/),
+       'direct-download credentials entered the store lane')
+store_build = File.read(File.join(ROOT, 'scripts/build_mac_app_store.sh'))
+verify(store_build.include?('--dart-define=MAC_APP_STORE=true') &&
+       store_build.include?('CHESSEVER_APP_STORE=YES'), 'store billing/native flags diverged')
+store_submit = File.read(File.join(ROOT, 'scripts/ci/mac_app_store_submit.sh'))
+verify(store_submit.include?('--platform MAC_OS --release-type MANUAL') &&
+       !store_submit.include?('AFTER_APPROVAL'), 'store review can release automatically')
+puts 'Mac App Store edition, signing separation and manual release verified.'

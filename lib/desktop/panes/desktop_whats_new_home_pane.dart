@@ -1,5 +1,6 @@
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_feedback_dialog.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
@@ -24,9 +25,11 @@ class DesktopWhatsNewHomePane extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Welcome to ChessEver Desktop Beta',
-                style: TextStyle(
+              Text(
+                isMacAppStore
+                    ? 'Welcome to ChessEver for Mac'
+                    : 'Welcome to ChessEver Desktop Beta',
+                style: const TextStyle(
                   color: kWhiteColor,
                   fontSize: 30,
                   fontWeight: FontWeight.w800,
@@ -70,9 +73,11 @@ class _FeedbackIntro extends StatelessWidget {
       TextSpan(
         style: baseStyle,
         children: [
-          const TextSpan(
+          TextSpan(
             text:
-                'ChessEver Desktop is still in beta, and we are improving it quickly. If something feels confusing, slow, missing, or not useful enough, please send us ',
+                isMacAppStore
+                    ? 'Follow live tournaments, analyze games, and organize your chess library. If you need help or have a suggestion, please send us '
+                    : 'ChessEver Desktop is still in beta, and we are improving it quickly. If something feels confusing, slow, missing, or not useful enough, please send us ',
           ),
           WidgetSpan(
             alignment: PlaceholderAlignment.baseline,

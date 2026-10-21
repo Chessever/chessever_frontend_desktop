@@ -1,4 +1,5 @@
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -7,7 +8,7 @@ void main() {
 
     expect(identity.displayName, 'ChessEver');
     expect(identity.urlScheme, 'chessever');
-    expect(identity.updatesEnabled, isTrue);
+    expect(identity.updatesEnabled, !macAppStoreBuild);
     expect(identity.isDevelopment, isFalse);
   });
 

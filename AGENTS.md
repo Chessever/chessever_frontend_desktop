@@ -252,6 +252,21 @@ On demand — read `docs/agents/desktop-auth.md` before working on this area. Gi
 
 End of AGENTS.md.
 
+## Desktop distribution editions
+
+Maintain the four website downloads (macOS Apple Silicon, macOS Intel, Windows,
+Linux) and the separate Mac App Store edition from `main`. Website editions keep
+Stripe and the existing updater. Only `scripts/build_mac_app_store.sh` enables
+`MAC_APP_STORE=true` together with native `CHESSEVER_APP_STORE=YES`; that edition
+uses Apple billing and App Store updates. Never apply store sandbox or billing
+flags to the direct-download lanes.
+
+Release instructions: `docs/ci/github-actions-release.md`. The Mac App Store
+workflow must upload and submit for review with `releaseType=MANUAL`; never add
+automatic release after approval. Do not cancel a pending review unless the
+operator explicitly selects replacement. Keep App Store signing assets separate
+from Developer ID signing assets, and out of source, Dart defines and artifacts.
+
 ---
 
 ## Forui

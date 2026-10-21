@@ -172,6 +172,12 @@ PODS:
     - Flutter
     - FlutterMacOS
   - PromisesObjC (2.4.0)
+  - purchases_flutter (10.16.0):
+    - FlutterMacOS
+    - PurchasesHybridCommon (= 19.12.0)
+  - PurchasesHybridCommon (19.12.0):
+    - RevenueCat (= 5.95.0)
+  - RevenueCat (5.95.0)
   - screen_retriever_macos (0.0.1):
     - FlutterMacOS
   - Sentry/HybridSDK (8.58.1)
@@ -219,6 +225,7 @@ DEPENDENCIES:
   - pasteboard (from `Flutter/ephemeral/.symlinks/plugins/pasteboard/macos`)
   - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
   - patrol (from `Flutter/ephemeral/.symlinks/plugins/patrol/darwin`)
+  - purchases_flutter (from `Flutter/ephemeral/.symlinks/plugins/purchases_flutter/macos`)
   - screen_retriever_macos (from `Flutter/ephemeral/.symlinks/plugins/screen_retriever_macos/macos`)
   - sentry_flutter (from `Flutter/ephemeral/.symlinks/plugins/sentry_flutter/macos`)
   - share_plus (from `Flutter/ephemeral/.symlinks/plugins/share_plus/macos`)
@@ -249,6 +256,8 @@ SPEC REPOS:
     - onnxruntime-c
     - onnxruntime-objc
     - PromisesObjC
+    - PurchasesHybridCommon
+    - RevenueCat
     - Sentry
 
 EXTERNAL SOURCES:
@@ -294,6 +303,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin
   patrol:
     :path: Flutter/ephemeral/.symlinks/plugins/patrol/darwin
+  purchases_flutter:
+    :path: Flutter/ephemeral/.symlinks/plugins/purchases_flutter/macos
   screen_retriever_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/screen_retriever_macos/macos
   sentry_flutter:
@@ -353,6 +364,9 @@ SPEC CHECKSUMS:
   path_provider_foundation: 080d55be775b7414fd5a5ef3ac137b97b097e564
   patrol: cea8074f183a2a4232d0ebd10569ae05149ada42
   PromisesObjC: f5707f49cb48b9636751c5b2e7d227e43fba9f47
+  purchases_flutter: 095c2d232d9e17aad5ab34292f1b3a4416088455
+  PurchasesHybridCommon: 7ba4a84cdd9738a936b2091f7e982952c1feb6f6
+  RevenueCat: 431637b02e9e5dc1165c2031936947d0468e1ed4
   screen_retriever_macos: 452e51764a9e1cdb74b3c541238795849f21557f
   Sentry: 958d9619ceccf6abb8c4736003fa336dac1a80a7
   sentry_flutter: 8c688f0657eef5c6faf4985c57ca0f48ffb2b7b5
