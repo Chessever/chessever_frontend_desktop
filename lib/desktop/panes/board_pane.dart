@@ -3297,9 +3297,15 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     void toggleMoveNag(ChessMovePointer target, int nag) {
-      final move = _moveAtPointer(chessGame.value, target);
-      if (move == null) return;
-      setMoveNags(target, _toggleNagList(move.nags ?? const <int>[], nag));
+      final nextGame = toggleBoardMoveNagAtPointer(
+        chessGame.value,
+        target,
+        nag,
+      );
+      if (identical(nextGame, chessGame.value)) return;
+      pushUndoSnapshot();
+      chessGame.value = nextGame;
+      dirtySinceLoad.value = true;
     }
 
     Future<void> commentAfterMoveAction() async {
@@ -7087,6 +7093,20 @@ ChessGame _setMoveGraphicCommentaryAtPointer(
   );
 }
 
+/// Pointer-scoped stored-NAG edit; the caller owns undo and dirty-state changes.
+ChessGame toggleBoardMoveNagAtPointer(
+  ChessGame game,
+  ChessMovePointer pointer,
+  int nag,
+) {
+  final move = _moveAtPointer(game, pointer);
+  if (move == null) return game;
+  final current = move.nags ?? const <int>[];
+  final next = _toggleNagList(current, nag);
+  if (identical(next, current)) return game;
+  return _setMoveNagsAtPointer(game, pointer, next);
+}
+
 ChessGame _setMoveNagsAtPointer(
   ChessGame game,
   ChessMovePointer pointer,
@@ -7207,16 +7227,28 @@ int? _qualityNagForChessComEffectType(String rawType) {
 final _pgnNamedDirectiveRegex = RegExp(r'\[%([a-zA-Z_]+)([^\]]*)\]');
 
 List<int> _toggleNagList(List<int> current, int nag) {
-  final tapped = getNagDisplay(nag);
-  if (tapped == null) return current;
+  // Classification codes deliberately have no generic text glyph, but they
+  // still occupy the same editable quality slot as !, ?, and the other NAGs.
+  final tappedCategory =
+      _isQualityNag(nag) ? NagCategory.quality : getNagDisplay(nag)?.category;
+  if (tappedCategory == null) return current;
 
   final next = List<int>.from(current);
   if (next.contains(nag)) {
-    next.remove(nag);
+    if (tappedCategory == NagCategory.quality) {
+      // Imported moves can carry a native badge and its portable !/? partner.
+      // Toggling off that assessment must clear both representations.
+      next.removeWhere(_isQualityNag);
+    } else {
+      next.remove(nag);
+    }
   } else {
     next.removeWhere((other) {
-      final display = getNagDisplay(other);
-      return display != null && display.category == tapped.category;
+      final category =
+          _isQualityNag(other)
+              ? NagCategory.quality
+              : getNagDisplay(other)?.category;
+      return category == tappedCategory;
     });
     next.add(nag);
   }

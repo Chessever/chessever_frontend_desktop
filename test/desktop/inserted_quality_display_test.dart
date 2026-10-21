@@ -143,7 +143,8 @@ void main() {
       'ordinary quality without a badge stays visible in ${mode.name}',
       (tester) async {
         await _show(tester, _mainline(r'$1 $14'), mode);
-        expect(find.text('!'), findsOneWidget);
+        expect(find.text('!'), findsNothing);
+        expect(_badge('Good Move'), findsOneWidget);
         expect(_badge('Best move'), findsNothing);
         expect(find.text(getNagDisplay(14)!.symbol), findsOneWidget);
       },
@@ -162,7 +163,8 @@ void main() {
           },
           annotations: {0: _report()},
         );
-        expect(find.text('?'), findsOneWidget);
+        expect(find.text('?'), findsNothing);
+        expect(_badge('Mistake'), findsOneWidget);
         expect(find.text('!'), findsNothing);
         expect(_badge('Best move'), findsNothing);
         expect(find.text(getNagDisplay(14)!.symbol), findsOneWidget);
@@ -178,7 +180,8 @@ void main() {
         mode,
         annotations: {0: _report()},
       );
-      expect(find.text('?'), findsOneWidget);
+      expect(find.text('?'), findsNothing);
+        expect(_badge('Mistake'), findsOneWidget);
       expect(find.text(r'$248'), findsNothing);
       expect(_badge('Best move'), findsNothing);
     });
