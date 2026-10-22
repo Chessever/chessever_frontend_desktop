@@ -1683,9 +1683,16 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
 
   String get _liveCardsPauseReason => 'desktop_countrymen_scroll';
 
+  late final StateController<Set<String>> _liveCardsPauseReasonsController;
+
   @override
   void initState() {
     super.initState();
+    // Read once: dispose() releases the pause, and `ref` throws there
+    // (CHESSEVER-24Q).
+    _liveCardsPauseReasonsController = ref.read(
+      liveGameCardsPauseReasonsProvider.notifier,
+    );
     _scrollController.addListener(_maybeLoadMore);
   }
 
@@ -1727,7 +1734,11 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
   void _setLiveCardsPausedForScroll(bool paused) {
     if (_liveCardsPausedForScroll == paused) return;
     _liveCardsPausedForScroll = paused;
-    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+    setLiveGameCardsPausedWithNotifier(
+      _liveCardsPauseReasonsController,
+      reason: _liveCardsPauseReason,
+      paused: paused,
+    );
   }
 
   @override

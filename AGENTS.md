@@ -167,6 +167,12 @@ The Ralph loop will keep waking you. Make every iteration land a verifiable, con
 ## 2. Branching and commits
 
 - Stay on `main` unless the user gave you a branch.
+- Desktop CI/CD uses GitHub Actions, not the Codemagic hosted service.
+  Keep the five recipes in `codemagic.yaml` as the behavior reference and run
+  `ruby scripts/ci/check_codemagic_parity.rb` when changing either workflow.
+  Release workflows stay manually dispatched, with signing and R2 credentials
+  behind the `main`-only `release` environment. Publishing to R2 is a manual
+  release choice, not an automatic consequence of a push or store approval.
 - Push commits and open a pull request only when the user explicitly asks.
 - One commit per coherent chunk. Imperative subject, focused body.
 - **Every commit that changes shipped code bumps `version:` in `pubspec.yaml`** — patch segment and build number together, both by one (`20.27.6+276` → `20.27.7+277`). The bump rides with the change that earned it; never leave it for a separate `chore: bump` commit. Put the resulting version at the end of the subject: `Suppress Game Report errors in retained decisive wins (20.27.7).` Docs-only, test-only, CI-only and tooling-only commits are exempt. The phone repo (`chessever-frontend`) follows the same rule, so shared logic ported to both — the Game Report classifier above all — bumps both.
@@ -245,6 +251,21 @@ On demand — read `docs/agents/desktop-auth.md` before working on this area. Gi
 ---
 
 End of AGENTS.md.
+
+## Desktop distribution editions
+
+Maintain the four website downloads (macOS Apple Silicon, macOS Intel, Windows,
+Linux) and the separate Mac App Store edition from `main`. Website editions keep
+Stripe and the existing updater. Only `scripts/build_mac_app_store.sh` enables
+`MAC_APP_STORE=true` together with native `CHESSEVER_APP_STORE=YES`; that edition
+uses Apple billing and App Store updates. Never apply store sandbox or billing
+flags to the direct-download lanes.
+
+Release instructions: `docs/ci/github-actions-release.md`. The Mac App Store
+workflow must upload and submit for review with `releaseType=MANUAL`; never add
+automatic release after approval. Do not cancel a pending review unless the
+operator explicitly selects replacement. Keep App Store signing assets separate
+from Developer ID signing assets, and out of source, Dart defines and artifacts.
 
 ---
 

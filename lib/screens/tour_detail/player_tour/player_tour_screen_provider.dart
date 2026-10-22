@@ -445,11 +445,13 @@ final tournamentRosterStandingsProvider = StreamProvider.autoDispose
             return;
           }
           emit(
-            players.map(
-              (player) => PlayerStandingModel.fromPlayer(
-                player,
-              ).copyWith(overallRank: player.rank),
-            ),
+            authoritative
+                ? publishedStandingRows(players)
+                : players.map(
+                  (player) => PlayerStandingModel.fromPlayer(
+                    player,
+                  ).copyWith(overallRank: player.rank),
+                ),
             source: _StandingSnapshotSource.roster,
           );
           schedule(refreshInterval);
@@ -565,6 +567,34 @@ String _standingCategoryBaseName(String name) {
       .trim();
 }
 
+/// Rows of a published (official) table in published order. Roster players
+/// the source does not rank — byes, withdrawals, feed-only names — are not
+/// official rows; ranking them by list position would invent places.
+@visibleForTesting
+List<PlayerStandingModel> publishedStandingRows(
+  Iterable<TournamentPlayer> players,
+) {
+  final ranked =
+      players
+          .where(
+            (p) =>
+                p.rank != null &&
+                p.rank! > 0 &&
+                p.score != null &&
+                p.score!.isFinite,
+          )
+          .indexed
+          .toList()
+        ..sort((a, b) {
+          final byRank = a.$2.rank!.compareTo(b.$2.rank!);
+          return byRank == 0 ? a.$1.compareTo(b.$1) : byRank;
+        });
+  return [
+    for (final (_, player) in ranked)
+      PlayerStandingModel.fromPlayer(player).copyWith(overallRank: player.rank),
+  ];
+}
+
 List<PlayerStandingModel> assignOverallRanks(
   List<PlayerStandingModel> standings,
 ) {
@@ -667,6 +697,25 @@ bool isOfficialStandingRow({
   required int? rank,
   required double? score,
 }) => useExternalOrder && rank != null && score != null;
+
+/// A published table owns its membership, as on chess-results.com and mobile.
+/// Feed players it does not list are dropped, so they get no invented rank
+/// and add no game-derived tiebreak columns. A table with no ranked row yet
+/// is not published, and keeps every player.
+@visibleForTesting
+List<TournamentPlayer> publishedTableMembers(
+  List<TournamentPlayer> players, {
+  required bool useExternalOrder,
+  required bool singleTourScope,
+}) {
+  bool official(TournamentPlayer p) => isOfficialStandingRow(
+    useExternalOrder: useExternalOrder && singleTourScope,
+    rank: p.rank,
+    score: p.score,
+  );
+  if (!players.any(official)) return players;
+  return players.where(official).toList(growable: false);
+}
 
 /// Whether to skip the client-side resort and trust the server-supplied order.
 ///
@@ -1259,7 +1308,11 @@ class PlayerTourScreenNotifier
       });
     }
 
-    return enrichedPlayers
+    return publishedTableMembers(
+          enrichedPlayers,
+          useExternalOrder: useExternalOrder,
+          singleTourScope: singleTourScope,
+        )
         .map(
           (player) => PlayerStandingModel.fromPlayer(player).copyWith(
             overallRank:

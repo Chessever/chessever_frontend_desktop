@@ -430,6 +430,13 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   }
 
   void _logErrorToSentry(dynamic error, StackTrace stackTrace) {
+    if (!mounted) return;
+    // Every caller already degrades to what it has (empty snapshots, the
+    // cached page, the error state). A timeout or a dead connection on this
+    // machine is not a fault to file: the 6s prefetch timeouts and "No
+    // internet connection" were most For You reports (CHESSEVER-1WS/1Q5/
+    // 22Y/1XM, 1PN/1XJ/23D/23G/24P).
+    if (error is Object && isLocalNetworkFailure(error)) return;
     unawaited(ref.read(errorLoggerProvider).logError(error, stackTrace));
   }
 

@@ -2203,11 +2203,19 @@ class GameRepository extends BaseRepository {
     });
   }
 
+  /// Both For You RPCs are granted to `authenticated` only (guests are
+  /// anonymous users, so they qualify). Without a session the call reaches
+  /// PostgREST as anon and fails with "permission denied", once per live
+  /// refresh (CHESSEVER-1PR/1WM/1WN). There is nothing to fetch without one.
+  bool get _hasSignedInSession => supabase.auth.currentSession != null;
+
   Future<Map<String, List<Games>>> getForYouTopGamesByEventIds({
     required List<String> eventIds,
     int boardsPerEvent = 4,
   }) async {
-    if (eventIds.isEmpty) return <String, List<Games>>{};
+    if (eventIds.isEmpty || !_hasSignedInSession) {
+      return <String, List<Games>>{};
+    }
 
     return handleApiCall(() async {
       final response = await supabase.rpc(
@@ -2242,7 +2250,7 @@ class GameRepository extends BaseRepository {
     required List<String> eventIds,
     required List<int> favoriteFideIds,
   }) async {
-    if (eventIds.isEmpty || favoriteFideIds.isEmpty) {
+    if (eventIds.isEmpty || favoriteFideIds.isEmpty || !_hasSignedInSession) {
       return <String, List<int>>{};
     }
 

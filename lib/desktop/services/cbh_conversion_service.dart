@@ -187,8 +187,10 @@ class CbhConversionService {
       String? path;
       String? failure;
       final errors = process.stderr.drain<void>();
+      // The converter echoes database text; a non-UTF-8 byte must not end
+      // the conversion with a FormatException (see UciEngine).
       final output = process.stdout
-          .transform(utf8.decoder)
+          .transform(const Utf8Decoder(allowMalformed: true))
           .transform(const LineSplitter())
           .listen((line) {
             try {

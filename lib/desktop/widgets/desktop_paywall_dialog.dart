@@ -16,6 +16,8 @@ import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
 import 'package:chessever/desktop/services/billing/desktop_trial_eligibility_provider.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
+import 'package:chessever/desktop/widgets/paywall/mac_app_store_plans.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
@@ -571,6 +573,9 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
   }
 
   List<Widget> _pricingBody() {
+    if (isMacAppStore) {
+      return [MacAppStorePlans(onAccountBound: widget.onAccountBound)];
+    }
     final pricingState = ref.watch(desktopPricingProvider);
     final pricing = pricingState.valueOrNull;
     final showsTrial = DesktopPricing.offersTrial(

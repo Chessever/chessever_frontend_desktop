@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:chessever/desktop/services/desktop_sentry_filter.dart';
 import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
 import 'package:chessever/desktop/state/desktop_window_role.dart';
@@ -14,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -35,6 +37,8 @@ import 'package:chessever/desktop/services/desktop_picture_in_picture_channel.da
 import 'package:chessever/desktop/services/desktop_shutdown_coordinator.dart';
 import 'package:chessever/desktop/auth/desktop_player_profile_access.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
+import 'package:chessever/desktop/services/mac_sandbox_file_picker.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_ui_stall_monitor.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
@@ -103,6 +107,7 @@ Future<void> _desktopEntrypoint(List<String> initialArguments) async {
   final boardWindowPayload = await _boardWindowPayloadForCurrentEngine(
     initialArguments,
   );
+  await MacSandboxFilePicker.initialize();
   if (boardWindowPayload != null) {
     await _desktopBoardWindowBoot(boardWindowPayload);
     return;
@@ -240,6 +245,8 @@ Future<void> _desktopMainWithSentry({
         options.enableUserInteractionBreadcrumbs = true;
         options.enableAutoSessionTracking = false;
         options.sampleRate = 1.0;
+        options.beforeSend = (event, hint) =>
+            shouldDropDesktopSentryEvent(event) ? null : event;
       },
       appRunner: () => _desktopBootOnce(initialArguments: initialArguments),
     ).timeout(
@@ -646,6 +653,7 @@ Future<void> _initializeFirebaseForCurrentPlatform({
   required String tag,
 }) async {
   if (Firebase.apps.isNotEmpty) {
+    await _configureStoreAnalytics();
     print('[desktop] firebase already initialized');
     return;
   }
@@ -654,6 +662,7 @@ Future<void> _initializeFirebaseForCurrentPlatform({
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    await _configureStoreAnalytics();
     print('[desktop] firebase init done');
   } on UnsupportedError catch (e, stack) {
     print('[desktop] firebase unavailable on this platform: $e');
@@ -661,6 +670,21 @@ Future<void> _initializeFirebaseForCurrentPlatform({
   } catch (e, stack) {
     print('[desktop] firebase init failed; starting without Firebase');
     ErrorReporter.report(e, stackTrace: stack, tag: tag);
+  }
+}
+
+Future<void> _configureStoreAnalytics() async {
+  if (!isMacAppStore) return;
+  try {
+    await FirebaseAnalytics.instance.setConsent(
+      adStorageConsentGranted: false,
+      adUserDataConsentGranted: false,
+      adPersonalizationSignalsConsentGranted: false,
+    );
+  } catch (_) {
+    // If this SDK cannot enforce the store build's advertising policy, stop
+    // collection instead of falling back to permissive persisted settings.
+    await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(false);
   }
 }
 

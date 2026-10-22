@@ -690,7 +690,7 @@ class _CollectionsBar extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Catalog list
 
-enum _CollectionRowAction { open, star }
+enum _CollectionRowAction { open, star, share, copyLink }
 
 class _CatalogList extends HookConsumerWidget {
   const _CatalogList({
@@ -761,6 +761,11 @@ class _CatalogList extends HookConsumerWidget {
             icon: starred ? Icons.star_outline_rounded : Icons.star_rounded,
             label: starred ? 'Unstar' : 'Star',
           ),
+          const DesktopContextMenuDivider(),
+          ...collectionShareMenuEntries(
+            share: _CollectionRowAction.share,
+            copyLink: _CollectionRowAction.copyLink,
+          ),
         ],
       );
       if (!context.mounted) return;
@@ -769,6 +774,22 @@ class _CatalogList extends HookConsumerWidget {
           onOpen(collection);
         case _CollectionRowAction.star:
           unawaited(pressCollectionStar(context, collection));
+        case _CollectionRowAction.share:
+          unawaited(
+            runCollectionShareAction(
+              context,
+              collection,
+              CollectionShareAction.share,
+            ),
+          );
+        case _CollectionRowAction.copyLink:
+          unawaited(
+            runCollectionShareAction(
+              context,
+              collection,
+              CollectionShareAction.copyLink,
+            ),
+          );
         case null:
           break;
       }
@@ -1324,6 +1345,8 @@ class _CollectionWorkspace extends HookConsumerWidget {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              CollectionShareButton(collection: detail),
+              const SizedBox(width: 12),
               if (detail.kind == CollectionKind.book) ...[
                 const Icon(
                   Icons.visibility_outlined,
