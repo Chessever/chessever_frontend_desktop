@@ -109,7 +109,7 @@ void main() {
         fetchApiBody: () => throw StateError('must not be called'),
         fetchTraceBody: () => throw StateError('must not be called'),
       );
-      expect(resolved.pricing.tier, 2);
+      expect(resolved.pricing.tier, 3);
       expect(resolved.countryCode, 'TR');
       expect(store.saved, isEmpty);
     });
@@ -133,7 +133,7 @@ void main() {
         fetchApiBody: () => throw StateError('challenged'),
         fetchTraceBody: () async => 'loc=TR\n',
       );
-      expect(resolved.pricing.tier, 2);
+      expect(resolved.pricing.tier, 3);
       expect(resolved.countryCode, 'TR');
       expect(store.saved, ['TR']);
     });

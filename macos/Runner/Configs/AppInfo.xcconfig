@@ -8,6 +8,8 @@ PRODUCT_NAME = chessever
 PRODUCT_BUNDLE_IDENTIFIER = com.chessever.desktop
 CHESSEVER_DISPLAY_NAME = ChessEver
 CHESSEVER_URL_SCHEME = chessever
+// The store lane overrides this setting and the Dart MAC_APP_STORE define.
+CHESSEVER_APP_STORE = NO
 
 // Keep the Runner target aligned with Podfile and project-level settings.
 // Flutter uses this value when generating the plugin Swift package.

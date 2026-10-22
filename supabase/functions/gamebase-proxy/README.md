@@ -18,18 +18,26 @@ The env file must contain:
 
 ```text
 GAMEBASE_API_KEY=...
+GAMEBASE_CLIENT_ANON_KEY=...
 ```
 
 Do not pass `GAMEBASE_API_KEY` to Flutter release builds.
+`GAMEBASE_CLIENT_ANON_KEY` is the public production key used by the apps. Set it
+explicitly to keep caller validation independent of platform-generated runtime
+keys, and update it together with the apps' public configuration.
 
 ## Deploy
 
 ```bash
-supabase functions deploy gamebase-proxy --use-api
+supabase functions deploy gamebase-proxy --project-ref oelbsuggrzyqwzmvidju --no-verify-jwt --use-api
 ```
 
-JWT verification stays enabled. Clients call the function with the app's
-Supabase anon/user token headers.
+Gateway JWT verification stays disabled, as pinned in `supabase/config.toml`.
+It rejects legacy public project keys after the ES256 migration. The function
+checks the public project key; Gamebase verifies account tokens and permissions
+for all member/viewer operations. The route allowlist never exposes staff ingest
+or admin endpoints. Rewarded requests forward the user's bearer and short-lived
+rewarded session so the service can validate their bound access grant.
 
 ## Member routes
 
