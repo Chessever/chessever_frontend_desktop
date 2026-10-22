@@ -790,11 +790,11 @@ void main() {
   });
 
   testWidgets(
-    'renders inserted source metadata in ladder and inline notation',
+    'renders full inserted source credit in ladder and inline notation',
     (tester) async {
       final layoutMode = ValueNotifier(NotationLayoutMode.ladder);
       addTearDown(layoutMode.dispose);
-      const sourceLabel = 'Alpha0 vs Beta0 · Keyboard UX Test · 2025-02-01';
+      const sourceLabel = 'Alpha0 vs Beta0, Keyboard UX Test, 2025-02-01';
 
       await tester.pumpWidget(
         _host(
@@ -804,14 +804,14 @@ void main() {
         ),
       );
 
-      expect(find.text(sourceLabel), findsOneWidget);
-      expect(find.textContaining('[%src'), findsNothing);
+      expect(find.textContaining(sourceLabel, findRichText: true), findsOneWidget);
+      expect(find.textContaining('[%src', findRichText: true), findsNothing);
 
       layoutMode.value = NotationLayoutMode.inline;
       await tester.pumpAndSettle();
 
-      expect(find.text(sourceLabel), findsOneWidget);
-      expect(find.textContaining('[%src'), findsNothing);
+      expect(find.textContaining(sourceLabel, findRichText: true), findsOneWidget);
+      expect(find.textContaining('[%src', findRichText: true), findsNothing);
     },
   );
 
