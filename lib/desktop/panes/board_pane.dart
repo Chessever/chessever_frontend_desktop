@@ -19,6 +19,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart'
     show ValueListenable, kDebugMode, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
+import 'package:chessever/utils/pgn_time_control.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -1294,6 +1295,15 @@ class _BoardPaneContent extends HookConsumerWidget {
           (gameId == null ||
               tabArgs.gameId == null ||
               tabArgs.gameId == gameId)) {
+        // Paste/import may have no bound game id while old tab context remains.
+        // Only an owner-matched event parse may consume that source control.
+        if (gameId != null && gameId.trim().isNotEmpty && tabArgs.gameId == gameId) {
+          enrichPgnTimeControlMetadata(
+            updatedMetadata,
+            timeControlText: tabArgs.timeControlText,
+            category: tabArgs.sourceGame?.timeControl,
+          );
+        }
         putIfMissing('White', tabArgs.whiteName);
         putIfMissing('Black', tabArgs.blackName);
         putIfMissing('WhiteFed', tabArgs.whiteFederation);
@@ -10561,6 +10571,7 @@ GamesTourModel _gamesTourModelFromSummary(
     gameStatus: summary.status,
     fen: summary.fen,
     pgn: summary.pgn,
+    timeControlText: summary.timeControlText,
     boardNr: summary.boardNumber,
     roundId: summary.roundId,
     roundSlug: summary.roundSlug.trim().isEmpty ? null : summary.roundSlug,

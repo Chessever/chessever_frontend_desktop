@@ -3825,6 +3825,12 @@ TournamentGameSummary _mergeFreshEventGameSummary(
     hasPgn: fresh.hasPgn || current.hasPgn,
     tourId: fresh.tourId.isNotEmpty ? fresh.tourId : current.tourId,
     tourSlug: fresh.tourSlug.isNotEmpty ? fresh.tourSlug : current.tourSlug,
+    timeControlText: (fresh.timeControlText?.trim().isNotEmpty ?? false)
+        ? fresh.timeControlText
+        : fresh.id == current.id &&
+              (fresh.tourId.isEmpty || fresh.tourId == current.tourId)
+        ? current.timeControlText
+        : null,
     whiteFederation:
         fresh.whiteFederation.isNotEmpty
             ? fresh.whiteFederation
