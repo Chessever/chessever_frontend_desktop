@@ -42,6 +42,8 @@ class BoardPaneSession {
     required this.dirtySinceLoad,
     required this.hasUnseenMoves,
     required this.undoStack,
+    this.lastSavedAnalysisPgn,
+    this.lastBroadcastPgn,
     this.savedSourceSeedPgn,
     this.hasCommittedSave = false,
     this.detachedSeedPgn,
@@ -62,6 +64,12 @@ class BoardPaneSession {
   /// Open-time seed superseded by this tab's successful save. Retained remounts
   /// must not reapply it over the committed baseline or post-save edits.
   final String? savedSourceSeedPgn;
+
+  /// Exact successful save baseline, independent of incoming Event PGNs.
+  final String? lastSavedAnalysisPgn;
+
+  /// Canonical feed provenance must never become a private saved tree.
+  final String? lastBroadcastPgn;
 
   /// Clean after saving is not the unchanged opening source.
   final bool hasCommittedSave;

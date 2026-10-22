@@ -534,11 +534,13 @@ bool shouldConfirmBoardTabCloseForLocalNotationEdits({
   required bool dirtySinceLoad,
   required String currentPgn,
   required String? lastAppliedPgn,
+  String? lastSavedAnalysisPgn,
 }) {
   return shouldConfirmBoardAnalysisDiscard(
     dirtySinceLoad: dirtySinceLoad,
     currentPgn: currentPgn,
     lastAppliedPgn: lastAppliedPgn,
+    lastSavedAnalysisPgn: lastSavedAnalysisPgn,
   );
 }
 
@@ -892,6 +894,11 @@ class _BoardPaneContent extends HookConsumerWidget {
     final reportActivation = useRef<Object>(Object());
     final savedSourceSeedPgn = useRef(restoredSession?.savedSourceSeedPgn);
     final hasCommittedSave = useRef(restoredSession?.hasCommittedSave ?? false);
+    final lastSavedAnalysisPgn = useState(restoredSession?.lastSavedAnalysisPgn);
+    final lastBroadcastPgn = useRef(
+      restoredSession?.lastBroadcastPgn ??
+          restoredSession?.savedSourceSeedPgn ?? restoredSession?.lastAppliedPgn,
+    );
     final reportRevealState = useRef(const GameReportRevealState());
     // Listen synchronously: even coalesced A -> B -> A replacements invalidate
     // reveal/save ownership. Summary-only retained PGN refreshes keep the seed.
@@ -904,6 +911,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         reportActivation.value = Object();
         savedSourceSeedPgn.value = null;
         hasCommittedSave.value = false;
+        lastSavedAnalysisPgn.value = null;
+        lastBroadcastPgn.value = null;
         reportRevealState.value = const GameReportRevealState();
       },
     );
@@ -1118,13 +1127,16 @@ class _BoardPaneContent extends HookConsumerWidget {
     final boardRenderKey =
         '${_boardRenderKey(activeTabId: activeTabId, activeGameId: activeGameId, boardArgs: boardArgs, latestPgnImport: latestPgnImport, lastAppliedGameId: lastAppliedGameId.value, lastAppliedPgn: lastAppliedPgn.value)}:cut${boardCutEpoch.value}';
 
+    final sessionUserNags = ref.watch(userMoveNagsProvider.select(
+      (state) => state[activeTabId ?? 'board-default'] ?? const <int, List<int>>{},
+    ));
     useEffect(
       () {
         final token = ++boardSessionWriteToken.value;
         final tabId = activeTabId;
         if (tabId == null) return null;
         final session = BoardPaneSession(
-          game: chessGame.value,
+          game: mergeUserMainlineNagsForGif(chessGame.value, sessionUserNags),
           pointer: List<int>.unmodifiable(pointer.value),
           pgnHeaders: Map<String, String>.unmodifiable(pgnHeaders.value),
           flipped: flipped.value,
@@ -1135,6 +1147,8 @@ class _BoardPaneContent extends HookConsumerWidget {
           dirtySinceLoad: dirtySinceLoad.value,
           hasUnseenMoves: hasUnseenMoves.value,
           undoStack: List<BoardUndoSnapshot>.unmodifiable(undoStack.value),
+          lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
+          lastBroadcastPgn: lastBroadcastPgn.value,
           savedSourceSeedPgn: savedSourceSeedPgn.value,
           hasCommittedSave: hasCommittedSave.value,
           detachedSeedPgn: restoredSession?.detachedSeedPgn,
@@ -1152,12 +1166,16 @@ class _BoardPaneContent extends HookConsumerWidget {
       [
         activeTabId,
         chessGame.value,
+        sessionUserNags,
         pointer.value,
         pgnHeaders.value,
         flipped.value,
         loadedFrom.value,
         dirtySinceLoad.value,
         hasCommittedSave.value,
+        lastSavedAnalysisPgn.value,
+        lastBroadcastPgn.value,
+        lastAppliedPgn.value,
         savedSourceSeedPgn.value,
         hasUnseenMoves.value,
       ],
@@ -1192,6 +1210,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         reportActivation.value = Object();
         savedSourceSeedPgn.value = null;
         hasCommittedSave.value = false;
+        lastSavedAnalysisPgn.value = null;
+        lastBroadcastPgn.value = null;
         reportRevealState.value = const GameReportRevealState();
         reportRevealRevision.value++;
       }
@@ -1341,7 +1361,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       final localAnnotations =
           isCanonicalBroadcastSource
               ? _reconcileCanonicalBroadcastLocalAnnotations(
-                previousBroadcastPgn: lastAppliedPgn.value,
+                previousBroadcastPgn: lastBroadcastPgn.value ?? lastAppliedPgn.value,
                 currentGame: oldGame,
                 freshGame: freshGame,
                 userNags: currentUserNags,
@@ -1374,6 +1394,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
       dirtySinceLoad.value = keepLocalEdits;
       lastAppliedPgn.value = trimmed;
+      lastBroadcastPgn.value = trimmed;
       lastAppliedInitialFenKey.value = initialFenKey;
       if (gameId != null) lastAppliedGameId.value = gameId;
       chessGame.value = game;
@@ -1607,6 +1628,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       undoStack.value.clear();
       dirtySinceLoad.value = retainedUserNags.isNotEmpty;
       lastAppliedPgn.value = pgn;
+      lastBroadcastPgn.value = pgn;
       lastAppliedInitialFenKey.value = initialFenKey;
       lastAppliedGameId.value = gameId;
       chessGame.value = updatedGame;
@@ -2225,11 +2247,14 @@ class _BoardPaneContent extends HookConsumerWidget {
           reportActivation.value = Object();
           savedSourceSeedPgn.value = null;
           hasCommittedSave.value = false;
+        lastSavedAnalysisPgn.value = null;
+        lastBroadcastPgn.value = null;
           reportRevealState.value = const GameReportRevealState();
         }
         lastAppliedGameId.value = activeGameId;
         if (activeGameId != null) {
           lastAppliedPgn.value = null;
+          lastBroadcastPgn.value = null;
           lastAppliedInitialFenKey.value = null;
           chessGame.value = _emptyChessGame;
           pgnHeaders.value = const {};
@@ -2893,7 +2918,9 @@ class _BoardPaneContent extends HookConsumerWidget {
           lastAppliedInitialFenKey: lastAppliedInitialFenKey.value,
           dirtySinceLoad: dirtySinceLoad.value,
           hasUnseenMoves: hasUnseenMoves.value,
-          undoStack: const [],
+          undoStack: List<BoardUndoSnapshot>.unmodifiable(undoStack.value),
+          lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
+          lastBroadcastPgn: lastBroadcastPgn.value,
           savedSourceSeedPgn: savedSourceSeedPgn.value,
           hasCommittedSave: hasCommittedSave.value,
           detachedSeedPgn: restoredSession?.detachedSeedPgn,
@@ -2939,12 +2966,32 @@ class _BoardPaneContent extends HookConsumerWidget {
         );
         hasCommittedSave.value = true;
         savedSourceSeedPgn.value ??= lastAppliedPgn.value;
-        lastAppliedPgn.value = pgn.trim();
+        lastBroadcastPgn.value ??= lastAppliedPgn.value;
+        lastSavedAnalysisPgn.value = pgn.trim();
+        // Feed provenance is independent of the persisted analysis snapshot.
         chessGame.value = rebased;
         pgnHeaders.value = rebased.metadata.map(
           (key, value) => MapEntry(key, value?.toString() ?? ''),
         );
-        dirtySinceLoad.value = exportGameToPgn(rebased).trim() != pgn.trim();
+        dirtySinceLoad.value = shouldConfirmBoardAnalysisDiscard(
+          dirtySinceLoad: true,
+          currentPgn: exportGameToPgn(rebased),
+          lastAppliedPgn: lastAppliedPgn.value,
+          lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
+        );
+        // Publish before identity attachment can remount the pane, and retire
+        // any older post-frame writer that still carries the dirty snapshot.
+        final tabId = activeTabId;
+        if (tabId != null) {
+          final snapshot =
+              ref.read(boardPaneSnapshotReadersProvider)[tabId]?.call();
+          if (snapshot != null && identical(seed, snapshot.seed)) {
+            boardSessionWriteToken.value++;
+            ref
+                .read(boardPaneSessionByTabIdProvider.notifier)
+                .put(tabId, snapshot.session);
+          }
+        }
       }
       return (ownsActivation: ownsActivation, commit: commit);
     }
@@ -2966,7 +3013,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         } else {
           pgn = boardClipboardPgn(
             game: chessGame.value,
-            dirtySinceLoad: dirtySinceLoad.value,
+            dirtySinceLoad: dirtySinceLoad.value || lastSavedAnalysisPgn.value != null,
             lastAppliedPgn: lastAppliedPgn.value,
           );
         }
@@ -4420,8 +4467,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       bool hasLocalNotationEdits() {
         return shouldConfirmBoardTabCloseForLocalNotationEdits(
           dirtySinceLoad: dirtySinceLoad.value,
-          currentPgn: exportGameToPgn(chessGame.value),
+          currentPgn: exportGameToPgn(hydrateGameForUserOutput(chessGame.value)),
           lastAppliedPgn: lastAppliedPgn.value,
+          lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
         );
       }
 
