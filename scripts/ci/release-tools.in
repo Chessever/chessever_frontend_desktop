@@ -1,0 +1,5 @@
+# Python tools for .github/workflows/desktop-release.yml: the R2 publisher's
+# requirements plus Codemagic's CLI tools. Lock with:
+#   uv pip compile scripts/ci/release-tools.in --universal --python-version 3.12 --generate-hashes -o scripts/ci/release-tools.txt
+-r ../requirements-release.txt
+codemagic-cli-tools==0.70.0

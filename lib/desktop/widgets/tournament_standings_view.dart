@@ -526,8 +526,11 @@ class TournamentStandingsView extends HookConsumerWidget {
             skipLoadingOnRefresh: true,
             skipLoadingOnReload: true,
             data: (snapshot) {
+              // Pagination categories ("Boards 1-66" + "Boards 67-126") carry
+              // independent 1..n tables; concatenating them interleaves
+              // duplicate ranks, so they use the combined snapshot instead.
               final hasCompleteOfficialRoster =
-                  officialRosterByTourId.isNotEmpty &&
+                  officialRosterByTourId.length == 1 &&
                   officialRosterByTourId.values.every(
                     (value) => value.hasValue,
                   );
@@ -596,6 +599,12 @@ class TournamentStandingsView extends HookConsumerWidget {
               final publishedTiebreaks = tiebreakColumns.values.toList(
                 growable: false,
               );
+              // Chess-Results SNo and Club/City columns appear only when the
+              // table publishes them, so other tables keep their layout.
+              final identity = _StandingsIdentityColumns(
+                startNumber: players.any((p) => p.startNumber != null),
+                club: players.any((p) => _clubName(p) != null),
+              );
               // Built once outside the LayoutBuilder: the rows never depend on
               // the width, so a resize frame only re-lays them out.
               final list = ListView.separated(
@@ -615,6 +624,7 @@ class TournamentStandingsView extends HookConsumerWidget {
                     return _StandingsHeaderRow(
                       columns: roundTable.columns,
                       tiebreaks: publishedTiebreaks,
+                      identity: identity,
                     );
                   }
 
@@ -625,6 +635,7 @@ class TournamentStandingsView extends HookConsumerWidget {
                     flagFederation: _flagFederation(ref, p.countryCode),
                     rounds: roundTable,
                     tiebreaks: publishedTiebreaks,
+                    identity: identity,
                     photoResolver:
                         photoResolver ??
                         (fideId) => FidePhotoService.getPhotoUrlOrNull(fideId),
@@ -639,6 +650,7 @@ class TournamentStandingsView extends HookConsumerWidget {
                 builder: (context, constraints) {
                   final requiredWidth =
                       _StandingsLayout.tableWidth(roundTable.columns) +
+                      identity.width +
                       publishedTiebreaks.length *
                           _StandingsLayout.tiebreakWidth +
                       _StandingsLayout.horizontalPadding;
@@ -1003,9 +1015,32 @@ class _Empty extends StatelessWidget {
   }
 }
 
+String? _clubName(PlayerStandingModel player) {
+  final club = player.club?.trim();
+  return club == null || club.isEmpty ? null : club;
+}
+
+/// Which optional Chess-Results identity columns (SNo, Club/City) this table
+/// shows. Decided over the whole table, not per row.
+class _StandingsIdentityColumns {
+  const _StandingsIdentityColumns({
+    required this.startNumber,
+    required this.club,
+  });
+
+  final bool startNumber;
+  final bool club;
+
+  double get width =>
+      (startNumber ? _StandingsLayout.startNumberWidth : 0) +
+      (club ? _StandingsLayout.clubWidth : 0);
+}
+
 abstract final class _StandingsLayout {
   static const horizontalPadding = 48.0;
   static const rankWidth = 32.0;
+  static const startNumberWidth = 44.0;
+  static const clubWidth = 180.0;
   static const avatarSlotWidth = 50.0;
   static const playerWidth = 300.0;
   static const ratingWidth = 72.0;
@@ -1023,10 +1058,15 @@ abstract final class _StandingsLayout {
 }
 
 class _StandingsHeaderRow extends StatelessWidget {
-  const _StandingsHeaderRow({required this.columns, required this.tiebreaks});
+  const _StandingsHeaderRow({
+    required this.columns,
+    required this.tiebreaks,
+    required this.identity,
+  });
 
   final List<TournamentStandingsColumn> columns;
   final List<PublishedTiebreak> tiebreaks;
+  final _StandingsIdentityColumns identity;
 
   @override
   Widget build(BuildContext context) {
@@ -1045,6 +1085,12 @@ class _StandingsHeaderRow extends StatelessWidget {
             width: _StandingsLayout.rankWidth,
             child: Text('#', style: style),
           ),
+          if (identity.startNumber)
+            const SizedBox(
+              key: Key('standings-header-start-number'),
+              width: _StandingsLayout.startNumberWidth,
+              child: Text('SNo', style: style),
+            ),
           const SizedBox(width: _StandingsLayout.avatarSlotWidth),
           const SizedBox(
             width: _StandingsLayout.playerWidth,
@@ -1054,6 +1100,15 @@ class _StandingsHeaderRow extends StatelessWidget {
             label: 'Rating',
             width: _StandingsLayout.ratingWidth,
           ),
+          if (identity.club)
+            const SizedBox(
+              key: Key('standings-header-club'),
+              width: _StandingsLayout.clubWidth,
+              child: Padding(
+                padding: EdgeInsets.only(left: 8),
+                child: Text('Club/City', style: style),
+              ),
+            ),
           const _HeaderCell(label: 'Pts.', width: _StandingsLayout.pointsWidth),
           for (final tiebreak in tiebreaks)
             DesktopTooltip(
@@ -1114,6 +1169,7 @@ class _StandingsPlayerRow extends StatelessWidget {
     required this.flagFederation,
     required this.rounds,
     required this.tiebreaks,
+    required this.identity,
     required this.photoResolver,
     required this.onOpenScoreCard,
     required this.onOpenGame,
@@ -1124,6 +1180,7 @@ class _StandingsPlayerRow extends StatelessWidget {
   final String flagFederation;
   final TournamentStandingsRoundTable rounds;
   final List<PublishedTiebreak> tiebreaks;
+  final _StandingsIdentityColumns identity;
   final StandingsPhotoResolver photoResolver;
   final VoidCallback onOpenScoreCard;
   final ValueChanged<GamesTourModel> onOpenGame;
@@ -1153,6 +1210,19 @@ class _StandingsPlayerRow extends StatelessWidget {
               ),
             ),
           ),
+          if (identity.startNumber)
+            SizedBox(
+              width: _StandingsLayout.startNumberWidth,
+              child: Text(
+                player.startNumber?.toString() ?? '',
+                key: Key('standings-start-number-$playerKey'),
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 13,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
           SizedBox(
             width: _StandingsLayout.avatarSlotWidth,
             child: Align(
@@ -1218,6 +1288,24 @@ class _StandingsPlayerRow extends StatelessWidget {
               ),
             ),
           ),
+          if (identity.club)
+            SizedBox(
+              width: _StandingsLayout.clubWidth,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8, right: 8),
+                child: DesktopTooltip(
+                  message: _clubName(player) ?? '',
+                  child: Text(
+                    _clubName(player) ?? '',
+                    key: Key('standings-club-$playerKey'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    style: const TextStyle(color: kWhiteColor70, fontSize: 13),
+                  ),
+                ),
+              ),
+            ),
           SizedBox(
             width: _StandingsLayout.pointsWidth,
             child: Text(

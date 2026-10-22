@@ -13,6 +13,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/services/engine/uci_engine.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/play/engine_catalog.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
 
@@ -101,6 +102,30 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
   HttpClient? _client;
 
   Future<void> _seed() async {
+    if (isMacAppStore) {
+      final path = switch (kind) {
+        BotEngineKind.stockfish => macAppStoreBundledPath(
+          'Helpers',
+          'stockfish',
+        ),
+        BotEngineKind.leela => macAppStoreBundledPath('Helpers', 'lc0'),
+        BotEngineKind.maia => macAppStoreBundledPath(
+          'Resources/Engines',
+          'maia3_simplified.onnx',
+        ),
+      };
+      final exists = await File(path).exists();
+      if (!mounted) return;
+      state = state.copyWith(
+        status:
+            exists
+                ? EngineInstallStatus.installed
+                : EngineInstallStatus.unsupported,
+        binaryPath: exists ? path : null,
+        progress: exists ? 1 : 0,
+      );
+      return;
+    }
     // Fast path for Stockfish: the existing facade already discovers
     // Homebrew + PATH installs. Reuse it so the Play UI doesn't force a
     // download on users who already have an engine.
@@ -138,6 +163,10 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
   /// Kick off a download. Idempotent — re-entrant calls during an in-progress
   /// download are ignored.
   Future<void> install() async {
+    if (isMacAppStore) {
+      await _seed();
+      return;
+    }
     if (state.status == EngineInstallStatus.downloading ||
         state.status == EngineInstallStatus.verifying) {
       return;
@@ -405,7 +434,11 @@ List<String> engineLaunchArguments(
     case BotEngineKind.stockfish:
       return const <String>[];
     case BotEngineKind.leela:
-      final weights = File(p.join(dir, 'weights.pb.gz'));
+      final weights = File(
+        isMacAppStore
+            ? macAppStoreBundledPath('Resources/Engines', 'weights.pb.gz')
+            : p.join(dir, 'weights.pb.gz'),
+      );
       return weights.existsSync()
           ? <String>['--weights=${weights.path}']
           : const <String>[];
