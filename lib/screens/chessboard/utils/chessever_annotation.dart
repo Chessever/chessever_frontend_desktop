@@ -132,7 +132,7 @@ final _chesseverAnnotationDirective = RegExp(
 /// directive and the external-compat classification marker. Tags-only comments
 /// become empty after cleaning and are omitted.
 final _pgnMachineTagDirective = RegExp(
-  r'\[%\s*(?:clk|eval|cal|csl|emt|tag|src|ce|chessever_annotation)\s*[^\]]*\]',
+  r'\[%\s*(?:clk|eval|evp|cal|csl|emt|tag|src|ce|chessever_annotation)\s*[^\]]*\]',
   caseSensitive: false,
 );
 
