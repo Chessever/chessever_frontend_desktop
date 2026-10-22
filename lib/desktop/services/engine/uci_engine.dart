@@ -7,6 +7,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'package:chessever/desktop/services/mac_app_store.dart';
+
 /// Minimal UCI engine driver that talks to a chess engine binary over
 /// stdin/stdout. Used on desktop where the `stockfish` Flutter package
 /// (Android/iOS only) cannot be loaded.
@@ -361,6 +363,16 @@ class UciEngine {
 /// (disable engine UI / show a "configure engine" prompt) rather than
 /// crashing the app.
 Future<String?> findStockfishBinary() async {
+  if (isMacAppStore) {
+    // Store helpers are sealed and signed in the app bundle. Never extract an
+    // executable to Application Support or discover an engine outside it.
+    final helper = File(p.join(
+      File(Platform.resolvedExecutable).parent.parent.path,
+      'Helpers',
+      'stockfish',
+    ));
+    return await helper.exists() ? helper.path : null;
+  }
   // 1. Bundled asset.
   final bundled = await _ensureBundledBinary();
   if (bundled != null) return bundled;

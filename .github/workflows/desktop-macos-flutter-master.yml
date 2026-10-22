@@ -1,0 +1,155 @@
+# Test-only macOS build against the Flutter master channel. GitHub Actions port
+# of `macos-desktop-master` in codemagic.yaml.
+#
+# No signing, no notarization, no publish: it produces a zipped, ad-hoc signed
+# .app to download and run yourself. It uses only the app-config organization
+# secrets (which ship inside every release build anyway), so it needs no
+# `release` environment.
+name: macOS desktop (Flutter master)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-macos-flutter-master
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CHESSEVER_CLOUDFLARE_API_BASE: ${{ vars.CHESSEVER_CLOUDFLARE_API_BASE }}
+
+jobs:
+  build:
+    name: macOS (Flutter master, unsigned)
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter (master)
+        background: true
+        uses: ./.github/actions/setup-flutter
+        with:
+          channel: master
+
+      - name: Select Xcode 26.6
+        background: true
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      - name: Wait for macOS toolchains
+        wait-all:
+
+      - name: Validate public client configuration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python scripts/ci/validate_client_config.py
+
+      - name: Verify build environment
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+        run: |
+          required=(
+            SUPABASE_URL
+            SUPABASE_ANON_KEY
+            GOOGLE_DESKTOP_CLIENT_ID
+            GOOGLE_DESKTOP_CLIENT_SECRET
+            SENTRY_FLUTTER
+            CHESSEVER_CLOUDFLARE_API_BASE
+          )
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is required"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Show Flutter version
+        run: flutter --version
+
+      - name: Get Flutter packages
+        run: flutter pub get
+
+      - name: Test macOS updater framework repair
+        run: bash ./scripts/test_macos_updater_framework_repair.sh
+
+      - name: Install CocoaPods dependencies
+        run: find . -name "Podfile" -execdir pod install \;
+
+      - name: Mask encoded build values
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+        run: |
+          bash ./scripts/ci/mask_dart_defines.sh SUPABASE_URL SUPABASE_ANON_KEY \
+            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
+
+      - name: Build macOS release (unsigned, ad-hoc)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+        run: |
+          DART_DEFINES=(
+            --dart-define=SUPABASE_URL="$SUPABASE_URL"
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=GOOGLE_DESKTOP_CLIENT_ID="$GOOGLE_DESKTOP_CLIENT_ID"
+            --dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET"
+            --dart-define=SENTRY_FLUTTER="$SENTRY_FLUTTER"
+            --dart-define=CHESSEVER_CLOUDFLARE_API_BASE="$CHESSEVER_CLOUDFLARE_API_BASE"
+            --dart-define=ANALYSIS_API_BASE=https://chessever-analysis.young-sun-69a8.workers.dev
+          )
+          for name in GOOGLE_WEB_CLIENT_ID BILLING_API_BASE GAMEBASE_PROXY_BASE; do
+            if [ -n "${!name:-}" ]; then
+              DART_DEFINES+=(--dart-define="$name=${!name}")
+            fi
+          done
+          # Runner.xcodeproj pins manual Developer ID signing. This is an
+          # unsigned test build, so Flutter's FLUTTER_XCODE_* passthrough turns
+          # signing off on the xcodebuild command line.
+          export FLUTTER_XCODE_CODE_SIGNING_ALLOWED=NO
+          export FLUTTER_XCODE_CODE_SIGNING_REQUIRED=NO
+          export FLUTTER_XCODE_CODE_SIGN_IDENTITY=-
+          export FLUTTER_XCODE_CODE_SIGN_STYLE=Automatic
+          export FLUTTER_XCODE_PROVISIONING_PROFILE_SPECIFIER=
+          export FLUTTER_XCODE_DEVELOPMENT_TEAM=
+          flutter config --enable-macos-desktop
+          flutter build macos --release "${DART_DEFINES[@]}"
+
+      - name: Zip the .app
+        run: |
+          APP_DIR="build/macos/Build/Products/Release"
+          APP_NAME="$(find "$APP_DIR" -maxdepth 1 -name '*.app' -exec basename {} \; | head -n 1)"
+          [ -n "$APP_NAME" ] || { echo "::error::no .app produced"; exit 1; }
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$APP_DIR/$APP_NAME" "$APP_DIR/${APP_NAME%.app}-master.zip"
+
+      - name: Keep zipped app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-flutter-master-app
+          path: build/macos/Build/Products/Release/*-master.zip
+          retention-days: 7
+          if-no-files-found: error

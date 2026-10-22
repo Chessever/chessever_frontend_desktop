@@ -1,0 +1,192 @@
+# Store edition only: universal macOS package, Apple billing, sandboxed engines.
+# Direct downloads and their Stripe billing stay in desktop-release.yml.
+name: Mac App Store review
+
+on:
+  workflow_dispatch:
+    inputs:
+      submit_review:
+        description: Submit for App Review with MANUAL release (unchecked uploads to App Store Connect only)
+        type: boolean
+        default: true
+      replace_pending_review:
+        description: Explicitly cancel and replace an earlier pending App Review submission
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-app-store-review
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the production branch
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: test "$RELEASE_REF" = refs/heads/main
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify release safeguards
+        run: |
+          ruby scripts/ci/check_codemagic_parity.rb
+          python3 -m unittest discover -s scripts/ci -p 'test_mac_app_store_submit.py'
+
+  mac_app_store:
+    name: Universal Mac App Store package
+    needs: preflight
+    runs-on: macos-26
+    timeout-minutes: 180
+    environment: release
+    env:
+      STORE_OUTPUT: ${{ github.workspace }}/build/mac-app-store
+      STORE_APPLICATION_IDENTITY: '3rd Party Mac Developer Application: ChessEver LLC (N8J7TUZMYR)'
+      STORE_INSTALLER_IDENTITY: '3rd Party Mac Developer Installer: ChessEver LLC (N8J7TUZMYR)'
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode 26.6
+        background: true
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      - name: Set up Flutter (stable)
+        background: true
+        uses: ./.github/actions/setup-flutter
+        with:
+          channel: stable
+
+      - name: Set up Python
+        background: true
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Wait for store toolchains
+        wait-all:
+
+      - name: Validate public client configuration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python scripts/ci/validate_client_config.py
+
+      - name: Set temporary signing paths
+        run: |
+          printf '%s\n' "STORE_KEYCHAIN=$RUNNER_TEMP/mac-app-store.keychain-db" \
+            "STORE_PROFILE=$RUNNER_TEMP/store-profiles/ChessEver.provisionprofile" \
+            "STORE_PUBLIC_CONFIG=$RUNNER_TEMP/mac-app-store-public.json" >> "$GITHUB_ENV"
+
+      - name: Install locked release tools and packages
+        run: |
+          python -m pip install --require-hashes -r scripts/ci/release-tools.txt
+          flutter pub get
+          (cd macos && pod install)
+
+      - name: Prepare public client configuration
+        # This allowlist contains public native-client settings only. Store,
+        # signing, R2 and notification credentials never enter Dart defines.
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+          CHESSEVER_CLOUDFLARE_API_BASE: ${{ vars.CHESSEVER_CLOUDFLARE_API_BASE }}
+        run: |
+          umask 077
+          bash scripts/ci/mask_dart_defines.sh SUPABASE_URL SUPABASE_ANON_KEY \
+            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          names = ('SUPABASE_URL', 'SUPABASE_ANON_KEY', 'GOOGLE_DESKTOP_CLIENT_ID',
+                   'GOOGLE_DESKTOP_CLIENT_SECRET', 'SENTRY_FLUTTER',
+                   'CHESSEVER_CLOUDFLARE_API_BASE')
+          config = {name: os.environ[name] for name in names}
+          missing = [name for name, value in config.items() if not value]
+          if missing:
+              raise SystemExit('Missing public client configuration: ' + ', '.join(missing))
+          config['ANALYSIS_API_BASE'] = config['CHESSEVER_CLOUDFLARE_API_BASE']
+          Path(os.environ['STORE_PUBLIC_CONFIG']).write_text(json.dumps(config))
+          PY
+
+      - name: Import Mac App Store signing identities
+        env:
+          APPLICATION_P12_B64: ${{ secrets.MAC_APP_STORE_APPLICATION_P12_B64 }}
+          INSTALLER_P12_B64: ${{ secrets.MAC_APP_STORE_INSTALLER_P12_B64 }}
+          MAC_APP_STORE_P12_PASSWORD: ${{ secrets.MAC_APP_STORE_P12_PASSWORD }}
+        run: |
+          umask 077
+          test -n "$MAC_APP_STORE_P12_PASSWORD"
+          keychain initialize --path "$STORE_KEYCHAIN"
+          for part in APPLICATION INSTALLER; do
+            var="${part}_P12_B64"
+            cert="$RUNNER_TEMP/store-${part}.p12"
+            printf '%s' "${!var}" | base64 --decode > "$cert"
+            keychain add-certificates --path "$STORE_KEYCHAIN" \
+              --certificate "$cert" --certificate-password @env:MAC_APP_STORE_P12_PASSWORD
+            rm -f "$cert"
+          done
+
+      - name: Fetch the production Mac App Store profile
+        env:
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/store-profiles"
+          app-store-connect profiles get WR4MCF5FY6 \
+            --profiles-dir "$RUNNER_TEMP/store-profiles" --save
+          profile="$(find "$RUNNER_TEMP/store-profiles" -type f -name '*.provisionprofile')"
+          test -n "$profile"
+          cp "$profile" "$STORE_PROFILE"
+          test -s "$STORE_PROFILE"
+
+      - name: Build and sign the universal store edition
+        # Signing is through the ephemeral keychain. No server credentials
+        # are present in the build step's environment.
+        run: bash scripts/build_mac_app_store.sh
+
+      - name: Upload and optionally submit for manual release
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          SUBMIT_REVIEW: ${{ inputs.submit_review }}
+          REPLACE_PENDING_REVIEW: ${{ inputs.replace_pending_review }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: bash scripts/ci/mac_app_store_submit.sh
+
+      - name: Keep the signed installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mac-app-store-pkg
+          path: build/mac-app-store/ChessEver-Mac-App-Store.pkg
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove signing material and temporary configuration
+        if: always()
+        run: |
+          security delete-keychain "$STORE_KEYCHAIN" || true
+          rm -f "$RUNNER_TEMP"/store-*.p12 "$STORE_PUBLIC_CONFIG"
+          rm -rf "$RUNNER_TEMP/store-profiles"

@@ -882,7 +882,8 @@ class ScoreCardScreen extends ConsumerWidget {
       final totalGames = int.tryParse(match.group(2) ?? '');
       return (score, totalGames);
     }
-    return (null, null);
+    // A published score without a games count ("4.5").
+    return (double.tryParse(scoreText.trim()), null);
   }
 
   String _getPlayerResult(GamesTourModel game, bool isWhite) {

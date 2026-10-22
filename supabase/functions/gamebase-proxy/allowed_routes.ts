@@ -19,7 +19,8 @@ export type AllowedRoute = {
 };
 
 // A folder id as the library stores it.
-const FOLDER = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+const FOLDER =
+  "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
 // A published collection's slug, or its id.
 const COLLECTION = "[A-Za-z0-9][A-Za-z0-9_-]{0,159}";
@@ -28,7 +29,12 @@ const allowedRoutes: AllowedRoute[] = [
   { method: "GET", pattern: /^\/api\/player\/memorial$/ },
   {
     method: "GET",
-    pattern: /^\/api\/player\/memorial\/[^/]+\/games$/,
+    pattern:
+      /^\/api\/player\/memorial\/[^/]+\/(?:games|stats|opening-tree|opening-tree\/status)$/,
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/player\/memorial\/[^/]+\/opening-tree\/build$/,
   },
 
   { method: "GET", pattern: /^\/api\/player$/ },
@@ -46,6 +52,8 @@ const allowedRoutes: AllowedRoute[] = [
   { method: "GET", pattern: /^\/api\/player\/[^/]+\/opening-tree$/ },
 
   { method: "GET", pattern: /^\/api\/miniatures$/ },
+  { method: "GET", pattern: /^\/api\/miniatures\/(?:stats|players)$/ },
+  { method: "GET", pattern: /^\/api\/event$/ },
   // Player win streaks (read-only leaderboard + per-player detail).
   { method: "GET", pattern: /^\/api\/streaks$/ },
   { method: "GET", pattern: /^\/api\/streaks\/[^/]+$/ },
@@ -82,8 +90,24 @@ const allowedRoutes: AllowedRoute[] = [
   // calls. Read-only apart from the two engagement counters. The catalog and
   // the books bound to an event are the same for everyone; they come first so
   // "catalog" and "for-event" are never read as a slug.
-  { method: "GET", pattern: /^\/api\/collections\/catalog\/(?:books|authors)$/ },
+  {
+    method: "GET",
+    pattern: /^\/api\/collections\/catalog\/(?:books|authors)$/,
+  },
+  { method: "GET", pattern: /^\/api\/collections$/ },
   { method: "GET", pattern: /^\/api\/collections\/for-event$/ },
+  { method: "GET", pattern: /^\/api\/collections\/for-opening$/ },
+  { method: "GET", pattern: /^\/api\/collections\/openings$/ },
+  {
+    method: "GET",
+    pattern: new RegExp(`^/api/collections/${COLLECTION}/openings$`),
+  },
+  { method: "GET", pattern: /^\/api\/collections\/games$/, viewer: true },
+  {
+    method: "POST",
+    pattern: /^\/api\/collections\/account\/avatar$/,
+    member: true,
+  },
   // A collection, its games and its players: a Premium collection opens only
   // for an entitled account, so these carry the viewer.
   {
@@ -113,8 +137,8 @@ const allowedRoutes: AllowedRoute[] = [
  *
  * The app's public key is a token too, with a role and no subject. Sending
  * it upstream as "the viewer" would ask Gamebase to judge nobody, so a viewer
- * route forwards only a token that says who is asking. The function's own
- * verification has already checked the signature; this only reads the claim.
+ * route forwards only a token that says who is asking. This only reads the
+ * claim; Gamebase validates the token before authorizing account operations.
  */
 export function bearerNamesAccount(authorization: string): boolean {
   const match = /^Bearer [\w-]+\.([\w-]+)\.[\w-]+$/.exec(authorization);
