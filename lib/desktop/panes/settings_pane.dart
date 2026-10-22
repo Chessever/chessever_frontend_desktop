@@ -14,6 +14,8 @@ import 'package:chessever/desktop/services/auth/desktop_guest_upgrade.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
+import 'package:chessever/desktop/widgets/paywall/mac_app_store_plans.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
@@ -242,7 +244,7 @@ class SettingsPane extends HookConsumerWidget {
             const _BotvinnikSection(),
             const _EngineSection(),
             const SizedBox(height: 16),
-            const _UpdatesSection(),
+            if (!isMacAppStore) const _UpdatesSection(),
             const SizedBox(height: 16),
             const _LegalSection(),
             const SizedBox(height: 16),
@@ -434,6 +436,13 @@ class _SubscriptionSection extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (isMacAppStore) {
+      return const _Card(
+        title: 'ChessEver Premium',
+        icon: Icons.workspace_premium_outlined,
+        child: MacAppStorePlans(),
+      );
+    }
     final futureSnapshot = useMemoized(
       DesktopBillingService.instance.currentEntitlement,
       const [],

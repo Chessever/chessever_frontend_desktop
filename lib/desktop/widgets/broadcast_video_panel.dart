@@ -191,10 +191,16 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     final existing = _controller;
     if (existing != null) return existing;
     final controller = _createController();
-    controller
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(kBlackColor)
-      ..setNavigationDelegate(
+    // Each setter awaits the native WebView. Without the WebView2 runtime, or
+    // once the controller is torn down, that future fails, and a discarded
+    // failure reached the zone as fatal (CHESSEVER-1ZW/1Z4). The load below
+    // surfaces the same failure as the frame fallback.
+    _ignoreWebViewFailure(
+      controller.setJavaScriptMode(JavaScriptMode.unrestricted),
+    );
+    _ignoreWebViewFailure(controller.setBackgroundColor(kBlackColor));
+    _ignoreWebViewFailure(
+      controller.setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
             final uri = Uri.tryParse(request.url);
@@ -233,9 +239,24 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
           // no fallback. Staleness is handled inside the check instead.
           onPageFinished: (_) => unawaited(_verifyEmbedDocument()),
         ),
-      );
+      ),
+    );
     _controller = controller;
     return controller;
+  }
+
+  static void _ignoreWebViewFailure(Future<void> call) {
+    unawaited(call.catchError((Object _) {}));
+  }
+
+  /// No WebView2 runtime is a failed frame like any other: the rail offers
+  /// the retry and the external link instead of crashing.
+  Future<void> _loadEmbed(Uri url) async {
+    try {
+      await _ensureController().loadRequest(url);
+    } catch (_) {
+      if (mounted && _loadedEmbedUrl == url.toString()) _markFrameFailed();
+    }
   }
 
   WebViewController _createController() {
@@ -347,7 +368,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
         _loadedEmbedUrl = null;
         return;
       }
-      unawaited(_ensureController().loadRequest(url));
+      unawaited(_loadEmbed(url));
     });
   }
 
@@ -359,7 +380,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // A load that landed in the same frame must survive the queued stop.
       if (!mounted || _loadedEmbedUrl != null) return;
-      unawaited(controller.loadRequest(Uri.parse('about:blank')));
+      _ignoreWebViewFailure(controller.loadRequest(Uri.parse('about:blank')));
     });
   }
 
@@ -374,7 +395,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
         // Windows keeps a native controller alive until it is disposed; do
         // it deterministically instead of leaving a WebView2 renderer for
         // the GC.
-        unawaited(platform.dispose());
+        _ignoreWebViewFailure(platform.dispose());
       } else {
         // WKWebView outlives its widget until the controller is collected,
         // so a torn-down pane would otherwise keep the stream (and its

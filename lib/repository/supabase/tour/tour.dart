@@ -23,6 +23,11 @@ class TournamentPlayer {
   final int? rank;
   final List<PublishedTiebreak> tiebreaks;
 
+  /// Chess-Results starting-list number (SNo) and Club/City, published
+  /// beside the official ranking.
+  final int? startNumber;
+  final String? club;
+
   TournamentPlayer({
     this.federation,
     required this.name,
@@ -36,6 +41,8 @@ class TournamentPlayer {
     this.team,
     this.rank,
     this.tiebreaks = const [],
+    this.startNumber,
+    this.club,
   });
 
   /// Creates a TournamentPlayer from JSON map.
@@ -64,7 +71,15 @@ class TournamentPlayer {
       team: json['team'] as String?,
       rank: _parseInt(json['rank']),
       tiebreaks: PublishedTiebreak.parse(json['tiebreaks']),
+      startNumber: _parseInt(json['startNumber']),
+      club: _text(json['club']),
     );
+  }
+
+  static String? _text(dynamic value) {
+    if (value is! String) return null;
+    final text = value.trim();
+    return text.isEmpty ? null : text;
   }
 
   /// Picks the first non-null numeric value out of a Lichess nested map keyed
@@ -110,6 +125,8 @@ class TournamentPlayer {
     if (tiebreaks.isNotEmpty) {
       data['tiebreaks'] = tiebreaks.map((t) => t.toJson()).toList();
     }
+    if (startNumber != null) data['startNumber'] = startNumber;
+    if (club != null) data['club'] = club;
 
     return data;
   }
@@ -207,6 +224,8 @@ class TournamentPlayer {
         other.performance == performance &&
         other.rank == rank &&
         other.team == team &&
+        other.startNumber == startNumber &&
+        other.club == club &&
         PublishedTiebreak.same(other.tiebreaks, tiebreaks);
   }
 
@@ -223,6 +242,8 @@ class TournamentPlayer {
         performance.hashCode ^
         team.hashCode ^
         rank.hashCode ^
+        startNumber.hashCode ^
+        club.hashCode ^
         Object.hashAll(tiebreaks);
   }
 
@@ -240,6 +261,8 @@ class TournamentPlayer {
     String? team,
     int? rank,
     List<PublishedTiebreak>? tiebreaks,
+    int? startNumber,
+    String? club,
   }) {
     return TournamentPlayer(
       federation: federation ?? this.federation,
@@ -254,6 +277,8 @@ class TournamentPlayer {
       team: team ?? this.team,
       rank: rank ?? this.rank,
       tiebreaks: tiebreaks ?? this.tiebreaks,
+      startNumber: startNumber ?? this.startNumber,
+      club: club ?? this.club,
     );
   }
 }
@@ -479,6 +504,26 @@ class TourInfo {
   final Map<String, dynamic>? officialTeamStandings;
   final Map<String, dynamic>? officialPlayerStandingsSections;
 
+  /// A finished event's complete organizer table, pinned by the data hub
+  /// (`{url, source, pinnedAt}`): every roster row then carries the
+  /// organizer's own rank, score and games count.
+  final Map<String, dynamic>? standingsPin;
+
+  /// Whether the roster is a pinned organizer table for this event's own
+  /// standings link. Organizer tables do not count forfeits as played, so the
+  /// broadcast games can never prove such a table stale.
+  bool get hasPinnedStandings {
+    final pin = standingsPin;
+    if (pin == null) return false;
+    final url = pin['url'];
+    final source = pin['source'];
+    return url is String &&
+        url.isNotEmpty &&
+        url == standings &&
+        source is String &&
+        source.isNotEmpty;
+  }
+
   List<OfficialPlayerSection> get playerStandingSections =>
       OfficialPlayerSection.parse(officialPlayerStandingsSections, standings);
 
@@ -496,6 +541,7 @@ class TourInfo {
     this.standingsUpdatedAt,
     this.officialTeamStandings,
     this.officialPlayerStandingsSections,
+    this.standingsPin,
     this.customScoring,
     this.teamScoring,
   });
@@ -517,6 +563,7 @@ class TourInfo {
       officialPlayerStandingsSections: _asStringKeyMap(
         json['officialPlayerStandingsSections'],
       ),
+      standingsPin: _asStringKeyMap(json['standingsPin']),
       customScoring: _asStringKeyMap(json['customScoring']),
       teamScoring: _asStringKeyMap(json['teamScoring']),
     );
@@ -551,6 +598,7 @@ class TourInfo {
         'officialTeamStandings': officialTeamStandings,
       if (officialPlayerStandingsSections != null)
         'officialPlayerStandingsSections': officialPlayerStandingsSections,
+      if (standingsPin != null) 'standingsPin': standingsPin,
       if (customScoring != null) 'customScoring': customScoring,
       if (teamScoring != null) 'teamScoring': teamScoring,
     };
@@ -649,10 +697,11 @@ class Tour {
   }
 
   bool get usesExternalStandings =>
-      (info.standingsSource == 'chess-results' ||
-          (info.standingsSource == 'info64' &&
-              info64EventUrl(info.standings) != null)) &&
-      info.standingsUpdatedAt != null;
+      ((info.standingsSource == 'chess-results' ||
+              (info.standingsSource == 'info64' &&
+                  info64EventUrl(info.standings) != null)) &&
+          info.standingsUpdatedAt != null) ||
+      info.hasPinnedStandings;
 
   // Format time until start
   static String timeUntilStart(List<DateTime> dates) {

@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@1/equals";
+import { deepStrictEqual as assertEquals } from "node:assert/strict";
 import {
   bearerNamesAccount,
   isAllowedGamebaseProxyRoute,
@@ -51,11 +51,52 @@ Deno.test("keeps existing regular-player routes available", () => {
   );
 });
 
+Deno.test("mobile proxy migration preserves its scoped reads and account avatar", () => {
+  for (
+    const path of [
+      "/api/miniatures/stats",
+      "/api/miniatures/players",
+      "/api/event",
+      "/api/player/memorial/memorial-id/stats",
+      "/api/player/memorial/memorial-id/opening-tree",
+      "/api/player/memorial/memorial-id/opening-tree/status",
+    ]
+  ) assertEquals(isAllowedGamebaseProxyRoute("GET", path), true, path);
+  assertEquals(
+    isAllowedGamebaseProxyRoute(
+      "POST",
+      "/api/player/memorial/memorial-id/opening-tree/build",
+    ),
+    true,
+  );
+  assertEquals(
+    matchGamebaseProxyRoute("POST", "/api/collections/account/avatar")?.member,
+    true,
+  );
+  assertEquals(
+    isAllowedGamebaseProxyRoute("POST", "/api/ingest/pgn-games"),
+    false,
+  );
+  assertEquals(
+    isAllowedGamebaseProxyRoute("POST", "/api/studies/refresh"),
+    false,
+  );
+});
+
 Deno.test("allows player win-streak reads only", () => {
   assertEquals(isAllowedGamebaseProxyRoute("GET", "/api/streaks"), true);
-  assertEquals(isAllowedGamebaseProxyRoute("GET", "/api/streaks/1503014"), true);
-  assertEquals(isAllowedGamebaseProxyRoute("POST", "/api/streaks/ingest"), false);
-  assertEquals(isAllowedGamebaseProxyRoute("GET", "/api/streaks/ingest/x"), false);
+  assertEquals(
+    isAllowedGamebaseProxyRoute("GET", "/api/streaks/1503014"),
+    true,
+  );
+  assertEquals(
+    isAllowedGamebaseProxyRoute("POST", "/api/streaks/ingest"),
+    false,
+  );
+  assertEquals(
+    isAllowedGamebaseProxyRoute("GET", "/api/streaks/ingest/x"),
+    false,
+  );
 });
 
 const FOLDER = "11111111-2222-4333-8444-555555555555";
@@ -109,7 +150,11 @@ Deno.test("book publishing: nothing here approves, and nothing else opens", () =
     ["PUT", "/api/search/query"],
   ];
   for (const [method, path] of refused) {
-    assertEquals(isAllowedGamebaseProxyRoute(method, path), false, `${method} ${path}`);
+    assertEquals(
+      isAllowedGamebaseProxyRoute(method, path),
+      false,
+      `${method} ${path}`,
+    );
   }
 });
 
@@ -143,7 +188,10 @@ Deno.test("collections: a book, its games and its players carry the viewer", () 
 });
 
 Deno.test("collections: a view is anonymous, a star is the member's", () => {
-  const view = matchGamebaseProxyRoute("POST", "/api/collections/endgames/view");
+  const view = matchGamebaseProxyRoute(
+    "POST",
+    "/api/collections/endgames/view",
+  );
   assertEquals(view !== null, true);
   assertEquals(view?.member, undefined);
   assertEquals(
@@ -161,16 +209,11 @@ Deno.test("collections: nothing here writes a collection", () => {
     ["DELETE", "/api/collections/endgames/star"],
     ["GET", "/api/collections/endgames/view"],
     ["GET", "/api/collections/endgames/star"],
-    // A profile photo is changed in the phone app and on the website.
-    ["POST", "/api/collections/account/avatar"],
     // Single-game PGN export is not something a reader's app asks for.
     ["GET", "/api/collections/endgames/games/g1/pgn"],
     ["GET", "/api/collections/endgames/games/"],
     ["GET", "/api/collections/"],
     ["GET", "/api/collections/a/b/c"],
-    // Routes the app never calls stay closed.
-    ["GET", "/api/collections"],
-    ["GET", "/api/collections/endgames/openings"],
     // A slug is letters, digits, dashes and underscores, nothing else.
     ["GET", "/api/collections/..%2Fadmin"],
     ["GET", "/api/collections/end%20games"],
@@ -180,7 +223,11 @@ Deno.test("collections: nothing here writes a collection", () => {
     ["PUT", `/api/collections/${"a".repeat(161)}/star`],
   ];
   for (const [method, path] of refused) {
-    assertEquals(isAllowedGamebaseProxyRoute(method, path), false, `${method} ${path}`);
+    assertEquals(
+      isAllowedGamebaseProxyRoute(method, path),
+      false,
+      `${method} ${path}`,
+    );
   }
 });
 
@@ -192,13 +239,37 @@ function token(payload: Record<string, unknown>): string {
 }
 
 Deno.test("collections: only a token that names an account is the viewer", () => {
-  assertEquals(bearerNamesAccount(token({ sub: "user-1", role: "authenticated" })), true);
+  assertEquals(
+    bearerNamesAccount(token({ sub: "user-1", role: "authenticated" })),
+    true,
+  );
   // The app's public key: a role, nobody behind it.
-  assertEquals(bearerNamesAccount(token({ role: "anon", iss: "supabase" })), false);
+  assertEquals(
+    bearerNamesAccount(token({ role: "anon", iss: "supabase" })),
+    false,
+  );
   assertEquals(bearerNamesAccount(token({ sub: "" })), false);
   assertEquals(bearerNamesAccount(token({ sub: 7 })), false);
   assertEquals(bearerNamesAccount("Bearer not-a-token"), false);
   assertEquals(bearerNamesAccount("Bearer a.%%%.c"), false);
   assertEquals(bearerNamesAccount("Basic abc"), false);
   assertEquals(bearerNamesAccount(""), false);
+});
+
+Deno.test("mobile opening metadata stays anonymous and published games carry the viewer", () => {
+  for (
+    const path of [
+      "/api/collections",
+      "/api/collections/openings",
+      "/api/collections/for-opening",
+      "/api/collections/endgames/openings",
+    ]
+  ) {
+    assertEquals(isAllowedGamebaseProxyRoute("GET", path), true, path);
+    assertEquals(matchGamebaseProxyRoute("GET", path)?.viewer, undefined);
+  }
+  assertEquals(
+    matchGamebaseProxyRoute("GET", "/api/collections/games")?.viewer,
+    true,
+  );
 });

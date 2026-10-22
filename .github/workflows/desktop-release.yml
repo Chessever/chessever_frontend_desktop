@@ -1,0 +1,628 @@
+# Desktop release: build, sign, notarize and publish to R2 for macOS (Apple
+# Silicon and Intel), Windows and Linux. GitHub Actions port of the release
+# workflows in codemagic.yaml; the scripts under scripts/ are reused unchanged.
+#
+# Manual runs only. Signing, notarization and R2 credentials live in the
+# `release` environment, which only `main` may use and which waits for a
+# reviewer before a job receives them. Setup and the secret catalogue:
+# docs/ci/github-actions-release.md in Chessever/chessever-frontend.
+name: Desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      macos_arm64:
+        description: macOS Apple Silicon (updater platform macos, Chessever.dmg)
+        type: boolean
+        default: true
+      macos_x64:
+        description: macOS Intel (updater platform macos-x64, Chessever-intel.dmg)
+        type: boolean
+        default: true
+      windows:
+        description: Windows
+        type: boolean
+        default: true
+      linux:
+        description: Linux
+        type: boolean
+        default: true
+      publish:
+        description: Publish to R2 (unchecked still builds, signs and notarizes, then keeps installers as run artifacts)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Releases replace each other in R2 (one release per platform), so never run
+# two at once.
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+# Explicit bash adds `-o pipefail`, matching the `set -euo pipefail` the
+# Codemagic scripts ran under.
+defaults:
+  run:
+    shell: bash
+
+env:
+  CHESSEVER_CLOUDFLARE_API_BASE: ${{ vars.CHESSEVER_CLOUDFLARE_API_BASE }}
+  PUBLISH: ${{ inputs.publish }}
+  # Appended to the Telegram platform label so a dry run is never announced
+  # as a release.
+  RUN_SUFFIX: ${{ !inputs.publish && ' (dry run)' || '' }}
+  # The release scripts read Codemagic's build variables; give them the
+  # GitHub equivalents.
+  CM_BUILD_DIR: ${{ github.workspace }}
+  CM_BRANCH: ${{ github.ref_name }}
+  CM_COMMIT: ${{ github.sha }}
+  CM_BUILD_ID: ${{ github.run_id }}
+  CM_BUILD_NUMBER: ${{ github.run_number }}
+  CM_BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+jobs:
+  preflight:
+    name: Verify desktop release recipe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the production branch
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          if [ "$RELEASE_REF" != refs/heads/main ]; then
+            echo '::error::Desktop releases must run from main.'
+            exit 1
+          fi
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify parity with the Codemagic desktop recipes
+        run: ruby scripts/ci/check_codemagic_parity.rb
+
+  macos:
+    name: macOS ${{ matrix.arch == 'arm64' && 'Apple Silicon' || 'Intel' }}
+    needs: preflight
+    if: inputs.macos_arm64 || inputs.macos_x64
+    runs-on: macos-26
+    timeout-minutes: 180
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+        exclude:
+          - arch: ${{ !inputs.macos_arm64 && 'arm64' || 'none' }}
+          - arch: ${{ !inputs.macos_x64 && 'x64' || 'none' }}
+    env:
+      MACOS_RELEASE_ARCH: ${{ matrix.arch }}
+      # Frozen names: Apple Silicon publishes under the bare `macos` slug,
+      # Intel is additive under `macos-x64`. See AGENTS.md before changing.
+      UPDATER_SLUG: ${{ matrix.arch == 'arm64' && 'macos' || 'macos-x64' }}
+      NOTIFY_LABEL: ${{ matrix.arch == 'arm64' && 'macOS arm64' || 'macOS intel' }}${{ !inputs.publish && ' (dry run)' || '' }}
+      CM_WORKFLOW_NAME: macOS Desktop Release (${{ matrix.arch == 'arm64' && 'Apple Silicon' || 'Intel' }})
+      CHESSEVER_DEV_ID_IDENTITY: "Developer ID Application: ChessEver LLC (N8J7TUZMYR)"
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode 26.6
+        background: true
+        # Codemagic's "latest" resolved to 26.6 (17F113) when this was ported.
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      - name: Set up Flutter (stable)
+        background: true
+        uses: ./.github/actions/setup-flutter
+        with:
+          channel: stable
+
+      - name: Set up Python
+        background: true
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Wait for macOS toolchains
+        wait-all:
+
+      - name: Validate public client configuration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python scripts/ci/validate_client_config.py
+
+      - name: Notify Telegram release started
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: bash ./scripts/codemagic_notify_telegram.sh "$NOTIFY_LABEL" started
+
+      - name: Verify release environment
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CHESSEVER_DEV_ID_P12_B64: ${{ secrets.MACOS_DEVELOPER_ID_P12_B64 }}
+          CHESSEVER_DEV_ID_P12_PASS: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          required=(
+            SUPABASE_URL
+            SUPABASE_ANON_KEY
+            GOOGLE_DESKTOP_CLIENT_ID
+            GOOGLE_DESKTOP_CLIENT_SECRET
+            SENTRY_FLUTTER
+            CHESSEVER_CLOUDFLARE_API_BASE
+            APP_STORE_CONNECT_KEY_IDENTIFIER
+            APP_STORE_CONNECT_ISSUER_ID
+            APP_STORE_CONNECT_PRIVATE_KEY
+            R2_ACCOUNT_ID
+            R2_ACCESS_KEY_ID
+            R2_SECRET_ACCESS_KEY
+            CHESSEVER_DEV_ID_P12_B64
+            CHESSEVER_DEV_ID_P12_PASS
+          )
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is required"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Get Flutter packages
+        run: flutter pub get
+
+      - name: Install R2 publisher and Codemagic CLI tools
+        # Same dependency stage as Codemagic, with a complete hash lock.
+        run: python -m pip install --require-hashes -r scripts/ci/release-tools.txt
+
+      - name: Test macOS updater framework repair
+        run: bash ./scripts/test_macos_updater_framework_repair.sh
+
+      - name: Install CocoaPods dependencies
+        run: find . -name "Podfile" -execdir pod install \;
+
+      - name: Install Developer ID certificate
+        # Developer ID private keys cannot be issued through the App Store
+        # Connect API, so the .p12 is stored as a secret.
+        env:
+          CHESSEVER_DEV_ID_P12_B64: ${{ secrets.MACOS_DEVELOPER_ID_P12_B64 }}
+          CHESSEVER_DEV_ID_P12_PASS: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          umask 077
+          cert="$RUNNER_TEMP/developer_id_application.p12"
+          printf '%s' "$CHESSEVER_DEV_ID_P12_B64" | base64 --decode > "$cert"
+          keychain initialize --path "$RUNNER_TEMP/signing.keychain-db"
+          keychain add-certificates \
+            --path "$RUNNER_TEMP/signing.keychain-db" \
+            --certificate "$cert" \
+            --certificate-password @env:CHESSEVER_DEV_ID_P12_PASS
+          rm -f "$cert"
+          security find-identity -v -p codesigning | grep -F "$CHESSEVER_DEV_ID_IDENTITY" > /dev/null
+
+      - name: Fetch macOS provisioning profile
+        # "Chessever Desktop Direct Distribution" (MAC_APP_DIRECT), required by
+        # the Associated Domains entitlement in Release.entitlements.
+        env:
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          app-store-connect profiles get SUW9J8GQ8V --save
+          xcode-project use-profiles --warn-only
+
+      - name: Mask encoded build values
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+        run: |
+          bash ./scripts/ci/mask_dart_defines.sh SUPABASE_URL SUPABASE_ANON_KEY \
+            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
+
+      - name: Build and publish macOS package
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          ARCH="$MACOS_RELEASE_ARCH"
+          DART_DEFINES=(
+            --dart-define=SUPABASE_URL="$SUPABASE_URL"
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=GOOGLE_DESKTOP_CLIENT_ID="$GOOGLE_DESKTOP_CLIENT_ID"
+            --dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET"
+            --dart-define=SENTRY_FLUTTER="$SENTRY_FLUTTER"
+            --dart-define=CHESSEVER_CLOUDFLARE_API_BASE="$CHESSEVER_CLOUDFLARE_API_BASE"
+            --dart-define=ANALYSIS_API_BASE=https://chessever-analysis.young-sun-69a8.workers.dev
+          )
+          for name in GOOGLE_WEB_CLIENT_ID BILLING_API_BASE GAMEBASE_PROXY_BASE; do
+            if [ -n "${!name:-}" ]; then
+              DART_DEFINES+=(--dart-define="$name=${!name}")
+            fi
+          done
+          if [ -z "${R2_BUCKET:-}" ]; then
+            unset R2_BUCKET
+          fi
+          flutter config --enable-macos-desktop
+          export FLUTTER_ROOT="${FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter)")/.." && pwd)}"
+          echo "=== Building macOS package for $ARCH ($UPDATER_SLUG) ==="
+          export MACOS_ENGINE_ARCH="$ARCH"
+          bash ./scripts/fetch_stockfish.sh
+          rm -rf dist
+          dart run desktop_updater:release "$UPDATER_SLUG" --release \
+            "${DART_DEFINES[@]}" \
+            --dart-define=MACOS_RELEASE_ARCH="$ARCH"
+          publish_args=(--arch "$ARCH")
+          if [ "$PUBLISH" != "true" ]; then
+            publish_args+=(--skip-upload)
+          fi
+          ./scripts/codemagic_publish_macos.sh "${publish_args[@]}"
+
+      - name: Mark macOS release succeeded
+        run: touch "$CM_BUILD_DIR/.codemagic_release_success"
+
+      - name: Keep installer (dry run)
+        if: ${{ !inputs.publish }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-${{ matrix.arch }}-dmg
+          path: dist/*.dmg
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Notify Telegram release finished
+        if: always()
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: bash ./scripts/codemagic_notify_telegram.sh "$NOTIFY_LABEL" finished
+
+      - name: Remove signing material
+        if: always()
+        run: |
+          keychain delete --path "$RUNNER_TEMP/signing.keychain-db" || true
+          keychain use-login || true
+          rm -f "$RUNNER_TEMP/developer_id_application.p12"
+
+  windows:
+    name: Windows
+    needs: preflight
+    if: inputs.windows
+    runs-on: windows-2022
+    timeout-minutes: 150
+    environment: release
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CM_WORKFLOW_NAME: Windows Desktop Release
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter (stable)
+        background: true
+        uses: ./.github/actions/setup-flutter
+        with:
+          channel: stable
+
+      - name: Set up Python
+        background: true
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Wait for Windows toolchains
+        wait-all:
+
+      - name: Validate public client configuration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python scripts/ci/validate_client_config.py
+
+      - name: Notify Telegram release started
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_notify_telegram.ps1 -Platform "Windows$env:RUN_SUFFIX" -Event started
+
+      - name: Verify release environment
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          $required = @(
+            'SUPABASE_URL',
+            'SUPABASE_ANON_KEY',
+            'GOOGLE_DESKTOP_CLIENT_ID',
+            'GOOGLE_DESKTOP_CLIENT_SECRET',
+            'SENTRY_FLUTTER',
+            'CHESSEVER_CLOUDFLARE_API_BASE',
+            'R2_ACCOUNT_ID',
+            'R2_ACCESS_KEY_ID',
+            'R2_SECRET_ACCESS_KEY'
+          )
+          $missing = @($required | Where-Object { -not [Environment]::GetEnvironmentVariable($_) })
+          if ($missing.Count -gt 0) {
+            $missing | ForEach-Object { Write-Output "::error::$_ is required" }
+            exit 1
+          }
+
+      - name: Get Flutter packages
+        run: flutter pub get
+
+      - name: Install R2 publisher dependencies
+        run: python -m pip install --require-hashes -r scripts\ci\release-tools.txt
+
+      - name: Test Windows native bundle verifier
+        run: flutter test --no-pub test/desktop/windows_release_bundle_verifier_test.dart
+
+      - name: Mask encoded build values
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+        run: |
+          bash ./scripts/ci/mask_dart_defines.sh SUPABASE_URL SUPABASE_ANON_KEY \
+            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
+
+      - name: Build Windows release
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_build_windows_release.ps1
+
+      - name: Upload Windows native symbols
+        # Skips with a warning unless the optional SENTRY_* secrets are set
+        # (they were not set in Codemagic either).
+        continue-on-error: true
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_upload_windows_symbols.ps1
+
+      - name: Install Inno Setup
+        run: |
+          $isccOnPath = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          $isccProgramFiles = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not $isccOnPath -and -not (Test-Path $isccProgramFiles)) {
+            choco install innosetup --yes --no-progress
+          }
+
+      - name: Publish Windows desktop archive
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          if (-not $env:R2_BUCKET) { Remove-Item Env:R2_BUCKET -ErrorAction SilentlyContinue }
+          if ($env:PUBLISH -eq 'true') {
+            powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_publish_windows.ps1
+          } else {
+            powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_publish_windows.ps1 -SkipUpload
+          }
+          exit $LASTEXITCODE
+
+      - name: Mark Windows release succeeded
+        run: New-Item -ItemType File -Path (Join-Path $env:CM_BUILD_DIR '.codemagic_release_success') -Force | Out-Null
+
+      - name: Keep installer (dry run)
+        if: ${{ !inputs.publish }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-installer
+          path: windows/installer/output/*.exe
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Notify Telegram release finished
+        if: always()
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_notify_telegram.ps1 -Platform "Windows$env:RUN_SUFFIX" -Event finished
+
+  linux:
+    name: Linux
+    needs: preflight
+    if: inputs.linux
+    # Codemagic's linux_x2 is Ubuntu 24.04; keep the same glibc floor for the .deb.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: release
+    env:
+      CM_WORKFLOW_NAME: Linux Desktop Release
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter (stable)
+        background: true
+        uses: ./.github/actions/setup-flutter
+        with:
+          channel: stable
+
+      - name: Set up Python
+        background: true
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Wait for Linux toolchains
+        wait-all:
+
+      - name: Validate public client configuration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python scripts/ci/validate_client_config.py
+
+      - name: Notify Telegram release started
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: bash ./scripts/codemagic_notify_telegram.sh "Linux$RUN_SUFFIX" started
+
+      - name: Verify release environment
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          required=(
+            SUPABASE_URL
+            SUPABASE_ANON_KEY
+            GOOGLE_DESKTOP_CLIENT_ID
+            GOOGLE_DESKTOP_CLIENT_SECRET
+            SENTRY_FLUTTER
+            CHESSEVER_CLOUDFLARE_API_BASE
+            R2_ACCOUNT_ID
+            R2_ACCESS_KEY_ID
+            R2_SECRET_ACCESS_KEY
+          )
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is required"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Get Flutter packages
+        run: flutter pub get
+
+      - name: Install R2 publisher dependencies
+        run: python -m pip install --require-hashes -r scripts/ci/release-tools.txt
+
+      - name: Test Linux updater archive aliases
+        run: flutter test --no-pub test/desktop/desktop_updater_archive_symlink_test.dart
+
+      - name: Mask encoded build values
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+        run: |
+          bash ./scripts/ci/mask_dart_defines.sh SUPABASE_URL SUPABASE_ANON_KEY \
+            GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
+
+      - name: Build Linux release
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+        run: bash ./scripts/codemagic_build_linux_release.sh
+
+      - name: Publish Linux desktop archive
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          if [ -z "${R2_BUCKET:-}" ]; then
+            unset R2_BUCKET
+          fi
+          # The publish script launches the built app with --verify-release-env,
+          # and the GTK runner opens a window before Dart sees the flag. Hosted
+          # Ubuntu has no display, so give it a virtual one.
+          if [ "$PUBLISH" = "true" ]; then
+            xvfb-run -a bash ./scripts/codemagic_publish_linux.sh
+          else
+            xvfb-run -a bash ./scripts/codemagic_publish_linux.sh --skip-upload
+          fi
+
+      - name: Mark Linux release succeeded
+        run: touch "$CM_BUILD_DIR/.codemagic_release_success"
+
+      - name: Keep installer (dry run)
+        if: ${{ !inputs.publish }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-deb
+          path: dist/**/*.deb
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Notify Telegram release finished
+        if: always()
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: bash ./scripts/codemagic_notify_telegram.sh "Linux$RUN_SUFFIX" finished

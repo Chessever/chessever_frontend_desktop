@@ -217,6 +217,10 @@ fastlane/.env*
 **/fastlane/metadata
 dist/
 
+# Local release evidence can contain account details and raw app captures.
+/output/
+*.provisionprofile
+
 # auto_updater signing keys — public key is committed; private keys never are.
 dsa_priv.pem
 sparkle_priv.pem

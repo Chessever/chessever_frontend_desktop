@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/mac_sandbox_file_picker.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// Wraps a child widget with a drag-drop overlay for chess files/folders.
@@ -58,6 +59,7 @@ class _LocalChessDropZoneState extends State<LocalChessDropZone> {
       onDragDone: (details) async {
         if (_dropInFlight) return;
         setState(() => _hovering = false);
+        await MacSandboxFilePicker.retain(details.files.map((file) => file.path));
         final paths = await localChessDropPaths(
           details.files.map((x) => x.path),
         );

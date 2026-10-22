@@ -112,4 +112,17 @@ void main() {
       if (authoritative) expect(rows.first.overallRank, 1);
     });
   }
+
+  test('published roster rows keep official order and drop unranked rows', () {
+    final rows = publishedStandingRows([
+      TournamentPlayer(name: 'Third', fideId: 3, rank: 3, score: 1, played: 3),
+      TournamentPlayer(name: 'Feed-only', fideId: 9, score: 2, played: 2),
+      TournamentPlayer(name: 'Tied B', fideId: 2, rank: 1, score: 2, played: 3),
+      TournamentPlayer(name: 'VACANT', rank: 0, score: 0, played: 0),
+      TournamentPlayer(name: 'Tied A', fideId: 1, rank: 1, score: 2, played: 3),
+      TournamentPlayer(name: 'Unscored', fideId: 4, rank: 4, played: 0),
+    ]);
+    expect(rows.map((row) => row.name), ['Tied B', 'Tied A', 'Third']);
+    expect(rows.map((row) => row.overallRank), [1, 1, 3]);
+  });
 }

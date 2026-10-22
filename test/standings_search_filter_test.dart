@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -254,6 +255,51 @@ void main() {
         isOfficialStandingRow(useExternalOrder: false, rank: 3, score: 4.5),
         isFalse,
       );
+    });
+  });
+
+  group('published table membership', () {
+    final ranked = TournamentPlayer(
+      name: 'Ranked',
+      played: 7,
+      rank: 1,
+      score: 6,
+    );
+    final feedOnly = TournamentPlayer(name: 'Feed only', played: 3);
+
+    test('drops feed players the published table does not list', () {
+      expect(
+        publishedTableMembers(
+          [ranked, feedOnly],
+          useExternalOrder: true,
+          singleTourScope: true,
+        ).map((p) => p.name),
+        ['Ranked'],
+      );
+    });
+
+    test('keeps everyone before the table ranks anyone', () {
+      expect(
+        publishedTableMembers(
+          [feedOnly],
+          useExternalOrder: true,
+          singleTourScope: true,
+        ),
+        hasLength(1),
+      );
+    });
+
+    test('keeps everyone outside a single published table', () {
+      for (final (external, single) in [(false, true), (true, false)]) {
+        expect(
+          publishedTableMembers(
+            [ranked, feedOnly],
+            useExternalOrder: external,
+            singleTourScope: single,
+          ),
+          hasLength(2),
+        );
+      }
     });
   });
 
