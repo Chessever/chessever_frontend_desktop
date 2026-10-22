@@ -1,6 +1,7 @@
 // Release-mode startup logging is intentional here — these are the only
 // signals users see when something goes wrong before the window appears.
 // ignore_for_file: avoid_print
+import 'services/converted_database_names.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -275,6 +276,7 @@ Future<void> _desktopBoot({
 
   WidgetsFlutterBinding.ensureInitialized();
   print('[desktop] flutter binding ready');
+  await initializeConvertedDatabaseNames();
 
   // Keep first paint and the established remote search path untouched. The
   // reviewed Memorial JSON is parsed once in a worker isolate after first
