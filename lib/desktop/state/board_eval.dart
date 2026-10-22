@@ -235,15 +235,8 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
     }
     _clearDepth();
     final settings = config.toEngineSettings();
-    final requested = settings.multiPvForStockfish();
-    int legalCount;
-    try {
-      legalCount = Chess.fromSetup(Setup.parseFen(fen)).legalMoves.length;
-    } catch (_) {
-      state = const BoardEvalState(pvs: [], isEvaluating: false, depth: 0);
-      return;
-    }
-    final multiPV = legalCount < requested ? legalCount : requested;
+    // The UCI boundary caps this to the actual legal root-move count.
+    final multiPV = settings.multiPvForStockfish();
     final searchDuration = settings.searchDurationFor(
       EngineComponent.principalVariation,
     );
@@ -253,9 +246,10 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
       final result = await StockfishSingleton().evaluatePosition(
         fen,
         depth: maxDepth,
-        maxDepth: maxDepth,
+        maxDepth: searchDuration == null ? null : maxDepth,
         multiPV: multiPV,
         searchDuration: searchDuration,
+        infiniteSearch: searchDuration == null,
         isCurrentPosition: true,
         allowCache: false,
         ownerId: _ownerId,
