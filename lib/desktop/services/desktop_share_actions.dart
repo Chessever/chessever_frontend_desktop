@@ -230,6 +230,25 @@ Future<void> shareDesktopEvent({
   await Share.share(url, sharePositionOrigin: _shareOrigin(context));
 }
 
+/// `https://chessever.com/collections/<slug>`. The web page there previews
+/// the collection and hands visitors to the apps, which open it by the same
+/// link. Null without a slug.
+String? buildDesktopCollectionShareUrl(String? slug) {
+  final value = slug?.trim();
+  if (value == null || value.isEmpty) return null;
+  return 'https://chessever.com/collections/${Uri.encodeComponent(value)}';
+}
+
+/// The system share sheet with [slug]'s collection link.
+Future<void> shareDesktopCollection(BuildContext context, String slug) async {
+  final url = buildDesktopCollectionShareUrl(slug);
+  if (url == null) {
+    _toast(context, 'This collection has no shareable link.', error: true);
+    return;
+  }
+  await Share.share(url, sharePositionOrigin: _shareOrigin(context));
+}
+
 Future<void> copyDesktopShareUrl(
   BuildContext context,
   String? url, {

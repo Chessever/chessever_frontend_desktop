@@ -3,11 +3,12 @@ import {
   bearerNamesAccount,
   matchGamebaseProxyRoute,
 } from "./allowed_routes.ts";
+import { hasProjectClientKey, upstreamHeaders } from "./request_headers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, if-none-match, cache-control, pragma",
+    "authorization, x-client-info, apikey, content-type, if-none-match, cache-control, pragma, x-rewarded-session",
   "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
   "Access-Control-Expose-Headers":
     "X-Game-Count, X-PGN-Cache, X-PGN-Snapshot, X-PGN-Filter-Version, X-PGN-Warm-Job, Retry-After, ETag, Content-Disposition",
@@ -52,9 +53,9 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "method_not_allowed" }, 405);
   }
 
-  const hasClientAuth = req.headers.has("authorization") ||
-    req.headers.has("apikey");
-  if (!hasClientAuth) {
+  const publicKey = (Deno.env.get("GAMEBASE_CLIENT_ANON_KEY") ??
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "").trim();
+  if (!hasProjectClientKey(req.headers, publicKey)) {
     return jsonResponse({ error: "unauthorized" }, 401);
   }
 
@@ -65,11 +66,10 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "route_not_allowed" }, 403);
   }
 
-  // A member route acts for one account. The function's JWT verification has
-  // already checked the token; Gamebase verifies it again and decides what
-  // that account may do. Without a member's bearer there is nobody to act for.
+  // Gamebase verifies the account token and its permissions. Gateway JWT
+  // verification stays off because it rejects the project's legacy anon key.
   const authorization = req.headers.get("authorization") ?? "";
-  if (route.member && !/^Bearer \S+$/.test(authorization)) {
+  if (route.member && !bearerNamesAccount(authorization)) {
     return jsonResponse({ error: "unauthorized" }, 401);
   }
 
@@ -87,26 +87,7 @@ Deno.serve(async (req: Request) => {
     upstreamUrl.searchParams.append(key, value);
   });
 
-  const headers = new Headers();
-  headers.set("Accept", req.headers.get("accept") ?? "application/json");
-  headers.set("X-API-Key", apiKey);
-  const ifNoneMatch = req.headers.get("if-none-match");
-  if (ifNoneMatch) headers.set("If-None-Match", ifNoneMatch);
-  const contentType = req.headers.get("content-type");
-  if (contentType) headers.set("Content-Type", contentType);
-  // Only member and viewer routes carry the caller's token upstream; every
-  // other route stays anonymous behind the server key, exactly as before.
-  if (route.member) headers.set("Authorization", authorization);
-  if (route.viewer) {
-    if (bearerNamesAccount(authorization)) {
-      headers.set("Authorization", authorization);
-    }
-    // "Judge my Premium again", sent right after a purchase.
-    if (/\bno-cache\b/i.test(req.headers.get("cache-control") ?? "")) {
-      headers.set("Cache-Control", "no-cache");
-      headers.set("Pragma", "no-cache");
-    }
-  }
+  const headers = upstreamHeaders(req.headers, route, apiKey);
 
   let body: BodyInit | undefined;
   if (req.method === "POST" || req.method === "PUT") {

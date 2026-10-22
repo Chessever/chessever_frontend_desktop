@@ -3,6 +3,8 @@ import 'package:chessever/repository/supabase/round/round.dart';
 import 'package:chessever/repository/supabase/round/round_repository.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/group_event/model/tour_detail_view_model.dart';
+import 'package:chessever/screens/standings/official_team_standings.dart';
+import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/tour_detail/bracket/utils/knockout_stage_parser.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
@@ -97,6 +99,12 @@ final knockoutTournamentStateProvider = Provider.autoDispose.family<
     formatSaysTeam: formatSaysTeam,
     formatSaysPlayer: formatSaysPlayer,
     allPlayersHaveTeam: allPlayersHaveTeam,
+    hasOfficialTeamTable:
+        buildOfficialTeamStandings(
+          info: tourMetadata?.info,
+          players: const <PlayerStandingModel>[],
+        ) !=
+        null,
   );
 
   // Check format first, then trustworthy stage metadata, then game structure.
@@ -165,8 +173,14 @@ bool resolveTeamEventClassification({
   required bool formatSaysTeam,
   required bool formatSaysPlayer,
   required bool allPlayersHaveTeam,
+  bool hasOfficialTeamTable = false,
 }) =>
-    teamTable ?? (formatSaysTeam || (!formatSaysPlayer && allPlayersHaveTeam));
+    // A validated organizer team table is proof on its own: the 2026 Russian
+    // Rapid Teams feeds carry no teamTable flag, a "9-round Swiss" format and
+    // no team labels, yet the event is a team one.
+    hasOfficialTeamTable ||
+    (teamTable ??
+        (formatSaysTeam || (!formatSaysPlayer && allPlayersHaveTeam)));
 
 typedef KnockoutRoundMetadataRequest = ({String tourId, String tourName});
 

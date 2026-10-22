@@ -50,6 +50,59 @@ class TeamStandingModel {
           ? gamePoints.toInt().toString()
           : gamePoints.toStringAsFixed(1);
 
+  /// [tiebreaks] without the published match-point and game-point columns
+  /// (Chess-Results TB1/TB2, Info64 MP/GP) when they repeat the [matchPoints]
+  /// and [gamePoints] the row already shows. Derived tiebreaks such as BH:MP
+  /// or EMMSB stay.
+  List<PublishedTiebreak> get extraTiebreaks => [
+    for (final tiebreak in tiebreaks)
+      if (!repeatsShownPoints(tiebreak)) tiebreak,
+  ];
+
+  /// Whether [tiebreak] is the published MP or GP column carrying the same
+  /// value as [matchPoints] or [gamePoints].
+  bool repeatsShownPoints(PublishedTiebreak tiebreak) {
+    final description = tiebreak.description;
+    final code = tiebreak.extendedCode;
+    if (tiebreak.points == matchPoints &&
+        (description == 'MP' ||
+            code == 'MP' ||
+            _publishedMatchPoints.hasMatch(description))) {
+      return true;
+    }
+    return tiebreak.points == gamePoints &&
+        (description == 'GP' ||
+            code == 'GP' ||
+            description == 'points (game-points)');
+  }
+
+  // "Matchpoints (2 for wins, …)" or the organizer's own scale,
+  // "Matchpoints (variabel)".
+  static final _publishedMatchPoints = RegExp(
+    r'^Matchpoints \((\d+ for wins|variabel\))',
+  );
+
+  /// Tiebreak columns for a table of [teams], in first-seen published order.
+  /// A column is dropped only when every team publishing it repeats that
+  /// team's own match or game points, so a column never vanishes for some
+  /// rows and stays for others.
+  static List<PublishedTiebreak> tableTiebreakColumns(
+    Iterable<TeamStandingModel> teams,
+  ) {
+    final definitions = <String, PublishedTiebreak>{};
+    final informative = <String>{};
+    for (final team in teams) {
+      for (final value in team.tiebreaks) {
+        definitions.putIfAbsent(value.identity, () => value);
+        if (!team.repeatsShownPoints(value)) informative.add(value.identity);
+      }
+    }
+    return [
+      for (final entry in definitions.entries)
+        if (informative.contains(entry.key)) entry.value,
+    ];
+  }
+
   /// Completed matches behind [matchPoints].
   int get matchesPlayed => matchesWon + matchesDrawn + matchesLost;
 
