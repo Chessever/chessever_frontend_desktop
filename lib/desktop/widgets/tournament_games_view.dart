@@ -2432,10 +2432,16 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
     // from whichever is fresher so we neither show a stale position/clock nor
     // clobber fresher realtime data already in flight on another channel.
     final currentBase = container.read(baseGameProvider(gameId));
-    final latestGame =
+    final positionWinner =
         shouldReplaceBaseGame(currentBase, fetched)
             ? fetched
             : (currentBase ?? fetched);
+    final latestGame = retainMissingGameTimeControl(
+      selected: positionWinner,
+      alternate: identical(positionWinner, fetched)
+          ? (currentBase ?? openedGame)
+          : fetched,
+    );
 
     if (currentBase != latestGame) {
       container.read(baseGameProvider(gameId).notifier).state = latestGame;

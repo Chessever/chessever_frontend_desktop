@@ -88,6 +88,7 @@ class BoardTabGameArgs {
     this.fenSeed,
     this.initialFen,
     this.sourceGame,
+    String? timeControlText,
     this.viewSource = ChessboardView.tour,
     this.eventBroadcastId,
     this.tournamentTitle = '',
@@ -111,7 +112,7 @@ class BoardTabGameArgs {
     this.librarySaveOrigin,
     this.retainedSeedIdentity,
     this.accessContext,
-  });
+  }) : _timeControlText = timeControlText;
 
   /// Supabase game id, when this tab is bound to a tournament game. Null
   /// for drag-dropped PGNs and saved-analysis opens — those have no live
@@ -155,6 +156,24 @@ class BoardTabGameArgs {
   /// context mobile supplies from `ChessBoardScreenNew`. Detached PGNs and
   /// saved analyses intentionally leave this null.
   final GamesTourModel? sourceGame;
+
+  // Small immutable context survives detach without serializing the whole DTO.
+  final String? _timeControlText;
+  String? get timeControlText {
+    final source = sourceGame;
+    if (source?.gameId == gameId &&
+        (source?.timeControlText?.trim().isNotEmpty ?? false)) {
+      return source!.timeControlText;
+    }
+    if (_timeControlText?.trim().isNotEmpty ?? false) return _timeControlText;
+    for (final game in eventGames) {
+      if (game.id == gameId &&
+          (game.timeControlText?.trim().isNotEmpty ?? false)) {
+        return game.timeControlText;
+      }
+    }
+    return null;
+  }
 
   /// Mobile board source this tab came from. Used when the desktop board
   /// needs to reproduce mobile's scorecard context rules.
@@ -368,6 +387,7 @@ class BoardTabGameArgs {
     bool clearFenSeed = false,
     String? initialFen,
     GamesTourModel? sourceGame,
+    String? timeControlText,
     ChessboardView? viewSource,
     String? eventBroadcastId,
     String? tournamentTitle,
@@ -412,6 +432,9 @@ class BoardTabGameArgs {
       fenSeed: clearFenSeed ? null : fenSeed ?? this.fenSeed,
       initialFen: initialFen ?? this.initialFen,
       sourceGame: sourceGame ?? this.sourceGame,
+      // A same-tab replacement must never inherit the previous game's control.
+      timeControlText: timeControlText ??
+          (gameId == null || gameId == this.gameId ? _timeControlText : null),
       viewSource: viewSource ?? this.viewSource,
       eventBroadcastId: eventBroadcastId ?? this.eventBroadcastId,
       tournamentTitle: tournamentTitle ?? this.tournamentTitle,
