@@ -49,7 +49,7 @@ jobs:
     name: Universal Mac App Store package
     needs: preflight
     runs-on: macos-26
-    timeout-minutes: 180
+    timeout-minutes: 30
     environment: release
     env:
       STORE_OUTPUT: ${{ github.workspace }}/build/mac-app-store
@@ -162,11 +162,13 @@ jobs:
           test -s "$STORE_PROFILE"
 
       - name: Build and sign the universal store edition
+        timeout-minutes: 20
         # Signing is through the ephemeral keychain. No server credentials
         # are present in the build step's environment.
         run: bash scripts/build_mac_app_store.sh
 
       - name: Upload and optionally submit for manual release
+        timeout-minutes: 10
         env:
           RELEASE_REF: ${{ github.ref }}
           SUBMIT_REVIEW: ${{ inputs.submit_review }}

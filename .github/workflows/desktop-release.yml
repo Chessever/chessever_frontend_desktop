@@ -90,7 +90,7 @@ jobs:
     needs: preflight
     if: inputs.macos_arm64 || inputs.macos_x64
     runs-on: macos-26
-    timeout-minutes: 180
+    timeout-minutes: 30
     environment: release
     strategy:
       fail-fast: false
@@ -243,6 +243,7 @@ jobs:
             GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
 
       - name: Build and publish macOS package
+        timeout-minutes: 20
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -322,7 +323,7 @@ jobs:
     needs: preflight
     if: inputs.windows
     runs-on: windows-2022
-    timeout-minutes: 150
+    timeout-minutes: 30
     environment: release
     defaults:
       run:
@@ -413,6 +414,7 @@ jobs:
             GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
 
       - name: Build Windows release
+        timeout-minutes: 20
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -485,7 +487,7 @@ jobs:
     if: inputs.linux
     # Codemagic's linux_x2 is Ubuntu 24.04; keep the same glibc floor for the .deb.
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 30
     environment: release
     env:
       CM_WORKFLOW_NAME: Linux Desktop Release
@@ -575,6 +577,7 @@ jobs:
             GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
 
       - name: Build Linux release
+        timeout-minutes: 20
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
