@@ -111,12 +111,6 @@ bool shouldInitiallyExpandTournamentRound({
   required String? topRoundId,
 }) => roundId == topRoundId;
 
-const int _kTournamentCardStockfishGameLimit = 24;
-
-@visibleForTesting
-bool shouldAllowTournamentCardStockfishFallback(int tournamentGameCount) =>
-    tournamentGameCount <= _kTournamentCardStockfishGameLimit;
-
 /// Orders match sections by elimination stage, then by pairing start time with
 /// the latest pairing first. Some feeds number matches in their slug
 /// (`quarterfinals-match-3-4`); treating that match number as a round number
@@ -1319,10 +1313,11 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
                 roundNameById: roundNameById,
                 streamingEnabled:
                     streamingEnabled && !game.gameStatus.isFinished,
-                allowStockfishFallback:
-                    shouldAllowTournamentCardStockfishFallback(
-                      eventGames.length,
-                    ),
+                // No event-size cap: only mounted (on-screen) cards evaluate,
+                // fallback pauses while the grid scrolls, and the engine caps
+                // its own low-priority backlog. Capping by event size left
+                // every board without an eval in large team events.
+                allowStockfishFallback: true,
               ),
             ),
           );
