@@ -10,7 +10,7 @@ on:
         type: boolean
         default: true
       replace_pending_review:
-        description: Explicitly cancel and replace an earlier pending App Review submission
+        description: Explicitly replace an earlier review or an approved version held for manual release
         type: boolean
         default: false
 
@@ -43,7 +43,7 @@ jobs:
       - name: Verify release safeguards
         run: |
           ruby scripts/ci/check_codemagic_parity.rb
-          python3 -m unittest discover -s scripts/ci -p 'test_mac_app_store_submit.py'
+          python3 -m unittest discover -s scripts/ci -p 'test_*.py'
 
   mac_app_store:
     name: Universal Mac App Store package
