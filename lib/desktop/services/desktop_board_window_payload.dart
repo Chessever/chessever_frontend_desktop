@@ -97,6 +97,8 @@ class DesktopBoardWindowPayload {
           'flipped': session.flipped,
           'loadedFrom': session.loadedFrom,
           'lastAppliedPgn': session.lastAppliedPgn,
+          'lastSavedAnalysisPgn': session.lastSavedAnalysisPgn,
+          'lastBroadcastPgn': session.lastBroadcastPgn,
           'lastAppliedGameId': session.lastAppliedGameId,
           'lastAppliedInitialFenKey': session.lastAppliedInitialFenKey,
           'dirty': session.dirtySinceLoad,
@@ -128,6 +130,8 @@ class DesktopBoardWindowPayload {
             flipped: data['flipped'] == true,
             loadedFrom: data['loadedFrom'] as String?,
             lastAppliedPgn: data['lastAppliedPgn'] as String?,
+            lastSavedAnalysisPgn: data['lastSavedAnalysisPgn'] as String?,
+            lastBroadcastPgn: data['lastBroadcastPgn'] as String?,
             lastAppliedGameId: data['lastAppliedGameId'] as String?,
             lastAppliedInitialFenKey:
                 data['lastAppliedInitialFenKey'] as String?,

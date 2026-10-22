@@ -5254,8 +5254,9 @@ Future<bool> _confirmReplaceActiveBoardGameIfNeeded({
   // a no-op unless the caller explicitly asked for a new tab.
   if (selectedId == nextGame.id) return false;
 
-  final session = ref.read(boardPaneSessionByTabIdProvider)[activeTabId];
-  if (!boardSessionHasUnsavedAnalysis(session)) return true;
+  if (!boardTabHasUnsavedAnalysis(tabId: activeTabId, read: ref.read)) {
+    return true;
+  }
 
   if (context == null || !context.mounted) return false;
   if (_eventGameReplacementConfirmationOpen) return false;
