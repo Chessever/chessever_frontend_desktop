@@ -4,7 +4,9 @@ import FlutterMacOS
 @main
 class AppDelegate: FlutterAppDelegate {
   override func applicationDidFinishLaunching(_ notification: Notification) {
-    installCheckForUpdatesMenuItem()
+    if Bundle.main.object(forInfoDictionaryKey: "ChessEverAppStoreBuild") as? String != "YES" {
+      installCheckForUpdatesMenuItem()
+    }
   }
 
   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

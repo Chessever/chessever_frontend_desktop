@@ -5443,9 +5443,16 @@ class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
   late final String _liveCardsPauseReason =
       'desktop_player_profile_scroll_${widget.tabId}';
 
+  late final StateController<Set<String>> _liveCardsPauseReasonsController;
+
   @override
   void initState() {
     super.initState();
+    // Read once: dispose() releases the pause, and `ref` throws there
+    // (CHESSEVER-24Q).
+    _liveCardsPauseReasonsController = ref.read(
+      liveGameCardsPauseReasonsProvider.notifier,
+    );
     widget.controller.addListener(_onScroll);
   }
 
@@ -5495,7 +5502,11 @@ class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
   void _setLiveCardsPausedForScroll(bool paused) {
     if (_liveCardsPausedForScroll == paused) return;
     _liveCardsPausedForScroll = paused;
-    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+    setLiveGameCardsPausedWithNotifier(
+      _liveCardsPauseReasonsController,
+      reason: _liveCardsPauseReason,
+      paused: paused,
+    );
   }
 
   GlobalKey _sectionKey(int index) {

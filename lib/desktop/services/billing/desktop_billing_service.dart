@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:flutter/foundation.dart' show debugPrint, immutable, kDebugMode;
 import 'package:http/http.dart' as http;
@@ -106,6 +107,9 @@ class DesktopBillingService {
     required int tier,
     required String interval,
   }) async {
+    if (isMacAppStore) {
+      throw StateError('Use Apple in-app purchases in this edition.');
+    }
     final session = await _activeSession(forceRefresh: true);
     if (session == null) {
       throw StateError('Sign in before purchasing.');
@@ -228,6 +232,15 @@ class DesktopBillingService {
       }),
     );
     if (resp.statusCode != 200) {
+      Object? failure;
+      try {
+        failure = jsonDecode(resp.body);
+      } on FormatException {
+        // Gateways can return an HTML error instead of the function's JSON.
+      }
+      if (failure is Map && failure['message'] is String) {
+        throw DesktopCheckoutException(failure['message'] as String);
+      }
       throw StateError(
         'stripe-checkout returned ${resp.statusCode}: ${resp.body}',
       );
@@ -274,10 +287,12 @@ class DesktopBillingService {
   Future<EntitlementSnapshot?> _fetchEntitlement({
     required String authToken,
   }) async {
-    final resp = await http.get(
-      Uri.parse('$_baseUrl/entitlement'),
-      headers: <String, String>{'authorization': 'Bearer $authToken'},
-    );
+    final resp = await http
+        .get(
+          Uri.parse('$_baseUrl/entitlement'),
+          headers: <String, String>{'authorization': 'Bearer $authToken'},
+        )
+        .timeout(const Duration(seconds: 12));
     if (resp.statusCode == 401 || resp.statusCode == 403) {
       throw DesktopBillingAuthException(
         'entitlement returned ${resp.statusCode}: ${resp.body}',
@@ -315,6 +330,13 @@ class DesktopBillingAuthException implements Exception {
 
   final String message;
 
+  @override
+  String toString() => message;
+}
+
+class DesktopCheckoutException implements Exception {
+  const DesktopCheckoutException(this.message);
+  final String message;
   @override
   String toString() => message;
 }
@@ -368,18 +390,25 @@ class EntitlementSnapshot {
       _ => null,
     };
     final status = json['status'] as String?;
+    final isActive = json['is_premium'] as bool? ?? false;
+    final expiresAt = switch (json['expires_at']) {
+      String s => DateTime.tryParse(s),
+      _ => null,
+    };
     return EntitlementSnapshot(
-      isActive: json['is_premium'] as bool? ?? false,
+      isActive: isActive,
       tier: json['tier'] as int?,
       provider: json['provider'] as String?,
-      expiresAt: switch (json['expires_at']) {
-        String s => DateTime.tryParse(s),
-        _ => null,
-      },
-      willRenew: cancelAt == null,
+      expiresAt: expiresAt,
+      willRenew:
+          (json['will_renew'] as bool?) ??
+          (isActive &&
+              expiresAt != null &&
+              cancelAt == null &&
+              !(json['product_id'] as String? ?? '').startsWith('rc_promo_')),
       productId: json['product_id'] as String? ?? '',
       status: status,
-      inBillingGracePeriod: status == 'past_due',
+      inBillingGracePeriod: isActive && status == 'past_due',
     );
   }
 
@@ -397,13 +426,13 @@ class EntitlementSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        isActive,
-        tier,
-        provider,
-        expiresAt,
-        willRenew,
-        productId,
-        status,
-        inBillingGracePeriod,
-      );
+    isActive,
+    tier,
+    provider,
+    expiresAt,
+    willRenew,
+    productId,
+    status,
+    inBillingGracePeriod,
+  );
 }

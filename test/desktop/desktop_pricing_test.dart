@@ -16,19 +16,33 @@ void main() {
 
     test('labels annual savings as a percent, matching the website', () {
       expect(DesktopPricing.priceForTier(1).annualSavingsPercent, 24);
-      expect(DesktopPricing.priceForTier(1).annualPlanLabel, 'Annual · Save 24%');
+      expect(
+        DesktopPricing.priceForTier(1).annualPlanLabel,
+        'Annual · Save 24%',
+      );
 
       expect(DesktopPricing.priceForTier(2).annualSavingsPercent, 26);
-      expect(DesktopPricing.priceForTier(2).annualPlanLabel, 'Annual · Save 26%');
+      expect(
+        DesktopPricing.priceForTier(2).annualPlanLabel,
+        'Annual · Save 26%',
+      );
 
       expect(DesktopPricing.priceForTier(3).annualSavingsPercent, 41);
-      expect(DesktopPricing.priceForTier(3).annualPlanLabel, 'Annual · Save 41%');
+      expect(
+        DesktopPricing.priceForTier(3).annualPlanLabel,
+        'Annual · Save 41%',
+      );
     });
 
     test('maps countries to the same tier examples used by web pricing', () {
       expect(DesktopPricing.priceForCountry('US').tier, 1);
-      expect(DesktopPricing.priceForCountry('TR').tier, 2);
+      expect(DesktopPricing.priceForCountry('KZ').tier, 2);
       expect(DesktopPricing.priceForCountry('IN').tier, 3);
+      for (final country in ['AR', 'BR', 'ID', 'TR', 'AZ']) {
+        expect(DesktopPricing.priceForCountry(country).tier, 3);
+        expect(DesktopPricing.priceForCountry(country).monthlyAmount, 4.49);
+        expect(DesktopPricing.priceForCountry(country).annualAmount, 31.99);
+      }
     });
 
     test('falls back to tier 1 when no country can be resolved', () {
@@ -59,20 +73,20 @@ void main() {
   });
 
   group('DesktopPricing trial copy', () {
-    test('matches the store and Stripe introductory offer', () {
-      expect(DesktopPricing.trialDays, 3);
+    test('matches Stripe checkout with no introductory trial', () {
+      expect(DesktopPricing.trialDays, 0);
     });
 
-    test('offers the trial unless eligibility is known false', () {
-      expect(DesktopPricing.offersTrial(null), isTrue);
-      expect(DesktopPricing.offersTrial(true), isTrue);
+    test('does not promise a trial with unknown or stale eligibility', () {
+      expect(DesktopPricing.offersTrial(null), isFalse);
+      expect(DesktopPricing.offersTrial(true), isFalse);
       expect(DesktopPricing.offersTrial(false), isFalse);
     });
 
     test('assurance line matches the website', () {
       expect(
         DesktopPricing.premiumAssuranceLabel(showsTrial: true),
-        'Secure checkout · Cancel anytime before day 3',
+        'Secure checkout · Cancel anytime · Every device',
       );
       expect(
         DesktopPricing.premiumAssuranceLabel(showsTrial: false),
@@ -83,7 +97,7 @@ void main() {
     test('monthly detail matches the website subtext', () {
       expect(
         DesktopPricing.monthlyPlanDetail(showsTrial: true),
-        '3 days free, then billed monthly',
+        'Billed monthly',
       );
       expect(
         DesktopPricing.monthlyPlanDetail(showsTrial: false),
@@ -97,7 +111,7 @@ void main() {
           pricing: DesktopPricing.priceForTier(1),
           showsTrial: true,
         ),
-        r'3 days free, then $8.33 a month · Save $31.89/yr',
+        r'$8.33 a month · Save $31.89/yr',
       );
       expect(
         DesktopPricing.annualPlanDetail(
@@ -130,7 +144,7 @@ void main() {
       );
       expect(
         DesktopPricing.annualPlanDetail(pricing: flat, showsTrial: true),
-        r'3 days free, then $10 a month',
+        r'$10 a month',
       );
     });
 
@@ -142,7 +156,7 @@ void main() {
           interval: 'year',
           showsTrial: true,
         ),
-        r'3 days free, then $99.99 billed annually · Save $31.89/yr',
+        r'$99.99 billed annually · Save $31.89/yr',
       );
       expect(
         DesktopPricing.planSubtext(
@@ -158,7 +172,7 @@ void main() {
           interval: 'month',
           showsTrial: true,
         ),
-        '3 days free, then billed monthly',
+        'Billed monthly',
       );
       expect(
         DesktopPricing.planSubtext(

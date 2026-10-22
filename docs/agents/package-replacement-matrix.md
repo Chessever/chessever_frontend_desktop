@@ -17,7 +17,7 @@
 | `google_sign_in` | ❌ no Windows | Replace with OAuth web flow using `url_launcher` + a local loopback server (`HttpServer.bind('127.0.0.1', 0)`). Same pattern works on macOS. |
 | `sign_in_with_apple` | ❌ no Windows | Keep gated to `Platform.isMacOS`; on Windows, hide the button. |
 | `sqflite` | ❌ no Windows | Replace with `sqflite_common_ffi` and call `sqfliteFfiInit()` + set `databaseFactory = databaseFactoryFfi` on desktop. Existing `AppDatabase` keeps its API. |
-| `purchases_flutter` | ✅ removed | Desktop billing is out of scope until Stripe is wired. Keep desktop gates open with the local subscription stub. |
+| `purchases_flutter` | ✅ macOS store only | Mac App Store builds use Apple purchases through RevenueCat, with the same account/entitlement as mobile. Website and Windows builds retain Stripe and the backend subscription notifier; never initialize the Apple SDK there. |
 | `amplitude_flutter` | ✅ removed | Unsupported on Windows. `AnalyticsService` remains package-free and keeps the local event API for mobile attribution forwarding. |
 | `app_settings` | ❌ no Windows | Drop. Desktop has a Preferences window (forui). |
 | `in_app_review` | ❌ no Windows | Drop. Desktop link to a feedback form. |

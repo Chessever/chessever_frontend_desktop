@@ -356,6 +356,29 @@ void main() {
       expect(plan.savedAnalyses.single['folder_id'], 'm-likes');
     });
 
+    test('a copied folder never reuses a name the destination holds', () {
+      final plan = planGuestAccountMerge(
+        snapshot: snapshotOf(
+          GuestAccountRows(
+            folders: [
+              _folder('g-open', 'Openings'),
+              _folder('g-end', 'Endgames'),
+            ],
+          ),
+        ),
+        destination: const GuestAccountRows(
+          folders: [
+            {'id': 'm-open', 'name': 'Openings'},
+            {'id': 'm-open-2', 'name': 'Openings 2'},
+          ],
+        ),
+        targetUserId: _member,
+      );
+      // UNIQUE(user_id, name) spans the whole tree: a same-named copy failed
+      // the write and aborted the merge (CHESSEVER-1Z7).
+      expect(plan.folders.map((f) => f['name']), ['Openings 3', 'Endgames']);
+    });
+
     test('permanent folders map onto the destination defaults', () {
       final plan = planGuestAccountMerge(
         snapshot: snapshotOf(

@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 
@@ -413,8 +412,11 @@ Future<({List<ChessGame> games, String? fileError})> _gamesFromFile(
   }
 }
 
+// debugPrint, not stdout: a Windows GUI build has no console, writing to
+// its stdout throws "The handle is invalid" and that aborted the import it
+// was logging (CHESSEVER-1K7).
 void _quickImportLog(String message) {
-  stdout.writeln(
+  debugPrint(
     '[PGN_QUICK_IMPORT ${DateTime.now().toIso8601String()}] $message',
   );
 }

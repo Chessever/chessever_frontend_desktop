@@ -7,6 +7,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
+import 'package:chessever/desktop/services/billing/mac_app_store_billing.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
+import 'package:chessever/desktop/state/desktop_window_role.dart';
 import 'package:chessever/desktop/services/desktop_offline_access_cache.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
@@ -51,7 +54,7 @@ class DesktopSubscriptionDependencies {
 
   /// Production wiring: Supabase auth, the `entitlement` edge function and the
   /// shared-preferences offline record.
-  factory DesktopSubscriptionDependencies.live() {
+  factory DesktopSubscriptionDependencies.live({bool useAppleStore = false}) {
     DesktopAccountIdentity? identityOf(User? user) => user == null
         ? null
         : DesktopAccountIdentity(id: user.id, isAnonymous: user.isAnonymous);
@@ -62,10 +65,13 @@ class DesktopSubscriptionDependencies {
       authChanges: () => Supabase.instance.client.auth.onAuthStateChange.map(
         (event) => identityOf(event.session?.user),
       ),
-      fetchEntitlement: ({required bool forceSessionRefresh}) =>
-          DesktopBillingService.instance.currentEntitlement(
-            forceSessionRefresh: forceSessionRefresh,
-          ),
+      fetchEntitlement: ({required bool forceSessionRefresh}) => useAppleStore
+          ? MacAppStoreBilling.instance.currentEntitlement(
+              forceSessionRefresh: forceSessionRefresh,
+            )
+          : DesktopBillingService.instance.currentEntitlement(
+              forceSessionRefresh: forceSessionRefresh,
+            ),
       readOfflineVerification: DesktopOfflineAccessCache.readOfflineVerification,
       recordEntitlement: DesktopOfflineAccessCache.recordEntitlement,
       signOut: () => Supabase.instance.client.auth.signOut(),
@@ -427,5 +433,12 @@ class DesktopSubscriptionNotifier extends SubscriptionNotifier {
 /// Riverpod override that swaps the mobile RevenueCat-driven notifier for
 /// the desktop one. Wired into [ProviderScope] in `desktop_main.dart`.
 final Override desktopSubscriptionOverride = subscriptionProvider.overrideWith(
-  (ref) => DesktopSubscriptionNotifier(),
+  (ref) => DesktopSubscriptionNotifier(
+    dependencies: DesktopSubscriptionDependencies.live(
+      // The native SDK has one customer identity per process. Detached
+      // boards verify the backend mirror; only the main engine owns the SDK.
+      useAppleStore: isMacAppStore &&
+          ref.read(desktopWindowRoleProvider) == DesktopWindowRole.main,
+    ),
+  ),
 );

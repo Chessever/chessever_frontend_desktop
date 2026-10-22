@@ -135,7 +135,6 @@ class DesktopPricing {
     'MV': 2,
     'BG': 2,
     'CL': 2,
-    'TR': 2,
     'KZ': 2,
     'RU': 2,
     'LC': 2,
@@ -149,9 +148,7 @@ class DesktopPricing {
     'MU': 2,
     'GD': 2,
     'DO': 2,
-    'AR': 2,
     'VC': 2,
-    'BR': 2,
     'AL': 2,
     'DM': 2,
     'GE': 2,
@@ -171,7 +168,6 @@ class DesktopPricing {
     'TV': 2,
     'MN': 2,
     'SR': 2,
-    'AZ': 2,
     'MH': 2,
     'EC': 2,
     'LY': 2,
@@ -188,7 +184,6 @@ class DesktopPricing {
     'FM': 2,
     'WS': 2,
     'IR': 2,
-    'ID': 2,
     'VN': 2,
     'JO': 2,
     'LB': 2,
@@ -208,6 +203,11 @@ class DesktopPricing {
     'UZ': 2,
 
     // Tier 3
+    'AR': 3,
+    'BR': 3,
+    'ID': 3,
+    'TR': 3,
+    'AZ': 3,
     'PS': 3,
     'EG': 3,
     'NI': 3,
@@ -291,19 +291,16 @@ class DesktopPricing {
     );
   }
 
-  /// Matches the introductory offer on the App Store, Play Store and Stripe.
-  static const int trialDays = 3;
+  /// New Stripe purchases begin billing immediately.
+  static const int trialDays = 0;
 
-  /// Whether a plan may advertise the free trial. `eligible == null` means
-  /// "not yet known" (signed out, or the probe has not returned) and reads as
-  /// offered — the same rule chessever.com applies, because checkout
-  /// independently re-checks before anyone is charged.
-  static bool offersTrial(bool? eligible) => eligible != false;
+  /// Advertise an offer only when checkout grants it and eligibility is known.
+  static bool offersTrial(bool? eligible) => trialDays > 0 && eligible == true;
 
   /// Reassurance line under the button. A trial changes when billing starts.
   /// Verbatim from chessever.com/premium.
   static String premiumAssuranceLabel({required bool showsTrial}) {
-    return showsTrial
+    return showsTrial && trialDays > 0
         ? 'Secure checkout · Cancel anytime before day $trialDays'
         : 'Secure checkout · Cancel anytime · Every device';
   }
@@ -311,7 +308,7 @@ class DesktopPricing {
   /// The Monthly column's detail line in the desktop paywall. Same words as
   /// the website's monthly subtext.
   static String monthlyPlanDetail({required bool showsTrial}) {
-    return showsTrial
+    return showsTrial && trialDays > 0
         ? '$trialDays days free, then billed monthly'
         : 'Billed monthly';
   }
@@ -324,7 +321,8 @@ class DesktopPricing {
     String currencyCode = 'USD',
     required bool showsTrial,
   }) {
-    final trialPrefix = showsTrial ? '$trialDays days free, then ' : '';
+    final trialPrefix =
+        showsTrial && trialDays > 0 ? '$trialDays days free, then ' : '';
     final equivalent =
         '${formatAmount(pricing.annualMonthlyEquivalent, currencyCode)}'
         ' a month';
@@ -343,7 +341,8 @@ class DesktopPricing {
     String currencyCode = 'USD',
     required bool showsTrial,
   }) {
-    final trialPrefix = showsTrial ? '$trialDays days free, then ' : '';
+    final trialPrefix =
+        showsTrial && trialDays > 0 ? '$trialDays days free, then ' : '';
     if (interval == 'year') {
       final billed =
           '${formatAmount(pricing.annualAmount, currencyCode)}'
@@ -352,7 +351,7 @@ class DesktopPricing {
       final savings = formatAmount(pricing.annualSavingsAmount, currencyCode);
       return '$trialPrefix$billed · Save $savings/yr';
     }
-    return showsTrial
+    return showsTrial && trialDays > 0
         ? '$trialDays days free, then billed monthly'
         : 'Billed monthly';
   }
