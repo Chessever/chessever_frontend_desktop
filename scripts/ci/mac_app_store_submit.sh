@@ -14,13 +14,12 @@ esac
 
 package="${STORE_OUTPUT:-build/mac-app-store}/ChessEver-Mac-App-Store.pkg"
 test -s "$package"
-args=(publish --path "$package")
 if [ "${SUBMIT_REVIEW:-true}" = true ]; then
-  args+=(--app-store --platform MAC_OS --release-type MANUAL
-    --whats-new @file:scripts/ci/mac_app_store_release_notes.txt
-    --max-find-build-wait 30 --max-build-processing-wait 60)
-  if [ "${REPLACE_PENDING_REVIEW:-false}" = true ]; then
-    args+=(--cancel-previous-submissions)
-  fi
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  python3 "$script_dir/app_store_review.py" --package "$package" \
+    --platform MAC_OS --release-type MANUAL \
+    --notes scripts/ci/mac_app_store_release_notes.txt \
+    --replace-pending "${REPLACE_PENDING_REVIEW:-false}"
+else
+  app-store-connect publish --path "$package" --silent --disable-jwt-cache
 fi
-app-store-connect "${args[@]}"

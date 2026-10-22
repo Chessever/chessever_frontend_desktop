@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -14,9 +15,10 @@ class MacAppStoreSubmitTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'ChessEver-Mac-App-Store.pkg').write_bytes(b'signed package fixture')
-            stub = root / 'app-store-connect'
-            stub.write_text('#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
-            stub.chmod(0o755)
+            for name in ('app-store-connect', 'python3'):
+                stub = root / name
+                stub.write_text(f'#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+                stub.chmod(0o755)
             env = dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}',
                        STORE_OUTPUT=str(root), RELEASE_REF='refs/heads/main')
             env.update(overrides)
@@ -27,15 +29,16 @@ class MacAppStoreSubmitTest(unittest.TestCase):
     def test_review_is_default_and_always_manual(self):
         result, args = self.run_submit()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('--app-store', args)
+        self.assertTrue(args[0].endswith('app_store_review.py'))
         self.assertEqual(args[args.index('--platform') + 1], 'MAC_OS')
         self.assertEqual(args[args.index('--release-type') + 1], 'MANUAL')
         self.assertNotIn('--cancel-previous-submissions', args)
+        self.assertEqual(args[args.index('--replace-pending') + 1], 'false')
 
     def test_pending_review_replacement_is_explicit(self):
         result, args = self.run_submit(REPLACE_PENDING_REVIEW='true')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('--cancel-previous-submissions', args)
+        self.assertEqual(args[args.index('--replace-pending') + 1], 'true')
         self.assertEqual(args[args.index('--release-type') + 1], 'MANUAL')
 
     def test_upload_only_does_not_mutate_review(self):
@@ -43,6 +46,7 @@ class MacAppStoreSubmitTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('--app-store', args)
         self.assertNotIn('--cancel-previous-submissions', args)
+        self.assertIn('--silent', args)
 
     def test_wrong_branch_and_invalid_options_never_call_cli(self):
         for options in ({'RELEASE_REF': 'refs/heads/dev'},
