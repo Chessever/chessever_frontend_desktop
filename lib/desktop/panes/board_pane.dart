@@ -19,6 +19,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart'
     show ValueListenable, kDebugMode, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/widgets/pgn_attribution_editor.dart';
 import 'package:chessever/utils/pgn_time_control.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -3222,7 +3223,10 @@ class _BoardPaneContent extends HookConsumerWidget {
       try {
         final saveCompletion = captureBoardSaveCompletion();
         // Same opt-in hydrate as Copy PGN.
-        final pgn = exportGameToPgn(hydrateGameForUserOutput(chessGame.value));
+        final exportSnapshot = hydrateGameForUserOutput(chessGame.value);
+        final edited = await showPgnAttributionDialog(context, exportSnapshot);
+        if (edited == null || !saveCompletion.ownsActivation()) return;
+        final pgn = exportGameToPgn(edited);
         final headers = pgnHeaders.value;
         final defaultName = _suggestPgnFileName(headers);
         final path = await FilePicker.platform.saveFile(
