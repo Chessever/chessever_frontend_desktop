@@ -541,21 +541,26 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       }
     }
     // The list order is the source of truth: started rounds first in descending
-    // order, then future rounds in descending order. A future round is promoted
-    // only when every started board is finished and it begins within two hours.
+    // order, then future rounds in descending order. The next round goes on
+    // top as soon as its boards are out and every started board is finished,
+    // however far off its start time is, or if it has none at all.
+    bool hasRoundGames(GamesAppBarModel model) =>
+        (grouped.gamesByRound[model.id] ?? const <GamesTourModel>[]).isNotEmpty;
     final displayRounds = sortRoundsForDisplay(
       grouped.filteredRounds,
       resolveDate: (model) => model.startsAt,
-      hasGames:
-          (model) =>
-              (grouped.gamesByRound[model.id] ?? const <GamesTourModel>[])
-                  .isNotEmpty,
+      hasGames: hasRoundGames,
       isRoundFullyPlayed: (model) {
         final games =
             grouped.gamesByRound[model.id] ?? const <GamesTourModel>[];
         return games.isNotEmpty &&
             games.every((game) => game.gameStatus.isFinished);
       },
+      // A round holding only published pairings has not started.
+      hasStartedActivity:
+          (model) =>
+              !grouped.upcomingPairingRoundIds.contains(model.id) &&
+              hasRoundGames(model),
     );
     final topRoundId = displayRounds.isEmpty ? null : displayRounds.first.id;
     final tournamentScopeId = 'tournament:${widget.tournamentId}';
