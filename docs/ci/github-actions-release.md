@@ -1,8 +1,9 @@
 # Desktop distribution through GitHub Actions
 
 The production branch is `main`. Both release workflows are manually dispatched
-and use the protected `release` environment. Only approved production jobs receive
-signing or publishing credentials. Setup uses native background steps followed by
+and use the protected `release` environment. Only jobs running from `main` receive
+signing or publishing credentials. The environment has no required reviewer, so a
+dispatched run starts at once: dispatching it is the approval. Setup uses native background steps followed by
 `wait-all`; no signing or publishing step runs in the background.
 
 ## Website downloads

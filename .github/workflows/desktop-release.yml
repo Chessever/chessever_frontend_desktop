@@ -3,8 +3,8 @@
 # workflows in codemagic.yaml; the scripts under scripts/ are reused unchanged.
 #
 # Manual runs only. Signing, notarization and R2 credentials live in the
-# `release` environment, which only `main` may use and which waits for a
-# reviewer before a job receives them. Setup and the secret catalogue:
+# `release` environment, which only `main` may use. It has no required
+# reviewer: dispatching the run is the approval. Setup and the secret catalogue:
 # docs/ci/github-actions-release.md in Chessever/chessever-frontend.
 name: Desktop release
 
