@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -24,6 +24,7 @@ import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/utils/eco_openings.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 const String _workspaceStorageKey = 'desktop_player_workspace_v1';
 const String _httpUserAgent =

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:screen_retriever/screen_retriever.dart';
@@ -7,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/desktop_window_geometry.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Keeps the main window inside the usable work area of the display it is on.
 ///

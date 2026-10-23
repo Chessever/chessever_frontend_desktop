@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'dart:math' as math;
 
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/desktop/services/resqlite.dart' as resqlite;
 
 import 'package:chessever/desktop/models/player_stats.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart'
@@ -19,6 +19,7 @@ import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart'
     show localChessDatabasesTable, localChessGamesTable, localChessPlayersTable;
 import 'package:chessever/utils/eco_openings.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 typedef PlayerStatsSelect =
     Future<List<Map<String, Object?>>> Function(

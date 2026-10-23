@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Which macOS package flavor this build was produced as.
 ///

@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_pgn_rename.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 const Object _localLibraryUnset = Object();
 const String playerWorkspaceLocalLibraryGroupPrefix = 'player-workspace:';

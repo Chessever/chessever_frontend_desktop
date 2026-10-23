@@ -1,7 +1,6 @@
-import 'dart:io';
-
 import 'package:chessever/desktop/services/play/play_models.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 TournamentResourceAssessment assessTournamentResources({
   required int participantCount,

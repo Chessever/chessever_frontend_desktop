@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
@@ -9,6 +9,7 @@ import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Singleton SQLite database service for the app.
 /// Replaces SharedPreferences for all local storage except Supabase auth.
@@ -99,6 +100,13 @@ class AppDatabase {
 
   Future<String> _resolveDatabasePath() async {
     if (_cachedDbPath != null) return _cachedDbPath!;
+
+    // The browser build stores the database in IndexedDB through
+    // sqlite3.wasm, which takes a bare name rather than a filesystem path.
+    if (kIsWeb) {
+      _cachedDbPath = _dbFileName;
+      return _cachedDbPath!;
+    }
 
     // Desktop bundles launched from Finder/Launchpad have cwd = "/", so
     // `getDatabasesPath()` (which returns a relative

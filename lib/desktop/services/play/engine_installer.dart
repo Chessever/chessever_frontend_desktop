@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'dart:math' as math;
 import 'dart:typed_data' show BytesBuilder;
 
@@ -16,6 +16,7 @@ import 'package:chessever/desktop/services/engine/uci_engine.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/play/engine_catalog.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// One-step bot readiness state for the Play setup screen.
 enum EngineInstallStatus {

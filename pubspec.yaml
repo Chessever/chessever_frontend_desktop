@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 22.17.0+490
+version: 22.17.1+491
 environment:
   sdk: ^3.7.2
 
@@ -113,10 +113,12 @@ dependencies:
   # pane's live-stream panel. webview_all is the single API that ships
   # endorsed implementations for BOTH desktop targets: WKWebView on macOS
   # and WebView2 on Windows, and is API-compatible with webview_flutter.
-  # The two platform subpackages are direct deps only so the panel can opt
-  # into inline/autoplay media on macOS and the shared WebView2 environment
-  # on Windows through their typed creation params.
+  # The platform subpackages are direct deps only so the panel can opt
+  # into inline/autoplay media on macOS, the shared WebView2 environment
+  # on Windows, and iframe permissions in the browser build through their
+  # typed creation params.
   webview_all: ^1.4.1
+  webview_all_web: ^1.4.1
   webview_all_wkwebview: ^1.4.1
   webview_all_windows: ^1.4.1
 
@@ -191,6 +193,12 @@ dependencies:
   firebase_analytics: ^11.6.0
   pasteboard: ^0.5.0
   purchases_flutter: ^10.16.0
+  # Browser build only (lib/main_web.dart): the app's key/value SQLite store
+  # runs on sqlite3.wasm persisted to IndexedDB. Pinned to the last release
+  # that accepts the sqflite_common_ffi already locked for the desktop build.
+  # scripts/build_web.sh fetches its sqlite3.wasm + sqflite_sw.js at build
+  # time, so no binary is committed.
+  sqflite_common_ffi_web: 1.1.1
 
 dev_dependencies:
   flutter_test:

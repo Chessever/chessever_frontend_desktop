@@ -273,3 +273,8 @@ from Developer ID signing assets, and out of source, Dart defines and artifacts.
 
 On demand — read `docs/agents/forui.md` before working on this area. Gist: This repo pins `forui: ^0.16.0` (`pubspec.yaml`).
 forui.dev documents the latest release — check every API against 0.16 and never blind-bump forui (0.24+ removed `FThemes.zinc.dark`, which the whole shell uses).
+
+## Browser build (app.chessever.com, experimental)
+
+On demand — read `docs/agents/web-build.md` before working on this area. Gist: `lib/main_web.dart` compiles the desktop shell to Wasm (skwasm) for app.chessever.com; it is not a release lane.
+In code the browser reaches, import `Platform` from `package:chessever/utils/platform/io_platform.dart`, never `dart:io` (its getters throw in a browser). Keep FFI, and equally browser-only libraries (`dart:ui_web`, `webview_all_web`), behind conditional imports: analyze misses either mistake, the compile does not.

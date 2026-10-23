@@ -1,5 +1,4 @@
 import 'dart:collection';
-import 'dart:io' show Platform;
 import 'dart:isolate';
 import 'dart:math' as math;
 
@@ -8,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 final RegExp _pgnHeaderRegex = RegExp(
   r'^\[\s*(\w+)\s+"((?:[^"\\]|\\.)*)"\s*\]',

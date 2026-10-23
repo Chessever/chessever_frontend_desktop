@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'local_chess_database_repository.dart';
 import 'local_pgn_source.dart';
 
@@ -10,6 +10,7 @@ import 'package:chessever/desktop/services/local_pgn_atomic_write.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Result of a local library write batch.
 class LocalLibraryWriteOutcome {

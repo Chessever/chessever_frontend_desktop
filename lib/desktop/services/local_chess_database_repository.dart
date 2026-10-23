@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
@@ -9,7 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/desktop/services/resqlite.dart' as resqlite;
 import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
@@ -33,6 +33,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/utils/eco_openings.dart';
 import 'package:chessever/utils/local_pgn_metadata.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 export 'package:chessever/repository/sqlite/local_chess_schema.dart'
     show createLocalChessDatabaseSchema;

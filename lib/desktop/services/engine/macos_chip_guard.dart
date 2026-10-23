@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:chessever/desktop/services/engine/macos_release_arch.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Resolves the host machine arch for wrong-chip detection.
 ///

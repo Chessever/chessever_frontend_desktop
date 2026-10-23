@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:io';
 
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
@@ -11,6 +10,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'explorer_games_cache.dart';
 import 'gamebase_explorer_state.dart';
 import 'gamebase_providers.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 // Desktop port of the phone app's explorer games warmer (chessever-frontend,
 // lib/screens/gamebase/providers/explorer_games_prefetch.dart).

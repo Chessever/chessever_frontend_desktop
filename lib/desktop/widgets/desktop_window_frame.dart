@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -8,6 +8,7 @@ import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 import 'package:chessever/desktop/services/desktop_picture_in_picture_channel.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Width reserved at the right edge of title-bar surfaces for the three
 /// Windows/Linux caption controls.
@@ -20,6 +21,9 @@ bool get _usesCustomWindowControls => Platform.isWindows || Platform.isLinux;
 ///
 /// macOS intentionally renders no Flutter caption buttons here. Its native
 /// traffic lights remain visible over the Flutter-painted title-bar surface.
+///
+/// In a browser tab the page is the window: there is nothing to resize,
+/// drag or close, so the frame passes [child] through untouched.
 class DesktopWindowFrame extends StatefulWidget {
   const DesktopWindowFrame({
     super.key,
@@ -44,13 +48,14 @@ class _DesktopWindowFrameState extends State<DesktopWindowFrame>
   @override
   void initState() {
     super.initState();
+    if (kIsWeb) return;
     windowManager.addListener(this);
     unawaited(_refreshMaximizedState());
   }
 
   @override
   void dispose() {
-    windowManager.removeListener(this);
+    if (!kIsWeb) windowManager.removeListener(this);
     super.dispose();
   }
 
@@ -93,6 +98,7 @@ class _DesktopWindowFrameState extends State<DesktopWindowFrame>
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) return widget.child;
     if (widget.framelessContent) {
       // Keep every pixel visually owned by the PiP game surface. These
       // transparent edge targets preserve free resizing without adding the
@@ -169,10 +175,11 @@ class DesktopStandaloneWindowChrome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (framelessContent) {
+    if (framelessContent || kIsWeb) {
       // The native frame and window buttons are removed by DesktopWindow.
       // PiP owns its dedicated controller row inside the board surface, so
-      // this outer frame must not add a second title bar around it.
+      // this outer frame must not add a second title bar around it. A
+      // browser tab has no window to drag either.
       return ColoredBox(color: kBackgroundColor, child: child);
     }
     return ColoredBox(

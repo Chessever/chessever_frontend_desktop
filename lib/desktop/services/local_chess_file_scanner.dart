@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'pgn_record_boundaries.dart';
 import 'local_pgn_position.dart';
 import 'dart:isolate';
@@ -10,7 +10,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:libcompress/libcompress.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/desktop/services/resqlite.dart' as resqlite;
 
 import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 
@@ -25,6 +25,7 @@ import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/utils/local_pgn_metadata.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 const localChessSupportedExtensions = <String>{
   '.pgn',

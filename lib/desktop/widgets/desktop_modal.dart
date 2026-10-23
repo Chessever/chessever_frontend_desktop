@@ -1,10 +1,9 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Shared desktop replacement for `showModalBottomSheet`.
 ///

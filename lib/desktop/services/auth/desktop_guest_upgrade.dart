@@ -16,7 +16,10 @@ enum DesktopAccountProvider { google, apple }
 final desktopGuestAccountMergerProvider = Provider<DesktopGuestAccountMerger>(
   (ref) => DesktopGuestAccountMerger(
     gateway: SupabaseGuestAccountMergeGateway(Supabase.instance.client),
-    pendingStore: FileGuestMergePendingStore(),
+    pendingStore:
+        kIsWeb
+            ? AppDatabaseGuestMergePendingStore()
+            : FileGuestMergePendingStore(),
   ),
 );
 

@@ -21,6 +21,7 @@ class DesktopAuthService {
   /// Throws [StateError] if `GOOGLE_DESKTOP_CLIENT_ID` is not configured —
   /// that's a setup problem, not a recoverable runtime error.
   Future<Session?> signInWithGoogle() async {
+    if (kIsWeb) return _signInWithRedirect(OAuthProvider.google);
     final clientId = DesktopEnv.maybeGet('GOOGLE_DESKTOP_CLIENT_ID');
     if (clientId == null || clientId.isEmpty) {
       final legacyClientId = DesktopEnv.maybeGet('GOOGLE_WEB_CLIENT_ID');
@@ -91,6 +92,9 @@ class DesktopAuthService {
   /// Apple auth therefore uses Supabase's hosted OAuth provider instead of
   /// `AuthenticationServices`, matching the web account page.
   Future<Session?> signInWithApple() async {
+    if (kIsWeb) {
+      return _signInWithRedirect(OAuthProvider.apple, scopes: 'name email');
+    }
     if (kDebugMode) {
       // ignore: avoid_print
       print('[auth] starting Apple OAuth loopback');
@@ -108,6 +112,31 @@ class DesktopAuthService {
       return session;
     } catch (e, st) {
       ErrorReporter.report(e, stackTrace: st, tag: 'auth.supabase_apple');
+      rethrow;
+    }
+  }
+
+  /// Browser sign-in: Supabase-hosted OAuth in the same tab. The page leaves
+  /// for the provider and comes back to this origin with a PKCE code, which
+  /// `Supabase.initialize` exchanges for a session on the next load, so this
+  /// returns `null`. The origin must be on the Supabase Auth redirect list.
+  Future<Session?> _signInWithRedirect(
+    OAuthProvider provider, {
+    String? scopes,
+  }) async {
+    try {
+      await Supabase.instance.client.auth.signInWithOAuth(
+        provider,
+        redirectTo: '${Uri.base.origin}/',
+        scopes: scopes,
+      );
+      return null;
+    } catch (e, st) {
+      ErrorReporter.report(
+        e,
+        stackTrace: st,
+        tag: 'auth.web_${provider.name}',
+      );
       rethrow;
     }
   }

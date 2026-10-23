@@ -1,14 +1,16 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:stockfish/stockfish.dart' as upstream;
+import 'package:chessever/desktop/services/engine/stockfish_upstream.dart'
+    as upstream;
 
 import 'package:chessever/desktop/services/engine/uci_engine.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 // Re-export the upstream enum so call-sites can use `StockfishState.ready`
 // regardless of which backend is active. The values match across mobile/desktop.
-export 'package:stockfish/stockfish.dart' show StockfishState;
+export 'package:chessever/desktop/services/engine/stockfish_upstream.dart'
+    show StockfishState;
 
 /// Maximum time for the spawned process to finish the UCI handshake.
 const desktopStockfishUciHandshakeTimeout = Duration(seconds: 5);
@@ -66,6 +68,18 @@ class Stockfish {
   factory Stockfish() {
     if (_instance != null) {
       throw StateError('Multiple instances are not supported, yet.');
+    }
+
+    if (kIsWeb) {
+      // No engine process can be spawned from a browser. Report the engine
+      // as unavailable through the same state the desktop backend uses when
+      // its binary is missing, so callers fall back exactly as they do there.
+      final s = Stockfish._desktop();
+      s._isDesktop = true;
+      _instance = s;
+      _desktopEngineUnavailable = true;
+      s._state.value = upstream.StockfishState.error;
+      return s;
     }
 
     final useDesktopBackend =

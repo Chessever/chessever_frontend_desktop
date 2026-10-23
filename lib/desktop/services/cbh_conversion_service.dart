@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'cbh_dart_conversion.dart';
 import 'cbv_archive_reader.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// The application installs a navigator-backed consent handler. Non-UI callers
 /// cannot silently convert a source or register the original binary database.

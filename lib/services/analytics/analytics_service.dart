@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -11,6 +10,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../repository/authentication/model/app_user.dart';
 import 'package:chessever/desktop/services/windows_analytics_transport.dart';
 import 'package:chessever/services/appsflyer_service.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Centralized analytics facade to keep event names/metadata consistent.
 class AnalyticsService {

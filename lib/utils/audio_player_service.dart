@@ -1,10 +1,10 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:chessever/utils/sound_preferences.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Sound effect types — used instead of raw AudioSource to avoid stale native
 /// handles after the SoLoud engine is torn down and reinitialized.
@@ -35,6 +35,11 @@ class AudioPlayerService with WidgetsBindingObserver {
   bool _initialized = false;
   bool _assetsLoaded = false;
   Future<void>? _initializing;
+
+  /// In a browser, a failed engine start aborts flutter_soloud's WebAssembly
+  /// module, and every later call into it aborts again. Once that happens the
+  /// session stays silent instead of retrying on every move.
+  bool _browserEngineFailed = false;
   bool _audioSessionConfigured = false;
   SoundTheme _soundTheme = SoundTheme.standard;
   double _soundVolume = kDefaultSoundVolume;
@@ -99,6 +104,7 @@ class AudioPlayerService with WidgetsBindingObserver {
   }
 
   Future<void> initializeAndLoadAllAssets({bool force = false}) {
+    if (_browserEngineFailed) return Future.value();
     // Always reuse the in-flight initialization to avoid racing init/deinit.
     if (_initializing != null) return _initializing!;
 
@@ -155,6 +161,7 @@ class AudioPlayerService with WidgetsBindingObserver {
   void playSfxForSan(String san) => playSound(sfxTypeForSan(san));
 
   Future<void> _playWithRecovery(SfxType type) async {
+    if (_browserEngineFailed) return;
     try {
       await initializeAndLoadAllAssets();
       // soloud 4.x: play() is sync — no await.
@@ -248,7 +255,12 @@ class AudioPlayerService with WidgetsBindingObserver {
     await _configureAudioSession();
 
     if (!player.isInitialized) {
-      await SoLoud.instance.init();
+      try {
+        await SoLoud.instance.init();
+      } catch (_) {
+        if (kIsWeb) _browserEngineFailed = true;
+        rethrow;
+      }
       // Re-apply after init just in case SoLoud native layer reset the category
       _audioSessionConfigured = false;
       await _configureAudioSession();
