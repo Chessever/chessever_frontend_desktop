@@ -1,38 +1,98 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="ChessEver in the browser: live broadcasts, the game database and the opening explorer from the desktop app.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0C0C0E">
 
-  <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="ChessEver">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="manifest" href="manifest.json">
 
   <title>ChessEver</title>
-  <link rel="manifest" href="manifest.json">
+
+  <!-- chessever:preconnect -->
+
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #0C0C0E;
+      color: #E6E6E8;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    .ce-screen {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      padding: 24px;
+      text-align: center;
+    }
+    .ce-screen[hidden] { display: none; }
+    .ce-screen img { width: 56px; height: 56px; border-radius: 12px; }
+    .ce-screen p { margin: 0; max-width: 420px; font-size: 14px; line-height: 1.5; color: #A1A1A6; }
+    .ce-screen strong { display: block; margin-bottom: 6px; font-size: 16px; color: #E6E6E8; }
+    .ce-screen a { color: #0FB4E5; }
+    .ce-progress {
+      width: 120px;
+      height: 2px;
+      overflow: hidden;
+      border-radius: 1px;
+      background: #1A1A1C;
+    }
+    .ce-progress::after {
+      content: "";
+      display: block;
+      width: 40%;
+      height: 100%;
+      background: #0FB4E5;
+      animation: ce-slide 1.1s ease-in-out infinite;
+    }
+    @keyframes ce-slide {
+      from { transform: translateX(-100%); }
+      to { transform: translateX(250%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .ce-progress::after { animation: none; width: 100%; opacity: 0.5; }
+    }
+  </style>
 </head>
 <body>
-  <script src="flutter_bootstrap.js" async></script>
+  <div id="ce-loading" class="ce-screen" role="status" aria-label="Loading ChessEver">
+    <img src="icons/Icon-192.png" alt="">
+    <div class="ce-progress"></div>
+  </div>
+
+  <div id="ce-unsupported" class="ce-screen" hidden>
+    <img src="icons/Icon-192.png" alt="">
+    <p>
+      <strong>This browser can't run ChessEver yet</strong>
+      The web version needs a current Chrome or Microsoft Edge.
+      You can also <a href="https://chessever.com/#download">download the desktop app</a>
+      for macOS, Windows or Linux.
+    </p>
+  </div>
+
+  <div id="ce-failed" class="ce-screen" hidden>
+    <img src="icons/Icon-192.png" alt="">
+    <p>
+      <strong>ChessEver didn't finish loading</strong>
+      Check your connection and <a href="">reload the page</a>.
+    </p>
+  </div>
+
+  <script>
+    {{flutter_bootstrap_js}}
+  </script>
 </body>
 </html>

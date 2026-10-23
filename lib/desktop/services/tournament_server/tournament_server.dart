@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:chessever/desktop/auth/desktop_play_access.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'dart:math';
 
 // Hide dartchess's `File` enum (board files a–h) so dart:io's [File] wins.
@@ -20,6 +20,7 @@ import 'package:chessever/desktop/services/play/maia3_engine.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_resource_assessor.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Top-level lifecycle for the embedded tournament server. Lives on
 /// localhost — we never bind to a public interface, and only one instance

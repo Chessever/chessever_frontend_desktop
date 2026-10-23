@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +6,7 @@ import 'package:flutter/widgets.dart' show ShortcutActivator, SingleActivator;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/repository/sqlite/app_database.dart';
+import 'package:chessever/desktop/utils/desktop_host_platform.dart';
 
 /// Every navigation / mutation action exposed to the desktop chess board's
 /// keyboard layer. Adding a new entry here is the only thing required to
@@ -599,9 +599,9 @@ class KeyChord {
   /// flags are honoured literally, so Win+S stays Win+S on Windows.
   ///
   /// Pass [isMacOS] to force a platform interpretation (tests / dual
-  /// registration). Defaults to the host [Platform.isMacOS].
+  /// registration). Defaults to [desktopUsesMacKeyConventions].
   ShortcutActivator toActivator({bool? isMacOS}) {
-    final isMac = isMacOS ?? Platform.isMacOS;
+    final isMac = isMacOS ?? desktopUsesMacKeyConventions;
     final resolved = resolvedModifiers(isMacOS: isMac);
     return SingleActivator(
       LogicalKeyboardKey(keyId),
@@ -654,7 +654,7 @@ class KeyChord {
     }
 
     final resolved = resolvedModifiers(
-      isMacOS: isMacOS ?? Platform.isMacOS,
+      isMacOS: isMacOS ?? desktopUsesMacKeyConventions,
     );
     return ctrl == resolved.ctrl && meta == resolved.meta;
   }
@@ -670,7 +670,7 @@ class KeyChord {
   /// other platform's glyph.
   String labelFor({bool? isMacOS}) {
     final parts = <String>[];
-    final isMac = isMacOS ?? Platform.isMacOS;
+    final isMac = isMacOS ?? desktopUsesMacKeyConventions;
     final resolved = resolvedModifiers(isMacOS: isMac);
     if (resolved.ctrl) parts.add(isMac ? '⌃' : 'Ctrl');
     if (alt) parts.add(isMac ? '⌥' : 'Alt');

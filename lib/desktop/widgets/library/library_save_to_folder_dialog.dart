@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import '../../services/board_save_boundary.dart';
@@ -39,6 +38,7 @@ import 'package:chessever/repository/library/models/saved_analysis.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Outcome reported back to the caller of [showLibrarySaveToFolderDialog].
 class LibrarySaveOutcome {

@@ -1,7 +1,8 @@
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Resolves environment values for the desktop build.
 ///

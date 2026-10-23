@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'dart:math';
 
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
@@ -16,6 +16,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'gamebase_providers.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 // Desktop port of the phone app's explorer games cache (chessever-frontend,
 // lib/screens/gamebase/providers/explorer_games_cache.dart). The behaviour is

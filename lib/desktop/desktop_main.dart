@@ -3,7 +3,7 @@
 // ignore_for_file: avoid_print
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:chessever/desktop/services/desktop_sentry_filter.dart';
 import 'package:chessever/desktop/services/desktop_push_isolation.dart';
@@ -65,6 +65,7 @@ import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
 import 'package:chessever/utils/foreground_task_scheduler.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Stripped-down startup path for the macOS / Windows builds.
 ///

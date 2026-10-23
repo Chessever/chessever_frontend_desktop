@@ -1,8 +1,8 @@
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 import 'package:screen_retriever/screen_retriever.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 const EdgeInsets desktopWindowSafePadding = EdgeInsets.all(24);
 

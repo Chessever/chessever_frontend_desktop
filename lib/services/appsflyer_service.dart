@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:appsflyer_sdk/appsflyer_sdk.dart';
 import 'package:chessever/services/deep_link_service.dart';
@@ -15,6 +14,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 import 'package:chessever/repository/local_storage/local_storage_repository.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// AppsFlyer predefined event names.
 ///

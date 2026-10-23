@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -11,6 +11,7 @@ import 'package:chessever/desktop/services/tournament_server/tournament_server.d
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Narrow native-window boundary used by terminal shutdown.
 ///

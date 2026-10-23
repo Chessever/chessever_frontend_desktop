@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
@@ -35,6 +35,7 @@ import 'package:chessever/providers/app_version_provider.dart';
 import 'package:chessever/providers/guest_session_provider.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Desktop preferences pane.
 ///
@@ -220,7 +221,9 @@ class SettingsPane extends HookConsumerWidget {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Account, engine, and window preferences',
+              kIsWeb
+                  ? 'Account and board preferences'
+                  : 'Account, engine, and window preferences',
               style: TextStyle(color: kWhiteColor70, fontSize: 13),
             ),
             const SizedBox(height: 24),
@@ -242,10 +245,13 @@ class SettingsPane extends HookConsumerWidget {
               const SizedBox(height: 16),
             ],
             const _BotvinnikSection(),
-            const _EngineSection(),
-            const SizedBox(height: 16),
-            if (!isMacAppStore) const _UpdatesSection(),
-            const SizedBox(height: 16),
+            // A browser tab runs no local engine and updates on reload.
+            if (!kIsWeb) ...[
+              const _EngineSection(),
+              const SizedBox(height: 16),
+              if (!isMacAppStore) const _UpdatesSection(),
+              const SizedBox(height: 16),
+            ],
             const _LegalSection(),
             const SizedBox(height: 16),
             const _PlatformSection(),
@@ -1052,12 +1058,14 @@ class _PlatformSection extends ConsumerWidget {
             'Number of processors',
             Platform.numberOfProcessors.toString(),
           ),
-          const SizedBox(height: 12),
-          const Text(
-            'Window position, sidebar state, and pane sizes are persisted '
-            'in the local SQLite database and restored on next launch.',
-            style: TextStyle(color: kLightGreyColor, fontSize: 11),
-          ),
+          if (!kIsWeb) ...[
+            const SizedBox(height: 12),
+            const Text(
+              'Window position, sidebar state, and pane sizes are persisted '
+              'in the local SQLite database and restored on next launch.',
+              style: TextStyle(color: kLightGreyColor, fontSize: 11),
+            ),
+          ],
         ],
       ),
     );

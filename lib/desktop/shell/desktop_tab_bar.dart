@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
@@ -8,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
-import 'package:window_manager/window_manager.dart';
+import 'package:chessever/desktop/widgets/desktop_drag_to_move_area.dart';
 
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
@@ -39,6 +38,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
     show GameStatus;
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Chrome-style tab bar that sits between the top bar and the content area.
 ///
@@ -261,7 +261,9 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                           ),
                           if (fillsRest)
                             const Expanded(
-                              child: DragToMoveArea(child: SizedBox.expand()),
+                              child: DesktopDragToMoveArea(
+                                child: SizedBox.expand(),
+                              ),
                             ),
                         ],
                       );

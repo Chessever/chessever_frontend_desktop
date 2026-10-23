@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-import 'dart:io' show Platform;
 
 import 'package:chessever/providers/error_logger_provider.dart';
 import 'package:chessever/repository/authentication/model/app_user.dart';
@@ -20,6 +19,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:chessever/e2e/e2e_config.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Compile-time environment values injected via `--dart-define`.
 const Map<String, String> _releaseEnvValues = {

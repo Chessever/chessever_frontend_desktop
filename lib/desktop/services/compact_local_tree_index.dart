@@ -1,11 +1,12 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 const String compactLocalTreeIndexFormat = 'ceti';
 const int compactLocalTreeIndexVersion = 1;

@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' as io;
+import 'dart:io' as io hide Platform;
 import 'dart:typed_data';
 
 import 'package:chessground/chessground.dart' as cg;
@@ -23,6 +23,7 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
 import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/platform/io_platform.dart' as io;
 
 const _defaultBoardShareShowEvalBar = false;
 

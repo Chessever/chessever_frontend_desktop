@@ -1,6 +1,5 @@
 // ignore_for_file: avoid_print
 import 'dart:async';
-import 'dart:io';
 
 import 'package:desktop_updater/desktop_updater.dart' as desktop_updater;
 import 'package:flutter/foundation.dart';
@@ -12,6 +11,7 @@ import 'package:chessever/desktop/services/desktop_shutdown_coordinator.dart';
 import 'package:chessever/desktop/services/desktop_update_recovery_marker.dart';
 import 'package:chessever/desktop/services/desktop_updater_state.dart';
 import 'package:chessever/desktop/services/engine/macos_release_arch.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 export 'package:chessever/desktop/services/desktop_updater_state.dart';
 

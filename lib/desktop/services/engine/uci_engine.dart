@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/services/mac_app_store.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Minimal UCI engine driver that talks to a chess engine binary over
 /// stdin/stdout. Used on desktop where the `stockfish` Flutter package

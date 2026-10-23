@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:webview_all/webview_all.dart';
@@ -14,11 +14,13 @@ import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/state/broadcast_video_streams_provider.dart';
 import 'package:chessever/desktop/state/broadcast_video_visibility_provider.dart';
+import 'package:chessever/desktop/widgets/broadcast_video_browser_controller.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_player_retention.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_toolbar.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Live-stream panel for the top of the Board pane's right rail.
 ///
@@ -260,6 +262,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   WebViewController _createController() {
+    if (kIsWeb) return createBrowserVideoController();
     if (Platform.isMacOS) {
       // Inline HTML5 playback and autoplay, matching the web's autoplay
       // behaviour. Defaults (inline false, media requires a gesture) would
@@ -490,7 +493,9 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
         .where(
           (stream) => broadcastStreamSupportsPlatform(
             stream,
-            BroadcastVideoClientPlatform.desktop,
+            kIsWeb
+                ? BroadcastVideoClientPlatform.web
+                : BroadcastVideoClientPlatform.desktop,
           ),
         )
         .toList(growable: false);

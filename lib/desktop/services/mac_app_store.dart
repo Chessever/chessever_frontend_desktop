@@ -1,4 +1,5 @@
-import 'dart:io' show File, Platform;
+import 'dart:io' show File;
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Opt-in distribution channel. Website and Windows builds keep their existing
 /// update, billing, and engine behavior.

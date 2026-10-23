@@ -1,4 +1,4 @@
-import 'dart:io' as io;
+import 'dart:io' as io hide Platform;
 import 'dart:ui' as ui;
 
 import 'package:chessground/chessground.dart' as cg;
@@ -16,6 +16,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/utils/platform/io_platform.dart' as io;
 
 /// Desktop-native sharing helpers for the board pane.
 ///

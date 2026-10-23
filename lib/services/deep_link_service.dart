@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:app_links/app_links.dart';
 import 'package:chessever/repository/authentication/auth_repository.dart';
@@ -27,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 List<GamesTourModel> _buildSortedRoundGameModels(List<Games> roundGames) {
   final gameList = roundGames

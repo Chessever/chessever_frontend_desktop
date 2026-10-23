@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Detects Windows UI-isolate stalls after the event loop becomes responsive.
 ///

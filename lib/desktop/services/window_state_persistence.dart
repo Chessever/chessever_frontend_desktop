@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:screen_retriever/screen_retriever.dart';
@@ -9,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/desktop_window_geometry.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Saves and restores the window position, size, and maximized state across
 /// app launches.

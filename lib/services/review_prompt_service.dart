@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/services/telegram_notification_service.dart';
@@ -11,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:in_app_review/in_app_review.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 enum ReviewPromptTrigger {
   session,

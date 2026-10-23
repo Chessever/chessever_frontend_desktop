@@ -4,7 +4,7 @@ import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -21,6 +21,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 const double _standardDownloadPhaseSpan = 0.45;
 const double _standardImportPhaseStart = 0.45;

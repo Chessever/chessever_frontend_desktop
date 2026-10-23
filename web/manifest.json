@@ -3,10 +3,9 @@
     "short_name": "ChessEver",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#1a1a1c",
-    "theme_color": "#1a1a1c",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#0C0C0E",
+    "theme_color": "#0C0C0E",
+    "description": "Live broadcasts, the game database and the opening explorer from the ChessEver desktop app.",
     "prefer_related_applications": false,
     "icons": [
         {

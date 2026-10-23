@@ -1,6 +1,5 @@
-import 'dart:io' show Platform;
-
 import 'package:flutter/foundation.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Result of a purchase attempt
 class PurchaseAttemptResult {

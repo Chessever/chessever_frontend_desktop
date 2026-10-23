@@ -1,8 +1,9 @@
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:collection/collection.dart';
 
 import 'package:chessever/desktop/services/windows_shell_reveal.dart';
+import 'package:chessever/utils/platform/io_platform.dart';
 
 /// Where a local database lives, resolved for the operating system's file
 /// manager.
