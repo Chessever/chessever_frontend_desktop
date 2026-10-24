@@ -67,3 +67,8 @@ No pull-request or push event can invoke either production release workflow.
 
 The Codemagic CLI tools are pinned open-source utilities running on GitHub
 runners. Their use does not invoke the hosted Codemagic build service.
+
+Platform jobs stop after 30 minutes, including setup, packaging and upload.
+Build steps stop after 20 minutes; mobile and Mac App Store upload/review steps
+stop after 10 minutes. Apple processing is external: a timeout is a failed run,
+not proof of submission. An already uploaded build is reused on a submission retry.
