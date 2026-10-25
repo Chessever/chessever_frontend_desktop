@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:appsflyer_sdk/appsflyer_sdk.dart';
 import 'package:chessever/services/deep_link_service.dart';
@@ -15,6 +14,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 import 'package:chessever/repository/local_storage/local_storage_repository.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// AppsFlyer predefined event names.
 ///
@@ -101,7 +101,7 @@ class AppsflyerService {
       return;
     }
 
-    final appId = Platform.isIOS ? '6752567269' : '';
+    final appId = hostIsIOS ? '6752567269' : '';
 
     final options = AppsFlyerOptions(
       afDevKey: devKey,
@@ -151,7 +151,7 @@ class AppsflyerService {
       // ATT prompt intentionally disabled for affiliate-only attribution.
       // Re-enable if we start running paid ad campaigns that need IDFA-level
       // ROAS; otherwise SKAN + af_sub1 covers influencer links.
-      // if (Platform.isIOS) {
+      // if (hostIsIOS) {
       //   await _requestAttWhenReady();
       // }
 
@@ -403,9 +403,9 @@ class AppsflyerService {
       }
 
       final platform =
-          Platform.isIOS
+          hostIsIOS
               ? 'ios'
-              : Platform.isAndroid
+              : hostIsAndroid
               ? 'android'
               : 'unknown';
 

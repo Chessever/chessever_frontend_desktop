@@ -1,9 +1,9 @@
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:chessever/desktop/shell/desktop_pane.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 @immutable
 class DesktopMainRoute {
@@ -125,7 +125,7 @@ List<DesktopMainRoute> get _routesInShortcutOrder => [
 ];
 
 String desktopPrimaryShortcutLabel(String key, {bool? isMacOS}) {
-  final usesMacOS = isMacOS ?? Platform.isMacOS;
+  final usesMacOS = isMacOS ?? keyboardUsesMacModifiers;
   return usesMacOS ? '⌘$key' : 'Ctrl+$key';
 }
 

@@ -12,6 +12,7 @@ import 'package:chessever/desktop/services/desktop_shutdown_coordinator.dart';
 import 'package:chessever/desktop/services/desktop_update_recovery_marker.dart';
 import 'package:chessever/desktop/services/desktop_updater_state.dart';
 import 'package:chessever/desktop/services/engine/macos_release_arch.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 export 'package:chessever/desktop/services/desktop_updater_state.dart';
 
@@ -33,7 +34,7 @@ class DesktopUpdaterService {
   /// Prefer the arch-specific DMG when this is a dual-package macOS build so
   /// "download latest" never hands Silicon users an Intel engine package.
   static String get _manualDownloadUrl {
-    if (Platform.isMacOS) {
+    if (hostIsMacOS) {
       return macosReleaseArchFromDefine().downloadUri.toString();
     }
     return _downloadPageUrl;
@@ -71,7 +72,7 @@ class DesktopUpdaterService {
   Timer? _retryTimer;
   int _retryAttempt = 0;
 
-  bool get _isSupported => Platform.isMacOS || Platform.isWindows;
+  bool get _isSupported => hostIsMacOS || hostIsWindows;
 
   Future<void> initialize() async {
     if (_initialized) return;

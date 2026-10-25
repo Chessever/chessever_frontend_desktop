@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/services/mac_app_store.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Minimal UCI engine driver that talks to a chess engine binary over
 /// stdin/stdout. Used on desktop where the `stockfish` Flutter package
@@ -306,7 +307,7 @@ class UciEngine {
           // Windows ignores the signal and terminates the child. POSIX needs
           // SIGKILL here because the graceful SIGTERM-equivalent was `quit`.
           _process.kill(
-            Platform.isWindows ? ProcessSignal.sigterm : ProcessSignal.sigkill,
+            hostIsWindows ? ProcessSignal.sigterm : ProcessSignal.sigkill,
           );
         } catch (_) {}
 
@@ -385,7 +386,7 @@ Future<String?> findStockfishBinary() async {
   if (sourceTree != null) return sourceTree;
 
   // 3. Homebrew on macOS.
-  if (Platform.isMacOS) {
+  if (hostIsMacOS) {
     for (final candidate in const <String>[
       '/opt/homebrew/bin/stockfish',
       '/usr/local/bin/stockfish',
@@ -395,7 +396,7 @@ Future<String?> findStockfishBinary() async {
   }
   // 4. PATH fallback.
   try {
-    final lookupTool = Platform.isWindows ? 'where' : 'which';
+    final lookupTool = hostIsWindows ? 'where' : 'which';
     final result = await UciEngine._runTrackedProcess(lookupTool, const [
       'stockfish',
     ]);
@@ -421,7 +422,7 @@ Future<String?> _findSourceTreeBinary() async {
   for (final candidate in candidates) {
     final file = File(candidate);
     if (!await file.exists()) continue;
-    if (!Platform.isWindows) {
+    if (!hostIsWindows) {
       try {
         await UciEngine._runTrackedProcess('chmod', ['+x', file.path]);
       } catch (_) {}
@@ -446,7 +447,7 @@ Future<String?> _ensureBundledBinary() async {
       await engineDir.create(recursive: true);
     }
 
-    final binaryName = Platform.isWindows ? 'stockfish.exe' : 'stockfish';
+    final binaryName = hostIsWindows ? 'stockfish.exe' : 'stockfish';
     final destination = File(p.join(engineDir.path, binaryName));
 
     // If we've already extracted the binary on a previous launch, reuse it.
@@ -461,7 +462,7 @@ Future<String?> _ensureBundledBinary() async {
         bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
         flush: true,
       );
-      if (!Platform.isWindows) {
+      if (!hostIsWindows) {
         // chmod +x on POSIX so the OS will exec the file.
         await UciEngine._runTrackedProcess('chmod', ['+x', destination.path]);
       }
@@ -476,8 +477,8 @@ Future<String?> _ensureBundledBinary() async {
 }
 
 String? _bundledAssetPathForPlatform() {
-  if (Platform.isMacOS) return 'assets/engine/macos/stockfish';
-  if (Platform.isWindows) return 'assets/engine/windows/stockfish.exe';
-  if (Platform.isLinux) return 'assets/engine/linux/stockfish';
+  if (hostIsMacOS) return 'assets/engine/macos/stockfish';
+  if (hostIsWindows) return 'assets/engine/windows/stockfish.exe';
+  if (hostIsLinux) return 'assets/engine/linux/stockfish';
   return null;
 }

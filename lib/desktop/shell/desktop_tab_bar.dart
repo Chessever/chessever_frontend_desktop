@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
@@ -39,6 +38,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
     show GameStatus;
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Chrome-style tab bar that sits between the top bar and the content area.
 ///
@@ -280,7 +280,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                   ),
                 ],
                 const SizedBox(width: 8),
-                if (Platform.isWindows || Platform.isLinux)
+                if (hostIsWindows || hostIsLinux)
                   const SizedBox(width: kDesktopWindowControlsWidth),
               ],
             ),

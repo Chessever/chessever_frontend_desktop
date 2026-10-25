@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
@@ -20,6 +19,7 @@ import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_combined_games_provider.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 class DesktopBoardWindowService {
   DesktopBoardWindowService({
@@ -239,7 +239,7 @@ class DesktopBoardWindowService {
       await createWindow!(payload);
       return;
     }
-    if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+    if (!(hostIsMacOS || hostIsWindows || hostIsLinux)) {
       throw UnsupportedError('Board windows are only available on desktop');
     }
     final controller = await WindowController.create(
@@ -255,7 +255,7 @@ class DesktopBoardWindowService {
   Future<void> _showOrReplacePictureInPicture(
     DesktopBoardWindowPayload payload,
   ) async {
-    if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+    if (!(hostIsMacOS || hostIsWindows || hostIsLinux)) {
       throw UnsupportedError('Board windows are only available on desktop');
     }
     final existing = await _findPictureInPictureWindow();
@@ -276,7 +276,7 @@ class DesktopBoardWindowService {
   }
 
   Future<void> _hidePictureInPicture() async {
-    if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+    if (!(hostIsMacOS || hostIsWindows || hostIsLinux)) {
       return;
     }
     final existing = await _findPictureInPictureWindow();

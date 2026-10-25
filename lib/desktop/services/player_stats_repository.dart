@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/resqlite.dart' as resqlite;
 
 import 'package:chessever/desktop/models/player_stats.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart'
@@ -19,6 +19,7 @@ import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart'
     show localChessDatabasesTable, localChessGamesTable, localChessPlayersTable;
 import 'package:chessever/utils/eco_openings.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 typedef PlayerStatsSelect =
     Future<List<Map<String, Object?>>> Function(
@@ -1521,7 +1522,7 @@ String? _normalizeFideId(String? value) {
 /// scopes to the exact `database_id` the import wrote.
 String _databaseId(String path) {
   final normalized = p.normalize(path.trim());
-  return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  return hostIsWindows ? normalized.toLowerCase() : normalized;
 }
 
 DateTime? _dateFromDot(String? raw) {

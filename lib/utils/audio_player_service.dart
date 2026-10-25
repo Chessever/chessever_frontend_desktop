@@ -1,10 +1,10 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:chessever/utils/sound_preferences.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Sound effect types — used instead of raw AudioSource to avoid stale native
 /// handles after the SoLoud engine is torn down and reinitialized.
@@ -76,7 +76,7 @@ class AudioPlayerService with WidgetsBindingObserver {
   Future<void> _configureAudioSession() async {
     if (_audioSessionConfigured) return;
 
-    if (Platform.isIOS) {
+    if (hostIsIOS) {
       try {
         // Configure iOS AVAudioSession to ambient mode which:
         // - Doesn't interrupt other audio (music, podcasts, etc.)

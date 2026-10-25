@@ -81,6 +81,8 @@ analysis_benchmark.json
 .pub-cache/
 .pub/
 build/
+# wrangler dev state for the web build (wrangler.web.jsonc).
+.wrangler/
 build_codex*/
 flutter_*.png
 # Golden-test diff artifacts written next to a failing golden test.

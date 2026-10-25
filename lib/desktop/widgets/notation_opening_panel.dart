@@ -5,7 +5,6 @@ import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
-import 'dart:io' show Platform;
 
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +33,7 @@ import 'package:chessever/desktop/widgets/variation_fork_chooser.dart';
 import 'package:chessever/screens/gamebase/models/move_aggregate.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Per-board-tab active page index for the right-rail Notation / Explorer /
 /// Games tab strip. Survives board-tab switches so the user returns to the
@@ -763,7 +763,7 @@ bool _isRightRailNextTabChord(KeyEvent event) {
   return debugIsRightRailNextTabChord(
     key: event.logicalKey,
     character: event.character,
-    isMac: Platform.isMacOS,
+    isMac: keyboardUsesMacModifiers,
     ctrl: _isControlPressed(),
     alt: _isAltPressed(),
     shift: HardwareKeyboard.instance.isShiftPressed,
@@ -775,7 +775,7 @@ bool _isRightRailPreviousTabChord(KeyEvent event) {
   return debugIsRightRailPreviousTabChord(
     key: event.logicalKey,
     character: event.character,
-    isMac: Platform.isMacOS,
+    isMac: keyboardUsesMacModifiers,
     ctrl: _isControlPressed(),
     alt: _isAltPressed(),
     shift: HardwareKeyboard.instance.isShiftPressed,

@@ -1,38 +1,75 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
+    The browser build is served from the root of app.chessever.com; the
+    placeholder below is replaced by `flutter build --base-href`.
   -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ChessEver in your browser: live broadcasts, games, players and the opening explorer.">
+  <meta name="theme-color" content="#0c0c0e">
+  <meta name="color-scheme" content="dark">
 
-  <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="ChessEver">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
   <title>ChessEver</title>
   <link rel="manifest" href="manifest.json">
+
+  <style>
+    html, body { margin: 0; height: 100%; background: #0c0c0e; }
+    #boot {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #8a8a90; letter-spacing: 0.01em;
+    }
+  </style>
+
+  <script>
+    // Some image hosts send no CORS headers, which Flutter's web renderer
+    // needs to decode an image. Route them through the same-origin relay in
+    // web_worker/index.js (keep the two host lists in sync).
+    (function () {
+      var relayHosts = { "image.lichess1.org": true };
+      function relayed(raw) {
+        try {
+          var url = new URL(raw, location.href);
+          if (relayHosts[url.hostname]) {
+            return "/_img?u=" + encodeURIComponent(url.href);
+          }
+        } catch (e) {}
+        return null;
+      }
+      var nativeFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        var raw = typeof input === "string" ? input
+          : input instanceof URL ? input.href
+          : input && input.url;
+        var target = raw && relayed(raw);
+        return nativeFetch(target || input, init);
+      };
+      var nativeOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        var target = relayed(String(url));
+        if (target) arguments[1] = target;
+        return nativeOpen.apply(this, arguments);
+      };
+    })();
+  </script>
+
+  <!-- flutter_soloud's web backend (move and capture sounds). -->
+  <script src="assets/packages/flutter_soloud/web/libflutter_soloud_plugin.js" defer></script>
+  <script src="assets/packages/flutter_soloud/web/init_module.dart.js" defer></script>
 </head>
 <body>
+  <div id="boot">Loading ChessEver…</div>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

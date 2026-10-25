@@ -3,7 +3,6 @@ import 'dart:async';
 
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -79,6 +78,7 @@ import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const _sidebarExpandedPreferenceKey = 'desktop_sidebar_expanded_v1';
 const _sidebarAutoCollapseBreakpoint = 1500.0;
@@ -794,7 +794,7 @@ class DesktopShell extends HookConsumerWidget {
                                     onOpenUserProfile:
                                         () => openCurrentUserProfileTab(ref),
                                     showSidebarToggle:
-                                        Platform.isMacOS && !sidebarExpanded,
+                                        hostIsMacOS && !sidebarExpanded,
                                     sidebarAutoCollapsed: autoCollapsed,
                                     onToggleSidebar: toggleSidebar,
                                   ),

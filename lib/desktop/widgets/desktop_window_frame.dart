@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
@@ -8,12 +7,13 @@ import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 import 'package:chessever/desktop/services/desktop_picture_in_picture_channel.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Width reserved at the right edge of title-bar surfaces for the three
 /// Windows/Linux caption controls.
 const double kDesktopWindowControlsWidth = 138;
 
-bool get _usesCustomWindowControls => Platform.isWindows || Platform.isLinux;
+bool get _usesCustomWindowControls => hostIsWindows || hostIsLinux;
 
 /// Supplies the virtual resize frame required by hidden-title-bar windows and
 /// keeps Windows/Linux caption controls available above every desktop route.
@@ -190,7 +190,7 @@ class DesktopStandaloneWindowChrome extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  if (Platform.isMacOS) const SizedBox(width: 78),
+                  if (hostIsMacOS) const SizedBox(width: 78),
                   Expanded(
                     child: DragToMoveArea(child: const SizedBox.expand()),
                   ),

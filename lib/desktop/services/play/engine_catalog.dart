@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/services/play/play_models.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Where to fetch a binary from for a given (engine, OS, arch) tuple.
 @immutable
@@ -90,9 +91,9 @@ class EngineDescriptor {
 }
 
 String _hostPlatform() {
-  if (Platform.isMacOS) return 'macos';
-  if (Platform.isWindows) return 'windows';
-  if (Platform.isLinux) return 'linux';
+  if (hostIsMacOS) return 'macos';
+  if (hostIsWindows) return 'windows';
+  if (hostIsLinux) return 'linux';
   return 'unknown';
 }
 

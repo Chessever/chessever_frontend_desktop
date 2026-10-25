@@ -1,0 +1,21 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart';
+
+// `dart:io`'s [Platform] throws on the web build (app.chessever.com), so
+// shared code asks these instead. In the native builds `kIsWeb` is a constant
+// false and each getter is exactly the `Platform` check it replaces.
+
+bool get hostIsMacOS => !kIsWeb && Platform.isMacOS;
+bool get hostIsWindows => !kIsWeb && Platform.isWindows;
+bool get hostIsLinux => !kIsWeb && Platform.isLinux;
+bool get hostIsAndroid => !kIsWeb && Platform.isAndroid;
+bool get hostIsIOS => !kIsWeb && Platform.isIOS;
+
+/// Whether shortcuts use ⌘ rather than Ctrl. On the web this follows the
+/// visitor's OS, so a Mac browser still gets ⌘ labels and bindings.
+bool get keyboardUsesMacModifiers =>
+    kIsWeb ? defaultTargetPlatform == TargetPlatform.macOS : Platform.isMacOS;
+
+/// `Platform.operatingSystem`, or `'web'` in the browser build.
+String get hostOperatingSystem => kIsWeb ? 'web' : Platform.operatingSystem;

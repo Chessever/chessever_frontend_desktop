@@ -10,6 +10,7 @@ import 'package:chessever/desktop/services/local_pgn_atomic_write.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/utils/host_platform.dart';
 
 /// Result of a local library write batch.
 class LocalLibraryWriteOutcome {
@@ -208,7 +209,7 @@ class LocalLibraryWriter {
   }
 
   String _normalize(String path) =>
-      Platform.isWindows ? path.toLowerCase() : path;
+      hostIsWindows ? path.toLowerCase() : path;
 }
 
 bool _looksLikePgnFile(String path) =>

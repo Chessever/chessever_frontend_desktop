@@ -20,6 +20,7 @@ import 'package:chessever/desktop/services/play/maia3_engine.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_resource_assessor.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Top-level lifecycle for the embedded tournament server. Lives on
 /// localhost — we never bind to a public interface, and only one instance
@@ -498,7 +499,7 @@ class TournamentServer extends StateNotifier<TournamentServerState> {
   }
 
   bool _isProcessAlive(int otherPid) {
-    if (Platform.isWindows) {
+    if (hostIsWindows) {
       // Synchronous probe avoids racing async lifecycle. Cost is one
       // tasklist invocation per stale-lock check (extremely rare).
       final res = Process.runSync('tasklist', ['/FI', 'PID eq $otherPid']);

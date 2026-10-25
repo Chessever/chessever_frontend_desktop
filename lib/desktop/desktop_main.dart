@@ -65,6 +65,7 @@ import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
 import 'package:chessever/utils/foreground_task_scheduler.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Stripped-down startup path for the macOS / Windows builds.
 ///
@@ -235,7 +236,7 @@ Future<void> _desktopMainWithSentry({
         // Windows has no native Sentry App Hang or frozen-frame integration.
         // Capture full tracing, interaction context, and screenshots in local
         // debug builds so the custom UI-stall watchdog has useful context.
-        final enableDebugFreezeDiagnostics = kDebugMode && Platform.isWindows;
+        final enableDebugFreezeDiagnostics = kDebugMode && hostIsWindows;
         options.tracesSampleRate = enableDebugFreezeDiagnostics ? 1.0 : 0.0;
         options.enableAutoPerformanceTracing = enableDebugFreezeDiagnostics;
         options.enableUserInteractionTracing = enableDebugFreezeDiagnostics;
@@ -267,7 +268,7 @@ Future<void> _desktopBoot({
   List<String> initialArguments = const <String>[],
 }) async {
   print('[desktop] startup begin (${Platform.operatingSystem})');
-  if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+  if (!(hostIsMacOS || hostIsWindows || hostIsLinux)) {
     throw StateError(
       'desktopMain() called on a non-desktop platform: ${Platform.operatingSystem}',
     );

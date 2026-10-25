@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const int _stableReadChunkBytes = 1024 * 1024;
 const int _contentFingerprintSampleBytes = 64 * 1024;
@@ -893,7 +894,7 @@ String localChessFileNameFromPath(String path) {
 }
 
 LocalChessFileAccessPlatform get _currentPlatform =>
-    Platform.isWindows
+    hostIsWindows
         ? LocalChessFileAccessPlatform.windows
         : LocalChessFileAccessPlatform.posix;
 

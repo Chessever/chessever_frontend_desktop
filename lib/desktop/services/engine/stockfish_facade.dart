@@ -1,14 +1,14 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:stockfish/stockfish.dart' as upstream;
+import 'package:chessever/web/shims/stockfish_upstream.dart' as upstream;
 
 import 'package:chessever/desktop/services/engine/uci_engine.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 // Re-export the upstream enum so call-sites can use `StockfishState.ready`
 // regardless of which backend is active. The values match across mobile/desktop.
-export 'package:stockfish/stockfish.dart' show StockfishState;
+export 'package:chessever/web/shims/stockfish_upstream.dart' show StockfishState;
 
 /// Maximum time for the spawned process to finish the UCI handshake.
 const desktopStockfishUciHandshakeTimeout = Duration(seconds: 5);
@@ -41,7 +41,10 @@ class Stockfish {
   static Stockfish? _instance;
   static bool _desktopEngineUnavailable = false;
 
-  static bool get desktopEngineUnavailable => _desktopEngineUnavailable;
+  /// Always true in the web build, which has no local engine to start; the
+  /// singleton then skips straight to its no-engine path.
+  static bool get desktopEngineUnavailable =>
+      kIsWeb || _desktopEngineUnavailable;
 
   static void resetDesktopEngineAvailabilityForRetry() {
     _desktopEngineUnavailable = false;
@@ -69,7 +72,7 @@ class Stockfish {
     }
 
     final useDesktopBackend =
-        Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+        hostIsMacOS || hostIsWindows || hostIsLinux;
 
     if (useDesktopBackend) {
       final s = Stockfish._desktop();

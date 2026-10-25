@@ -16,6 +16,7 @@ import 'package:chessever/desktop/services/engine/uci_engine.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/play/engine_catalog.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// One-step bot readiness state for the Play setup screen.
 enum EngineInstallStatus {
@@ -289,7 +290,7 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
       default:
         throw const FormatException('Could not prepare bot package.');
     }
-    if (!Platform.isWindows) {
+    if (!hostIsWindows) {
       await Process.run('chmod', ['+x', outPath]);
     }
     return outPath;
@@ -331,7 +332,7 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
       targetDir.path,
       ..._normalizeArchivePath(executable.name).split('/'),
     ]);
-    if (!Platform.isWindows) {
+    if (!hostIsWindows) {
       await Process.run('chmod', ['+x', executablePath]);
     }
     return executablePath;

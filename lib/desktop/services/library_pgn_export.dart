@@ -7,6 +7,7 @@ import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/library/utils/folder_pgn_exporter.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Outcome of [exportFolderToDisk] surfaced to the calling UI so it can
 /// render accurate desktop feedback (or stay silent on user cancel).
@@ -122,7 +123,7 @@ Future<LibraryExportResult> _exportTree({
     return const LibraryExportResult(cancelled: true);
   }
 
-  final separator = Platform.isWindows ? '\\' : '/';
+  final separator = hostIsWindows ? '\\' : '/';
   final written = <String>[];
   var totalGames = 0;
   for (final entry in files) {

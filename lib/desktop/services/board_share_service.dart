@@ -16,6 +16,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Desktop-native sharing helpers for the board pane.
 ///
@@ -70,7 +71,7 @@ class BoardShareService {
     String defaultName = 'chessever_position.png',
   }) async {
     String? outputPath;
-    if (io.Platform.isMacOS || io.Platform.isWindows || io.Platform.isLinux) {
+    if (hostIsMacOS || hostIsWindows || hostIsLinux) {
       outputPath = await FilePicker.platform.saveFile(
         dialogTitle: 'Save Position Image',
         fileName: defaultName,
@@ -95,7 +96,7 @@ class BoardShareService {
 
   /// Copy PNG bytes to the system clipboard.
   static Future<void> copyPngBytesToClipboard(Uint8List bytes) async {
-    if (io.Platform.isLinux) {
+    if (hostIsLinux) {
       await _copyPngBytesToLinuxClipboard(bytes);
       return;
     }
@@ -146,7 +147,7 @@ class BoardShareService {
     String defaultName = 'chessever_game.gif',
   }) async {
     String? outputPath;
-    if (io.Platform.isMacOS || io.Platform.isWindows || io.Platform.isLinux) {
+    if (hostIsMacOS || hostIsWindows || hostIsLinux) {
       outputPath = await FilePicker.platform.saveFile(
         dialogTitle: 'Save Game GIF',
         fileName: defaultName,

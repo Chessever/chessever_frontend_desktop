@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 class DesktopFileOpenService {
   DesktopFileOpenService._();
@@ -111,7 +112,7 @@ class DesktopFileOpenService {
       }
     });
 
-    if (Platform.isMacOS) {
+    if (hostIsMacOS) {
       try {
         final pending = await _channel.invokeMethod<List<dynamic>>(
           'takeInitialOpenFiles',
@@ -219,7 +220,7 @@ class DesktopFileOpenService {
     }
     final path =
         maybeUri != null && maybeUri.scheme == 'file'
-            ? maybeUri.toFilePath(windows: Platform.isWindows)
+            ? maybeUri.toFilePath(windows: hostIsWindows)
             : trimmed;
 
     // Recognized files go through the import worker even when missing or

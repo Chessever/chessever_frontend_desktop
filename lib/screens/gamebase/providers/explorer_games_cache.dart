@@ -1089,7 +1089,10 @@ bool _underFlutterTest() {
 /// main window writes it; detached board windows read it. Nothing is saved
 /// under `flutter test`.
 final explorerGamesDiskStoreProvider = Provider<ExplorerGamesDiskStore>((ref) {
-  if (_underFlutterTest()) return const NoopExplorerGamesDiskStore();
+  // The web build has no cache directory; first pages live in memory only.
+  if (kIsWeb || _underFlutterTest()) {
+    return const NoopExplorerGamesDiskStore();
+  }
   return FileExplorerGamesDiskStore(
     readOnly: ref.read(desktopWindowRoleProvider) != DesktopWindowRole.main,
     directory: () async {

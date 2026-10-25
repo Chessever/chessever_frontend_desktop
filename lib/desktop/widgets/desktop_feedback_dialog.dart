@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -15,6 +14,7 @@ import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/services/telegram_notification_service.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const desktopFeedbackDialogTitle = 'Feedback';
 
@@ -120,7 +120,7 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
           'source': 'desktop_report_issue',
           'app_version': packageInfo.version,
           'build_number': packageInfo.buildNumber,
-          'platform': Platform.operatingSystem,
+          'platform': hostOperatingSystem,
         });
       }
 
@@ -134,7 +134,7 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
             source: 'desktop_report_issue',
             userId: userId,
             appVersion: '${packageInfo.version} (${packageInfo.buildNumber})',
-            platform: Platform.operatingSystem,
+            platform: hostOperatingSystem,
             screenshotBytes: screenshotBytes,
           );
 

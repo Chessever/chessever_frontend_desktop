@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_pgn_rename.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const Object _localLibraryUnset = Object();
 const String playerWorkspaceLocalLibraryGroupPrefix = 'player-workspace:';
@@ -478,7 +479,7 @@ class LocalLibraryRegistryNotifier
     final trimmed = path.trim();
     if (trimmed.isEmpty) return '';
     final normalized = p.normalize(trimmed);
-    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+    return hostIsWindows ? normalized.toLowerCase() : normalized;
   }
 
   LocalLibraryEntry _entryWithMetadata(

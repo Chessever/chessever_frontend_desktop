@@ -1,61 +1,15 @@
 import 'dart:async';
 import 'package:chessever/desktop/services/engine/complete_pv_batch.dart';
-import 'dart:ffi';
-import 'dart:io' show Platform;
-import 'dart:isolate';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
-import 'package:ffi/ffi.dart';
+import 'package:chessever/screens/chessboard/provider/stockfish_native_stdin.dart'
+    if (dart.library.js_interop) 'package:chessever/screens/chessboard/provider/stockfish_native_stdin_web.dart';
 import 'package:flutter/foundation.dart';
 // On macOS / Windows the upstream `package:stockfish` ships no native libs, so
 // we route through a façade that spawns a Stockfish binary as a subprocess
 // and re-exposes the same `Stockfish` / `StockfishState` API.
 import 'package:chessever/desktop/services/engine/stockfish_facade.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
-
-// Cache for native FFI pointers to avoid expensive lookups during teardown/hot-restart
-DynamicLibrary? _nativeStockfishLib;
-int Function(Pointer<Utf8>)? _nativeWriteFn;
-
-/// Write a UCI command directly to the native Stockfish stdin buffer via FFI,
-/// bypassing the Dart [Stockfish] wrapper's state check that throws when the
-/// engine isn't in [StockfishState.ready].
-///
-/// PERFORMANCE: Uses [Isolate.run] to avoid blocking the main thread. This is
-/// critical during hot-restart teardown where the native engine might be busy
-/// and holding the stdin mutex, which would otherwise hang the entire app.
-Future<void> _rawStockfishStdin(String command) async {
-  // On macOS/Windows there is no in-process stockfish native library to look
-  // up — the engine runs as a subprocess, owned by the façade. The desktop
-  // façade's dispose() already sends 'stop'/'quit' to the subprocess, so
-  // there's nothing to do here.
-  if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
-    return;
-  }
-  try {
-    await Isolate.run(() {
-      _nativeStockfishLib ??=
-          Platform.isAndroid
-              ? DynamicLibrary.open('libstockfish.so')
-              : DynamicLibrary.process();
-
-      _nativeWriteFn ??=
-          _nativeStockfishLib!
-              .lookup<NativeFunction<IntPtr Function(Pointer<Utf8>)>>(
-                'stockfish_stdin_write',
-              )
-              .asFunction<int Function(Pointer<Utf8>)>();
-
-      final ptr = '$command\n'.toNativeUtf8();
-      try {
-        _nativeWriteFn!(ptr);
-      } finally {
-        calloc.free(ptr);
-      }
-    });
-  } catch (_) {
-    // Silently ignore FFI errors during teardown
-  }
-}
+import 'package:chessever/utils/host_platform.dart';
 
 @visibleForTesting
 List<Pv> normalizeStockfishPvsToWhitePerspective(List<Pv> pvs, String fen) {
@@ -210,7 +164,7 @@ class StockfishSingleton {
   /// Get the minimum disposal wait time based on platform
   Duration get _minDisposalWait {
     try {
-      return Platform.isAndroid ? _androidMinDisposalWait : _iosMinDisposalWait;
+      return hostIsAndroid ? _androidMinDisposalWait : _iosMinDisposalWait;
     } catch (_) {
       // Fallback for web or test environments
       return _iosMinDisposalWait;
@@ -220,7 +174,7 @@ class StockfishSingleton {
   /// Check if we're on Android (needs stricter instance management)
   bool get _isAndroid {
     try {
-      return Platform.isAndroid;
+      return hostIsAndroid;
     } catch (_) {
       return false;
     }
@@ -230,7 +184,7 @@ class StockfishSingleton {
   /// spawn + UCI handshake rather than an in-process FFI init.
   bool get _isDesktop {
     try {
-      return Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+      return hostIsMacOS || hostIsWindows || hostIsLinux;
     } catch (_) {
       return false;
     }
@@ -1316,8 +1270,8 @@ class StockfishSingleton {
       await Future.delayed(const Duration(milliseconds: 100));
     } catch (e) {
       // If stdin throws (engine not accepting commands yet), fall back to FFI
-      unawaited(_rawStockfishStdin('stop'));
-      unawaited(_rawStockfishStdin('quit'));
+      unawaited(rawStockfishStdin('stop'));
+      unawaited(rawStockfishStdin('quit'));
       await Future.delayed(const Duration(milliseconds: 100));
       debugPrint('⚠️ STOCKFISH: Could not send quit via stdin: $e');
     }
@@ -1531,8 +1485,8 @@ class StockfishSingleton {
             // The native engine is still alive (Dart reference may be null).
             // Send "quit" directly via FFI so the native process can shut down
             // before we attempt to create a fresh instance.
-            unawaited(_rawStockfishStdin('stop'));
-            unawaited(_rawStockfishStdin('quit'));
+            unawaited(rawStockfishStdin('stop'));
+            unawaited(rawStockfishStdin('quit'));
 
             if (_engine != null) {
               final existingEngine = _engine!;
@@ -1668,8 +1622,8 @@ class StockfishSingleton {
     // This avoids expensive FFI lookups and potential hangs on hot-restart
     // when the engine was never used or already disposed.
     if (_engine != null || _lastDisposeTime != null) {
-      unawaited(_rawStockfishStdin('stop'));
-      unawaited(_rawStockfishStdin('quit'));
+      unawaited(rawStockfishStdin('stop'));
+      unawaited(rawStockfishStdin('quit'));
     }
 
     if (_currentJob != null && !_currentJob!.completer.isCompleted) {

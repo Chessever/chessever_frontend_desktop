@@ -1,4 +1,3 @@
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -6,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/desktop/utils/library_folder_tree.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 @immutable
 class MyDatabasesFocusState {
@@ -109,7 +109,7 @@ String libraryCloudDatabasePinKey(String folderId) {
 
 String libraryLocalDatabasePinKey(String path) {
   final normalized = p.normalize(path.trim());
-  final canonical = Platform.isWindows ? normalized.toLowerCase() : normalized;
+  final canonical = hostIsWindows ? normalized.toLowerCase() : normalized;
   return 'local:$canonical';
 }
 

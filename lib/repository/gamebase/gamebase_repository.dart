@@ -2565,9 +2565,13 @@ final gamebaseRepositoryProvider = Provider<GamebaseRepository>((ref) {
   // proxy hop) on the next explorer request. A minute of idle keep-alive
   // covers ordinary reading pauses; the socket still closes the moment the
   // server closes its end.
-  dio.httpClientAdapter = IOHttpClientAdapter(
-    createHttpClient:
-        () => HttpClient()..idleTimeout = const Duration(seconds: 60),
-  );
+  // The web build keeps Dio's default browser adapter (dart:io's HttpClient
+  // does not exist there); the browser manages its own keep-alive.
+  if (!kIsWeb) {
+    dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient:
+          () => HttpClient()..idleTimeout = const Duration(seconds: 60),
+    );
+  }
   return GamebaseRepository(dio);
 });

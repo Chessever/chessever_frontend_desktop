@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart' show GZipDecoder, GZipEncoder;
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
@@ -24,7 +25,10 @@ const _gzipPrefix = 'gz:';
 String _encodeAndCompress(List<Games> games) {
   final jsonStrings = games.map((g) => json.encode(g.toJson())).toList();
   final fullJson = json.encode(jsonStrings);
-  final compressed = gzip.encode(utf8.encode(fullJson));
+  final bytes = utf8.encode(fullJson);
+  // dart:io's zlib does not exist in the web build; archive's codec does.
+  final compressed =
+      kIsWeb ? const GZipEncoder().encodeBytes(bytes) : gzip.encode(bytes);
   return '$_gzipPrefix${base64.encode(compressed)}';
 }
 
@@ -34,7 +38,10 @@ List<Games> _decompressAndDecode(String cached) {
   String jsonString;
   if (cached.startsWith(_gzipPrefix)) {
     final b64 = cached.substring(_gzipPrefix.length);
-    jsonString = utf8.decode(gzip.decode(base64.decode(b64)));
+    final bytes = base64.decode(b64);
+    jsonString = utf8.decode(
+      kIsWeb ? const GZipDecoder().decodeBytes(bytes) : gzip.decode(bytes),
+    );
   } else {
     // Legacy uncompressed entry — backwards compatible
     jsonString = cached;

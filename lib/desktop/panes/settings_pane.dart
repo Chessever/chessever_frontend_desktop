@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
@@ -35,6 +36,7 @@ import 'package:chessever/providers/app_version_provider.dart';
 import 'package:chessever/providers/guest_session_provider.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Desktop preferences pane.
 ///
@@ -842,7 +844,7 @@ class _UpdatesSection extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final development = DesktopBuildIdentity.current.isDevelopment;
-    final supported = !development && (Platform.isMacOS || Platform.isWindows);
+    final supported = !development && (hostIsMacOS || hostIsWindows);
     final update = supported ? ref.watch(desktopUpdateStateProvider) : null;
     final checking = useState<bool>(false);
     final lastCheckedAt = useState<DateTime?>(null);
@@ -1047,11 +1049,12 @@ class _PlatformSection extends ConsumerWidget {
             'App version',
             appVersion == null ? '—' : 'v$appVersion',
           ),
-          _KeyValueRow('Operating System', Platform.operatingSystem),
-          _KeyValueRow(
-            'Number of processors',
-            Platform.numberOfProcessors.toString(),
-          ),
+          _KeyValueRow('Operating System', hostOperatingSystem),
+          if (!kIsWeb)
+            _KeyValueRow(
+              'Number of processors',
+              Platform.numberOfProcessors.toString(),
+            ),
           const SizedBox(height: 12),
           const Text(
             'Window position, sidebar state, and pane sizes are persisted '
