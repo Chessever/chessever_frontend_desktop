@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const String compactLocalTreeIndexFormat = 'ceti';
 const int compactLocalTreeIndexVersion = 1;
@@ -142,7 +143,7 @@ class CompactLocalTreeIndexBuilder {
     _workingDirectory.createSync(recursive: true);
     _bucketFiles = List<RandomAccessFile>.generate(_bucketCount, (index) {
       return File(
-        '${_workingDirectory.path}${Platform.pathSeparator}bucket-$index.bin',
+        '${_workingDirectory.path}${hostPathSeparator}bucket-$index.bin',
       ).openSync(mode: FileMode.writeOnly);
     });
     _bucketBuffers = List<BytesBuilder>.generate(
@@ -224,7 +225,7 @@ class CompactLocalTreeIndexBuilder {
       output.writeFromSync(Uint8List(_headerSize));
       for (var bucket = 0; bucket < _bucketCount; bucket++) {
         final bucketFile = File(
-          '${_workingDirectory.path}${Platform.pathSeparator}bucket-$bucket.bin',
+          '${_workingDirectory.path}${hostPathSeparator}bucket-$bucket.bin',
         );
         if (!bucketFile.existsSync() || bucketFile.lengthSync() == 0) continue;
         final bytes = bucketFile.readAsBytesSync();

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:chessever/desktop/auth/desktop_play_access.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:dartchess/dartchess.dart';
@@ -13,6 +12,7 @@ import 'package:chessever/desktop/services/play/bot_identity.dart';
 import 'package:chessever/desktop/services/play/engine_installer.dart';
 import 'package:chessever/desktop/services/play/maia3_engine.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Terminal reason for a finished game. We keep our own enum because
 /// dartchess [Outcome] alone doesn't tell us *why* (timeout vs resignation
@@ -441,7 +441,7 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
     // analysis singleton handles that. Bots don't need many threads.
     // The web engine is a single-threaded WebAssembly build.
     if (kIsWeb) return 1;
-    final cores = Platform.numberOfProcessors;
+    final cores = hostProcessorCount;
     return cores >= 4 ? 2 : 1;
   }
 

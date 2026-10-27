@@ -199,9 +199,8 @@ bool librarySaveAllowsCloudDestinations(LibrarySaveDestinationMode mode) =>
     mode != LibrarySaveDestinationMode.localOnly;
 
 @visibleForTesting
-/// The browser build has no local PGN files to save into.
 bool librarySaveAllowsLocalDestinations(LibrarySaveDestinationMode mode) =>
-    !kIsWeb && mode != LibrarySaveDestinationMode.cloudOnly;
+    mode != LibrarySaveDestinationMode.cloudOnly;
 
 @visibleForTesting
 String librarySaveDialogTitle(LibrarySaveDestinationMode mode) {
@@ -1536,7 +1535,9 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                   children: [
                                     for (final entry in localEntries)
                                       _localDestinationRow(entry, busy),
-                                    Padding(
+                                    // Browsers cannot hand back a writable
+                                    // path to a file the user picks.
+                                    if (!kIsWeb) Padding(
                                       padding: const EdgeInsets.only(top: 4),
                                       child: _AddLocalFolderTile(
                                         onTap: busy ? null : _onAddLocalPgnFile,

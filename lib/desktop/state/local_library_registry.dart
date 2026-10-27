@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:crypto/crypto.dart';

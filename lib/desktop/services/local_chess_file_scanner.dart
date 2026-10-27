@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'pgn_record_boundaries.dart';
 import 'local_pgn_position.dart';
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';

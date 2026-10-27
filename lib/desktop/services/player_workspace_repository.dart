@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -97,8 +97,6 @@ class PlayerWorkspaceRepository {
   Future<PlayerWorkspaceSnapshot> loadSnapshot() async {
     final raw = await _appDatabase.getJson<Object?>(_workspaceStorageKey);
     final snapshot = PlayerWorkspaceSnapshot.fromJson(raw);
-    // The web build has no support directory and no generated files to rebase.
-    if (kIsWeb) return snapshot;
     final support = await _supportDirectory();
     localChessLog.info(
       'Player workspace storage root',

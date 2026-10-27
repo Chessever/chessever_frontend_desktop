@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -1053,7 +1052,7 @@ class _PlatformSection extends ConsumerWidget {
           if (!kIsWeb)
             _KeyValueRow(
               'Number of processors',
-              Platform.numberOfProcessors.toString(),
+              hostProcessorCount.toString(),
             ),
           const SizedBox(height: 12),
           const Text(

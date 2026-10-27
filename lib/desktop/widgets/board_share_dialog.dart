@@ -23,6 +23,7 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
 import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const _defaultBoardShareShowEvalBar = false;
 
@@ -291,7 +292,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       setState(() => _gifProgressLabel = 'Loading GIF preview…');
       final temporaryDirectory = await getTemporaryDirectory();
       final temporaryPath =
-          '${temporaryDirectory.path}${io.Platform.pathSeparator}'
+          '${temporaryDirectory.path}${hostPathSeparator}'
           'chessever_gif_preview_${DateTime.now().microsecondsSinceEpoch}.gif';
       await service.downloadToFile(
         jobId: completed.id,

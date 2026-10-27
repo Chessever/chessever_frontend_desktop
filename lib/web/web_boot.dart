@@ -18,7 +18,10 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
+import 'package:chessever/web/web_file_system.dart';
+import 'package:chessever/web/web_path_provider.dart';
 import 'package:chessever/web/web_url_sync.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 /// Browser startup for the desktop shell.
 ///
@@ -37,6 +40,12 @@ Future<void> runChessEverWeb() async {
 Future<void> _boot() async {
   WidgetsFlutterBinding.ensureInitialized();
   print('[web] startup begin');
+
+  // Local databases, workspaces and caches are files on desktop; here they
+  // live in an IndexedDB-backed filesystem mounted before anything opens one.
+  await WebFileSystem.mount();
+  PathProviderPlatform.instance = WebPathProvider();
+  print('[web] file system mounted');
 
   // The worker-backed factory needs a SharedWorker, which some browsers lack
   // or refuse; the main-thread factory reads the same IndexedDB storage.

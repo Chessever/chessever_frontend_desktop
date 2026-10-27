@@ -1,6 +1,5 @@
 import 'dart:collection';
-import 'dart:io' show Platform;
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 import 'dart:math' as math;
 
 import 'package:dartchess/dartchess.dart';
@@ -8,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 final RegExp _pgnHeaderRegex = RegExp(
   r'^\[\s*(\w+)\s+"((?:[^"\\]|\\.)*)"\s*\]',
@@ -380,7 +380,7 @@ int _treeWorkerCount({
   if (requestedWorkerCount != null) {
     return requestedWorkerCount.clamp(1, gameCount).toInt();
   }
-  final processors = Platform.numberOfProcessors;
+  final processors = hostProcessorCount;
   final byCpu = math.max(1, math.min(processors - 1, 8));
   final byWork =
       minGamesPerWorker <= 1

@@ -2556,7 +2556,10 @@ String _debugBody(Object? data) {
 final gamebaseRepositoryProvider = Provider<GamebaseRepository>((ref) {
   final dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 10),
+      // In a browser Dio's connect timeout runs until the first response
+      // bytes, so a slow-starting PGN export would be aborted; the browser
+      // owns connection timing there and the receive timeouts still apply.
+      connectTimeout: kIsWeb ? null : const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 30),
     ),
   );

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 
 import 'package:crypto/crypto.dart';
 import 'package:dartchess/dartchess.dart' show Chess;
@@ -246,7 +246,7 @@ class LocalChessResqliteDatabase {
       _localChessDevelopmentPurgeEnv,
     );
     final environmentValue =
-        Platform.environment[_localChessDevelopmentPurgeEnv];
+        hostEnvironment[_localChessDevelopmentPurgeEnv];
     final flagFileExists = await flagFile.exists();
     final shouldPurge = shouldPurgeLocalChessResqliteCacheForDevelopment(
       isReleaseMode: kReleaseMode,

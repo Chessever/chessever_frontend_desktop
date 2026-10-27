@@ -16,6 +16,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'gamebase_providers.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 // Desktop port of the phone app's explorer games cache (chessever-frontend,
 // lib/screens/gamebase/providers/explorer_games_cache.dart). The behaviour is
@@ -239,7 +240,7 @@ class FileExplorerGamesDiskStore implements ExplorerGamesDiskStore {
   }
 
   File _file(Directory dir, String name) =>
-      File('${dir.path}${Platform.pathSeparator}$name');
+      File('${dir.path}${hostPathSeparator}$name');
 
   Future<String?> _readOwnerMarker(Directory dir) async {
     final ownerFile = _file(dir, _ownerFileName);
@@ -1077,7 +1078,7 @@ void recordExplorerGamesPaint({
 
 bool _underFlutterTest() {
   try {
-    return Platform.environment.containsKey('FLUTTER_TEST');
+    return hostEnvironment.containsKey('FLUTTER_TEST');
   } catch (_) {
     return false;
   }
@@ -1089,15 +1090,12 @@ bool _underFlutterTest() {
 /// main window writes it; detached board windows read it. Nothing is saved
 /// under `flutter test`.
 final explorerGamesDiskStoreProvider = Provider<ExplorerGamesDiskStore>((ref) {
-  // The web build has no cache directory; first pages live in memory only.
-  if (kIsWeb || _underFlutterTest()) {
-    return const NoopExplorerGamesDiskStore();
-  }
+  if (_underFlutterTest()) return const NoopExplorerGamesDiskStore();
   return FileExplorerGamesDiskStore(
     readOnly: ref.read(desktopWindowRoleProvider) != DesktopWindowRole.main,
     directory: () async {
       final base = await getApplicationCacheDirectory();
-      return Directory('${base.path}${Platform.pathSeparator}explorer_games');
+      return Directory('${base.path}${hostPathSeparator}explorer_games');
     },
   );
 });

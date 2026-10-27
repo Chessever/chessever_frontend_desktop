@@ -19,3 +19,13 @@ bool get keyboardUsesMacModifiers =>
 
 /// `Platform.operatingSystem`, or `'web'` in the browser build.
 String get hostOperatingSystem => kIsWeb ? 'web' : Platform.operatingSystem;
+
+/// `Platform.pathSeparator`; `/` in the browser build's filesystem.
+String get hostPathSeparator => kIsWeb ? '/' : Platform.pathSeparator;
+
+/// `Platform.numberOfProcessors`, or what the browser reports.
+int get hostProcessorCount => kIsWeb ? 4 : Platform.numberOfProcessors;
+
+/// `Platform.environment`; empty in the browser build.
+Map<String, String> get hostEnvironment =>
+    kIsWeb ? const <String, String>{} : Platform.environment;
