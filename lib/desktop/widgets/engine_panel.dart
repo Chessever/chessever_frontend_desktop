@@ -534,14 +534,23 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             const SizedBox(width: 8),
           ],
           Expanded(
-            child: Text(
-              'Stockfish',
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: engineOn ? kWhiteColor : kWhiteColor70,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
+            // A clipped "St…" reads as broken; in a narrow rail the score and
+            // controls say enough, so the name steps aside instead.
+            child: LayoutBuilder(
+              builder:
+                  (context, constraints) =>
+                      constraints.maxWidth < 64
+                          ? const SizedBox.shrink()
+                          : Text(
+                            'Stockfish',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: engineOn ? kWhiteColor : kWhiteColor70,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
             ),
           ),
           if (engineActive) ...[

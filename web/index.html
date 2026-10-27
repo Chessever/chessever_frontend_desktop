@@ -37,7 +37,11 @@
     // needs to decode an image. Route them through the same-origin relay in
     // web_worker/index.js (keep the two host lists in sync).
     (function () {
-      var relayHosts = { "image.lichess1.org": true, "marketing.chess.com": true };
+      var relayHosts = {
+        "image.lichess1.org": true,
+        "marketing.chess.com": true,
+        "saintlouischessclub.org": true
+      };
       function relayed(raw) {
         try {
           var url = new URL(raw, location.href);
