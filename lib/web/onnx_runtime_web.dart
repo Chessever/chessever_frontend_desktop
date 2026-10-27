@@ -10,7 +10,15 @@ Future<void>? _loading;
 /// Adds onnxruntime-web (`web/onnx/`) to the page the first time Maia needs
 /// it, so the 14 MB runtime costs nothing until then.
 Future<void> ensureOnnxRuntimeLoaded() {
-  return _loading ??= () async {
+  return _loading ??= _loadOnnxRuntime().catchError((Object error) {
+    // A dropped connection must not leave Maia broken until a reload.
+    _loading = null;
+    throw error;
+  });
+}
+
+Future<void> _loadOnnxRuntime() {
+  return () async {
     final base = Uri.parse(web.document.baseURI).resolve('onnx/').toString();
     if (!globalContext.has('ort')) {
       final loaded = Completer<void>();
@@ -20,9 +28,10 @@ Future<void> ensureOnnxRuntimeLoaded() {
             ..async = true;
       script.onload = ((web.Event _) => loaded.complete()).toJS;
       script.onerror =
-          ((web.Event _) => loaded.completeError(
-            StateError('Could not load the Maia runtime'),
-          )).toJS;
+          ((web.Event _) {
+            script.remove();
+            loaded.completeError(StateError('Could not load the Maia runtime'));
+          }).toJS;
       web.document.head!.appendChild(script);
       await loaded.future;
     }
