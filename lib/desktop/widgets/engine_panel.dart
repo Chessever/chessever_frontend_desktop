@@ -2097,7 +2097,9 @@ class _DepthChip extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          color: kLightGreyColor.withValues(alpha: isEvaluating ? 0.9 : 0.65),
+          // Readable on the chip (about 1.9:1 before); still a step below
+          // the score beside it.
+          color: isEvaluating ? kWhiteColor70 : kLightGreyColor,
           fontSize: 10,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.4,

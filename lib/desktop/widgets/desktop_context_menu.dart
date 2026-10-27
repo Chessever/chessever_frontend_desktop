@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -175,46 +176,60 @@ class _DesktopContextMenuOverlayState<T>
     final left = widget.position.dx.clamp(8.0, maxLeft).toDouble();
     final top = widget.position.dy.clamp(8.0, maxTop).toDouble();
 
-    return Material(
-      type: MaterialType.transparency,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _dismiss(),
-              onSecondaryTap: () => _dismiss(),
-            ),
-          ),
-          Positioned(
-            left: left,
-            top: top,
-            child: AnimatedBuilder(
-              animation: _controller,
-              builder: (context, child) {
-                final t = _controller.value.clamp(0.0, 1.0);
-                final scale = 0.965 + (0.035 * t);
-                return Opacity(
-                  opacity: t,
-                  child: Transform.translate(
-                    offset: Offset(0, -4 * (1 - t)),
-                    child: Transform.scale(
-                      scale: scale,
-                      alignment: Alignment.topLeft,
-                      filterQuality: FilterQuality.medium,
-                      child: child,
-                    ),
-                  ),
-                );
-              },
-              child: _DesktopContextMenuSurface<T>(
-                entries: widget.entries,
-                width: widget.width,
-                onSelect: _dismiss,
+    // The menu takes focus so Esc closes it, rather than reaching the
+    // shell's Esc binding underneath, which would close the tab and leave
+    // this overlay drawn over the next one.
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.escape) {
+          unawaited(_dismiss());
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Material(
+        type: MaterialType.transparency,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _dismiss(),
+                onSecondaryTap: () => _dismiss(),
               ),
             ),
-          ),
-        ],
+            Positioned(
+              left: left,
+              top: top,
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  final t = _controller.value.clamp(0.0, 1.0);
+                  final scale = 0.965 + (0.035 * t);
+                  return Opacity(
+                    opacity: t,
+                    child: Transform.translate(
+                      offset: Offset(0, -4 * (1 - t)),
+                      child: Transform.scale(
+                        scale: scale,
+                        alignment: Alignment.topLeft,
+                        filterQuality: FilterQuality.medium,
+                        child: child,
+                      ),
+                    ),
+                  );
+                },
+                child: _DesktopContextMenuSurface<T>(
+                  entries: widget.entries,
+                  width: widget.width,
+                  onSelect: _dismiss,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

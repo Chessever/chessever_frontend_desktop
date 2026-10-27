@@ -719,8 +719,9 @@ class _PlayerRow extends StatelessWidget {
     return ClickCursor(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onSelect,
-        onDoubleTap: onOpen,
+        // One click opens, as in any command palette; arrow keys still
+        // move the highlight first.
+        onTap: onOpen,
         child: SingleMotionBuilder(
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,
@@ -847,8 +848,9 @@ class _TournamentRow extends StatelessWidget {
     return ClickCursor(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onSelect,
-        onDoubleTap: onOpen,
+        // One click opens, as in any command palette; arrow keys still
+        // move the highlight first.
+        onTap: onOpen,
         child: SingleMotionBuilder(
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,
@@ -1107,8 +1109,9 @@ class _OpeningRow extends StatelessWidget {
     return ClickCursor(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onSelect,
-        onDoubleTap: onOpen,
+        // One click opens, as in any command palette; arrow keys still
+        // move the highlight first.
+        onTap: onOpen,
         child: SingleMotionBuilder(
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,
@@ -1191,8 +1194,9 @@ class _PaletteRow extends StatelessWidget {
     return ClickCursor(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onSelect,
-        onDoubleTap: onOpen,
+        // One click opens, as in any command palette; arrow keys still
+        // move the highlight first.
+        onTap: onOpen,
         child: SingleMotionBuilder(
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,

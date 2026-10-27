@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:js_interop';
 
+import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:web/web.dart' as web;
 
 import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 
@@ -24,6 +26,7 @@ class WebUrlSync {
   static ProviderSubscription<DesktopTabsState>? _tabs;
   static ProviderSubscription<Map<String, BoardTabGameArgs>>? _boards;
   static ProviderSubscription<Object?>? _events;
+  static ProviderSubscription<Object?>? _players;
   static JSFunction? _onPopState;
 
   /// The tab the arrival address opened, that address, and the address the
@@ -35,9 +38,14 @@ class WebUrlSync {
   static String? _arrivalPath;
   static String? _arrivalTabPath;
 
-  /// Set while a Back or Forward is being applied, so the tab change it
-  /// causes rewrites the current entry instead of pushing a new one.
+  /// Set while a Back or Forward is being applied (until the frame it
+  /// causes has settled), so the tab change it causes rewrites the current
+  /// entry instead of pushing a new one.
   static bool _restoring = false;
+
+  /// Position of the current history entry, stamped on each one, so a
+  /// popstate can tell Back from Forward.
+  static int _index = 0;
 
   static Future<void> start(ProviderContainer container) async {
     await _openInitialPath(Uri.base, container);
@@ -66,10 +74,12 @@ class WebUrlSync {
       final location = web.window.location;
       if ('${location.pathname}${location.search}' == path) return;
       final activeId = container.read(desktopTabsProvider).activeId;
-      final state = {'tab': activeId}.jsify();
       if (replace || _restoring) {
+        final state = {'tab': activeId, 'index': _index}.jsify();
         web.window.history.replaceState(state, '', path);
       } else {
+        _index++;
+        final state = {'tab': activeId, 'index': _index}.jsify();
         web.window.history.pushState(state, '', path);
       }
     }
@@ -80,6 +90,10 @@ class WebUrlSync {
       (_, _) => sync(),
     );
     _events = container.listen(tournamentByTabIdProvider, (_, _) => sync());
+    _players = container.listen(
+      playerProfileByTabIdProvider,
+      (_, _) => sync(),
+    );
 
     _onPopState =
         ((web.PopStateEvent event) {
@@ -90,22 +104,39 @@ class WebUrlSync {
     sync(replace: true);
   }
 
-  /// Shows the page a Back or Forward landed on: its tab when still open,
-  /// else the address opened afresh.
+  /// Shows the page a Back or Forward landed on. Another tab's entry
+  /// re-activates that tab; an entry of the tab already in front steps that
+  /// tab's own history (pane switches navigate inside one tab); an entry
+  /// whose tab was closed opens its address afresh.
   static Future<void> _restore(
     ProviderContainer container,
     JSAny? state,
     void Function({bool replace}) sync,
   ) async {
+    final entry = state?.dartify();
+    final tabId = entry is Map ? entry['tab'] : null;
+    final index = entry is Map ? entry['index'] : null;
+    final back = index is num ? index < _index : true;
+    if (index is num) _index = index.toInt();
     _restoring = true;
     try {
-      final tabId = (state?.dartify() as Map?)?['tab'];
       final tabs = container.read(desktopTabsProvider);
-      if (tabId is String && tabs.tabs.any((tab) => tab.id == tabId)) {
-        container.read(desktopTabsProvider.notifier).activate(tabId);
+      final notifier = container.read(desktopTabsProvider.notifier);
+      if (tabId is String &&
+          tabId != tabs.activeId &&
+          tabs.tabs.any((tab) => tab.id == tabId)) {
+        notifier.activate(tabId);
+      } else if (tabId is String && tabId == tabs.activeId) {
+        if (back && tabs.canGoBack) {
+          notifier.goBack();
+        } else if (!back && tabs.canGoForward) {
+          notifier.goForward();
+        }
       } else {
         await _openInitialPath(Uri.parse(web.window.location.href), container);
       }
+      // Tab changes land over the next frame; keep rewriting until then.
+      await WidgetsBinding.instance.endOfFrame;
       sync(replace: true);
     } finally {
       _restoring = false;
@@ -116,6 +147,7 @@ class WebUrlSync {
     _tabs?.close();
     _boards?.close();
     _events?.close();
+    _players?.close();
     final onPopState = _onPopState;
     if (onPopState != null) {
       web.window.removeEventListener('popstate', onPopState);
@@ -129,7 +161,6 @@ class WebUrlSync {
     'calendar': TabKind.calendar,
     'rankings': TabKind.rankings,
     'chess-players': TabKind.rankings,
-    'watch': TabKind.watch,
     'analysis': TabKind.board,
   };
 
@@ -175,17 +206,40 @@ class WebUrlSync {
         return _pathOf(
           buildDesktopEventShareUrl(id: event.id, title: event.title),
         );
+      case TabKind.playerProfile:
+        final player = container.read(playerProfileByTabIdProvider)[tab.id];
+        final fideId = player?.fideId;
+        if (player == null || fideId == null || fideId <= 0) return '/';
+        return _playerPath(player.playerName, fideId);
       case TabKind.tournaments:
         return '/broadcast';
       case TabKind.calendar:
         return '/calendar';
       case TabKind.rankings:
         return '/rankings';
-      case TabKind.watch:
-        return '/watch';
       default:
         return '/';
     }
+  }
+
+  /// chessever.com's player address: `/player/<first-last-slug>/<fideId>`
+  /// (src/lib/player-profile-path.ts). The site resolves the FIDE id, so an
+  /// accent dropped from the slug still lands on the same profile.
+  static String _playerPath(String name, int fideId) {
+    var display = name.trim();
+    if (display.contains(',')) {
+      final parts = display.split(',');
+      final first = parts.sublist(1).join(',').trim();
+      final last = parts.first.trim();
+      display = first.isEmpty ? last : '$first $last';
+    }
+    var slug = display
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (slug.length > 120) slug = slug.substring(0, 120);
+    if (slug.isEmpty) slug = 'player';
+    return '/player/$slug/$fideId';
   }
 
   static String _pathOf(String url) {

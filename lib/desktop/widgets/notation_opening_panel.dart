@@ -1116,19 +1116,22 @@ class _SegmentBar extends ConsumerWidget {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.only(left: 8),
-                // A narrow rail drops the least-used jumps instead of hiding
-                // the forward buttons off-screen: game jumps first, then
-                // first/last move. Their keyboard shortcuts keep working.
+                // A narrow rail drops the least-used jumps instead of letting
+                // the buttons spill over their neighbours: game jumps first,
+                // then first/last move, and with no room even for one step
+                // each way (the Explorer's own buttons open beside it), the
+                // whole cluster. Their keyboard shortcuts keep working.
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     final width = constraints.maxWidth;
+                    if (width < _clusterWidth(buttons: 2)) {
+                      return const SizedBox.shrink();
+                    }
                     final hasGameJumps =
                         onPreviousGame != null || onNextGame != null;
                     final dropGameJumps =
-                        hasGameJumps &&
-                        width < _clusterWidth(includeGameJumps: true);
-                    final dropEdgeJumps =
-                        width < _clusterWidth(includeGameJumps: false);
+                        hasGameJumps && width < _clusterWidth(buttons: 6);
+                    final dropEdgeJumps = width < _clusterWidth(buttons: 4);
                     return Align(
                       alignment: Alignment.center,
                       child: _ExplorerNavigationCluster(
@@ -1165,11 +1168,10 @@ class _SegmentBar extends ConsumerWidget {
   }
 }
 
-/// Width of the navigation cluster: 36 px buttons with 4 px gaps, with or
-/// without the previous/next game jumps.
-double _clusterWidth({required bool includeGameJumps}) {
-  final buttons = includeGameJumps ? 6 : 4;
-  return buttons * 36.0 + (buttons - 1) * 4.0;
+/// Width the navigation cluster needs for [buttons] 36 px buttons with 4 px
+/// gaps, plus a little air so it never sits flush against its neighbours.
+double _clusterWidth({required int buttons}) {
+  return buttons * 36.0 + (buttons - 1) * 4.0 + 8.0;
 }
 
 /// Exposes the actual Explorer navigation controls without remote providers.
