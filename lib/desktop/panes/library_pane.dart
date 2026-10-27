@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:file_picker/file_picker.dart';
 import 'package:chessever/desktop/state/library_destination.dart';
 import 'package:chessever/desktop/services/shared_books.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
@@ -241,6 +243,46 @@ class LibraryPane extends HookConsumerWidget {
       }
     }
 
+    /// The browser build has no local databases: picked or pasted PGN goes
+    /// to the import preview, which saves it into a cloud database.
+    void stageWebImport(List<ChessGame> games, String sourceLabel) {
+      ref
+          .read(libraryImportBufferProvider.notifier)
+          .accept(
+            games: games,
+            sourceLabel: sourceLabel,
+            suggestedFolderId: selectedFolderId.value,
+          );
+    }
+
+    Future<void> importWebPgnFiles() async {
+      final result = await FilePicker.platform.pickFiles(
+        dialogTitle: 'Import PGN',
+        type: FileType.custom,
+        allowedExtensions: const ['pgn'],
+        allowMultiple: true,
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty || !context.mounted) return;
+      final text = [
+        for (final file in result.files)
+          if (file.bytes != null)
+            utf8.decode(file.bytes!, allowMalformed: true),
+      ].join('\n\n');
+      final parsed = await parsePgnsToChessGamesAsync(text);
+      if (!context.mounted) return;
+      if (parsed.isEmpty) {
+        showDesktopToast(context, 'No games found in that PGN.', error: true);
+        return;
+      }
+      stageWebImport(
+        parsed.map((e) => e.chessGame).toList(),
+        result.files.length == 1
+            ? result.files.single.name
+            : '${result.files.length} files',
+      );
+    }
+
     Future<void> openClipboardPgnDatabase() async {
       try {
         final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
@@ -270,6 +312,10 @@ class LibraryPane extends HookConsumerWidget {
           return;
         }
 
+        if (kIsWeb) {
+          stageWebImport(parsed.map((e) => e.chessGame).toList(), 'clipboard');
+          return;
+        }
         final directory = io.Directory(
           p.join(io.Directory.systemTemp.path, 'chessever_clipboard_databases'),
         );
@@ -390,6 +436,7 @@ class LibraryPane extends HookConsumerWidget {
     }
 
     Future<void> importLocalPgnFiles() async {
+      if (kIsWeb) return importWebPgnFiles();
       final paths = await pickLibraryPgnDatabasePaths();
       if (paths == null) return;
       if (!context.mounted) return;
@@ -2022,12 +2069,15 @@ class _MyDatabasesHeader extends StatelessWidget {
           Icons.cloud_outlined,
           LibraryDatabaseCatalogSourceFilter.cloud,
         ),
-        const SizedBox(width: 4),
-        filterButton(
-          'Local',
-          Icons.computer_rounded,
-          LibraryDatabaseCatalogSourceFilter.local,
-        ),
+        // The browser build keeps every database in the cloud.
+        if (!kIsWeb) ...[
+          const SizedBox(width: 4),
+          filterButton(
+            'Local',
+            Icons.computer_rounded,
+            LibraryDatabaseCatalogSourceFilter.local,
+          ),
+        ],
       ],
     );
     final localLabel = localGroupLabel?.trim();

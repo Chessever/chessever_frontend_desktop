@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -198,8 +199,9 @@ bool librarySaveAllowsCloudDestinations(LibrarySaveDestinationMode mode) =>
     mode != LibrarySaveDestinationMode.localOnly;
 
 @visibleForTesting
+/// The browser build has no local PGN files to save into.
 bool librarySaveAllowsLocalDestinations(LibrarySaveDestinationMode mode) =>
-    mode != LibrarySaveDestinationMode.cloudOnly;
+    !kIsWeb && mode != LibrarySaveDestinationMode.cloudOnly;
 
 @visibleForTesting
 String librarySaveDialogTitle(LibrarySaveDestinationMode mode) {

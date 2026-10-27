@@ -17,7 +17,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart'
-    show ValueListenable, kDebugMode, listEquals, visibleForTesting;
+    show ValueListenable, kDebugMode, kIsWeb, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -152,6 +152,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/web/text_download.dart';
 
 // The corner grip and its drag maths now live with the Play pane's board too.
 // Re-exported so existing board-pane callers and tests keep their entry point.
@@ -3168,6 +3169,12 @@ class _BoardPaneContent extends HookConsumerWidget {
         final pgn = exportGameToPgn(hydrateGameForUserOutput(chessGame.value));
         final headers = pgnHeaders.value;
         final defaultName = _suggestPgnFileName(headers);
+        if (kIsWeb) {
+          downloadTextFile(defaultName, pgn);
+          saveCompletion.commit(pgn);
+          showToast('Downloaded $defaultName');
+          return;
+        }
         final path = await FilePicker.platform.saveFile(
           dialogTitle: 'Save PGN',
           fileName: defaultName,
