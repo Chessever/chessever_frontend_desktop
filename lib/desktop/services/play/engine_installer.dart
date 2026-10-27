@@ -17,6 +17,8 @@ import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/play/engine_catalog.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/web_engine_process_stub.dart'
+    if (dart.library.js_interop) 'package:chessever/web/web_engine_process.dart';
 
 /// One-step bot readiness state for the Play setup screen.
 enum EngineInstallStatus {
@@ -90,10 +92,17 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
         EngineInstallState(
           kind: kind,
           status:
-              kEngineCatalog[kind]?.artifactForHost() == null &&
+              kIsWeb
+                  ? _webInstallStatus(kind)
+                  : kEngineCatalog[kind]?.artifactForHost() == null &&
                       kind != BotEngineKind.stockfish
                   ? EngineInstallStatus.unsupported
                   : EngineInstallStatus.notInstalled,
+          binaryPath:
+              kIsWeb && kind == BotEngineKind.stockfish
+                  ? kWebStockfishEnginePath
+                  : null,
+          progress: kIsWeb && kind == BotEngineKind.stockfish ? 1.0 : 0.0,
         ),
       ) {
     unawaited(_seed());
@@ -102,7 +111,15 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
   final BotEngineKind kind;
   HttpClient? _client;
 
+  /// The browser build ships Stockfish (a Web Worker); Leela and Maia need
+  /// native binaries and stay unavailable there.
+  static EngineInstallStatus _webInstallStatus(BotEngineKind kind) =>
+      kind == BotEngineKind.stockfish
+          ? EngineInstallStatus.installed
+          : EngineInstallStatus.unsupported;
+
   Future<void> _seed() async {
+    if (kIsWeb) return;
     if (isMacAppStore) {
       final path = switch (kind) {
         BotEngineKind.stockfish => macAppStoreBundledPath(

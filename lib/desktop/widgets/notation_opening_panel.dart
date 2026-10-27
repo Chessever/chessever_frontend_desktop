@@ -1116,25 +1116,40 @@ class _SegmentBar extends ConsumerWidget {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.only(left: 8),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: _ExplorerNavigationCluster(
-                    canGoBack: canGoBack,
-                    canGoForward: canGoForward,
-                    canStepForward: canStepForward,
-                    onFirstMove: onFirstMove,
-                    onPreviousMove: onPreviousMove,
-                    onNextMove: onNextMove,
-                    onLastMove: onLastMove,
-                    onPreviousGame: onPreviousGame,
-                    onNextGame: onNextGame,
-                    firstMoveShortcutLabel: firstMoveShortcutLabel,
-                    previousMoveShortcutLabel: previousMoveShortcutLabel,
-                    nextMoveShortcutLabel: nextMoveShortcutLabel,
-                    lastMoveShortcutLabel: lastMoveShortcutLabel,
-                    previousGameShortcutLabel: previousGameShortcutLabel,
-                    nextGameShortcutLabel: nextGameShortcutLabel,
-                  ),
+                // A narrow rail drops the least-used jumps instead of hiding
+                // the forward buttons off-screen: game jumps first, then
+                // first/last move. Their keyboard shortcuts keep working.
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = constraints.maxWidth;
+                    final hasGameJumps =
+                        onPreviousGame != null || onNextGame != null;
+                    final dropGameJumps =
+                        hasGameJumps &&
+                        width < _clusterWidth(includeGameJumps: true);
+                    final dropEdgeJumps =
+                        width < _clusterWidth(includeGameJumps: false);
+                    return Align(
+                      alignment: Alignment.center,
+                      child: _ExplorerNavigationCluster(
+                        canGoBack: canGoBack,
+                        canGoForward: canGoForward,
+                        canStepForward: canStepForward,
+                        onFirstMove: dropEdgeJumps ? null : onFirstMove,
+                        onPreviousMove: onPreviousMove,
+                        onNextMove: onNextMove,
+                        onLastMove: dropEdgeJumps ? null : onLastMove,
+                        onPreviousGame: dropGameJumps ? null : onPreviousGame,
+                        onNextGame: dropGameJumps ? null : onNextGame,
+                        firstMoveShortcutLabel: firstMoveShortcutLabel,
+                        previousMoveShortcutLabel: previousMoveShortcutLabel,
+                        nextMoveShortcutLabel: nextMoveShortcutLabel,
+                        lastMoveShortcutLabel: lastMoveShortcutLabel,
+                        previousGameShortcutLabel: previousGameShortcutLabel,
+                        nextGameShortcutLabel: nextGameShortcutLabel,
+                      ),
+                    );
+                  },
                 ),
               ),
             )
@@ -1148,6 +1163,13 @@ class _SegmentBar extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Width of the navigation cluster: 36 px buttons with 4 px gaps, with or
+/// without the previous/next game jumps.
+double _clusterWidth({required bool includeGameJumps}) {
+  final buttons = includeGameJumps ? 6 : 4;
+  return buttons * 36.0 + (buttons - 1) * 4.0;
 }
 
 /// Exposes the actual Explorer navigation controls without remote providers.

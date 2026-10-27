@@ -9,6 +9,8 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/web_engine_process_stub.dart'
+    if (dart.library.js_interop) 'package:chessever/web/web_engine_process.dart';
 
 /// Minimal UCI engine driver that talks to a chess engine binary over
 /// stdin/stdout. Used on desktop where the `stockfish` Flutter package
@@ -122,6 +124,13 @@ class UciEngine {
     List<String> arguments = const <String>[],
     String? workingDirectory,
   }) {
+    // The browser build has no processes; its engines run in Web Workers.
+    if (kIsWeb) {
+      return _spawn(
+        binaryPath,
+        processStarter: () => startWebEngineProcess(binaryPath),
+      );
+    }
     return _spawn(
       binaryPath,
       processStarter:

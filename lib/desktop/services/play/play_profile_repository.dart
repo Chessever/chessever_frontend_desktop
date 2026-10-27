@@ -1,11 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
@@ -13,6 +10,7 @@ import 'package:chessever/desktop/services/play/play_achievements.dart';
 import 'package:chessever/desktop/services/play/play_elo.dart';
 import 'package:chessever/desktop/services/play/play_game_analysis.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
+import 'package:chessever/desktop/services/play/play_local_store.dart';
 
 /// Per-time-control rating stats stored on `user_play_profiles`.
 @immutable
@@ -657,52 +655,35 @@ class PlayProfileRepository {
     return null;
   }
 
-  Future<File> _profileFile() async {
-    final support = await getApplicationSupportDirectory();
-    return File(p.join(support.path, 'play_profile', 'profile.json'));
-  }
+  static const _store = PlayLocalStore();
+  static const _profilePath = 'play_profile/profile.json';
+  static const _gamesPath = 'play_profile/games.json';
+  static String _historyPath(RatedTimeControl tc) =>
+      'play_profile/history_${tc.wire}.json';
 
-  Future<File> _gamesFile() async {
-    final support = await getApplicationSupportDirectory();
-    return File(p.join(support.path, 'play_profile', 'games.json'));
-  }
-
-  Future<File> _historyFile(RatedTimeControl tc) async {
-    final support = await getApplicationSupportDirectory();
-    return File(
-      p.join(support.path, 'play_profile', 'history_${tc.wire}.json'),
-    );
-  }
-
-  PlayUserProfile? _readLocalProfileSync(File file) {
-    if (!file.existsSync()) return null;
+  Future<PlayUserProfile?> _readLocalProfile() async {
+    final text = await _store.read(_profilePath);
+    if (text == null) return null;
     try {
-      final json = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      final json = jsonDecode(text) as Map<String, dynamic>;
       return PlayUserProfile.fromJson(json);
     } catch (_) {
       return null;
     }
   }
 
-  Future<PlayUserProfile?> _readLocalProfile() async {
-    final file = await _profileFile();
-    return _readLocalProfileSync(file);
-  }
-
   Future<void> _writeLocalProfile(PlayUserProfile profile) async {
-    final file = await _profileFile();
-    if (!await file.parent.exists()) await file.parent.create(recursive: true);
-    await file.writeAsString(
+    await _store.write(
+      _profilePath,
       const JsonEncoder.withIndent('  ').convert(profile.toLocalJson()),
-      flush: true,
     );
   }
 
   Future<List<PlayGameRecord>> _readLocalGames({required int limit}) async {
-    final file = await _gamesFile();
-    if (!await file.exists()) return const <PlayGameRecord>[];
+    final text = await _store.read(_gamesPath);
+    if (text == null) return const <PlayGameRecord>[];
     try {
-      final json = jsonDecode(await file.readAsString()) as List<dynamic>;
+      final json = jsonDecode(text) as List<dynamic>;
       final games =
           json
               .whereType<Map>()
@@ -724,13 +705,11 @@ class PlayProfileRepository {
     byKey[record.localGameKey] = record;
     final next =
         byKey.values.toList()..sort((a, b) => b.playedAt.compareTo(a.playedAt));
-    final file = await _gamesFile();
-    if (!await file.parent.exists()) await file.parent.create(recursive: true);
-    await file.writeAsString(
+    await _store.write(
+      _gamesPath,
       const JsonEncoder.withIndent(
         '  ',
       ).convert(next.take(500).map((g) => g.toLocalJson()).toList()),
-      flush: true,
     );
   }
 
@@ -741,10 +720,10 @@ class PlayProfileRepository {
   }
 
   Future<List<PlayRatingPoint>> _readLocalHistory(RatedTimeControl tc) async {
-    final file = await _historyFile(tc);
-    if (!await file.exists()) return const <PlayRatingPoint>[];
+    final text = await _store.read(_historyPath(tc));
+    if (text == null) return const <PlayRatingPoint>[];
     try {
-      final raw = jsonDecode(await file.readAsString()) as List<dynamic>;
+      final raw = jsonDecode(text) as List<dynamic>;
       final points =
           raw
               .whereType<Map>()
@@ -764,15 +743,13 @@ class PlayProfileRepository {
     RatedTimeControl tc,
     List<PlayRatingPoint> points,
   ) async {
-    final file = await _historyFile(tc);
-    if (!await file.parent.exists()) await file.parent.create(recursive: true);
     final sorted = [...points]
       ..sort((a, b) => a.playedAt.compareTo(b.playedAt));
-    await file.writeAsString(
+    await _store.write(
+      _historyPath(tc),
       const JsonEncoder.withIndent(
         '  ',
       ).convert(sorted.map((p) => p.toLocalJson()).toList()),
-      flush: true,
     );
   }
 

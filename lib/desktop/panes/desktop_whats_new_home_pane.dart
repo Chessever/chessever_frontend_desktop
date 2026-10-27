@@ -2,6 +2,7 @@ import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_feedback_dialog.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 class DesktopWhatsNewHomePane extends StatelessWidget {
@@ -26,7 +27,9 @@ class DesktopWhatsNewHomePane extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                isMacAppStore
+                kIsWeb
+                    ? 'Welcome to ChessEver on the web'
+                    : isMacAppStore
                     ? 'Welcome to ChessEver for Mac'
                     : 'Welcome to ChessEver Desktop Beta',
                 style: const TextStyle(
@@ -75,7 +78,9 @@ class _FeedbackIntro extends StatelessWidget {
         children: [
           TextSpan(
             text:
-                isMacAppStore
+                kIsWeb
+                    ? 'ChessEver on the web is new, and we are improving it quickly. If something feels confusing, slow, missing, or not useful enough, please send us '
+                    : isMacAppStore
                     ? 'Follow live tournaments, analyze games, and organize your chess library. If you need help or have a suggestion, please send us '
                     : 'ChessEver Desktop is still in beta, and we are improving it quickly. If something feels confusing, slow, missing, or not useful enough, please send us ',
           ),
@@ -155,11 +160,16 @@ class _PowerTipsList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A browser tab cannot be dragged out into its own window.
+    final tips = [
+      for (final tip in _tips)
+        if (!kIsWeb || tip.shortcut != 'Drag tab') tip,
+    ];
     return Column(
       children: [
-        for (var i = 0; i < _tips.length; i++) ...[
-          _PowerTip(tip: _tips[i]),
-          if (i != _tips.length - 1) const SizedBox(height: 8),
+        for (var i = 0; i < tips.length; i++) ...[
+          _PowerTip(tip: tips[i]),
+          if (i != tips.length - 1) const SizedBox(height: 8),
         ],
       ],
     );

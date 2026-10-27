@@ -18,6 +18,7 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
+import 'package:chessever/web/web_url_sync.dart';
 
 /// Browser startup for the desktop shell.
 ///
@@ -85,5 +86,7 @@ Future<void> _boot() async {
   // Board sounds are a few small files; fetch them once the shell has drawn.
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(AudioPlayerService.instance.initializeAndLoadAllAssets());
+    // Open the page the address names, then keep the address in step.
+    unawaited(WebUrlSync.start(container));
   });
 }

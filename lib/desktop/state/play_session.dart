@@ -439,6 +439,8 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
   int _hostThreadHint() {
     // Reasonable conservative default that won't pin every core; the real
     // analysis singleton handles that. Bots don't need many threads.
+    // The web engine is a single-threaded WebAssembly build.
+    if (kIsWeb) return 1;
     final cores = Platform.numberOfProcessors;
     return cores >= 4 ? 2 : 1;
   }

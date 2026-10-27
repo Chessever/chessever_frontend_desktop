@@ -41,10 +41,7 @@ class Stockfish {
   static Stockfish? _instance;
   static bool _desktopEngineUnavailable = false;
 
-  /// Always true in the web build, which has no local engine to start; the
-  /// singleton then skips straight to its no-engine path.
-  static bool get desktopEngineUnavailable =>
-      kIsWeb || _desktopEngineUnavailable;
+  static bool get desktopEngineUnavailable => _desktopEngineUnavailable;
 
   static void resetDesktopEngineAvailabilityForRetry() {
     _desktopEngineUnavailable = false;
