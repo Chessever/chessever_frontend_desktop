@@ -6,7 +6,11 @@
 // that sends no CORS headers cannot be drawn. index.html rewrites requests for
 // the hosts below to this same-origin relay. Only these hosts are relayed, so
 // the route is not an open proxy.
-const RELAY_HOSTS = new Set(['image.lichess1.org', 'marketing.chess.com']);
+const RELAY_HOSTS = new Set([
+  'image.lichess1.org',
+  'marketing.chess.com',
+  'saintlouischessclub.org',
+]);
 const ONE_DAY = 86400;
 
 export default {

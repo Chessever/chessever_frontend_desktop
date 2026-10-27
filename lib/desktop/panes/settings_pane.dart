@@ -221,7 +221,9 @@ class SettingsPane extends HookConsumerWidget {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Account, engine, and window preferences',
+              kIsWeb
+                  ? 'Account, engine, and board preferences'
+                  : 'Account, engine, and window preferences',
               style: TextStyle(color: kWhiteColor70, fontSize: 13),
             ),
             const SizedBox(height: 24),
@@ -245,8 +247,11 @@ class SettingsPane extends HookConsumerWidget {
             const _BotvinnikSection(),
             const _EngineSection(),
             const SizedBox(height: 16),
-            if (!isMacAppStore) const _UpdatesSection(),
-            const SizedBox(height: 16),
+            // The browser always loads the latest build; nothing to update.
+            if (!isMacAppStore && !kIsWeb) ...[
+              const _UpdatesSection(),
+              const SizedBox(height: 16),
+            ],
             const _LegalSection(),
             const SizedBox(height: 16),
             const _PlatformSection(),
@@ -626,7 +631,14 @@ class _EngineSection extends HookWidget {
     String statusLabel;
     Color statusColor;
     String description;
-    if (loading) {
+    if (kIsWeb) {
+      // Bundled with the page as a Web Worker; there is no binary to find.
+      statusLabel = 'Built in';
+      statusColor = kGreenColor;
+      description =
+          'Stockfish runs in your browser, in a background worker, so '
+          'analysis never needs an install.';
+    } else if (loading) {
       statusLabel = 'Checking…';
       statusColor = kLightGreyColor;
       description = 'Looking for a Stockfish binary on this machine.';
@@ -1056,8 +1068,11 @@ class _PlatformSection extends ConsumerWidget {
             ),
           const SizedBox(height: 12),
           const Text(
-            'Window position, sidebar state, and pane sizes are persisted '
-            'in the local SQLite database and restored on next launch.',
+            kIsWeb
+                ? 'Sidebar state and pane sizes are saved in this browser '
+                    'and restored on your next visit.'
+                : 'Window position, sidebar state, and pane sizes are persisted '
+                    'in the local SQLite database and restored on next launch.',
             style: TextStyle(color: kLightGreyColor, fontSize: 11),
           ),
         ],

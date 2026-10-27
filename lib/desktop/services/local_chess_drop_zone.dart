@@ -1,6 +1,11 @@
 import 'dart:async';
+import 'dart:io' as io;
+
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -59,10 +64,15 @@ class _LocalChessDropZoneState extends State<LocalChessDropZone> {
       onDragDone: (details) async {
         if (_dropInFlight) return;
         setState(() => _hovering = false);
-        await MacSandboxFilePicker.retain(details.files.map((file) => file.path));
-        final paths = await localChessDropPaths(
-          details.files.map((x) => x.path),
-        );
+        final List<String> paths;
+        if (kIsWeb) {
+          paths = await copyDroppedChessFilesIntoAppStorage(details.files);
+        } else {
+          await MacSandboxFilePicker.retain(
+            details.files.map((file) => file.path),
+          );
+          paths = await localChessDropPaths(details.files.map((x) => x.path));
+        }
         if (paths.isEmpty) return;
         _dropInFlight = true;
         try {
@@ -80,6 +90,37 @@ class _LocalChessDropZoneState extends State<LocalChessDropZone> {
       ),
     );
   }
+}
+
+/// Browsers hand over dropped files as blobs, not paths: copy the chess files
+/// (including those inside a dropped folder) into the app's browser
+/// filesystem, next to the ones the Import button brings in.
+Future<List<String>> copyDroppedChessFilesIntoAppStorage(
+  Iterable<DropItem> dropped,
+) async {
+  final files = <DropItem>[];
+  void collect(Iterable<DropItem> items) {
+    for (final item in items) {
+      if (item is DropItemDirectory) {
+        collect(item.children);
+      } else if (looksLikeLocalChessFile(item.name)) {
+        files.add(item);
+      }
+    }
+  }
+
+  collect(dropped);
+  if (files.isEmpty) return const <String>[];
+  final documents = await getApplicationDocumentsDirectory();
+  final folder = io.Directory(p.join(documents.path, 'Imported PGN'));
+  await folder.create(recursive: true);
+  final paths = <String>[];
+  for (final file in files) {
+    final target = io.File(p.join(folder.path, p.basename(file.name)));
+    await target.writeAsBytes(await file.readAsBytes(), flush: true);
+    paths.add(target.path);
+  }
+  return List<String>.unmodifiable(paths);
 }
 
 @visibleForTesting
