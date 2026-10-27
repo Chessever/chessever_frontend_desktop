@@ -6,6 +6,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/services/auth/desktop_auth_browser.dart';
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -104,7 +105,9 @@ class DesktopWelcomeScreen extends HookConsumerWidget {
                   iconAsset: SvgAsset.googleColorIcon,
                   label:
                       signingIn.value
-                          ? 'Opening browser…'
+                          ? (DesktopAuthBrowser.inApp
+                              ? 'Signing in…'
+                              : 'Opening browser…')
                           : 'Continue with Google',
                   primary: true,
                   disabled: signingIn.value,
@@ -326,6 +329,7 @@ String _friendly(Object error) {
         'OAuth is enabled in Supabase.';
   }
   if (str.contains('TimeoutException') || str.contains('timed out')) {
+    if (DesktopAuthBrowser.inApp) return 'Sign-in timed out. Please try again.';
     return 'Sign-in timed out. Try again — the browser tab may have closed. '
         'For Apple, also check that Supabase allows '
         'http://127.0.0.1:*/auth/callback as a redirect URL.';

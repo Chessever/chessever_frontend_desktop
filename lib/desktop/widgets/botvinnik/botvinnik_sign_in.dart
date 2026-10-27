@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/desktop/services/auth/desktop_auth_browser.dart';
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
@@ -91,7 +92,9 @@ class _BotvinnikSignInBodyState extends State<_BotvinnikSignInBody> {
             asset: SvgAsset.googleColorIcon,
             label:
                 _busy == _Provider.google
-                    ? 'Opening browser'
+                    ? (DesktopAuthBrowser.inApp
+                        ? 'Signing in'
+                        : 'Opening browser')
                     : 'Continue with Google',
             onPress: _busy == null ? () => _signIn(_Provider.google) : null,
           ),
