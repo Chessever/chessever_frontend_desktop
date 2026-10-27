@@ -1864,6 +1864,47 @@ class DesktopGameCardsFlow extends StatelessWidget {
                   childAspectRatio: aspect,
                 );
 
+        // Embedded grids sit inside an outer scroll view and never scroll
+        // themselves. Plain rows lay out the same cells without a second
+        // viewport and sliver grid per section, which made every section
+        // scrolled into view expensive (web profile: ~10% of a feed scroll).
+        if (embedded) {
+          final spacing = metrics.spacing;
+          final cellWidth =
+              ((innerWidth - spacing * (columns - 1)) / columns)
+                  .clamp(0.0, double.infinity)
+                  .toDouble();
+          final cellHeight = mainAxisExtent ?? cellWidth / aspect;
+          final rows = (itemCount / columns).ceil();
+          return Padding(
+            padding: padding ?? EdgeInsets.zero,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var row = 0; row < rows; row++) ...[
+                  if (row > 0) SizedBox(height: spacing),
+                  SizedBox(
+                    height: cellHeight,
+                    child: Row(
+                      children: [
+                        for (var col = 0; col < columns; col++) ...[
+                          if (col > 0) SizedBox(width: spacing),
+                          Expanded(
+                            child:
+                                row * columns + col < itemCount
+                                    ? itemBuilder(context, row * columns + col)
+                                    : const SizedBox.shrink(),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }
+
         return GridView.builder(
           controller: embedded ? null : scrollController,
           padding: padding,

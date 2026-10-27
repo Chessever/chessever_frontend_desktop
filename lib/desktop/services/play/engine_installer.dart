@@ -98,11 +98,8 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
                       kind != BotEngineKind.stockfish
                   ? EngineInstallStatus.unsupported
                   : EngineInstallStatus.notInstalled,
-          binaryPath:
-              kIsWeb && kind == BotEngineKind.stockfish
-                  ? kWebStockfishEnginePath
-                  : null,
-          progress: kIsWeb && kind == BotEngineKind.stockfish ? 1.0 : 0.0,
+          binaryPath: kIsWeb ? _webEnginePath(kind) : null,
+          progress: kIsWeb && _webEnginePath(kind) != null ? 1.0 : 0.0,
         ),
       ) {
     unawaited(_seed());
@@ -114,9 +111,18 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
   /// The browser build ships Stockfish (a Web Worker); Leela and Maia need
   /// native binaries and stay unavailable there.
   static EngineInstallStatus _webInstallStatus(BotEngineKind kind) =>
-      kind == BotEngineKind.stockfish
-          ? EngineInstallStatus.installed
-          : EngineInstallStatus.unsupported;
+      _webEnginePath(kind) == null
+          ? EngineInstallStatus.unsupported
+          : EngineInstallStatus.installed;
+
+  /// Stockfish runs in a Web Worker; Maia's ONNX model loads straight from
+  /// maiachess.com (it allows any origin, and at 46 MB exceeds what the app
+  /// itself can host). Leela needs a native binary.
+  static String? _webEnginePath(BotEngineKind kind) => switch (kind) {
+    BotEngineKind.stockfish => kWebStockfishEnginePath,
+    BotEngineKind.maia => kEngineCatalog[kind]?.artifacts.first.url,
+    BotEngineKind.leela => null,
+  };
 
   Future<void> _seed() async {
     if (kIsWeb) return;

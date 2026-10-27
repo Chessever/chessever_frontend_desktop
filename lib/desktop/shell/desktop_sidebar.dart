@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 import 'package:chessever/desktop/widgets/editorial/inbox_unread_anchor.dart';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -913,9 +912,6 @@ const _NavEntry _settingsEntry = _NavEntry(
 );
 
 String? _shortcutLabelForEntry(_NavEntry entry, {bool? isMacOS}) {
-  // Browsers keep ⌘/Ctrl + digit (tab switching) and ⌘, (their settings) for
-  // themselves, so the web build does not advertise them.
-  if (kIsWeb) return null;
   final pane = entry.pane;
   if (pane != null) {
     final routeShortcut = desktopMainRouteShortcutLabel(pane, isMacOS: isMacOS);

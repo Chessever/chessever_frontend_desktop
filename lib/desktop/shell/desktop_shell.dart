@@ -3,6 +3,8 @@ import 'dart:async';
 
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
+import 'package:chessever/desktop/shell/browser_safe_shortcuts.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -583,6 +585,16 @@ class DesktopShell extends HookConsumerWidget {
             const SingleActivator(LogicalKeyboardKey.keyB, meta: true):
                 const _ToggleSidebarIntent(),
           };
+          if (kIsWeb) {
+            shellShortcuts.addAll(
+              browserSafeTabShortcuts(
+                closeTab: const _CloseTabIntent(),
+                newTab: const _NewTabIntent(),
+                nextTab: const _NextTabIntent(),
+                previousTab: const _PreviousTabIntent(),
+              ),
+            );
+          }
           for (final binding in desktopMainRouteShortcutBindings()) {
             shellShortcuts[SingleActivator(
               binding.key,

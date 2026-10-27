@@ -29,7 +29,14 @@ class WebFileSystem {
 
   final Map<String, _Node> _nodes = {'/': _Node.directory()};
   final Set<String> _dirty = {};
-  final Set<String> _deleted = {};
+  /// Removed paths and how many chunk records each had in IndexedDB.
+  final Map<String, int> _deleted = {};
+
+  /// Files persist as 256 KB chunks, so a small write (an SQLite page) saves
+  /// only the chunk it touched instead of the whole file.
+  static const int _chunkSize = 256 * 1024;
+
+  static String _chunkKey(String path, int index) => '$path\u0000$index';
   web.IDBDatabase? _db;
   Timer? _flushTimer;
 
@@ -39,8 +46,10 @@ class WebFileSystem {
     try {
       fs._db = await _openDatabase();
       await fs._loadAll();
-    } catch (_) {
+    } catch (e) {
       // Private windows can refuse IndexedDB; files then last for the tab.
+      // ignore: avoid_print
+      print('[web] file storage unavailable, keeping files in memory: $e');
       fs._db = null;
     }
     for (final dir in WebPathProvider.folders) {
@@ -163,11 +172,9 @@ class WebFileSystem {
       throw FileSystemException('Directory not empty', path);
     }
     for (final child in children) {
-      _nodes.remove(child);
-      _markDeleted(child);
+      _markDeleted(child, _nodes.remove(child));
     }
-    _nodes.remove(key);
-    _markDeleted(key);
+    _markDeleted(key, _nodes.remove(key));
   }
 
   void rename(String from, String to) {
@@ -185,13 +192,11 @@ class WebFileSystem {
       moves[target + child.substring(source.length)] = _nodes[child]!;
     }
     for (final child in _childrenOf(source, recursive: true).toList()) {
-      _nodes.remove(child);
-      _markDeleted(child);
+      _markDeleted(child, _nodes.remove(child));
     }
-    _nodes.remove(source);
-    _markDeleted(source);
+    _markDeleted(source, _nodes.remove(source));
     for (final entry in moves.entries) {
-      _nodes[entry.key] = entry.value;
+      _nodes[entry.key] = entry.value..markAllDirty();
       _markDirty(entry.key);
     }
   }
@@ -219,14 +224,17 @@ class WebFileSystem {
   }
 
   void _markDirty(String key) {
-    _deleted.remove(key);
     _dirty.add(key);
     _scheduleFlush();
   }
 
-  void _markDeleted(String key) {
+  /// [removed] gives the chunk records the path had; they move with it on a
+  /// rename, so the node then starts again from no stored chunks.
+  void _markDeleted(String key, _Node? removed) {
     _dirty.remove(key);
-    _deleted.add(key);
+    final stored = removed?.storedChunks ?? 0;
+    _deleted[key] = (_deleted[key] ?? 0) > stored ? _deleted[key]! : stored;
+    removed?.storedChunks = 0;
     _scheduleFlush();
   }
 
@@ -242,18 +250,45 @@ class WebFileSystem {
     final db = _db;
     if (db == null || (_dirty.isEmpty && _deleted.isEmpty)) return;
     final writes = _dirty.toList();
-    final deletes = _deleted.toList();
+    final deletes = Map.of(_deleted);
     _dirty.clear();
     _deleted.clear();
     final tx = db.transaction(_store.toJS, 'readwrite');
     final store = tx.objectStore(_store);
-    for (final key in deletes) {
+    deletes.forEach((key, chunks) {
+      if (_nodes.containsKey(key) && !writes.contains(key)) return;
       store.delete(key.toJS);
-    }
+      for (var i = 0; i < chunks; i++) {
+        store.delete(_chunkKey(key, i).toJS);
+      }
+    });
     for (final key in writes) {
       final n = _nodes[key];
       if (n == null) continue;
-      store.put(n.toJs(), key.toJS);
+      final previous = deletes[key] ?? 0;
+      if (previous > n.storedChunks) n.storedChunks = previous;
+      store.put(n.metaJs(), key.toJS);
+      if (n.isDirectory) continue;
+      final count = (n.length + _chunkSize - 1) ~/ _chunkSize;
+      final indices =
+          n.allDirty
+              ? List<int>.generate(count, (i) => i)
+              : (n.dirtyChunks.where((i) => i < count).toList()..sort());
+      for (final i in indices) {
+        final start = i * _chunkSize;
+        final end = start + _chunkSize > n.length ? n.length : start + _chunkSize;
+        store.put(
+          Uint8List.fromList(n.bytes.sublist(start, end)).toJS,
+          _chunkKey(key, i).toJS,
+        );
+      }
+      for (var i = count; i < n.storedChunks; i++) {
+        store.delete(_chunkKey(key, i).toJS);
+      }
+      n
+        ..storedChunks = count
+        ..allDirty = false
+        ..dirtyChunks.clear();
     }
     await _complete(tx);
   }
@@ -266,11 +301,25 @@ class WebFileSystem {
     final values = await _request<JSArray<JSAny?>>(store.getAll());
     final keyList = keys.toDart;
     final valueList = values.toDart;
+    final chunks = <String, Map<int, Uint8List>>{};
     for (var i = 0; i < keyList.length; i++) {
       final key = (keyList[i] as JSString).toDart;
       final value = valueList[i];
       if (value == null) continue;
-      _nodes[key] = _Node.fromJs(value as JSObject);
+      final split = key.indexOf('\u0000');
+      if (split < 0) {
+        _nodes[key] = _Node.fromMetaJs(value as JSObject);
+      } else {
+        (chunks[key.substring(0, split)] ??= {})[int.parse(
+              key.substring(split + 1),
+            )] =
+            (value as JSUint8Array).toDart;
+      }
+    }
+    for (final entry in chunks.entries) {
+      final node = _nodes[entry.key];
+      if (node == null || node.isDirectory) continue;
+      node.loadChunks(entry.value, _chunkSize);
     }
   }
 
@@ -323,12 +372,29 @@ class _Node {
   Uint8List _buffer = Uint8List(0);
   int length = 0;
 
+  /// Persistence bookkeeping: chunks changed since the last flush (or all of
+  /// them), and how many chunk records IndexedDB holds for this node.
+  bool allDirty = true;
+  final Set<int> dirtyChunks = {};
+  int storedChunks = 0;
+
+  void markAllDirty() => allDirty = true;
+
+  void _markRange(int start, int end) {
+    if (allDirty || end <= start) return;
+    const size = WebFileSystem._chunkSize;
+    for (var i = start ~/ size; i <= (end - 1) ~/ size; i++) {
+      dirtyChunks.add(i);
+    }
+  }
+
   Uint8List get bytes => Uint8List.sublistView(_buffer, 0, length);
 
   void setBytes(List<int> data) {
     _buffer = Uint8List.fromList(data);
     length = _buffer.length;
     modified = DateTime.now();
+    allDirty = true;
   }
 
   void ensureCapacity(int size) {
@@ -346,7 +412,12 @@ class _Node {
     final count = stop - start;
     ensureCapacity(position + count);
     _buffer.setRange(position, position + count, data, start);
+    final previousLength = length;
     if (position + count > length) length = position + count;
+    _markRange(
+      position < previousLength ? position : previousLength,
+      position + count,
+    );
     modified = DateTime.now();
   }
 
@@ -354,33 +425,43 @@ class _Node {
     if (size > length) {
       ensureCapacity(size);
       _buffer.fillRange(length, size, 0);
+      _markRange(length, size);
+    } else if (size > 0) {
+      _markRange(size - 1, size);
     }
     length = size;
     modified = DateTime.now();
   }
 
-  JSObject toJs() {
+  void loadChunks(Map<int, Uint8List> chunks, int chunkSize) {
+    _buffer = Uint8List(length);
+    chunks.forEach((index, data) {
+      final start = index * chunkSize;
+      final end = start + data.length > length ? length : start + data.length;
+      if (start < end) _buffer.setRange(start, end, data);
+    });
+    storedChunks = (length + chunkSize - 1) ~/ chunkSize;
+    allDirty = false;
+  }
+
+  JSObject metaJs() {
     final object = JSObject();
     object['dir'] = isDirectory.toJS;
     object['mtime'] = modified.millisecondsSinceEpoch.toJS;
-    if (!isDirectory) object['data'] = bytes.toJS;
+    object['length'] = length.toJS;
     return object;
   }
 
-  static _Node fromJs(JSObject object) {
+  static _Node fromMetaJs(JSObject object) {
     final isDir = (object['dir'] as JSBoolean?)?.toDart ?? false;
     final n = isDir ? _Node.directory() : _Node.file();
     final mtime = (object['mtime'] as JSNumber?)?.toDartInt;
     if (mtime != null) {
       n.modified = DateTime.fromMillisecondsSinceEpoch(mtime);
     }
-    final data = object['data'];
-    if (!isDir && data != null) {
-      n.setBytes((data as JSUint8Array).toDart);
-      if (mtime != null) {
-        n.modified = DateTime.fromMillisecondsSinceEpoch(mtime);
-      }
-    }
+    n
+      ..length = (object['length'] as JSNumber?)?.toDartInt ?? 0
+      ..allDirty = false;
     return n;
   }
 }
