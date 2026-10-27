@@ -218,8 +218,10 @@ class _ShortcutPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // One fixed width, so every tip's text starts on the same line no matter
+    // how long its shortcut is.
     return Container(
-      constraints: const BoxConstraints(minWidth: 104),
+      width: 144,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: kBackgroundColor,
@@ -229,6 +231,8 @@ class _ShortcutPill extends StatelessWidget {
       child: Text(
         shortcut,
         textAlign: TextAlign.center,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: const TextStyle(
           color: kLightGreyColor,
           fontSize: 11,
