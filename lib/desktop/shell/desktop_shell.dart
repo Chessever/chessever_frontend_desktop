@@ -584,6 +584,8 @@ class DesktopShell extends HookConsumerWidget {
                 const _NewTabIntent(),
             const SingleActivator(LogicalKeyboardKey.keyB, meta: true):
                 const _ToggleSidebarIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyB, control: true):
+                const _ToggleSidebarIntent(),
           };
           if (kIsWeb) {
             shellShortcuts.addAll(

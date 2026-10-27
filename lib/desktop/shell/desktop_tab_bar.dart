@@ -885,6 +885,10 @@ class _GameTabChipContent extends StatelessWidget {
     }
     final parts = n.split(RegExp(r'\s+'));
     if (parts.length == 1) return parts.first;
+    // "Pranesh M": a trailing initial is not a surname.
+    if (RegExp(r'^\p{L}\.?$', unicode: true).hasMatch(parts.last)) {
+      return parts[parts.length - 2];
+    }
     return parts.last;
   }
 

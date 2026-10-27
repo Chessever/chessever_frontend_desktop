@@ -1,6 +1,7 @@
 import 'package:chessever/utils/country_utils.dart';
 
 import '../base_repository.dart';
+import 'package:chessever/repository/supabase/postgrest_filter_value.dart';
 
 class PlayersRepository extends BaseRepository {
   /// Fetches a paginated list of players from chess_players table.
@@ -21,7 +22,7 @@ class PlayersRepository extends BaseRepository {
 
       // Apply search filter
       if (search.trim().isNotEmpty) {
-        final term = '%${search.trim()}%';
+        final term = postgrestIlikeContains(search);
         builder = builder.or('name.ilike.$term,title.ilike.$term');
       }
 
@@ -129,7 +130,7 @@ class PlayersRepository extends BaseRepository {
     return handleApiCall(() async {
       if (query.trim().isEmpty) return [];
 
-      final term = '%${query.trim()}%';
+      final term = postgrestIlikeContains(query);
 
       final data = await supabase
           .from('chess_players')

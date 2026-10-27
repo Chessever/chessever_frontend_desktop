@@ -181,6 +181,10 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
           Text(
             isMacAppStore
                 ? 'Reports include app version and platform.'
+                : kIsWeb
+                ? 'Reports include app version and browser. Screenshots are '
+                    'optional and capture only the ChessEver page, not your '
+                    'browser or other tabs.'
                 : 'Reports include app version and platform. Screenshots are optional and capture only the ChessEver desktop window content, not your OS toolbar or other apps.',
             style: const TextStyle(
               color: kWhiteColor70,
@@ -338,7 +342,9 @@ class _ScreenshotOption extends StatelessWidget {
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'Captures only the ChessEver desktop content behind this dialog.',
+                  kIsWeb
+                      ? 'Captures only the ChessEver page behind this dialog.'
+                      : 'Captures only the ChessEver desktop content behind this dialog.',
                   style: TextStyle(color: kLightGreyColor, fontSize: 12),
                 ),
               ],

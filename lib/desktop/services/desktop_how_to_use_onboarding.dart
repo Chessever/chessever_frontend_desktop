@@ -1,4 +1,5 @@
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const desktopHowToUseDismissedVersionKey =
     'desktop_how_to_use_dismissed_version_v1';
@@ -11,6 +12,8 @@ bool shouldOpenDesktopHowToUse({
 }
 
 bool shouldFocusDesktopHowToUse(DesktopTabsState tabs) {
+  // A web visitor who came for a page's address keeps that page in front.
+  if (webArrivedOnPage) return false;
   return tabs.tabs.length == 1 &&
       tabs.activeId == 'tournaments-default' &&
       tabs.active?.kind == TabKind.tournaments;

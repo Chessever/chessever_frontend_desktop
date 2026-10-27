@@ -29,6 +29,14 @@ String get hostPathSeparator => kIsWeb ? '/' : Platform.pathSeparator;
 int get hostProcessorCount =>
     kIsWeb ? browserHardwareConcurrency() ?? 4 : Platform.numberOfProcessors;
 
+/// Where local databases live, in user-facing copy.
+String get hostLocalStorageName => kIsWeb ? 'this browser' : 'this computer';
+
+/// Web build: whether the visitor arrived on a page's address (say
+/// app.chessever.com/broadcast) rather than the bare domain. Set at boot,
+/// before the address bar starts following the tabs.
+bool webArrivedOnPage = false;
+
 /// `Platform.environment`; empty in the browser build.
 Map<String, String> get hostEnvironment =>
     kIsWeb ? const <String, String>{} : Platform.environment;

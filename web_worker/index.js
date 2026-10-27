@@ -10,6 +10,7 @@ const RELAY_HOSTS = new Set([
   'image.lichess1.org',
   'marketing.chess.com',
   'saintlouischessclub.org',
+  'aicf.in',
 ]);
 const ONE_DAY = 86400;
 
@@ -40,7 +41,11 @@ async function relayImage(request, url, ctx) {
   if (cached) return cached;
 
   const upstream = await fetch(target.toString(), {
-    headers: { Accept: 'image/*' },
+    // Some hosts' bot protection refuses a request with no User-Agent.
+    headers: {
+      Accept: 'image/*',
+      'User-Agent': 'Mozilla/5.0 (compatible; ChessEverImageRelay/1.0; +https://chessever.com)',
+    },
     cf: { cacheEverything: true, cacheTtl: ONE_DAY },
   });
   const type = upstream.headers.get('Content-Type') ?? '';

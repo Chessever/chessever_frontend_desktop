@@ -137,6 +137,7 @@ import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/number_format_utils.dart';
 import 'package:chessever/utils/pgn_multi_parser.dart';
 import 'package:chessever/utils/time_utils.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Desktop library: complete cloud navigation in the rail plus a mixed local
 /// and selected-cloud working catalog on Library Home.
@@ -1898,8 +1899,10 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                 storageKey: 'library_pane.my_databases.home_split',
                 children: [
                   SplitChild(
-                    minSize: 124,
-                    initialWeight: 0.24,
+                    // Room for the section header and two database rows, so
+                    // a freshly imported database is not half-cut at the edge.
+                    minSize: 156,
+                    initialWeight: 0.30,
                     label: 'Library Home',
                     child: _MyDatabasesBoard(
                       folders: folders,
@@ -2561,7 +2564,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           showDesktopToast(
             context,
             result.sourceDeleted
-                ? 'Local database deleted from this computer.'
+                ? 'Local database deleted from $hostLocalStorageName.'
                 : 'Local database removed. Source files were already gone.',
           );
         }
@@ -2579,7 +2582,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         if (context.mounted) {
           showDesktopToast(
             context,
-            'Could not delete local database from this computer. Please try again.',
+            'Could not delete local database from $hostLocalStorageName. Please try again.',
             error: true,
           );
         }
@@ -2755,7 +2758,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         if (context.mounted) {
           showDesktopToast(
             context,
-            'Folder "${group.label}" deleted from this computer.',
+            'Folder "${group.label}" deleted from $hostLocalStorageName.',
           );
         }
       } catch (e, st) {
@@ -2773,7 +2776,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         if (context.mounted) {
           showDesktopToast(
             context,
-            'Could not delete local folder from this computer. Please try again.',
+            'Could not delete local folder from $hostLocalStorageName. Please try again.',
             error: true,
           );
         }
@@ -2930,10 +2933,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             label: 'Remove from Library Home',
           ),
           const DesktopContextMenuDivider(),
-          const DesktopContextMenuItem(
+          DesktopContextMenuItem(
             value: _LocalDatabaseBoardAction.deleteFromComputer,
             icon: Icons.delete_forever_outlined,
-            label: 'Delete from computer',
+            label: kIsWeb ? 'Delete from this browser' : 'Delete from computer',
             destructive: true,
           ),
         ],
@@ -3050,10 +3053,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             label: 'Remove from Library Home',
           ),
           const DesktopContextMenuDivider(),
-          const DesktopContextMenuItem(
+          DesktopContextMenuItem(
             value: _LocalGroupBoardAction.deleteFromComputer,
             icon: Icons.delete_forever_outlined,
-            label: 'Delete from computer',
+            label: kIsWeb ? 'Delete from this browser' : 'Delete from computer',
             destructive: true,
           ),
         ],
@@ -3704,8 +3707,8 @@ class _ConfirmDeleteLocalDatabaseDialog extends StatelessWidget {
     final playerLabel = entry.groupLabel?.trim();
     final details =
         isPlayerDatabase
-            ? 'This deletes the local database source and its generated cache from this computer. It also removes this source from ${playerLabel == null || playerLabel.isEmpty ? 'the player' : playerLabel} in Players.\n\nDeleting sources one by one leaves the player in Players. Only deleting the whole player folder removes the player.\n\n${entry.path}'
-            : 'This deletes the local database source and its generated cache from this computer. This cannot be undone.\n\n${entry.path}';
+            ? 'This deletes the local database source and its generated cache from $hostLocalStorageName. It also removes this source from ${playerLabel == null || playerLabel.isEmpty ? 'the player' : playerLabel} in Players.\n\nDeleting sources one by one leaves the player in Players. Only deleting the whole player folder removes the player.\n\n${entry.path}'
+            : 'This deletes the local database source and its generated cache from $hostLocalStorageName. This cannot be undone.\n\n${entry.path}';
     return Center(
       child: Container(
         width: 440,
@@ -3881,9 +3884,9 @@ class _ConfirmDeleteLocalFolderDialog extends StatelessWidget {
     );
     final details =
         isPlayerFolder
-            ? 'This is a Players folder. Deleting it removes ${group.label} from Players and deletes all $count local $databaseLabel, generated cache, and PGN files from this computer. This cannot be undone.'
+            ? 'This is a Players folder. Deleting it removes ${group.label} from Players and deletes all $count local $databaseLabel, generated cache, and PGN files from $hostLocalStorageName. This cannot be undone.'
             : 'This deletes all $count local $databaseLabel in this folder, '
-                'their generated cache, and their PGN files from this computer. '
+                'their generated cache, and their PGN files from $hostLocalStorageName. '
                 'This cannot be undone.';
     return Center(
       child: Container(
@@ -7391,7 +7394,8 @@ class _GamesBody extends ConsumerWidget {
         message:
             folder.isSubscribed
                 ? 'Wait for the owner to share games into it.'
-                : 'Drop a .pgn onto this window, paste a PGN from your '
+                : 'Drop a .pgn onto this ${kIsWeb ? 'page' : 'window'}, '
+                    'paste a PGN from your '
                     'clipboard, or use the Import PGN file action above.',
       );
     }
@@ -10984,9 +10988,13 @@ class _TwicGamesTable extends StatelessWidget {
           border: Border.all(color: kDividerColor),
         ),
         clipBehavior: Clip.antiAlias,
-        child: Column(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final showDetails =
+                constraints.maxWidth >= _kPreviewDetailColumnsMinWidth;
+            return Column(
           children: [
-            const _TwicTableHeader(),
+            _TwicTableHeader(showDetails: showDetails),
             const Divider(height: 1, color: kDividerColor),
             Expanded(
               child: ListView.builder(
@@ -11006,6 +11014,7 @@ class _TwicGamesTable extends StatelessWidget {
                     height: _kDatabaseWorkspaceTwicRowExtent,
                     child: _TwicTableRow(
                       game: game,
+                      showDetails: showDetails,
                       selected:
                           (selectedGameIds?.contains(game.gameId) ?? false) ||
                           game.gameId == selectedGameId,
@@ -11023,6 +11032,8 @@ class _TwicGamesTable extends StatelessWidget {
               ),
             ),
           ],
+            );
+          },
         ),
       ),
     );
@@ -11036,6 +11047,10 @@ const double _kPreviewColResult = 48.0;
 const double _kPreviewColEco = 52.0;
 const double _kPreviewColDate = 82.0;
 const double _kPreviewColGap = 8.0;
+
+/// Below this width the Event and ECO columns step aside so both player
+/// cells keep room for a name and rating instead of drawing over the result.
+const double _kPreviewDetailColumnsMinWidth = 620.0;
 const EdgeInsets _kPreviewTableCellPadding = EdgeInsets.fromLTRB(
   10,
   10,
@@ -11044,7 +11059,9 @@ const EdgeInsets _kPreviewTableCellPadding = EdgeInsets.fromLTRB(
 );
 
 class _TwicTableHeader extends StatelessWidget {
-  const _TwicTableHeader();
+  const _TwicTableHeader({this.showDetails = true});
+
+  final bool showDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -11072,10 +11089,12 @@ class _TwicTableHeader extends StatelessWidget {
           const SizedBox(width: _kPreviewColGap),
           Expanded(flex: _kPreviewColBlack, child: label('Black')),
           const SizedBox(width: _kPreviewColGap),
-          Expanded(flex: _kPreviewColEvent, child: label('Event')),
-          const SizedBox(width: _kPreviewColGap),
-          SizedBox(width: _kPreviewColEco, child: label('ECO')),
-          const SizedBox(width: _kPreviewColGap),
+          if (showDetails) ...[
+            Expanded(flex: _kPreviewColEvent, child: label('Event')),
+            const SizedBox(width: _kPreviewColGap),
+            SizedBox(width: _kPreviewColEco, child: label('ECO')),
+            const SizedBox(width: _kPreviewColGap),
+          ],
           SizedBox(
             width: _kPreviewColDate,
             child: Align(
@@ -11092,6 +11111,7 @@ class _TwicTableHeader extends StatelessWidget {
 class _TwicTableRow extends StatefulWidget {
   const _TwicTableRow({
     required this.game,
+    required this.showDetails,
     required this.selected,
     this.onRangeSelect,
     required this.onTap,
@@ -11100,6 +11120,7 @@ class _TwicTableRow extends StatefulWidget {
   });
 
   final GamesTourModel game;
+  final bool showDetails;
   final bool selected;
   final VoidCallback? onRangeSelect;
   final VoidCallback onTap;
@@ -11192,44 +11213,46 @@ class _TwicTableRowState extends State<_TwicTableRow>
                     ),
                   ),
                   const SizedBox(width: _kPreviewColGap),
-                  Expanded(
-                    flex: _kPreviewColEvent,
-                    child: Text(
-                      game.tourId,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: kWhiteColor, fontSize: 12),
+                  if (widget.showDetails) ...[
+                    Expanded(
+                      flex: _kPreviewColEvent,
+                      child: Text(
+                        game.tourId,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: kWhiteColor, fontSize: 12),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: _kPreviewColGap),
-                  SizedBox(
-                    width: _kPreviewColEco,
-                    child:
-                        desktopTableDisplayValue(eco).isEmpty
-                            ? const SizedBox.shrink()
-                            : Container(
-                              alignment: Alignment.center,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: kBlack3Color,
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: kDividerColor),
-                              ),
-                              child: Text(
-                                eco,
-                                style: const TextStyle(
-                                  color: kWhiteColor,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  fontFeatures: [FontFeature.tabularFigures()],
+                    const SizedBox(width: _kPreviewColGap),
+                    SizedBox(
+                      width: _kPreviewColEco,
+                      child:
+                          desktopTableDisplayValue(eco).isEmpty
+                              ? const SizedBox.shrink()
+                              : Container(
+                                alignment: Alignment.center,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: kBlack3Color,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: kDividerColor),
+                                ),
+                                child: Text(
+                                  eco,
+                                  style: const TextStyle(
+                                    color: kWhiteColor,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    fontFeatures: [FontFeature.tabularFigures()],
+                                  ),
                                 ),
                               ),
-                            ),
-                  ),
-                  const SizedBox(width: _kPreviewColGap),
+                    ),
+                    const SizedBox(width: _kPreviewColGap),
+                  ],
                   SizedBox(
                     width: _kPreviewColDate,
                     child: Text(
