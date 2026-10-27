@@ -987,8 +987,10 @@ class _ColumnDims {
     }
     if (width >= 340) {
       const horizontalPad = 10.0;
-      const move = 72.0;
-      const gamesValue = 38.0;
+      // Wide enough for a three-digit compact total ("628K") in the web
+      // build's font as well as the desktop system font.
+      const move = 66.0;
+      const gamesValue = 44.0;
       const gamesIcon = 14.0;
       const last = 64.0;
       const double? score = null;
@@ -1007,8 +1009,8 @@ class _ColumnDims {
       );
     }
     const horizontalPad = 8.0;
-    const move = 62.0;
-    const gamesValue = 32.0;
+    const move = 56.0;
+    const gamesValue = 38.0;
     const gamesIcon = 12.0;
     const last = 64.0;
     const double? score = null;
@@ -2152,9 +2154,12 @@ class _ExplorerEmpty extends StatelessWidget {
 /// rendering the awkward `1000.0k`.
 @visibleForTesting
 String formatOpeningExplorerGameCount(int total) {
-  if (total >= 999950) {
+  if (total >= 999500) {
     return '${(total / 1000000).toStringAsFixed(1)}M';
   }
+  // Three significant digits: "628.9k" would not fit the narrow GAMES slot
+  // that "58.4k" and "3.4M" do.
+  if (total >= 99950) return '${(total / 1000).round()}k';
   if (total >= 1000) return '${(total / 1000).toStringAsFixed(1)}k';
   return total.toString();
 }

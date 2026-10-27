@@ -87,6 +87,65 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
   bool? _tabStripFillsRest;
   Map<String, double>? _tabStripWidths;
 
+  // Scrolls the strip when its tabs need more room than it has: the wheel
+  // moves it sideways, and the active tab is kept in view.
+  final ScrollController _tabScroll = ScrollController();
+  String? _revealedActiveId;
+
+  @override
+  void dispose() {
+    _tabScroll.dispose();
+    super.dispose();
+  }
+
+  /// Scrolls the strip so [activeId]'s chip is fully visible.
+  void _revealActiveTab(
+    List<DesktopTab> tabs,
+    String? activeId,
+    Map<String, double> widths,
+  ) {
+    if (activeId == null || !_tabScroll.hasClients) return;
+    var start = 6.0;
+    for (final tab in tabs) {
+      if (tab.id == activeId) break;
+      start += widths[tab.id] ?? 0;
+    }
+    final end = start + (widths[activeId] ?? 0);
+    final position = _tabScroll.position;
+    final viewStart = position.pixels;
+    final viewEnd = viewStart + position.viewportDimension;
+    double? target;
+    if (start < viewStart) {
+      target = start - 6;
+    } else if (end > viewEnd) {
+      target = end + 6 - position.viewportDimension;
+    }
+    if (target == null) return;
+    unawaited(
+      _tabScroll.animateTo(
+        target.clamp(position.minScrollExtent, position.maxScrollExtent),
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+      ),
+    );
+  }
+
+  void _onStripPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_tabScroll.hasClients) return;
+    final delta = event.scrollDelta;
+    // A trackpad's sideways swipe already scrolls the list; turn a plain
+    // vertical wheel into the same sideways motion.
+    if (delta.dy.abs() <= delta.dx.abs()) return;
+    final position = _tabScroll.position;
+    if (position.maxScrollExtent <= 0) return;
+    _tabScroll.jumpTo(
+      (position.pixels + delta.dy).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      ),
+    );
+  }
+
   Future<void> _closeTabWithUnsavedAnalysisGuard(String tabId) async {
     final session = ref.read(boardPaneSessionByTabIdProvider)[tabId];
     if (boardSessionHasUnsavedAnalysis(session)) {
@@ -170,6 +229,14 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                         desiredListWidth,
                       );
                       final fillsRest = listWidth < constraints.maxWidth;
+                      if (_revealedActiveId != state.activeId) {
+                        _revealedActiveId = state.activeId;
+                        final tabs = state.tabs;
+                        final activeId = state.activeId;
+                        WidgetsBinding.instance.addPostFrameCallback(
+                          (_) => _revealActiveTab(tabs, activeId, widths),
+                        );
+                      }
                       // Window-resize frames re-run this builder even when
                       // every chip keeps its width. Returning the identical
                       // strip lets Flutter skip rebuilding the list and every
@@ -195,70 +262,74 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                         children: [
                           SizedBox(
                             width: listWidth,
-                            child: ReorderableListView.builder(
-                              scrollDirection: Axis.horizontal,
-                              buildDefaultDragHandles: false,
-                              padding: const EdgeInsets.only(left: 6, right: 6),
-                              proxyDecorator: (child, index, animation) {
-                                // While being dragged, the proxy gets a slight scale +
-                                // raised shadow so the user feels the lift.
-                                return AnimatedBuilder(
-                                  animation: animation,
-                                  builder: (context, _) {
-                                    final t = Curves.easeOut.transform(
-                                      animation.value,
-                                    );
-                                    return Material(
-                                      color: Colors.transparent,
-                                      elevation: 6 * t,
-                                      shadowColor: Colors.black.withValues(
-                                        alpha: 0.4,
+                            child: Listener(
+                              onPointerSignal: _onStripPointerSignal,
+                              child: ReorderableListView.builder(
+                                scrollController: _tabScroll,
+                                scrollDirection: Axis.horizontal,
+                                buildDefaultDragHandles: false,
+                                padding: const EdgeInsets.only(left: 6, right: 6),
+                                proxyDecorator: (child, index, animation) {
+                                  // While being dragged, the proxy gets a slight scale +
+                                  // raised shadow so the user feels the lift.
+                                  return AnimatedBuilder(
+                                    animation: animation,
+                                    builder: (context, _) {
+                                      final t = Curves.easeOut.transform(
+                                        animation.value,
+                                      );
+                                      return Material(
+                                        color: Colors.transparent,
+                                        elevation: 6 * t,
+                                        shadowColor: Colors.black.withValues(
+                                          alpha: 0.4,
+                                        ),
+                                        child: Transform.scale(
+                                          scale: 1 + 0.03 * t,
+                                          filterQuality: FilterQuality.medium,
+                                          child: child,
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
+                                // Keep legacy callback here because desktopTabsProvider.reorder
+                                // still expects Flutter's pre-removal newIndex semantics.
+                                // ignore: deprecated_member_use
+                                onReorder: notifier.reorder,
+                                itemCount: state.tabs.length,
+                                itemBuilder: (context, i) {
+                                  final tab = state.tabs[i];
+                                  // Chrome-style: pointer-down on the chip immediately
+                                  // arms a horizontal drag (`ReorderableDragStartListener`
+                                  // uses ImmediateMultiDragGestureRecognizer). Short
+                                  // taps without movement still bubble through to the
+                                  // chip's GestureDetector so click-to-activate keeps
+                                  // working — only sustained motion past the touch-slop
+                                  // commits to a reorder gesture.
+                                  return SizedBox(
+                                    key: ValueKey(tab.id),
+                                    width: widths[tab.id],
+                                    child: ReorderableDragStartListener(
+                                      index: i,
+                                      child: _TabChip(
+                                        tab: tab,
+                                        active: tab.id == state.activeId,
+                                        onActivate:
+                                            () => notifier.activate(tab.id),
+                                        onClose:
+                                            tab.closable
+                                                ? () => unawaited(
+                                                  _closeTabWithUnsavedAnalysisGuard(
+                                                    tab.id,
+                                                  ),
+                                                )
+                                                : null,
                                       ),
-                                      child: Transform.scale(
-                                        scale: 1 + 0.03 * t,
-                                        filterQuality: FilterQuality.medium,
-                                        child: child,
-                                      ),
-                                    );
-                                  },
-                                );
-                              },
-                              // Keep legacy callback here because desktopTabsProvider.reorder
-                              // still expects Flutter's pre-removal newIndex semantics.
-                              // ignore: deprecated_member_use
-                              onReorder: notifier.reorder,
-                              itemCount: state.tabs.length,
-                              itemBuilder: (context, i) {
-                                final tab = state.tabs[i];
-                                // Chrome-style: pointer-down on the chip immediately
-                                // arms a horizontal drag (`ReorderableDragStartListener`
-                                // uses ImmediateMultiDragGestureRecognizer). Short
-                                // taps without movement still bubble through to the
-                                // chip's GestureDetector so click-to-activate keeps
-                                // working — only sustained motion past the touch-slop
-                                // commits to a reorder gesture.
-                                return SizedBox(
-                                  key: ValueKey(tab.id),
-                                  width: widths[tab.id],
-                                  child: ReorderableDragStartListener(
-                                    index: i,
-                                    child: _TabChip(
-                                      tab: tab,
-                                      active: tab.id == state.activeId,
-                                      onActivate:
-                                          () => notifier.activate(tab.id),
-                                      onClose:
-                                          tab.closable
-                                              ? () => unawaited(
-                                                _closeTabWithUnsavedAnalysisGuard(
-                                                  tab.id,
-                                                ),
-                                              )
-                                              : null,
                                     ),
-                                  ),
-                                );
-                              },
+                                  );
+                                },
+                              ),
                             ),
                           ),
                           if (fillsRest)

@@ -3595,29 +3595,30 @@ class _BoardPaneContent extends HookConsumerWidget {
       goLast();
     }
 
-    void navigatePreviousGameManually() {
+    // The games list loads the event's games; collapsed (narrow windows
+    // start that way) nothing has, so Cmd/Ctrl+Up/Down opens it first and
+    // switches once it has had a moment to load.
+    Future<void> navigateGameManually(int delta) async {
       pauseAutoReplayForManualNavigation();
-      unawaited(
-        navigateActiveEventGame(
-          ref,
-          context: context,
-          delta: -1,
-          liveOnly: pictureInPictureMode,
-        ),
+      if (hasGameRail &&
+          !boardFocusMode &&
+          mainSplitController.isCollapsed(0)) {
+        mainSplitController.restore(0);
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        if (!context.mounted) return;
+      }
+      await navigateActiveEventGame(
+        ref,
+        context: context,
+        delta: delta,
+        liveOnly: pictureInPictureMode,
       );
     }
 
-    void navigateNextGameManually() {
-      pauseAutoReplayForManualNavigation();
-      unawaited(
-        navigateActiveEventGame(
-          ref,
-          context: context,
-          delta: 1,
-          liveOnly: pictureInPictureMode,
-        ),
-      );
-    }
+    void navigatePreviousGameManually() =>
+        unawaited(navigateGameManually(-1));
+
+    void navigateNextGameManually() => unawaited(navigateGameManually(1));
 
     Future<void> restoreMainWindowFromPictureInPictureAction() async {
       if (!pictureInPictureMode) return;
