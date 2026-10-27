@@ -42,29 +42,54 @@ Future<void> ensureOnnxRuntimeLoaded() {
 /// flutter_onnxruntime's web plugin hands Dart values straight to JavaScript,
 /// which only works when compiled to JavaScript; this app's web build is
 /// Wasm, so Maia talks to onnxruntime-web through these typed bindings.
+///
+/// Handles for the same model URL share one underlying session (Maia's
+/// rating is an input, so every Maia player in a tournament can use the same
+/// 46 MB model), and runs on it go one at a time.
 class WebOnnxSession {
-  WebOnnxSession._(this._session);
+  WebOnnxSession._(this._url, this._shared, this._session);
 
+  final String _url;
+  final _SharedSession _shared;
   final JSObject _session;
+  bool _released = false;
+
+  static final Map<String, _SharedSession> _byUrl = {};
 
   static Future<WebOnnxSession> create(String modelUrl) async {
+    final shared = _byUrl[modelUrl] ??= _SharedSession(_open(modelUrl));
+    shared.users++;
+    try {
+      return WebOnnxSession._(modelUrl, shared, await shared.session);
+    } catch (_) {
+      // A failed load is not cached, so the next game can try again.
+      shared.users--;
+      if (identical(_byUrl[modelUrl], shared)) _byUrl.remove(modelUrl);
+      rethrow;
+    }
+  }
+
+  static Future<JSObject> _open(String modelUrl) async {
     await ensureOnnxRuntimeLoaded();
     final factory = _ort['InferenceSession'] as JSObject;
     final options = JSObject()..['executionProviders'] = ['wasm'.toJS].toJS;
-    final session =
-        await factory
-            .callMethod<JSPromise<JSObject>>(
-              'create'.toJS,
-              modelUrl.toJS,
-              options,
-            )
-            .toDart;
-    return WebOnnxSession._(session);
+    return factory
+        .callMethod<JSPromise<JSObject>>('create'.toJS, modelUrl.toJS, options)
+        .toDart;
   }
 
   /// Runs the model on [inputs] (name to data and shape) and returns a copy
   /// of the [output] tensor's values.
   Future<Float32List> run(
+    Map<String, (Float32List, List<int>)> inputs,
+    String output,
+  ) {
+    final result = _shared.queue.then((_) => _run(inputs, output));
+    _shared.queue = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
+  }
+
+  Future<Float32List> _run(
     Map<String, (Float32List, List<int>)> inputs,
     String output,
   ) async {
@@ -98,7 +123,13 @@ class WebOnnxSession {
     }
   }
 
+  /// Drops this handle; the session itself is released with its last user.
   Future<void> release() async {
+    if (_released) return;
+    _released = true;
+    if (--_shared.users > 0) return;
+    if (identical(_byUrl[_url], _shared)) _byUrl.remove(_url);
+    await _shared.queue;
     await _session.callMethod<JSPromise<JSAny?>>('release'.toJS).toDart;
   }
 
@@ -111,4 +142,12 @@ class WebOnnxSession {
       (results[key.toDart] as JSObject?)?.callMethod<JSAny?>('dispose'.toJS);
     }
   }
+}
+
+class _SharedSession {
+  _SharedSession(this.session);
+
+  final Future<JSObject> session;
+  int users = 0;
+  Future<void> queue = Future<void>.value();
 }

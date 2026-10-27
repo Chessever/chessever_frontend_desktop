@@ -101,6 +101,13 @@ class TournamentServer extends StateNotifier<TournamentServerState> {
       clearError: true,
     );
     try {
+      // The browser build drives the conductor in the page and the UI reads
+      // [state.snapshot]; there is no loopback server to offer and no other
+      // process to lock out (and no pid to write).
+      if (kIsWeb) {
+        state = state.copyWith(status: TournamentServerStatus.running);
+        return true;
+      }
       await _acquireLock();
       // Bind on 127.0.0.1 only — never expose to the LAN.
       final router =

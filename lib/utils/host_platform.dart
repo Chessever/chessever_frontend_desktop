@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 
+import 'package:chessever/web/hardware_concurrency.dart';
 import 'package:flutter/foundation.dart';
 
 // `dart:io`'s [Platform] throws on the web build (app.chessever.com), so
@@ -23,8 +24,10 @@ String get hostOperatingSystem => kIsWeb ? 'web' : Platform.operatingSystem;
 /// `Platform.pathSeparator`; `/` in the browser build's filesystem.
 String get hostPathSeparator => kIsWeb ? '/' : Platform.pathSeparator;
 
-/// `Platform.numberOfProcessors`, or what the browser reports.
-int get hostProcessorCount => kIsWeb ? 4 : Platform.numberOfProcessors;
+/// `Platform.numberOfProcessors`, or what the browser reports (4 if hidden).
+/// Each web engine runs in its own Worker, so these are real parallel cores.
+int get hostProcessorCount =>
+    kIsWeb ? browserHardwareConcurrency() ?? 4 : Platform.numberOfProcessors;
 
 /// `Platform.environment`; empty in the browser build.
 Map<String, String> get hostEnvironment =>

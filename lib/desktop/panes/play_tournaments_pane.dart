@@ -2781,8 +2781,14 @@ class _CreateTournamentDialogState
 
   List<BotEngineKind> _selectedEngines() {
     if (_engineMode == _TournamentEngineMode.single) return [_engine];
-    if (_enginePool.isEmpty) return [_engine];
-    return _enginePool.toList(growable: false);
+    final pool = [
+      for (final engine in _enginePool)
+        if (ref.read(engineInstallProvider(engine)).status !=
+            EngineInstallStatus.unsupported)
+          engine,
+    ];
+    if (pool.isEmpty) return [_engine];
+    return pool;
   }
 
   Widget _fieldRow(Widget left, Widget right) {
@@ -2829,7 +2835,18 @@ class _CreateTournamentDialogState
     );
   }
 
+  /// Bot types this device can run at all. An engine that is merely not
+  /// installed yet stays listed; one the platform cannot run (Leela in the
+  /// browser) is left out, since its games would end before the first move.
+  List<BotEngineKind> _runnableEngines() => [
+    for (final engine in BotEngineKind.values)
+      if (ref.watch(engineInstallProvider(engine)).status !=
+          EngineInstallStatus.unsupported)
+        engine,
+  ];
+
   Widget _engineControls() {
+    final engines = _runnableEngines();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2845,14 +2862,14 @@ class _CreateTournamentDialogState
           _selectField<BotEngineKind>(
             label: 'Bot type',
             value: _engine,
-            values: BotEngineKind.values,
+            values: engines,
             format: (value) => value.displayName,
             onChanged: (value) => _engine = value,
           )
         else
           Column(
             children: [
-              for (final engine in BotEngineKind.values) ...[
+              for (final engine in engines) ...[
                 _EngineSwitchRow(
                   engine: engine,
                   selected: _enginePool.contains(engine),
@@ -2869,8 +2886,7 @@ class _CreateTournamentDialogState
                         }
                       }),
                 ),
-                if (engine != BotEngineKind.values.last)
-                  const SizedBox(height: 8),
+                if (engine != engines.last) const SizedBox(height: 8),
               ],
             ],
           ),

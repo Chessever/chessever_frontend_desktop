@@ -380,6 +380,9 @@ int _treeWorkerCount({
   if (requestedWorkerCount != null) {
     return requestedWorkerCount.clamp(1, gameCount).toInt();
   }
+  // The browser build's isolate shim runs every worker on the page thread,
+  // so splitting the work there only adds shard merges.
+  if (kIsWeb) return 1;
   final processors = hostProcessorCount;
   final byCpu = math.max(1, math.min(processors - 1, 8));
   final byWork =
