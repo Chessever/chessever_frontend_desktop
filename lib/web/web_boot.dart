@@ -4,6 +4,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:sqflite/sqflite.dart' show databaseFactory;
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
@@ -41,6 +42,10 @@ Future<void> runChessEverWeb() async {
 Future<void> _boot() async {
   WidgetsFlutterBinding.ensureInitialized();
   webArrivedOnPage = Uri.base.pathSegments.any((s) => s.isNotEmpty);
+  // The app has no Flutter routes to mirror; WebUrlSync owns the address bar
+  // and history. Flutter's own strategy would add its sentinel entry and
+  // answer Back by itself, fighting the entries WebUrlSync pushes.
+  setUrlStrategy(null);
   print('[web] startup begin');
 
   // Local databases, workspaces and caches are files on desktop; here they
