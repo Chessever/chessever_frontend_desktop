@@ -9,6 +9,7 @@ import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -28,6 +29,7 @@ import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_pgn_catalog.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -4751,6 +4753,14 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
 
   Future<void> _pickFiles() async {
     if (_working) return;
+    if (kIsWeb) {
+      final paths = await pickWebChessFilesIntoAppStorage(
+        dialogTitle: 'Import player PGN',
+        allowedExtensions: localChessPickerExtensions,
+      );
+      if (paths != null) await _importPaths(paths);
+      return;
+    }
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Import player PGN',
       type: FileType.custom,
@@ -4772,6 +4782,11 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
 
   Future<void> _pickFolder() async {
     if (_working) return;
+    if (kIsWeb) {
+      final directory = await pickWebChessFolderIntoAppStorage();
+      if (directory != null) await _importPaths(<String>[directory]);
+      return;
+    }
     final path = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Import player PGN folder',
       lockParentWindow: true,

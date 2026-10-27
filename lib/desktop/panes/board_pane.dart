@@ -5490,8 +5490,11 @@ class _BoardPaneContent extends HookConsumerWidget {
                         isForegroundTab: isForegroundSurface,
                         autoAnalysisAllowed:
                             allowGameAnalysis && isForegroundSurface,
+                        // A browser cannot float a second window over the
+                        // desktop the way the desktop app does.
                         onPictureInPicture:
-                            boardArgs == null ||
+                            kIsWeb ||
+                                    boardArgs == null ||
                                     (!isLiveGame &&
                                         !currentGameIsInPictureInPicture)
                                 ? null

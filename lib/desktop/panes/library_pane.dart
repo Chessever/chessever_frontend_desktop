@@ -1,5 +1,3 @@
-import 'package:path_provider/path_provider.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:chessever/desktop/state/library_destination.dart';
 import 'package:chessever/desktop/services/shared_books.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
@@ -53,6 +51,7 @@ import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_source_deletion.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -243,31 +242,6 @@ class LibraryPane extends HookConsumerWidget {
       }
     }
 
-    /// Browsers hand over file contents, not paths: copy the picked PGN files
-    /// into the app's browser filesystem, then open them like desktop does.
-    Future<List<String>?> pickWebPgnFilesIntoAppStorage() async {
-      final result = await FilePicker.platform.pickFiles(
-        dialogTitle: 'Import PGN',
-        type: FileType.custom,
-        allowedExtensions: const ['pgn'],
-        allowMultiple: true,
-        withData: true,
-      );
-      if (result == null || result.files.isEmpty) return null;
-      final support = await getApplicationDocumentsDirectory();
-      final folder = io.Directory(p.join(support.path, 'Imported PGN'));
-      await folder.create(recursive: true);
-      final paths = <String>[];
-      for (final file in result.files) {
-        final bytes = file.bytes;
-        if (bytes == null) continue;
-        final target = io.File(p.join(folder.path, p.basename(file.name)));
-        await target.writeAsBytes(bytes, flush: true);
-        paths.add(target.path);
-      }
-      return paths.isEmpty ? null : paths;
-    }
-
     Future<void> openClipboardPgnDatabase() async {
       try {
         final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
@@ -419,7 +393,9 @@ class LibraryPane extends HookConsumerWidget {
     Future<void> importLocalPgnFiles() async {
       final paths =
           kIsWeb
-              ? await pickWebPgnFilesIntoAppStorage()
+              ? await pickWebChessFilesIntoAppStorage(
+                dialogTitle: 'Import PGN',
+              )
               : await pickLibraryPgnDatabasePaths();
       if (paths == null) return;
       if (!context.mounted) return;

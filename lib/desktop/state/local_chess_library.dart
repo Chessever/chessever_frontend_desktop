@@ -16,6 +16,7 @@ import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 
 const Object _localChessUnset = Object();
@@ -222,6 +223,10 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   int _treeBuildGeneration = 0;
 
   Future<bool> pickFolder() async {
+    if (kIsWeb) {
+      final directory = await pickWebChessFolderIntoAppStorage();
+      return directory != null && await openPaths(<String>[directory]);
+    }
     final directory = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Browse local chess folder',
       lockParentWindow: true,
@@ -231,6 +236,13 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   }
 
   Future<bool> pickFiles() async {
+    if (kIsWeb) {
+      final paths = await pickWebChessFilesIntoAppStorage(
+        allowedExtensions: localChessPickerExtensions,
+      );
+      if (paths == null) return false;
+      return openPaths(paths, sourceLabel: paths.length == 1 ? null : 'Files');
+    }
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Open chess files',
       type: FileType.custom,

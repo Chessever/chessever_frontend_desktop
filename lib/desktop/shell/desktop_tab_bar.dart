@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
@@ -13,6 +14,7 @@ import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
+import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
@@ -554,7 +556,22 @@ class _TabChipState extends ConsumerState<_TabChip>
         myIdx < tabsState.tabs.length - 1 &&
         tabsState.tabs.skip(myIdx + 1).any((t) => t.closable);
     final isBoardTab = widget.tab.kind == TabKind.board;
-    final canMoveToWindow = isBoardTab && widget.tab.closable;
+    // In the browser a game moves to a new browser tab, which only works for
+    // games with a public address.
+    final webArgs =
+        kIsWeb && isBoardTab
+            ? ref.read(boardTabGameArgsByTabIdProvider)[widget.tab.id]
+            : null;
+    final canMoveToWindow =
+        isBoardTab &&
+        widget.tab.closable &&
+        (!kIsWeb ||
+            (webArgs != null &&
+                buildDesktopGameShareUrl(
+                      game: webArgs.sourceGame,
+                      gameId: webArgs.gameId,
+                    ) !=
+                    null));
     final isMuted = ref.read(boardTabSoundMuteProvider).contains(widget.tab.id);
 
     final picked = await showMenu<_TabAction>(
@@ -581,7 +598,10 @@ class _TabChipState extends ConsumerState<_TabChip>
             value: _TabAction.moveToWindow,
             child: _MenuRow(
               icon: Icons.open_in_browser_rounded,
-              label: 'Move tab to new window',
+              label:
+                  kIsWeb
+                      ? 'Move tab to new browser tab'
+                      : 'Move tab to new window',
             ),
           ),
         if (widget.onClose != null)
@@ -699,7 +719,10 @@ class _TabChipState extends ConsumerState<_TabChip>
               }
             },
             onPointerMove: (event) {
-              if (_detachTriggered ||
+              // Tearing a tab off into its own window is a desktop gesture;
+              // in a browser it would only surprise.
+              if (kIsWeb ||
+                  _detachTriggered ||
                   widget.tab.kind != TabKind.board ||
                   (event.buttons & kPrimaryMouseButton) == 0) {
                 return;

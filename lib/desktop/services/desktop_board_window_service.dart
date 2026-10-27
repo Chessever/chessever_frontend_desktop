@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
+import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/services/desktop_picture_in_picture_channel.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -20,6 +21,7 @@ import 'package:chessever/screens/countrymen/provider/countrymen_combined_games_
 import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/browser_tab.dart';
 
 class DesktopBoardWindowService {
   DesktopBoardWindowService({
@@ -27,7 +29,12 @@ class DesktopBoardWindowService {
     this.createDetachedWindow,
     this.childReadyTimeout = const Duration(seconds: 30),
     this.onPictureInPictureVisibilityChanged,
+    this.openInThisWindow,
   });
+
+  /// Web build: opens a game that has no public link as a tab here, since a
+  /// new browser tab could not receive it.
+  final void Function(BoardTabGameArgs args)? openInThisWindow;
 
   final Future<void> Function(DesktopBoardWindowPayload payload)? createWindow;
   final Future<DetachedBoardWindow> Function(DesktopBoardWindowPayload payload)?
@@ -50,7 +57,25 @@ class DesktopBoardWindowService {
         'has_pgn': args.pgn.trim().isNotEmpty,
       },
     );
+    if (kIsWeb) {
+      if (!openInWebBrowserTab(args)) openInThisWindow?.call(args);
+      return;
+    }
     await _openPayload(DesktopBoardWindowPayload.fromArgs(args));
+  }
+
+  /// Web build: a browser tab is the app's "new window". Opens the game's
+  /// app.chessever.com address there; false when the game has no public
+  /// address (a local PGN or an unsaved analysis).
+  bool openInWebBrowserTab(BoardTabGameArgs args) {
+    final url = buildDesktopGameShareUrl(
+      game: args.sourceGame,
+      gameId: args.gameId,
+    );
+    if (url == null) return false;
+    final uri = Uri.parse(url);
+    openInBrowserTab(uri.hasQuery ? '${uri.path}?${uri.query}' : uri.path);
+    return true;
   }
 
   Future<void> openPictureInPictureWindow(BoardTabGameArgs args) async {
@@ -368,6 +393,12 @@ class DesktopBoardWindowService {
     if (tab.id.isEmpty || tab.kind != TabKind.board || !tab.closable) {
       return false;
     }
+    if (kIsWeb) {
+      final args = container.read(boardTabGameArgsByTabIdProvider)[tabId];
+      if (args == null || !openInWebBrowserTab(args)) return false;
+      container.read(desktopTabsProvider.notifier).close(tabId);
+      return true;
+    }
 
     if (!_detachingTabs.add(tabId)) return false;
     try {
@@ -526,6 +557,8 @@ final desktopBoardWindowServiceProvider = Provider<DesktopBoardWindowService>((
   ref,
 ) {
   return DesktopBoardWindowService(
+    openInThisWindow:
+        (args) => openBoardGameTabFromContainer(ref.container, args),
     onPictureInPictureVisibilityChanged: (visibility) {
       ref.read(boardPictureInPictureVisibilityProvider.notifier).state =
           visibility;
