@@ -1118,39 +1118,44 @@ class _SegmentBar extends ConsumerWidget {
                 padding: const EdgeInsets.only(left: 8),
                 // A narrow rail drops the least-used jumps instead of letting
                 // the buttons spill over their neighbours: game jumps first,
-                // then first/last move, and with no room even for one step
-                // each way (the Explorer's own buttons open beside it), the
-                // whole cluster. Their keyboard shortcuts keep working.
+                // then first/last move; the remaining back/forward pair
+                // shrinks to fit, and only leaves when even that cannot.
+                // Their keyboard shortcuts keep working.
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     final width = constraints.maxWidth;
-                    if (width < _clusterWidth(buttons: 2)) {
-                      return const SizedBox.shrink();
-                    }
+                    if (width < 48) return const SizedBox.shrink();
+                    // Between 48 px and a full pair, the back/forward pair
+                    // shrinks to fit rather than leaving the rail.
+                    final squeezed = width < _clusterWidth(buttons: 2, air: 0);
                     final hasGameJumps =
                         onPreviousGame != null || onNextGame != null;
                     final dropGameJumps =
                         hasGameJumps && width < _clusterWidth(buttons: 6);
                     final dropEdgeJumps = width < _clusterWidth(buttons: 4);
+                    final cluster = _ExplorerNavigationCluster(
+                      canGoBack: canGoBack,
+                      canGoForward: canGoForward,
+                      canStepForward: canStepForward,
+                      onFirstMove: dropEdgeJumps ? null : onFirstMove,
+                      onPreviousMove: onPreviousMove,
+                      onNextMove: onNextMove,
+                      onLastMove: dropEdgeJumps ? null : onLastMove,
+                      onPreviousGame: dropGameJumps ? null : onPreviousGame,
+                      onNextGame: dropGameJumps ? null : onNextGame,
+                      firstMoveShortcutLabel: firstMoveShortcutLabel,
+                      previousMoveShortcutLabel: previousMoveShortcutLabel,
+                      nextMoveShortcutLabel: nextMoveShortcutLabel,
+                      lastMoveShortcutLabel: lastMoveShortcutLabel,
+                      previousGameShortcutLabel: previousGameShortcutLabel,
+                      nextGameShortcutLabel: nextGameShortcutLabel,
+                    );
                     return Align(
                       alignment: Alignment.center,
-                      child: _ExplorerNavigationCluster(
-                        canGoBack: canGoBack,
-                        canGoForward: canGoForward,
-                        canStepForward: canStepForward,
-                        onFirstMove: dropEdgeJumps ? null : onFirstMove,
-                        onPreviousMove: onPreviousMove,
-                        onNextMove: onNextMove,
-                        onLastMove: dropEdgeJumps ? null : onLastMove,
-                        onPreviousGame: dropGameJumps ? null : onPreviousGame,
-                        onNextGame: dropGameJumps ? null : onNextGame,
-                        firstMoveShortcutLabel: firstMoveShortcutLabel,
-                        previousMoveShortcutLabel: previousMoveShortcutLabel,
-                        nextMoveShortcutLabel: nextMoveShortcutLabel,
-                        lastMoveShortcutLabel: lastMoveShortcutLabel,
-                        previousGameShortcutLabel: previousGameShortcutLabel,
-                        nextGameShortcutLabel: nextGameShortcutLabel,
-                      ),
+                      child:
+                          squeezed
+                              ? FittedBox(fit: BoxFit.scaleDown, child: cluster)
+                              : cluster,
                     );
                   },
                 ),
@@ -1169,9 +1174,10 @@ class _SegmentBar extends ConsumerWidget {
 }
 
 /// Width the navigation cluster needs for [buttons] 36 px buttons with 4 px
-/// gaps, plus a little air so it never sits flush against its neighbours.
-double _clusterWidth({required int buttons}) {
-  return buttons * 36.0 + (buttons - 1) * 4.0 + 8.0;
+/// gaps, plus [air] so an optional jump is only added when it will not sit
+/// flush against its neighbours.
+double _clusterWidth({required int buttons, double air = 8}) {
+  return buttons * 36.0 + (buttons - 1) * 4.0 + air;
 }
 
 /// Exposes the actual Explorer navigation controls without remote providers.
