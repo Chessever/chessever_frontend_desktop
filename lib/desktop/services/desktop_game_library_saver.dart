@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:chessever/utils/pgn_time_control.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -153,6 +154,11 @@ Map<String, dynamic> mergeDesktopGameMetadataForLibrary(
   Map<String, dynamic> metadata,
   GamesTourModel game,
 ) {
+  enrichPgnTimeControlMetadata(
+    metadata,
+    timeControlText: game.timeControlText,
+    category: game.timeControl,
+  );
   _putMeaningful(metadata, 'White', game.whitePlayer.name);
   _putMeaningful(metadata, 'Black', game.blackPlayer.name);
   _putMeaningful(metadata, 'WhiteTitle', game.whitePlayer.title);

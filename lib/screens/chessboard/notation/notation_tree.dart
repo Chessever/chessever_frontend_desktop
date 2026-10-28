@@ -254,7 +254,13 @@ Map<String, String> _buildPgnHeaders(ChessGame game) {
       // converts `[%clk]` to elapsed time through it and drops every clock in
       // the game when it cannot. Games saved before we knew that carry a
       // category word ("standard"); rewrite what we can, drop the rest.
-      final field = pgnTimeControlField(entry.value?.toString());
+      // An imported machine field is already seconds. Running a short value
+      // such as 60+2 through the human shorthand parser changes it to 3600+2
+      // and corrupts elapsed times after save/reopen.
+      final raw = entry.value?.toString();
+      final field = isValidPgnTimeControl(raw)
+          ? raw!.trim()
+          : pgnTimeControlField(raw);
       if (field != null) headers[key] = field;
       continue;
     }

@@ -64,6 +64,7 @@ class TournamentGameSummary {
     this.roundStartsAt,
     this.hasStarted = false,
     this.pgn,
+    this.timeControlText,
     this.whiteTeam = '',
     this.blackTeam = '',
     this.localPgnSource,
@@ -92,6 +93,7 @@ class TournamentGameSummary {
       blackPlayer: game.blackPlayer.name,
       tourId: game.tourId,
       tourSlug: game.tourSlug ?? '',
+      timeControlText: game.timeControlText,
       whiteFederation: _summaryFederation(game.whitePlayer),
       blackFederation: _summaryFederation(game.blackPlayer),
       whiteTitle: game.whitePlayer.title,
@@ -156,6 +158,7 @@ class TournamentGameSummary {
       blackPlayer: black?.name ?? '',
       tourId: game.tourId,
       tourSlug: game.tourSlug,
+      timeControlText: game.timeControlText,
       whiteFederation: white?.fed ?? '',
       blackFederation: black?.fed ?? '',
       whiteTitle: white?.title ?? '',
@@ -253,6 +256,9 @@ class TournamentGameSummary {
   /// summaries usually omit this and let the board fetch the current PGN.
   final String? pgn;
 
+  /// Detailed source control, not a speed category. Keep it through thin rows.
+  final String? timeControlText;
+
   /// Local PGN coordinates when this summary is a row from an imported file.
   /// Null for cloud, Gamebase, and detached-preview entries.
   final TournamentGameLocalPgnSource? localPgnSource;
@@ -278,6 +284,7 @@ class TournamentGameSummary {
     String? whiteTeam,
     String? blackTeam,
     String? pgn,
+    String? timeControlText,
     String? fen,
     DateTime? lastMoveTime,
     GameStatus? status,
@@ -317,6 +324,7 @@ class TournamentGameSummary {
       roundStartsAt: roundStartsAt,
       hasStarted: hasStarted ?? this.hasStarted,
       pgn: pgn ?? this.pgn,
+      timeControlText: timeControlText ?? this.timeControlText,
       whiteTeam: whiteTeam ?? this.whiteTeam,
       blackTeam: blackTeam ?? this.blackTeam,
       localPgnSource: localPgnSource ?? this.localPgnSource,
@@ -365,6 +373,7 @@ GamesTourModel gamesTourModelFromTournamentSummary(
     gameStatus: summary.status,
     fen: summary.fen,
     pgn: summary.pgn,
+    timeControlText: summary.timeControlText,
     boardNr: summary.boardNumber,
     roundId: summary.roundId,
     roundSlug: summary.roundSlug.trim().isEmpty ? null : summary.roundSlug,
@@ -406,6 +415,13 @@ TournamentGameSummary tournamentSummaryWithArbitratedLiveGame({
     tourId:
         liveGame.tourId.isNotEmpty ? liveGame.tourId : structuralSummary.tourId,
     tourSlug: liveGame.tourSlug ?? structuralSummary.tourSlug,
+    timeControlText: liveGame.gameId != structuralSummary.id
+        ? null
+        : (liveGame.timeControlText?.trim().isNotEmpty ?? false)
+        ? liveGame.timeControlText
+        : liveGame.tourId.isEmpty || liveGame.tourId == structuralSummary.tourId
+        ? structuralSummary.timeControlText
+        : null,
     whiteFederation: whiteFederation,
     blackFederation: blackFederation,
     whiteTitle: liveGame.whitePlayer.title,

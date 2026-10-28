@@ -13,6 +13,7 @@ import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
+import 'package:chessever/desktop/utils/notation_move_timing.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
@@ -60,12 +61,14 @@ typedef _TranspositionIndex = Map<String, List<ChessMovePointer>>;
 class _NotationPositionMarkers extends InheritedWidget {
   const _NotationPositionMarkers({
     required this.positionArrowKeys,
+    required this.timings,
     required this.transpositions,
     required this.onJump,
     required super.child,
   });
 
   final Set<String> positionArrowKeys;
+  final NotationMoveTimingIndex timings;
   final _TranspositionIndex transpositions;
   final ValueChanged<ChessMovePointer> onJump;
 
@@ -74,7 +77,8 @@ class _NotationPositionMarkers extends InheritedWidget {
 
   @override
   bool updateShouldNotify(covariant _NotationPositionMarkers oldWidget) {
-    return positionArrowKeys != oldWidget.positionArrowKeys ||
+    return timings != oldWidget.timings ||
+        positionArrowKeys != oldWidget.positionArrowKeys ||
         transpositions != oldWidget.transpositions ||
         onJump != oldWidget.onJump;
   }
@@ -362,6 +366,9 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   String? _indexedStartingFen;
   String? _indexedSignature;
   _TranspositionIndex _cachedTranspositions = const {};
+  ChessGame? _timingGame;
+  String? _timingControl;
+  NotationMoveTimingIndex? _cachedTimings;
 
   @override
   void initState() {
@@ -583,6 +590,12 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   @override
   Widget build(BuildContext context) {
     final mainline = widget.game.mainline;
+    final timeControl = widget.game.metadata['TimeControl']?.toString();
+    if (!identical(_timingGame, widget.game) || _timingControl != timeControl) {
+      _timingGame = widget.game;
+      _timingControl = timeControl;
+      _cachedTimings = NotationMoveTimingIndex.fromGame(widget.game);
+    }
     // Variations open expanded by default. Only a caller that passes
     // finite auto-collapse thresholds opts into folding on open.
     final autoCollapseDepth = widget.autoCollapseDepth;
@@ -639,6 +652,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
 
     return _NotationPositionMarkers(
       positionArrowKeys: widget.positionArrowKeys,
+      timings: _cachedTimings!,
       transpositions: transpositions,
       onJump: widget.onJump,
       child: CallbackShortcuts(
@@ -3377,8 +3391,8 @@ class _LadderChip extends StatefulWidget {
   /// matching the reference hierarchy.
   final bool mainlineDominant;
 
-  /// Compact `M:SS` derived from a `[%clk]` PGN extension. Null hides the
-  /// trailing clock pill. Only mainline moves currently carry this.
+  /// Compact `M:SS` from a `[%clk]` PGN extension, shown only when the move
+  /// has no elapsed time. Null hides the clock pill.
   final String? clockText;
 
   /// Total seconds remaining at the clock annotation; used to colour
@@ -3643,6 +3657,8 @@ class _LadderChipState extends State<_LadderChip>
   @override
   Widget build(BuildContext context) {
     final isVariation = widget.depth > 0;
+    final timing = _NotationPositionMarkers.maybeOf(context)?.timings.at(widget.pointer);
+    final elapsedLabel = timing?.label;
     final fg =
         widget.selected
             ? kBackgroundColor
@@ -3757,7 +3773,9 @@ class _LadderChipState extends State<_LadderChip>
     );
     final transpositionCount = transpositionPointers?.length ?? 0;
 
-    final clockText = widget.clockText;
+    // Timing is presentation-only; stored remaining clocks stay unchanged.
+    // Elapsed time leads; the remaining clock shows only when it is unknown.
+    final clockText = elapsedLabel == null ? widget.clockText : null;
     final children = <Widget>[
       if (widget.compact) sanText else Flexible(child: sanText),
       if (classificationType != null) ...[
@@ -3808,7 +3826,14 @@ class _LadderChipState extends State<_LadderChip>
           ),
         ),
       ],
-      if (clockText != null) ...[
+      if (elapsedLabel != null) ...[
+        const SizedBox(width: 6),
+        _ElapsedTimeBadge(
+          text: elapsedLabel,
+          selected: widget.selected,
+          tooltip: timing!.tooltip,
+        ),
+      ] else if (clockText != null) ...[
         const SizedBox(width: 6),
         _ClockBadge(
           text: clockText,
@@ -4150,9 +4175,9 @@ class _MoveCommentEditorState extends State<_MoveCommentEditor> {
 }
 
 /// Tiny `M:SS` pill rendered to the right of a move chip when the PGN
-/// supplied a `[%clk]` extension. Inverts color when the chip is selected
-/// so it stays readable on the cyan active background. Goes red under
-/// 30s remaining as a time-pressure cue chess masters scan for.
+/// supplied a `[%clk]` extension but no elapsed time. Inverts color when the
+/// chip is selected so it stays readable on the cyan active background. Goes
+/// red under 30s remaining as a time-pressure cue chess masters scan for.
 class _ClockBadge extends StatelessWidget {
   const _ClockBadge({
     required this.text,
@@ -4184,6 +4209,33 @@ class _ClockBadge extends StatelessWidget {
         height: 1.0,
         letterSpacing: -0.2,
         fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+  }
+}
+
+/// Neutral elapsed label: a quick move must never look like a low clock.
+class _ElapsedTimeBadge extends StatelessWidget {
+  const _ElapsedTimeBadge({required this.text, required this.selected, required this.tooltip});
+
+  final String text;
+  final bool selected;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return DesktopTooltip(
+      message: tooltip,
+      child: Text(
+        text,
+        style: TextStyle(
+          color: selected ? kBackgroundColor.withValues(alpha: 0.85) : const Color(0xFF8E8E93),
+          fontSize: 10,
+          fontWeight: FontWeight.w500,
+          height: 1.0,
+          letterSpacing: -0.2,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
       ),
     );
   }
@@ -4375,6 +4427,8 @@ String _branchLabel(int variationIndex) {
   }
   return '${variationIndex - 51}';
 }
+
+// Elapsed-time formatting lives in notation_move_timing.dart.
 
 /// Compact clock display from `[%clk H:MM:SS]`: drops leading zero hour,
 /// shows `M:SS` under a minute. Returns null when input is null/empty.

@@ -721,14 +721,30 @@ GamesTourModel selectFreshestNavigationGame({
   required GamesTourModel incoming,
 }) {
   if (current.gameId != incoming.gameId) return current;
-  if (_shouldUseIncomingGame(
+  final useIncoming = _shouldUseIncomingGame(
     current,
     incoming,
     allowEqualFreshnessUpdate: true,
-  )) {
-    return incoming;
+  ) || _incomingHasRicherPgn(current, incoming);
+  return retainMissingGameTimeControl(
+    selected: useIncoming ? incoming : current,
+    alternate: useIncoming ? current : incoming,
+  );
+}
+
+/// Time-control context is independent of the winning position/clock tuple.
+/// Lightweight rows omit it; only borrow it from the exact same game and tour.
+GamesTourModel retainMissingGameTimeControl({
+  required GamesTourModel selected,
+  required GamesTourModel alternate,
+}) {
+  if ((selected.timeControlText?.trim().isNotEmpty ?? false) ||
+      selected.gameId != alternate.gameId ||
+      selected.tourId != alternate.tourId ||
+      !(alternate.timeControlText?.trim().isNotEmpty ?? false)) {
+    return selected;
   }
-  return _incomingHasRicherPgn(current, incoming) ? incoming : current;
+  return selected.copyWith(timeControlText: alternate.timeControlText);
 }
 
 GamesTourModel _mergeLiveUpdate({
