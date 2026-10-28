@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/web/folder_picker.dart';
+import 'package:chessever/web/linked_files.dart';
 
 // Browsers hand over file contents, never paths. These copy what the user
 // picks or drops into the app's browser filesystem (documents/Imported PGN)
@@ -33,11 +34,17 @@ Future<String> _write(
 }
 
 /// Picks chess files and returns their paths in app storage, or null when
-/// the user cancels or picks nothing usable.
+/// the user cancels or picks nothing usable. Where the browser allows it
+/// (Chromium), the copies stay linked: edits saved here go back to the
+/// user's own files, as on desktop.
 Future<List<String>?> pickWebChessFilesIntoAppStorage({
   String dialogTitle = 'Open chess files',
   List<String> allowedExtensions = const ['pgn'],
 }) async {
+  if (linkedFilesSupported) {
+    final documents = await getApplicationDocumentsDirectory();
+    return pickLinkedChessFiles(p.join(documents.path, 'Linked PGN'));
+  }
   final result = await FilePicker.platform.pickFiles(
     dialogTitle: dialogTitle,
     type: FileType.custom,

@@ -2,7 +2,7 @@
 
 What the desktop shell does in a browser, how, and which pub.dev packages
 were weighed for the gaps. Checked against pub.dev on 2026-10-28; build
-22.17.11. Verified in headless Chromium and WebKit; Firefox and real Safari
+22.17.15. Verified in headless Chromium and WebKit; Firefox and real Safari
 still need a manual pass.
 
 ## Features
@@ -22,7 +22,7 @@ still need a manual pass.
 | Share board image | Browser share sheet | `share_plus` with `XFile.fromData` |
 | Open game in new window, move tab to new window | New browser tab | The game's chessever.com address, same origin (`browser_tab.dart`); local-only games open as a tab |
 | Picture-in-picture, tear-off tabs | Not available | Hidden on the web |
-| Link a PGN file to keep editing in place | Not available | Needs the File System Access API (Chromium only) |
+| Edit a PGN file in place | Chrome, Edge, Opera | Import keeps a File System Access handle; saved changes are written back to the user's file (`lib/web/linked_files_web.dart`). Firefox and Safari edit an imported copy; Export saves it |
 | Show in folder, auto-update, window position | Not applicable | Hidden on the web |
 | Addresses and history | chessever.com paths | `lib/web/web_url_sync.dart` owns the address bar and Back/Forward; Flutter's URL strategy is off |
 
@@ -38,7 +38,7 @@ still need a manual pass.
 | `stockfish` | 1.8.1 | 1.8.1 | Native only; the web build swaps in the Worker shim |
 | `pasteboard` | 0.5.0 | 0.6.0 (2026-10-22) | Not needed on the web; images go through `ClipboardItem` |
 | `share_plus` | 10.1.4 | 13.3.1 (2026-10-01) | Works on the web as is |
-| `file_system_access_api` | not used | 2.0.0 (2024-01-19) | Unmaintained; call the API through `web` if in-place PGN editing is wanted (Chromium only) |
+| `file_system_access_api` | not used | 2.0.0 (2024-01-19) | Unmaintained; the API is called through `web` instead (in-place editing above) |
 
 ## Still open
 

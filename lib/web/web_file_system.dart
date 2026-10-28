@@ -223,9 +223,14 @@ class WebFileSystem {
     _markDirty(key);
   }
 
+  /// Called with each path whose contents or metadata change, so a file
+  /// linked to one on the user's disk can be written back there.
+  void Function(String path)? onFileChanged;
+
   void _markDirty(String key) {
     _dirty.add(key);
     _scheduleFlush();
+    onFileChanged?.call(key);
   }
 
   /// [removed] gives the chunk records the path had; they move with it on a
