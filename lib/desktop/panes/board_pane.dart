@@ -3630,18 +3630,11 @@ class _BoardPaneContent extends HookConsumerWidget {
       goLast();
     }
 
-    // The games list loads the event's games; collapsed (narrow windows
-    // start that way) nothing has, so Cmd/Ctrl+Up/Down opens it first and
-    // switches once it has had a moment to load.
+    // A collapsed games list (narrow windows start that way) has loaded
+    // nothing; navigateActiveEventGame loads the event's games itself, so
+    // the list stays as the user left it.
     Future<void> navigateGameManually(int delta) async {
       pauseAutoReplayForManualNavigation();
-      if (hasGameRail &&
-          !boardFocusMode &&
-          mainSplitController.isCollapsed(0)) {
-        mainSplitController.restore(0);
-        await Future<void>.delayed(const Duration(milliseconds: 900));
-        if (!context.mounted) return;
-      }
       await navigateActiveEventGame(
         ref,
         context: context,
@@ -9810,13 +9803,14 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           ),
         ),
       ),
-      // A phone-width board has no room for the photo and a name; the name
-      // matters more, so the photo steps aside.
+      // A phone-width browser board has no room for the photo and a name;
+      // the name matters more, so the photo steps aside. The desktop app's
+      // picture-in-picture window opens at 356 px and keeps its photos.
       child: LayoutBuilder(
         builder:
             (context, constraints) => Row(
               children: [
-                if (constraints.maxWidth >= 360) ...[
+                if (!kIsWeb || constraints.maxWidth >= 360) ...[
                   Container(
                     key: const ValueKey<String>('desktop-board-player-avatar'),
                     width: 42,
