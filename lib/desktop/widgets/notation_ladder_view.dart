@@ -3791,14 +3791,29 @@ class _LadderChipState extends State<_LadderChip>
             ?._annotationsHidden ??
         false;
     final nags = annotationsHidden ? const <NagDisplay>[] : _resolvedNags();
-    final classificationType =
-        annotationsHidden
-            ? null
-            : annotationTypeFromClassificationNags(widget.nags);
+    final classificationType = annotationsHidden
+        ? null
+        : annotationTypeFromClassificationNags(widget.nags) ??
+              annotationTypeFromQualityNags(widget.nags);
     final firstQualityNag = nags.cast<NagDisplay?>().firstWhere(
       (d) => d?.isQuality == true,
       orElse: () => null,
     );
+    final reportBadgeVisible =
+        !annotationsHidden &&
+        !widget.userHasQualityNag &&
+        widget.annotation?.useClassificationIcon == true;
+    final manualQualityBadge =
+        classificationType == null &&
+            !reportBadgeVisible &&
+            firstQualityNag != null &&
+            manualQualityIconAsset(firstQualityNag.symbol) != null
+        ? firstQualityNag
+        : null;
+    final hasClassificationBadge =
+        classificationType != null ||
+        reportBadgeVisible ||
+        manualQualityBadge != null;
     final sanColor =
         widget.selected
             ? kBackgroundColor
@@ -3888,11 +3903,12 @@ class _LadderChipState extends State<_LadderChip>
             useClassificationIcon: true,
           ),
         ),
-      ] else if (!annotationsHidden &&
-          !widget.userHasQualityNag &&
-          widget.annotation?.useClassificationIcon == true) ...[
+      ] else if (reportBadgeVisible) ...[
         const SizedBox(width: 4),
         _NotationClassificationIcon(annotation: widget.annotation!),
+      ] else if (manualQualityBadge != null) ...[
+        const SizedBox(width: 4),
+        _NotationClassificationIcon.manual(manualQualityBadge),
       ],
       if (hasPositionArrows) ...[
         const SizedBox(width: 4),
@@ -3906,7 +3922,11 @@ class _LadderChipState extends State<_LadderChip>
           onTap: () => markers?.onJump(transpositionTarget),
         ),
       ],
-      for (final d in nags) ...[
+      // Portable quality NAGs remain stored and still supply SAN styling/menu
+      // state, but the visible classification badge already conveys them.
+      for (final d in nags.where(
+        (d) => !hasClassificationBadge || !d.isQuality,
+      )) ...[
         const SizedBox(width: 3),
         DesktopTooltip(
           message: d.description ?? d.symbol,
@@ -3967,21 +3987,27 @@ class _LadderChipState extends State<_LadderChip>
 }
 
 class _NotationClassificationIcon extends StatelessWidget {
-  const _NotationClassificationIcon({required this.annotation});
+  const _NotationClassificationIcon({required this.annotation}) : manual = null;
+  const _NotationClassificationIcon.manual(this.manual) : annotation = null;
 
-  final LichessMoveAnnotation annotation;
+  final LichessMoveAnnotation? annotation;
+  final NagDisplay? manual;
 
   @override
   Widget build(BuildContext context) {
-    final type = annotation.type;
+    final type = annotation?.type;
     // Badge SVG already carries its own coloured disc — render bare, no circle.
     return DesktopTooltip(
-      message: _annotationLabel(type),
+      message: type == null
+          ? manualQualityIconLabel(manual!.symbol)
+          : _annotationLabel(type),
       child: SizedBox(
         width: 17,
         height: 17,
         child: SvgPicture.asset(
-          moveAnnotationIconAsset(type),
+          type == null
+              ? manualQualityIconAsset(manual!.symbol)!
+              : moveAnnotationIconAsset(type),
           fit: BoxFit.contain,
         ),
       ),
@@ -4218,7 +4244,6 @@ class _MoveCommentEditorState extends State<_MoveCommentEditor> {
                   focusNode: _focusNode,
                   minLines: 4,
                   maxLines: 8,
-                  maxLength: 600,
                   style: const TextStyle(
                     color: kWhiteColor,
                     fontSize: 13,

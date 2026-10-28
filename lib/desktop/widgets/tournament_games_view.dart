@@ -111,12 +111,6 @@ bool shouldInitiallyExpandTournamentRound({
   required String? topRoundId,
 }) => roundId == topRoundId;
 
-const int _kTournamentCardStockfishGameLimit = 24;
-
-@visibleForTesting
-bool shouldAllowTournamentCardStockfishFallback(int tournamentGameCount) =>
-    tournamentGameCount <= _kTournamentCardStockfishGameLimit;
-
 /// Orders match sections by elimination stage, then by pairing start time with
 /// the latest pairing first. Some feeds number matches in their slug
 /// (`quarterfinals-match-3-4`); treating that match number as a round number
@@ -547,21 +541,26 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       }
     }
     // The list order is the source of truth: started rounds first in descending
-    // order, then future rounds in descending order. A future round is promoted
-    // only when every started board is finished and it begins within two hours.
+    // order, then future rounds in descending order. The next round goes on
+    // top as soon as its boards are out and every started board is finished,
+    // however far off its start time is, or if it has none at all.
+    bool hasRoundGames(GamesAppBarModel model) =>
+        (grouped.gamesByRound[model.id] ?? const <GamesTourModel>[]).isNotEmpty;
     final displayRounds = sortRoundsForDisplay(
       grouped.filteredRounds,
       resolveDate: (model) => model.startsAt,
-      hasGames:
-          (model) =>
-              (grouped.gamesByRound[model.id] ?? const <GamesTourModel>[])
-                  .isNotEmpty,
+      hasGames: hasRoundGames,
       isRoundFullyPlayed: (model) {
         final games =
             grouped.gamesByRound[model.id] ?? const <GamesTourModel>[];
         return games.isNotEmpty &&
             games.every((game) => game.gameStatus.isFinished);
       },
+      // A round holding only published pairings has not started.
+      hasStartedActivity:
+          (model) =>
+              !grouped.upcomingPairingRoundIds.contains(model.id) &&
+              hasRoundGames(model),
     );
     final topRoundId = displayRounds.isEmpty ? null : displayRounds.first.id;
     final tournamentScopeId = 'tournament:${widget.tournamentId}';
@@ -1319,10 +1318,11 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
                 roundNameById: roundNameById,
                 streamingEnabled:
                     streamingEnabled && !game.gameStatus.isFinished,
-                allowStockfishFallback:
-                    shouldAllowTournamentCardStockfishFallback(
-                      eventGames.length,
-                    ),
+                // No event-size cap: only mounted (on-screen) cards evaluate,
+                // fallback pauses while the grid scrolls, and the engine caps
+                // its own low-priority backlog. Capping by event size left
+                // every board without an eval in large team events.
+                allowStockfishFallback: true,
               ),
             ),
           );
