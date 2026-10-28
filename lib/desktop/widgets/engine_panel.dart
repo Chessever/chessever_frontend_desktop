@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:chessever/desktop/state/engine_display.dart';
+import 'package:chessever/desktop/state/engine_formatted_display.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/state/desktop_account_identity.dart';
@@ -80,6 +80,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.reportSourceAccessible = true,
     this.reportController,
     this.reportCoordinator,
+    this.pvSanFormatter,
     this.onPictureInPicture,
     this.pictureInPictureSelected = false,
     this.headerTrailing,
@@ -156,6 +157,10 @@ class EnginePanel extends ConsumerStatefulWidget {
   @visibleForTesting
   final GameReportRequestCoordinator? reportCoordinator;
 
+  /// Controlled asynchronous SAN conversion for production-path regressions.
+  @visibleForTesting
+  final Future<List<String>> Function(Map<String, String>)? pvSanFormatter;
+
   @override
   ConsumerState<EnginePanel> createState() => _EnginePanelState();
 }
@@ -163,7 +168,12 @@ class EnginePanel extends ConsumerStatefulWidget {
 class _EnginePanelState extends ConsumerState<EnginePanel> {
   late final GameAnalysisReportController _reportController;
   late final bool _ownsReportController;
-  final _display = EngineDisplay();
+  late final _display = EngineFormattedDisplay(
+    formatSan:
+        (input) =>
+            widget.pvSanFormatter?.call(input) ??
+            compute(formatEnginePvSanLine, input),
+  );
   int _targetGeneration = 0;
   bool _lastReportedRunning = false;
   GameAnalysisReport? _lastPublishedReport;
@@ -364,6 +374,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         (_) => callback?.call(false),
       );
     }
+    _display.dispose();
     _reportController.removeListener(_onReport);
     if (_ownsReportController) _reportController.dispose();
     super.dispose();
@@ -416,104 +427,113 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       requestNotice: _requestNotice,
     );
     // Engine ticks do not rebuild the report or schedule automatic analysis.
-    return Consumer(
-      builder: (context, ref, _) {
-        final current =
-            engineActive
-                ? ref.watch(boardEvalProvider(widget.fen))
-                : const BoardEvalState(pvs: [], isEvaluating: false, depth: 0);
-        final reading = _display.update(
-          widget.fen,
-          current,
-          enabled: engineActive,
-        );
-        final linesCurrent = _display.isCurrent(widget.fen, current);
-        final targetFen = widget.fen;
-        final generation = _targetGeneration;
-        final sourceReading = reading;
-        void playCurrent(String uci) {
-          if (!mounted ||
-              !widget.isForegroundTab ||
-              widget.fen != targetFen ||
-              generation != _targetGeneration ||
-              !identical(_display.reading, sourceReading) ||
-              ref
-                      .read(engineSettingsProviderNew)
-                      .valueOrNull
-                      ?.showEngineAnalysis !=
-                  true ||
-              !identical(
-                ref.read(boardEvalProvider(targetFen)),
-                sourceReading,
-              )) {
-            return;
-          }
-          widget.onPlayUci?.call(uci);
-        }
+    return ListenableBuilder(
+      listenable: _display,
+      builder:
+          (context, _) => Consumer(
+            builder: (context, ref, _) {
+              final current =
+                  engineActive
+                      ? ref.watch(boardEvalProvider(widget.fen))
+                      : const BoardEvalState(
+                        pvs: [],
+                        isEvaluating: false,
+                        depth: 0,
+                      );
+              final reading = _display.update(
+                widget.fen,
+                current,
+                enabled: engineActive,
+              );
+              final linesCurrent = _display.isCurrent(widget.fen, current);
+              final targetFen = widget.fen;
+              final generation = _targetGeneration;
+              final sourceReading = reading;
+              void playCurrent(String uci) {
+                if (!mounted ||
+                    !widget.isForegroundTab ||
+                    widget.fen != targetFen ||
+                    generation != _targetGeneration ||
+                    !identical(_display.reading, sourceReading) ||
+                    ref
+                            .read(engineSettingsProviderNew)
+                            .valueOrNull
+                            ?.showEngineAnalysis !=
+                        true ||
+                    !identical(
+                      ref.read(boardEvalProvider(targetFen)),
+                      sourceReading,
+                    )) {
+                  return;
+                }
+                widget.onPlayUci?.call(uci);
+              }
 
-        final engineContent =
-            liveAnalysisPausedForReport
-                ? const _EnginePausedForReport()
-                : engineActive
-                ? _EngineLinesSurface(
-                  fen: _display.fen ?? widget.fen,
-                  state: reading,
-                  interactive: linesCurrent,
-                  playOwner: widget.pvPlayOwner ?? widget.game ?? this,
-                  onPlayUci:
-                      linesCurrent && widget.onPlayUci != null
-                          ? playCurrent
-                          : null,
-                )
-                : const _EngineNotReady();
+              final engineContent =
+                  liveAnalysisPausedForReport
+                      ? const _EnginePausedForReport()
+                      : engineActive
+                      ? _EngineLinesSurface(
+                        fen: _display.fen ?? widget.fen,
+                        state: reading,
+                        sanLines: _display.snapshot?.sanLines ?? const [],
+                        interactive: linesCurrent,
+                        playOwner: widget.pvPlayOwner ?? widget.game ?? this,
+                        onPlayUci:
+                            linesCurrent && widget.onPlayUci != null
+                                ? playCurrent
+                                : null,
+                      )
+                      : const _EngineNotReady();
 
-        final Widget? body =
-            engineOn && reportOn
-                ? ResizableSplitView(
-                  axis: Axis.vertical,
-                  storageKey: desktopEngineReportSplitStorageKey,
-                  gutterThickness: desktopEngineReportGutterThickness,
-                  gutterColor: kPrimaryColor,
+              final Widget? body =
+                  engineOn && reportOn
+                      ? ResizableSplitView(
+                        axis: Axis.vertical,
+                        storageKey: desktopEngineReportSplitStorageKey,
+                        gutterThickness: desktopEngineReportGutterThickness,
+                        gutterColor: kPrimaryColor,
+                        children: [
+                          SplitChild(
+                            minSize: 80,
+                            initialWeight: 0.40,
+                            label: 'Live engine',
+                            dismissible: false,
+                            child: engineContent,
+                          ),
+                          SplitChild(
+                            minSize: 140,
+                            initialWeight: 0.60,
+                            label: 'Game report',
+                            dismissible: false,
+                            child: reportContent,
+                          ),
+                        ],
+                      )
+                      : engineOn
+                      ? engineContent
+                      : reportOn
+                      ? reportContent
+                      : null;
+
+              // Engine lines and the report remain independently toggled; when both
+              // are visible, either can be resized without moving the notation boundary.
+              return Container(
+                color: kBlack2Color,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    SplitChild(
-                      minSize: 80,
-                      initialWeight: 0.40,
-                      label: 'Live engine',
-                      dismissible: false,
-                      child: engineContent,
+                    _buildHeader(
+                      engineOn: engineOn,
+                      engineActive: engineActive,
+                      reading: reading,
                     ),
-                    SplitChild(
-                      minSize: 140,
-                      initialWeight: 0.60,
-                      label: 'Game report',
-                      dismissible: false,
-                      child: reportContent,
-                    ),
+                    if (body != null) Expanded(child: body),
                   ],
-                )
-                : engineOn
-                ? engineContent
-                : reportOn
-                ? reportContent
-                : null;
-
-        // Engine lines and the report remain independently toggled; when both
-        // are visible, either can be resized without moving the notation boundary.
-        return Container(
-          color: kBlack2Color,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildHeader(
-                engineOn: engineOn,
-                engineActive: engineActive,
-                reading: reading,
-              ),
-              if (body != null) Expanded(child: body),
-            ],
+                ),
+              );
+            },
           ),
-        );
-      },
     );
   }
 
@@ -534,14 +554,23 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             const SizedBox(width: 8),
           ],
           Expanded(
-            child: Text(
-              'Stockfish',
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: engineOn ? kWhiteColor : kWhiteColor70,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
+            // A clipped "St…" reads as broken; in a narrow rail the score and
+            // controls say enough, so the name steps aside instead.
+            child: LayoutBuilder(
+              builder:
+                  (context, constraints) =>
+                      constraints.maxWidth < 64
+                          ? const SizedBox.shrink()
+                          : Text(
+                            'Stockfish',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: engineOn ? kWhiteColor : kWhiteColor70,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
             ),
           ),
           if (engineActive) ...[
@@ -663,9 +692,11 @@ class _EngineLinesSurface extends ConsumerWidget {
     required this.playOwner,
     required this.state,
     required this.interactive,
+    required this.sanLines,
   });
 
   final BoardEvalState state;
+  final List<List<String>> sanLines;
   final bool interactive;
 
   final String fen;
@@ -703,6 +734,7 @@ class _EngineLinesSurface extends ConsumerWidget {
             onPlayUci: onPlayUci,
             playOwner: playOwner,
             interactive: interactive,
+            formattedSan: sanLines[index],
           ),
     );
   }
@@ -1655,6 +1687,7 @@ class _PvLine extends StatefulWidget {
     required this.onPlayUci,
     this.playOwner,
     this.formatSan,
+    this.formattedSan,
   });
 
   final int rank;
@@ -1664,6 +1697,7 @@ class _PvLine extends StatefulWidget {
   final void Function(String uci)? onPlayUci;
   final Object? playOwner;
   final Future<List<String>> Function(Map<String, String>)? formatSan;
+  final List<String>? formattedSan;
 
   @override
   State<_PvLine> createState() => _PvLineState();
@@ -1731,7 +1765,12 @@ class _PvLineState extends State<_PvLine> {
     _cachedMoves = moves;
     _cachedFirstUci = parts.isEmpty ? null : parts.first.trim();
     _formatGeneration += 1;
-    if (parts.isNotEmpty) _scheduleFormat();
+    final labels = widget.formattedSan;
+    if (labels != null && parts.isNotEmpty) {
+      _cacheFormattedLine(labels, moves, widget.pv);
+    } else if (parts.isNotEmpty) {
+      _scheduleFormat();
+    }
   }
 
   void _scheduleFormat() {
@@ -1762,30 +1801,7 @@ class _PvLineState extends State<_PvLine> {
           )) {
         return;
       }
-      final ucis = moves
-          .split(_pvWhitespace)
-          .where((move) => move.isNotEmpty)
-          .toList(growable: false);
-      final tokens = <_PvToken>[];
-      for (var i = 0; i < labels.length && i < ucis.length; i++) {
-        tokens.add(
-          _PvToken(
-            san: labels[i],
-            uci: ucis[i],
-            ucisUpTo: List<String>.unmodifiable(ucis.take(i + 1)),
-          ),
-        );
-      }
-      setState(() {
-        _cachedTokens = tokens;
-        _cachedDisplayLine = tokens.map((token) => token.san).join(' ');
-        _displayPv = BoardPv(
-          evaluation: widget.pv.evaluation,
-          mate: widget.pv.mate,
-          moves: tokens.map((token) => token.uci).join(' '),
-        );
-        _hoveredTokenIndex = null;
-      });
+      setState(() => _cacheFormattedLine(labels, moves, widget.pv));
     } catch (_) {
       // Keep the last coherent SAN reading (or the initial placeholder).
     } finally {
@@ -1796,6 +1812,28 @@ class _PvLineState extends State<_PvLine> {
         _scheduleFormat();
       }
     }
+  }
+
+  void _cacheFormattedLine(List<String> labels, String moves, BoardPv pv) {
+    final ucis = moves
+        .split(_pvWhitespace)
+        .where((move) => move.isNotEmpty)
+        .toList(growable: false);
+    _cachedTokens = <_PvToken>[
+      for (var i = 0; i < labels.length && i < ucis.length; i++)
+        _PvToken(
+          san: labels[i],
+          uci: ucis[i],
+          ucisUpTo: List<String>.unmodifiable(ucis.take(i + 1)),
+        ),
+    ];
+    _cachedDisplayLine = _cachedTokens.map((token) => token.san).join(' ');
+    _displayPv = BoardPv(
+      evaluation: pv.evaluation,
+      mate: pv.mate,
+      moves: _cachedTokens.map((token) => token.uci).join(' '),
+    );
+    _hoveredTokenIndex = null;
   }
 
   /// First UCI move of the line. The bar's `pv.moves` is a space-
@@ -2088,7 +2126,9 @@ class _DepthChip extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          color: kLightGreyColor.withValues(alpha: isEvaluating ? 0.9 : 0.65),
+          // Readable on the chip (about 1.9:1 before); still a step below
+          // the score beside it.
+          color: isEvaluating ? kWhiteColor70 : kLightGreyColor,
           fontSize: 10,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.4,

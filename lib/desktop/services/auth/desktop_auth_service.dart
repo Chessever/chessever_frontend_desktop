@@ -1,16 +1,24 @@
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/desktop/services/auth/desktop_auth_browser.dart';
 import 'package:chessever/desktop/services/auth/google_oauth_loopback.dart';
 import 'package:chessever/desktop/services/auth/supabase_oauth_loopback.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
 
 /// Desktop-friendly auth surface used by the shell and panes.
 ///
 /// Mirrors the parts of the mobile `AuthRepository` that desktop actually
 /// needs: sign in with Google (via the loopback flow, not `google_sign_in`)
-/// and sign in with Apple (via Supabase-hosted OAuth on every desktop OS).
+/// and sign in with Apple (native in the Mac App Store edition,
+/// Supabase-hosted OAuth in the website builds).
 class DesktopAuthService {
   DesktopAuthService._();
   static final DesktopAuthService instance = DesktopAuthService._();
@@ -83,18 +91,20 @@ class DesktopAuthService {
     }
   }
 
-  /// Runs Supabase-hosted Apple OAuth through a loopback callback.
+  /// Signs in with Apple.
   ///
-  /// Native macOS Sign in with Apple depends on the
-  /// `com.apple.developer.applesignin` entitlement being present in the final
-  /// signed app. Our direct-download Developer ID release path cannot rely on
-  /// that entitlement, and Windows has no native Apple sheet at all. Desktop
-  /// Apple auth therefore uses Supabase's hosted OAuth provider instead of
-  /// `AuthenticationServices`, matching the web account page.
+  /// The Mac App Store edition shows the native sheet: App Review requires
+  /// Apple sign-in to finish without leaving the app (guideline 4), and the
+  /// store profile grants `com.apple.developer.applesignin`.
+  ///
+  /// The website builds run Supabase-hosted Apple OAuth through a loopback
+  /// callback. Our direct-download Developer ID release path cannot rely on
+  /// that entitlement, and Windows has no native Apple sheet at all.
   Future<Session?> signInWithApple() async {
     if (kIsWeb) {
       return _signInWithRedirect(OAuthProvider.apple, scopes: 'name email');
     }
+    if (isMacAppStore) return _signInWithAppleNatively();
     if (kDebugMode) {
       // ignore: avoid_print
       print('[auth] starting Apple OAuth loopback');
@@ -116,10 +126,12 @@ class DesktopAuthService {
     }
   }
 
-  /// Browser sign-in: Supabase-hosted OAuth in the same tab. The page leaves
-  /// for the provider and comes back to this origin with a PKCE code, which
-  /// `Supabase.initialize` exchanges for a session on the next load, so this
-  /// returns `null`. The origin must be on the Supabase Auth redirect list.
+  /// Browser sign-in: Supabase-hosted OAuth in the same tab. A tab cannot
+  /// run the loopback server, so the page leaves for the provider and comes
+  /// back to this origin with a PKCE code, which `Supabase.initialize`
+  /// exchanges for a session on the next load. This returns `null`; the
+  /// guest gate replays a pending guest merge once the permanent account
+  /// appears. The origin must be on the Supabase Auth redirect list.
   Future<Session?> _signInWithRedirect(
     OAuthProvider provider, {
     String? scopes,
@@ -139,6 +151,64 @@ class DesktopAuthService {
       );
       rethrow;
     }
+  }
+
+  /// The phone's native flow: Apple signs a SHA-256 of a one-time nonce and
+  /// Supabase checks the raw nonce against the identity token.
+  Future<Session?> _signInWithAppleNatively() async {
+    final rawNonce = _randomNonce();
+    final AuthorizationCredentialAppleID credential;
+    try {
+      credential = await SignInWithApple.getAppleIDCredential(
+        scopes: const [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+        nonce: sha256.convert(utf8.encode(rawNonce)).toString(),
+      );
+    } on SignInWithAppleAuthorizationException catch (e) {
+      if (e.code == AuthorizationErrorCode.canceled) {
+        throw const DesktopSignInCancelled();
+      }
+      rethrow;
+    }
+    final idToken = credential.identityToken;
+    if (idToken == null) {
+      throw StateError('Apple did not return an identity token.');
+    }
+
+    final auth = Supabase.instance.client.auth;
+    try {
+      final response = await auth.signInWithIdToken(
+        provider: OAuthProvider.apple,
+        idToken: idToken,
+        nonce: rawNonce,
+      );
+      // Apple shares the name only on the first authorization.
+      final fullName =
+          [
+            credential.givenName,
+            credential.familyName,
+          ].whereType<String>().join(' ').trim();
+      if (fullName.isNotEmpty) {
+        try {
+          await auth.updateUser(UserAttributes(data: {'full_name': fullName}));
+        } catch (e, st) {
+          ErrorReporter.report(e, stackTrace: st, tag: 'auth.apple_name');
+        }
+      }
+      return response.session;
+    } catch (e, st) {
+      ErrorReporter.report(e, stackTrace: st, tag: 'auth.supabase_apple');
+      rethrow;
+    }
+  }
+
+  String _randomNonce() {
+    const chars =
+        '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._';
+    final random = Random.secure();
+    return List.generate(32, (_) => chars[random.nextInt(chars.length)]).join();
   }
 
   String _redact(String s) =>

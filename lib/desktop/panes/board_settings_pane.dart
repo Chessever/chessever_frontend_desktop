@@ -230,7 +230,6 @@ class _SettingsSidebar extends StatelessWidget {
                         engine.showEngineAnalysis
                             ? '${engine.principalVariationLabel()} lines · ${engine.maxArrowsLabel()} arrows'
                             : 'Off',
-                    selected: true,
                   ),
                   const SizedBox(height: 8),
                   _SidebarItem(
@@ -265,39 +264,25 @@ class _SettingsSidebar extends StatelessWidget {
   }
 }
 
+/// A summary of the section of the same name on the right, not a tab.
 class _SidebarItem extends StatelessWidget {
   const _SidebarItem({
     required this.icon,
     required this.title,
     required this.value,
-    this.selected = false,
   });
 
   final IconData icon;
   final String title;
   final String value;
-  final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-      decoration: BoxDecoration(
-        color:
-            selected
-                ? kPrimaryColor.withValues(alpha: 0.12)
-                : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color:
-              selected
-                  ? kPrimaryColor.withValues(alpha: 0.36)
-                  : Colors.transparent,
-        ),
-      ),
       child: Row(
         children: [
-          Icon(icon, size: 16, color: selected ? kPrimaryColor : kWhiteColor70),
+          Icon(icon, size: 16, color: kWhiteColor70),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -305,8 +290,8 @@ class _SidebarItem extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: TextStyle(
-                    color: selected ? kWhiteColor : kWhiteColor70,
+                  style: const TextStyle(
+                    color: kWhiteColor70,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),

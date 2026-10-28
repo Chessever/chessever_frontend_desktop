@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
-import 'package:chessever/desktop/widgets/desktop_drag_to_move_area.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/chat/botvinnik_provider.dart';
 import 'package:chessever/chat/chat_api.dart';
@@ -23,9 +23,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/app_version_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/desktop/utils/desktop_host_platform.dart';
-import 'package:chessever/desktop/web/desktop_web_support.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Vertical rhythm of the sidebar rail.
 ///
@@ -524,18 +522,16 @@ class _SidebarHeader extends StatelessWidget {
     // and a 40 px toggle. In that state the traffic-light area remains a
     // draggable title surface and DesktopTabBar renders the toggle beside its
     // history controls instead.
-    if (Platform.isMacOS && !expanded) {
-      return const DesktopDragToMoveArea(child: SizedBox.expand());
+    if (hostIsMacOS && !expanded) {
+      return const DragToMoveArea(child: SizedBox.expand());
     }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
         children: [
-          if (Platform.isMacOS) const SizedBox(width: 64),
-          const Expanded(
-            child: DesktopDragToMoveArea(child: SizedBox.expand()),
-          ),
+          if (hostIsMacOS) const SizedBox(width: 64),
+          const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
           DesktopSidebarToggleButton(
             expanded: expanded,
             autoCollapsed: autoCollapsed,
@@ -682,7 +678,7 @@ class _SidebarItemState extends State<_SidebarItem>
   }
 
   /// Tooltip-friendly label for the new-tab modifier per platform.
-  String _modifierHintLabel() => desktopUsesMacKeyConventions ? '⌘' : 'Ctrl';
+  String _modifierHintLabel() => keyboardUsesMacModifiers ? '⌘' : 'Ctrl';
 
   @override
   void didUpdateWidget(covariant _SidebarItem oldWidget) {
@@ -862,7 +858,6 @@ const _NavEntry _searchEntry = _NavEntry(
 
 final List<_NavEntry> _primaryNav = desktopMainRoutes
     .where((route) => route.pane != DesktopPane.inbox)
-    .where((route) => desktopPaneAvailable(route.pane))
     .map(_NavEntry.fromMainRoute)
     .toList(growable: false);
 

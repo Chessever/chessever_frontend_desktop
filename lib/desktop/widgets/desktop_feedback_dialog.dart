@@ -14,7 +14,7 @@ import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/services/telegram_notification_service.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const desktopFeedbackDialogTitle = 'Feedback';
 
@@ -120,7 +120,7 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
           'source': 'desktop_report_issue',
           'app_version': packageInfo.version,
           'build_number': packageInfo.buildNumber,
-          'platform': Platform.operatingSystem,
+          'platform': hostOperatingSystem,
         });
       }
 
@@ -134,7 +134,7 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
             source: 'desktop_report_issue',
             userId: userId,
             appVersion: '${packageInfo.version} (${packageInfo.buildNumber})',
-            platform: Platform.operatingSystem,
+            platform: hostOperatingSystem,
             screenshotBytes: screenshotBytes,
           );
 
@@ -181,6 +181,10 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
           Text(
             isMacAppStore
                 ? 'Reports include app version and platform.'
+                : kIsWeb
+                ? 'Reports include app version and browser. Screenshots are '
+                    'optional and capture only the ChessEver page, not your '
+                    'browser or other tabs.'
                 : 'Reports include app version and platform. Screenshots are optional and capture only the ChessEver desktop window content, not your OS toolbar or other apps.',
             style: const TextStyle(
               color: kWhiteColor70,
@@ -338,7 +342,9 @@ class _ScreenshotOption extends StatelessWidget {
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'Captures only the ChessEver desktop content behind this dialog.',
+                  kIsWeb
+                      ? 'Captures only the ChessEver page behind this dialog.'
+                      : 'Captures only the ChessEver desktop content behind this dialog.',
                   style: TextStyle(color: kLightGreyColor, fontSize: 12),
                 ),
               ],

@@ -89,6 +89,10 @@ class DesktopCompactPlayerNameText extends StatelessWidget {
   Widget build(BuildContext context) {
     final parts = desktopCompactPlayerNameParts(name);
     final fullLabel = parts.fullLabel.isEmpty ? fallback : parts.fullLabel;
+    // Measure in the font the Text below will draw with: [style] alone may
+    // lack the inherited family, and a narrower stand-in font says a name
+    // fits that then gets clipped mid-letter.
+    final drawn = DefaultTextStyle.of(context).style.merge(style);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -96,12 +100,12 @@ class DesktopCompactPlayerNameText extends StatelessWidget {
         final display =
             maxWidth.isFinite &&
                     maxWidth > 0 &&
-                    !_fits(context, fullLabel, maxWidth: maxWidth, style: style)
+                    !_fits(context, fullLabel, maxWidth: maxWidth, style: drawn)
                 ? _singleDotSurname(
                   context,
                   parts.lastName.isEmpty ? fallback : parts.lastName,
                   maxWidth: maxWidth,
-                  style: style,
+                  style: drawn,
                 )
                 : fullLabel;
         return Text(

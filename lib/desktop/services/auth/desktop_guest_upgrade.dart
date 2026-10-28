@@ -16,6 +16,8 @@ enum DesktopAccountProvider { google, apple }
 final desktopGuestAccountMergerProvider = Provider<DesktopGuestAccountMerger>(
   (ref) => DesktopGuestAccountMerger(
     gateway: SupabaseGuestAccountMergeGateway(Supabase.instance.client),
+    // A browser tab has no application support directory, and its sign-in
+    // leaves the page, so the snapshot waits in the app's IndexedDB store.
     pendingStore:
         kIsWeb
             ? AppDatabaseGuestMergePendingStore()

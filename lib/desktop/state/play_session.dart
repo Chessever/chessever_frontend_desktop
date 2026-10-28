@@ -12,7 +12,7 @@ import 'package:chessever/desktop/services/play/bot_identity.dart';
 import 'package:chessever/desktop/services/play/engine_installer.dart';
 import 'package:chessever/desktop/services/play/maia3_engine.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Terminal reason for a finished game. We keep our own enum because
 /// dartchess [Outcome] alone doesn't tell us *why* (timeout vs resignation
@@ -439,7 +439,9 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
   int _hostThreadHint() {
     // Reasonable conservative default that won't pin every core; the real
     // analysis singleton handles that. Bots don't need many threads.
-    final cores = Platform.numberOfProcessors;
+    // The web engine is a single-threaded WebAssembly build.
+    if (kIsWeb) return 1;
+    final cores = hostProcessorCount;
     return cores >= 4 ? 2 : 1;
   }
 

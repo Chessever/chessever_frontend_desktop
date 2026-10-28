@@ -10,7 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:in_app_review/in_app_review.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 enum ReviewPromptTrigger {
   session,
@@ -269,7 +269,7 @@ class ReviewPromptService {
         'source': trigger.name,
         'app_version': packageInfo.version,
         'build_number': packageInfo.buildNumber,
-        'platform': Platform.operatingSystem,
+        'platform': hostOperatingSystem,
       });
       debugPrint('[Feedback] Supabase insert SUCCESS');
 
@@ -281,7 +281,7 @@ class ReviewPromptService {
         source: trigger.name,
         userId: userId,
         appVersion: '${packageInfo.version} (${packageInfo.buildNumber})',
-        platform: Platform.operatingSystem,
+        platform: hostOperatingSystem,
       );
       debugPrint('[Feedback] Telegram notification sent');
     } catch (e) {
@@ -291,7 +291,7 @@ class ReviewPromptService {
 
   static bool get _isMobilePlatform {
     if (kIsWeb) return false;
-    return Platform.isAndroid || Platform.isIOS;
+    return hostIsAndroid || hostIsIOS;
   }
 
   void _showThanksSnackBar(BuildContext context) {

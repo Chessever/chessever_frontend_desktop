@@ -10,7 +10,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'explorer_games_cache.dart';
 import 'gamebase_explorer_state.dart';
 import 'gamebase_providers.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 // Desktop port of the phone app's explorer games warmer (chessever-frontend,
 // lib/screens/gamebase/providers/explorer_games_prefetch.dart).
@@ -455,7 +455,7 @@ class ExplorerGamesPrefetcher {
 
 bool _underFlutterTest() {
   try {
-    return Platform.environment.containsKey('FLUTTER_TEST');
+    return hostEnvironment.containsKey('FLUTTER_TEST');
   } catch (_) {
     return false;
   }

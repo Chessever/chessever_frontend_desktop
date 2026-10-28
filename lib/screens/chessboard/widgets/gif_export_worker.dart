@@ -1,4 +1,4 @@
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;

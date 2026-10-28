@@ -1,6 +1,7 @@
 import 'package:chessground/chessground.dart';
 import 'package:dartchess/dartchess.dart' hide Board;
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import 'package:chessever/desktop/services/board_editor_pgn_import.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/play/play_from_here.dart';
+import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/opening_explorer_seed.dart';
@@ -443,6 +445,18 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
   }
 
   Future<void> _openLocalFiles() async {
+    if (kIsWeb) {
+      final paths = await pickWebChessFilesIntoAppStorage(
+        dialogTitle: 'Open chess files in Board Editor',
+        allowedExtensions: localChessPickerExtensions,
+      );
+      if (paths == null) return;
+      await _openLocalChessPaths(
+        paths,
+        sourceLabel: paths.length == 1 ? null : 'Board Editor files',
+      );
+      return;
+    }
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Open chess files in Board Editor',
       type: FileType.custom,
@@ -465,6 +479,11 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
   }
 
   Future<void> _openLocalFolder() async {
+    if (kIsWeb) {
+      final directory = await pickWebChessFolderIntoAppStorage();
+      if (directory != null) await _openLocalChessPaths(<String>[directory]);
+      return;
+    }
     final directory = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Open chess folder in Board Editor',
       lockParentWindow: true,
@@ -1907,7 +1926,7 @@ class _PositionMetadataFieldsState extends State<_PositionMetadataFields> {
               child: FTextField(
                 controller: _lastPawnMoveController,
                 label: const Text('Last pawn move'),
-                hint: 'ed',
+                hint: 'e.g. e5',
                 onChange: (raw) {
                   final error = _validateLastPawnMove(raw);
                   setState(() => _lastPawnMoveError = error);
@@ -2779,10 +2798,17 @@ class _RailPalettePiece extends StatelessWidget {
           style: _pieceButtonStyle(selected: isSelected),
           onPress: onTap,
           mainAxisSize: MainAxisSize.min,
-          child: SizedBox(
+          // A light square behind every piece, as on the board: black
+          // pieces drawn straight on the dark tile were near invisible.
+          child: Container(
             width: extent,
             height: extent,
-            child: Center(child: pieceWidget),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: kBoardLightGrey,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: pieceWidget,
           ),
         ),
       ),

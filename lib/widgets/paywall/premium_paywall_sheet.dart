@@ -18,7 +18,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Show the premium paywall sheet.
 /// Returns `true` if the user successfully subscribed.
@@ -190,7 +190,7 @@ class _PaywallContent extends HookConsumerWidget {
     }
 
     Future<void> handleHaveCode() async {
-      if (Platform.isIOS) {
+      if (hostIsIOS) {
         // Apple's native sheet — code is entered inside the OS UI, not ours,
         // so we can't capture the actual code value on this platform. We
         // still tag the funnel step and the cached affiliate context so the

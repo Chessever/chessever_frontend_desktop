@@ -3,8 +3,9 @@
 // ignore_for_file: avoid_print
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' hide Platform;
+import 'dart:io';
 
+import 'package:chessever/desktop/services/converted_database_names.dart';
 import 'package:chessever/desktop/services/desktop_sentry_filter.dart';
 import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
@@ -65,7 +66,7 @@ import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
 import 'package:chessever/utils/foreground_task_scheduler.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Stripped-down startup path for the macOS / Windows builds.
 ///
@@ -236,7 +237,7 @@ Future<void> _desktopMainWithSentry({
         // Windows has no native Sentry App Hang or frozen-frame integration.
         // Capture full tracing, interaction context, and screenshots in local
         // debug builds so the custom UI-stall watchdog has useful context.
-        final enableDebugFreezeDiagnostics = kDebugMode && Platform.isWindows;
+        final enableDebugFreezeDiagnostics = kDebugMode && hostIsWindows;
         options.tracesSampleRate = enableDebugFreezeDiagnostics ? 1.0 : 0.0;
         options.enableAutoPerformanceTracing = enableDebugFreezeDiagnostics;
         options.enableUserInteractionTracing = enableDebugFreezeDiagnostics;
@@ -268,7 +269,7 @@ Future<void> _desktopBoot({
   List<String> initialArguments = const <String>[],
 }) async {
   print('[desktop] startup begin (${Platform.operatingSystem})');
-  if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+  if (!(hostIsMacOS || hostIsWindows || hostIsLinux)) {
     throw StateError(
       'desktopMain() called on a non-desktop platform: ${Platform.operatingSystem}',
     );
@@ -276,6 +277,7 @@ Future<void> _desktopBoot({
 
   WidgetsFlutterBinding.ensureInitialized();
   print('[desktop] flutter binding ready');
+  await initializeConvertedDatabaseNames();
 
   // Keep first paint and the established remote search path untouched. The
   // reviewed Memorial JSON is parsed once in a worker isolate after first

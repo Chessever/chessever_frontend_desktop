@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -6,6 +7,7 @@ import '../../state/active_board_game.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/widgets/pgn_attribution_editor.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -38,7 +40,7 @@ import 'package:chessever/repository/library/models/saved_analysis.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Outcome reported back to the caller of [showLibrarySaveToFolderDialog].
 class LibrarySaveOutcome {
@@ -474,6 +476,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   // make sense for bulk imports.
   late bool _showGameDetails;
   late final bool _supportsMetadataEdit;
+  PgnAttributionController? _attributionCtrl;
   TextEditingController? _whiteSurnameCtrl;
   TextEditingController? _whiteFirstNameCtrl;
   TextEditingController? _blackSurnameCtrl;
@@ -519,6 +522,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   }
 
   void _seedMetadataControllers(Map<String, dynamic> metadata) {
+    _attributionCtrl = PgnAttributionController(metadata);
     final whiteParts = splitPlayerName(metadata['White']?.toString());
     final blackParts = splitPlayerName(metadata['Black']?.toString());
     _whiteSurnameCtrl = TextEditingController(text: whiteParts.surname);
@@ -562,6 +566,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   @override
   void dispose() {
     _newDatabaseNameCtrl?.dispose();
+    _attributionCtrl?.dispose();
     _whiteSurnameCtrl?.dispose();
     _whiteFirstNameCtrl?.dispose();
     _blackSurnameCtrl?.dispose();
@@ -608,7 +613,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       month: _monthCtrl!.text,
       day: _dayCtrl!.text,
     );
-    return [source.copyWith(metadata: merged)];
+    return [source.copyWith(metadata: _attributionCtrl!.applyTo(merged))];
   }
 
   void _fillTodayDate() {
@@ -622,7 +627,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
 
   String _normalizeLocalPath(String path) {
     final normalized = p.normalize(path.trim());
-    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+    return hostIsWindows ? normalized.toLowerCase() : normalized;
   }
 
   Future<void> _onAddLocalPgnFile() async {
@@ -1522,11 +1527,11 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                               ))
                                 LibrarySaveSection(
                                   key: const ValueKey('save-local'),
-                                  icon: Platform.isMacOS
+                                  icon: hostIsMacOS
                                       ? Icons.computer_outlined
                                       : Icons.storage_outlined,
                                   label:
-                                      Platform.isMacOS
+                                      hostIsMacOS
                                           ? 'ON THIS MAC'
                                           : 'ON THIS PC',
                                   enabled: !busy,
@@ -1534,7 +1539,9 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                   children: [
                                     for (final entry in localEntries)
                                       _localDestinationRow(entry, busy),
-                                    Padding(
+                                    // Browsers cannot hand back a writable
+                                    // path to a file the user picks.
+                                    if (!kIsWeb) Padding(
                                       padding: const EdgeInsets.only(top: 4),
                                       child: _AddLocalFolderTile(
                                         onTap: busy ? null : _onAddLocalPgnFile,
@@ -2016,6 +2023,11 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                         (_isSaving || _isUpdatingOriginal)
                             ? null
                             : _fillTodayDate,
+                  ),
+                  const SizedBox(height: 12),
+                  PgnAttributionEditor(
+                    controller: _attributionCtrl!,
+                    enabled: !_isSaving && !_isUpdatingOriginal,
                   ),
                 ],
               ),

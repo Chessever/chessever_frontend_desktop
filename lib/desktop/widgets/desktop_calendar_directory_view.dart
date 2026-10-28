@@ -130,26 +130,43 @@ class DesktopCalendarDirectoryBody extends StatelessWidget {
       onNextMonth: onNextMonth,
       onToday: onToday,
     );
+    final listPane = DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBackgroundColor,
+        border: Border.all(color: kDividerColor),
+      ),
+      child: SizedBox.expand(
+        key: const Key('desktop-calendar-directory-list-pane'),
+        child: list,
+      ),
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
+        // A phone-width window has no room for the month beside the list;
+        // the month sits above it instead of squeezing the list to a sliver.
+        if (constraints.maxWidth < 640) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  key: const Key('desktop-calendar-compact-month'),
+                  child: calendar,
+                ),
+                const SizedBox(height: 12),
+                Expanded(child: listPane),
+              ],
+            ),
+          );
+        }
         final calendarWidth = (constraints.maxWidth * 0.28).clamp(280.0, 310.0);
         return Padding(
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: kBackgroundColor,
-                    border: Border.all(color: kDividerColor),
-                  ),
-                  child: SizedBox.expand(
-                    key: const Key('desktop-calendar-directory-list-pane'),
-                    child: list,
-                  ),
-                ),
-              ),
+              Expanded(child: listPane),
               const SizedBox(width: 20),
               SizedBox(
                 key: const Key('desktop-calendar-compact-month'),

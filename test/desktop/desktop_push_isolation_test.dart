@@ -65,25 +65,16 @@ void main() {
         ).allMatches(entity.readAsStringSync()).length;
         if (count > 0) rootContainers[_relative(entity.path)] = count;
       }
-      // The only root containers desktop creates live in desktop_main.dart
-      // and in the browser build's web_main.dart.
-      expect(
-        rootContainers.keys,
-        unorderedEquals([
-          'lib/desktop/desktop_main.dart',
-          'lib/desktop/web/web_main.dart',
-        ]),
-      );
+      // The only root containers desktop creates live in desktop_main.dart.
+      expect(rootContainers.keys, ['lib/desktop/desktop_main.dart']);
 
-      for (final MapEntry(key: path, value: count) in rootContainers.entries) {
-        final main = File(path).readAsStringSync();
-        expect(
-          RegExp(r'\.\.\.desktopPushIsolationOverrides').allMatches(main).length,
-          count,
-          reason: 'each ProviderContainer in $path must spread the '
-              'push isolation overrides',
-        );
-      }
+      final main = File('lib/desktop/desktop_main.dart').readAsStringSync();
+      expect(
+        RegExp(r'\.\.\.desktopPushIsolationOverrides').allMatches(main).length,
+        rootContainers['lib/desktop/desktop_main.dart'],
+        reason: 'each ProviderContainer in desktop_main must spread the '
+            'push isolation overrides',
+      );
     });
 
     test('the only push_enabled writes are unreachable except through the '

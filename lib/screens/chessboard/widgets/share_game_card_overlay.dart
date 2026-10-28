@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:io' as io;
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 

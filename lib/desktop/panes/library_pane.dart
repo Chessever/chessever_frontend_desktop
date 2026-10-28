@@ -1,3 +1,4 @@
+import '../services/converted_database_names.dart';
 import 'package:chessever/desktop/state/library_destination.dart';
 import 'package:chessever/desktop/services/shared_books.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
@@ -51,6 +52,7 @@ import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_source_deletion.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -136,6 +138,7 @@ import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/number_format_utils.dart';
 import 'package:chessever/utils/pgn_multi_parser.dart';
 import 'package:chessever/utils/time_utils.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Desktop library: complete cloud navigation in the rail plus a mixed local
 /// and selected-cloud working catalog on Library Home.
@@ -390,7 +393,12 @@ class LibraryPane extends HookConsumerWidget {
     }
 
     Future<void> importLocalPgnFiles() async {
-      final paths = await pickLibraryPgnDatabasePaths();
+      final paths =
+          kIsWeb
+              ? await pickWebChessFilesIntoAppStorage(
+                dialogTitle: 'Import PGN',
+              )
+              : await pickLibraryPgnDatabasePaths();
       if (paths == null) return;
       if (!context.mounted) return;
 
@@ -464,6 +472,14 @@ class LibraryPane extends HookConsumerWidget {
       if (path != null) activateLocalPath(path);
     }
 
+    // Read without a MediaQuery dependency, as the board pane does: it only
+    // picks the starting layout. A phone-width window starts with the
+    // folder rail closed so the databases get the width.
+    final narrowWindow =
+        (context.getInheritedWidgetOfExactType<MediaQuery>()?.data.size.width ??
+            double.infinity) <
+        700;
+
     return FTheme(
       data: FThemes.zinc.dark,
       child: Container(
@@ -483,6 +499,7 @@ class LibraryPane extends HookConsumerWidget {
                   initialWeight: 0.20,
                   label: 'Cloud Library',
                   collapsedIcon: Icons.view_sidebar_outlined,
+                  initialCollapsed: narrowWindow,
                   child: _FolderRail(
                     ownedFolders: ownedSorted,
                     subscribedFolders: subscribedSorted,
@@ -1422,28 +1439,33 @@ enum DatabaseWorkspaceSource { twic, folder, local }
 class DatabaseWorkspaceArgs {
   const DatabaseWorkspaceArgs.folder({
     required this.folderId,
-    required this.title,
+    required String title,
     required this.isSubscribed,
-  }) : source = DatabaseWorkspaceSource.folder,
+  }) : _title = title,
+       source = DatabaseWorkspaceSource.folder,
        localPath = null;
 
   const DatabaseWorkspaceArgs.twic()
     : source = DatabaseWorkspaceSource.twic,
       folderId = kTwicBookId,
-      title = 'ChessEver',
+      _title = 'ChessEver',
       isSubscribed = true,
       localPath = null;
 
   const DatabaseWorkspaceArgs.local({
     required this.localPath,
-    required this.title,
-  }) : source = DatabaseWorkspaceSource.local,
+    required String title,
+  }) : _title = title,
+       source = DatabaseWorkspaceSource.local,
        folderId = '',
        isSubscribed = false;
 
   final DatabaseWorkspaceSource source;
   final String folderId;
-  final String title;
+  final String _title;
+  String get title => localPath != null
+      ? convertedDatabaseDisplayLabel(localPath!, _title)
+      : _title;
   final bool isSubscribed;
   final String? localPath;
 
@@ -1892,8 +1914,10 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                 storageKey: 'library_pane.my_databases.home_split',
                 children: [
                   SplitChild(
-                    minSize: 124,
-                    initialWeight: 0.24,
+                    // Room for the section header and two database rows, so
+                    // a freshly imported database is not half-cut at the edge.
+                    minSize: 156,
+                    initialWeight: 0.30,
                     label: 'Library Home',
                     child: _MyDatabasesBoard(
                       folders: folders,
@@ -2555,7 +2579,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           showDesktopToast(
             context,
             result.sourceDeleted
-                ? 'Local database deleted from this computer.'
+                ? 'Local database deleted from $hostLocalStorageName.'
                 : 'Local database removed. Source files were already gone.',
           );
         }
@@ -2573,7 +2597,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         if (context.mounted) {
           showDesktopToast(
             context,
-            'Could not delete local database from this computer. Please try again.',
+            'Could not delete local database from $hostLocalStorageName. Please try again.',
             error: true,
           );
         }
@@ -2749,7 +2773,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         if (context.mounted) {
           showDesktopToast(
             context,
-            'Folder "${group.label}" deleted from this computer.',
+            'Folder "${group.label}" deleted from $hostLocalStorageName.',
           );
         }
       } catch (e, st) {
@@ -2767,7 +2791,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         if (context.mounted) {
           showDesktopToast(
             context,
-            'Could not delete local folder from this computer. Please try again.',
+            'Could not delete local folder from $hostLocalStorageName. Please try again.',
             error: true,
           );
         }
@@ -2924,10 +2948,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             label: 'Remove from Library Home',
           ),
           const DesktopContextMenuDivider(),
-          const DesktopContextMenuItem(
+          DesktopContextMenuItem(
             value: _LocalDatabaseBoardAction.deleteFromComputer,
             icon: Icons.delete_forever_outlined,
-            label: 'Delete from computer',
+            label: kIsWeb ? 'Delete from this browser' : 'Delete from computer',
             destructive: true,
           ),
         ],
@@ -3044,10 +3068,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             label: 'Remove from Library Home',
           ),
           const DesktopContextMenuDivider(),
-          const DesktopContextMenuItem(
+          DesktopContextMenuItem(
             value: _LocalGroupBoardAction.deleteFromComputer,
             icon: Icons.delete_forever_outlined,
-            label: 'Delete from computer',
+            label: kIsWeb ? 'Delete from this browser' : 'Delete from computer',
             destructive: true,
           ),
         ],
@@ -3698,8 +3722,8 @@ class _ConfirmDeleteLocalDatabaseDialog extends StatelessWidget {
     final playerLabel = entry.groupLabel?.trim();
     final details =
         isPlayerDatabase
-            ? 'This deletes the local database source and its generated cache from this computer. It also removes this source from ${playerLabel == null || playerLabel.isEmpty ? 'the player' : playerLabel} in Players.\n\nDeleting sources one by one leaves the player in Players. Only deleting the whole player folder removes the player.\n\n${entry.path}'
-            : 'This deletes the local database source and its generated cache from this computer. This cannot be undone.\n\n${entry.path}';
+            ? 'This deletes the local database source and its generated cache from $hostLocalStorageName. It also removes this source from ${playerLabel == null || playerLabel.isEmpty ? 'the player' : playerLabel} in Players.\n\nDeleting sources one by one leaves the player in Players. Only deleting the whole player folder removes the player.\n\n${entry.path}'
+            : 'This deletes the local database source and its generated cache from $hostLocalStorageName. This cannot be undone.\n\n${entry.path}';
     return Center(
       child: Container(
         width: 440,
@@ -3875,9 +3899,9 @@ class _ConfirmDeleteLocalFolderDialog extends StatelessWidget {
     );
     final details =
         isPlayerFolder
-            ? 'This is a Players folder. Deleting it removes ${group.label} from Players and deletes all $count local $databaseLabel, generated cache, and PGN files from this computer. This cannot be undone.'
+            ? 'This is a Players folder. Deleting it removes ${group.label} from Players and deletes all $count local $databaseLabel, generated cache, and PGN files from $hostLocalStorageName. This cannot be undone.'
             : 'This deletes all $count local $databaseLabel in this folder, '
-                'their generated cache, and their PGN files from this computer. '
+                'their generated cache, and their PGN files from $hostLocalStorageName. '
                 'This cannot be undone.';
     return Center(
       child: Container(
@@ -5734,6 +5758,15 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
                         minSize: 380,
                         initialWeight: 0.48,
                         label: 'Preview',
+                        // No room beside the table in a phone-width window.
+                        initialCollapsed:
+                            (context
+                                    .getInheritedWidgetOfExactType<MediaQuery>()
+                                    ?.data
+                                    .size
+                                    .width ??
+                                double.infinity) <
+                            700,
                         child: _TwicPreviewPanel(
                           game: selected,
                           previewGame: selectedPreviewGame,
@@ -7385,7 +7418,8 @@ class _GamesBody extends ConsumerWidget {
         message:
             folder.isSubscribed
                 ? 'Wait for the owner to share games into it.'
-                : 'Drop a .pgn onto this window, paste a PGN from your '
+                : 'Drop a .pgn onto this ${kIsWeb ? 'page' : 'window'}, '
+                    'paste a PGN from your '
                     'clipboard, or use the Import PGN file action above.',
       );
     }
@@ -10969,56 +11003,73 @@ class _TwicGamesTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final itemCount = state.games.length + (state.hasMore ? 1 : 0);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-      child: Container(
-        decoration: BoxDecoration(
-          color: kBlack2Color,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: kDividerColor),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          children: [
-            const _TwicTableHeader(),
-            const Divider(height: 1, color: kDividerColor),
-            Expanded(
-              child: ListView.builder(
-                controller: scrollController,
-                physics: const DesktopScrollPhysics(),
-                padding: EdgeInsets.zero,
-                itemCount: itemCount,
-                itemBuilder: (context, i) {
-                  if (i >= state.games.length) {
-                    return SizedBox(
-                      height: _kDatabaseWorkspaceTwicRowExtent + 16,
-                      child: const _TwicLoadingMoreRow(),
-                    );
-                  }
-                  final game = state.games[i];
-                  return SizedBox(
-                    height: _kDatabaseWorkspaceTwicRowExtent,
-                    child: _TwicTableRow(
-                      game: game,
-                      selected:
-                          (selectedGameIds?.contains(game.gameId) ?? false) ||
-                          game.gameId == selectedGameId,
-                      onRangeSelect:
-                          onRangeSelect == null
-                              ? null
-                              : () => onRangeSelect!(i),
-                      onTap: () => onTapGame(game),
-                      onDoubleTap: () => (onOpenGame ?? onTapGame)(game),
-                      onContextMenu:
-                          (position) => onContextMenuGame(game, position),
+    return LayoutBuilder(
+      // A phone-width table needs its gutter for the player names.
+      builder:
+          (context, outer) => Padding(
+            padding:
+                outer.maxWidth < 400
+                    ? const EdgeInsets.fromLTRB(6, 4, 6, 8)
+                    : const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Container(
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kDividerColor),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final showDetails =
+                      constraints.maxWidth >= _kPreviewDetailColumnsMinWidth;
+                  final showDate =
+                      constraints.maxWidth >= _kPreviewDateColumnMinWidth;
+                  return Column(
+                children: [
+                  _TwicTableHeader(showDetails: showDetails, showDate: showDate),
+                  const Divider(height: 1, color: kDividerColor),
+                  Expanded(
+                    child: ListView.builder(
+                      controller: scrollController,
+                      physics: const DesktopScrollPhysics(),
+                      padding: EdgeInsets.zero,
+                      itemCount: itemCount,
+                      itemBuilder: (context, i) {
+                        if (i >= state.games.length) {
+                          return SizedBox(
+                            height: _kDatabaseWorkspaceTwicRowExtent + 16,
+                            child: const _TwicLoadingMoreRow(),
+                          );
+                        }
+                        final game = state.games[i];
+                        return SizedBox(
+                          height: _kDatabaseWorkspaceTwicRowExtent,
+                          child: _TwicTableRow(
+                            game: game,
+                            showDetails: showDetails,
+                            showDate: showDate,
+                            selected:
+                                (selectedGameIds?.contains(game.gameId) ?? false) ||
+                                game.gameId == selectedGameId,
+                            onRangeSelect:
+                                onRangeSelect == null
+                                    ? null
+                                    : () => onRangeSelect!(i),
+                            onTap: () => onTapGame(game),
+                            onDoubleTap: () => (onOpenGame ?? onTapGame)(game),
+                            onContextMenu:
+                                (position) => onContextMenuGame(game, position),
+                          ),
+                        );
+                      },
                     ),
+                  ),
+                ],
                   );
                 },
               ),
             ),
-          ],
-        ),
-      ),
+          ),
     );
   }
 }
@@ -11030,6 +11081,14 @@ const double _kPreviewColResult = 48.0;
 const double _kPreviewColEco = 52.0;
 const double _kPreviewColDate = 82.0;
 const double _kPreviewColGap = 8.0;
+
+/// Below this width the Event and ECO columns step aside so both player
+/// cells keep room for a name and rating instead of drawing over the result.
+const double _kPreviewDetailColumnsMinWidth = 620.0;
+
+/// Below this the Date column steps aside as well (a phone-width window),
+/// leaving White, Result and Black.
+const double _kPreviewDateColumnMinWidth = 360.0;
 const EdgeInsets _kPreviewTableCellPadding = EdgeInsets.fromLTRB(
   10,
   10,
@@ -11038,7 +11097,10 @@ const EdgeInsets _kPreviewTableCellPadding = EdgeInsets.fromLTRB(
 );
 
 class _TwicTableHeader extends StatelessWidget {
-  const _TwicTableHeader();
+  const _TwicTableHeader({this.showDetails = true, this.showDate = true});
+
+  final bool showDetails;
+  final bool showDate;
 
   @override
   Widget build(BuildContext context) {
@@ -11052,6 +11114,23 @@ class _TwicTableHeader extends StatelessWidget {
       ),
       textAlign: alignEnd ? TextAlign.right : TextAlign.left,
     );
+    if (!showDate) {
+      // Phone width: rows stack white over black.
+      return Container(
+        padding: _kPreviewTableCellPadding,
+        color: kBlack3Color.withValues(alpha: 0.4),
+        child: Row(
+          children: [
+            Expanded(child: label('Players')),
+            const SizedBox(width: _kPreviewColGap),
+            SizedBox(
+              width: _kPreviewColResult,
+              child: Center(child: label('Result')),
+            ),
+          ],
+        ),
+      );
+    }
     return Container(
       padding: _kPreviewTableCellPadding,
       color: kBlack3Color.withValues(alpha: 0.4),
@@ -11066,17 +11145,20 @@ class _TwicTableHeader extends StatelessWidget {
           const SizedBox(width: _kPreviewColGap),
           Expanded(flex: _kPreviewColBlack, child: label('Black')),
           const SizedBox(width: _kPreviewColGap),
-          Expanded(flex: _kPreviewColEvent, child: label('Event')),
-          const SizedBox(width: _kPreviewColGap),
-          SizedBox(width: _kPreviewColEco, child: label('ECO')),
-          const SizedBox(width: _kPreviewColGap),
-          SizedBox(
-            width: _kPreviewColDate,
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: label('Date', alignEnd: true),
+          if (showDetails) ...[
+            Expanded(flex: _kPreviewColEvent, child: label('Event')),
+            const SizedBox(width: _kPreviewColGap),
+            SizedBox(width: _kPreviewColEco, child: label('ECO')),
+            const SizedBox(width: _kPreviewColGap),
+          ],
+          if (showDate)
+            SizedBox(
+              width: _kPreviewColDate,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: label('Date', alignEnd: true),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -11086,6 +11168,8 @@ class _TwicTableHeader extends StatelessWidget {
 class _TwicTableRow extends StatefulWidget {
   const _TwicTableRow({
     required this.game,
+    required this.showDetails,
+    this.showDate = true,
     required this.selected,
     this.onRangeSelect,
     required this.onTap,
@@ -11094,6 +11178,8 @@ class _TwicTableRow extends StatefulWidget {
   });
 
   final GamesTourModel game;
+  final bool showDetails;
+  final bool showDate;
   final bool selected;
   final VoidCallback? onRangeSelect;
   final VoidCallback onTap;
@@ -11153,7 +11239,57 @@ class _TwicTableRowState extends State<_TwicTableRow>
                 hovered: _hovered,
               ),
               padding: _kPreviewTableCellPadding,
-              child: Row(
+              child:
+                  widget.showDate
+                      ? _wideRow(game, result, eco, dateLabel)
+                      : _stackedRow(game, result),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Phone width: white over black, result on the right, so both names
+  /// get the row's full width instead of a column each.
+  Widget _stackedRow(GamesTourModel game, String result) {
+    final white = game.whitePlayer;
+    final black = game.blackPlayer;
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _PlayerCell(
+                name: white.name,
+                federation: white.federation,
+                title: white.title,
+                rating: white.rating > 0 ? white.rating.toString() : '',
+              ),
+              _PlayerCell(
+                name: black.name,
+                federation: black.federation,
+                title: black.title,
+                rating: black.rating > 0 ? black.rating.toString() : '',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: _kPreviewColGap),
+        SizedBox(width: _kPreviewColResult, child: _ResultPill(result: result)),
+      ],
+    );
+  }
+
+  Widget _wideRow(
+    GamesTourModel game,
+    String result,
+    String eco,
+    String dateLabel,
+  ) {
+    return Row(
                 children: [
                   Expanded(
                     flex: _kPreviewColWhite,
@@ -11186,62 +11322,60 @@ class _TwicTableRowState extends State<_TwicTableRow>
                     ),
                   ),
                   const SizedBox(width: _kPreviewColGap),
-                  Expanded(
-                    flex: _kPreviewColEvent,
-                    child: Text(
-                      game.tourId,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: kWhiteColor, fontSize: 12),
-                    ),
-                  ),
-                  const SizedBox(width: _kPreviewColGap),
-                  SizedBox(
-                    width: _kPreviewColEco,
-                    child:
-                        desktopTableDisplayValue(eco).isEmpty
-                            ? const SizedBox.shrink()
-                            : Container(
-                              alignment: Alignment.center,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: kBlack3Color,
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: kDividerColor),
-                              ),
-                              child: Text(
-                                eco,
-                                style: const TextStyle(
-                                  color: kWhiteColor,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  fontFeatures: [FontFeature.tabularFigures()],
-                                ),
-                              ),
-                            ),
-                  ),
-                  const SizedBox(width: _kPreviewColGap),
-                  SizedBox(
-                    width: _kPreviewColDate,
-                    child: Text(
-                      dateLabel,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: kLightGreyColor,
-                        fontSize: 11,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                  if (widget.showDetails) ...[
+                    Expanded(
+                      flex: _kPreviewColEvent,
+                      child: Text(
+                        game.tourId,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: kWhiteColor, fontSize: 12),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: _kPreviewColGap),
+                    SizedBox(
+                      width: _kPreviewColEco,
+                      child:
+                          desktopTableDisplayValue(eco).isEmpty
+                              ? const SizedBox.shrink()
+                              : Container(
+                                alignment: Alignment.center,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: kBlack3Color,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: kDividerColor),
+                                ),
+                                child: Text(
+                                  eco,
+                                  style: const TextStyle(
+                                    color: kWhiteColor,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    fontFeatures: [FontFeature.tabularFigures()],
+                                  ),
+                                ),
+                              ),
+                    ),
+                    const SizedBox(width: _kPreviewColGap),
+                  ],
+                  if (widget.showDate)
+                    SizedBox(
+                      width: _kPreviewColDate,
+                      child: Text(
+                        dateLabel,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          color: kLightGreyColor,
+                          fontSize: 11,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
                 ],
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

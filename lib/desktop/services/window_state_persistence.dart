@@ -8,7 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/desktop_window_geometry.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Saves and restores the window position, size, and maximized state across
 /// app launches.
@@ -129,7 +129,7 @@ class WindowStatePersistence with WindowListener {
   }
 
   bool get _isDesktop =>
-      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+      hostIsMacOS || hostIsWindows || hostIsLinux;
 
   Future<List<DesktopDisplayArea>> _displays() async {
     final displays = [

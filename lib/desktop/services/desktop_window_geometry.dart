@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 import 'package:screen_retriever/screen_retriever.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const EdgeInsets desktopWindowSafePadding = EdgeInsets.all(24);
 
@@ -86,7 +86,7 @@ class DesktopDisplayArea {
 
 /// Whether window and display rects are per-monitor logical pixels that must
 /// be compared through physical pixels. See [DesktopDisplayArea].
-bool get desktopUsesPerMonitorScaling => Platform.isWindows;
+bool get desktopUsesPerMonitorScaling => hostIsWindows;
 
 /// Index into [displays] of the display holding [point], or of the nearest
 /// display when none holds it; -1 when [displays] is empty.

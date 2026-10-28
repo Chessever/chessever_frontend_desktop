@@ -6,7 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/desktop_window_geometry.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Keeps the main window inside the usable work area of the display it is on.
 ///
@@ -65,7 +65,7 @@ class DesktopWindowWorkAreaGuard
   /// startup bounds.
   Future<void> start() async {
     if (_started) return;
-    if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) return;
+    if (!(hostIsMacOS || hostIsWindows || hostIsLinux)) return;
     _started = true;
     windowManager.addListener(this);
     WidgetsBinding.instance.addObserver(this);

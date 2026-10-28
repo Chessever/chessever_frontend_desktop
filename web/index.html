@@ -1,98 +1,76 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!--
+    The browser build is served from the root of app.chessever.com; the
+    placeholder below is replaced by `flutter build --base-href`.
+  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
-  <meta name="description" content="ChessEver in the browser: live broadcasts, the game database and the opening explorer from the desktop app.">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ChessEver in your browser: live broadcasts, games, players and the opening explorer.">
+  <meta name="theme-color" content="#0c0c0e">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#0C0C0E">
 
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="ChessEver">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-  <link rel="icon" type="image/png" href="favicon.png">
-  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="favicon.png"/>
 
   <title>ChessEver</title>
-
-  <!-- chessever:preconnect -->
+  <link rel="manifest" href="manifest.json">
 
   <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #0C0C0E;
-      color: #E6E6E8;
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    }
-    .ce-screen {
-      position: fixed;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 20px;
-      padding: 24px;
-      text-align: center;
-    }
-    .ce-screen[hidden] { display: none; }
-    .ce-screen img { width: 56px; height: 56px; border-radius: 12px; }
-    .ce-screen p { margin: 0; max-width: 420px; font-size: 14px; line-height: 1.5; color: #A1A1A6; }
-    .ce-screen strong { display: block; margin-bottom: 6px; font-size: 16px; color: #E6E6E8; }
-    .ce-screen a { color: #0FB4E5; }
-    .ce-progress {
-      width: 120px;
-      height: 2px;
-      overflow: hidden;
-      border-radius: 1px;
-      background: #1A1A1C;
-    }
-    .ce-progress::after {
-      content: "";
-      display: block;
-      width: 40%;
-      height: 100%;
-      background: #0FB4E5;
-      animation: ce-slide 1.1s ease-in-out infinite;
-    }
-    @keyframes ce-slide {
-      from { transform: translateX(-100%); }
-      to { transform: translateX(250%); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .ce-progress::after { animation: none; width: 100%; opacity: 0.5; }
+    html, body { margin: 0; height: 100%; background: #0c0c0e; }
+    #boot {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #8a8a90; letter-spacing: 0.01em;
     }
   </style>
-</head>
-<body>
-  <div id="ce-loading" class="ce-screen" role="status" aria-label="Loading ChessEver">
-    <img src="icons/Icon-192.png" alt="">
-    <div class="ce-progress"></div>
-  </div>
-
-  <div id="ce-unsupported" class="ce-screen" hidden>
-    <img src="icons/Icon-192.png" alt="">
-    <p>
-      <strong>This browser can't run ChessEver yet</strong>
-      The web version needs a current Chrome or Microsoft Edge.
-      You can also <a href="https://chessever.com/#download">download the desktop app</a>
-      for macOS, Windows or Linux.
-    </p>
-  </div>
-
-  <div id="ce-failed" class="ce-screen" hidden>
-    <img src="icons/Icon-192.png" alt="">
-    <p>
-      <strong>ChessEver didn't finish loading</strong>
-      Check your connection and <a href="">reload the page</a>.
-    </p>
-  </div>
 
   <script>
-    {{flutter_bootstrap_js}}
+    // Some image hosts send no CORS headers, which Flutter's web renderer
+    // needs to decode an image. Route them through the same-origin relay in
+    // web_worker/index.js (keep the two host lists in sync).
+    (function () {
+      var relayHosts = {
+        "image.lichess1.org": true,
+        "marketing.chess.com": true,
+        "saintlouischessclub.org": true,
+        "aicf.in": true
+      };
+      function relayed(raw) {
+        try {
+          var url = new URL(raw, location.href);
+          if (relayHosts[url.hostname]) {
+            return "/_img?u=" + encodeURIComponent(url.href);
+          }
+        } catch (e) {}
+        return null;
+      }
+      var nativeFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        var raw = typeof input === "string" ? input
+          : input instanceof URL ? input.href
+          : input && input.url;
+        var target = raw && relayed(raw);
+        return nativeFetch(target || input, init);
+      };
+      var nativeOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        var target = relayed(String(url));
+        if (target) arguments[1] = target;
+        return nativeOpen.apply(this, arguments);
+      };
+    })();
   </script>
+</head>
+<body>
+  <div id="boot">Loading ChessEver…</div>
+  <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

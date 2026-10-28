@@ -19,7 +19,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:chessever/e2e/e2e_config.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Compile-time environment values injected via `--dart-define`.
 const Map<String, String> _releaseEnvValues = {
@@ -386,7 +386,7 @@ class AuthController extends AutoDisposeAsyncNotifier<AppAuthState> {
       ),
     );
 
-    if (!Platform.isIOS) {
+    if (!hostIsIOS) {
       final message = 'Apple Sign-In is only available on iOS devices.';
       state = AsyncValue.data(AppAuthState.error(message));
       debugPrint('❌ [APPLE AUTH] Not iOS, aborting');
@@ -980,12 +980,12 @@ class AuthController extends AutoDisposeAsyncNotifier<AppAuthState> {
   Future<void> _initializeGoogleSignIn() async {
     if (kDebugMode) {
       debugPrint('🔵 [GOOGLE INIT] Starting initialization...');
-      debugPrint('   Platform: ${Platform.isAndroid ? "Android" : "iOS"}');
+      debugPrint('   Platform: ${hostIsAndroid ? "Android" : "iOS"}');
     }
 
     // clientId is only needed for iOS (Android auto-handles it via SHA-1/package name)
     String? clientId;
-    if (Platform.isIOS) {
+    if (hostIsIOS) {
       clientId = _env('GOOGLE_IOS_CLIENT_ID');
     }
 

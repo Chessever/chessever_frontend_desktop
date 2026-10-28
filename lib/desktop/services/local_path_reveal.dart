@@ -1,9 +1,10 @@
-import 'dart:io' hide Platform;
+import 'dart:io';
 
 import 'package:collection/collection.dart';
 
-import 'package:chessever/desktop/services/windows_shell_reveal.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/desktop/services/windows_shell_reveal.dart'
+    if (dart.library.js_interop) 'package:chessever/desktop/services/windows_shell_reveal_web.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Where a local database lives, resolved for the operating system's file
 /// manager.
@@ -399,8 +400,8 @@ Future<LocalPathRevealResult> revealLocalPathInFileManager(
     );
   }
 
-  final windows = isWindows ?? Platform.isWindows;
-  final macos = isMacOS ?? Platform.isMacOS;
+  final windows = isWindows ?? hostIsWindows;
+  final macos = isMacOS ?? hostIsMacOS;
   final linux = isLinux ?? (!windows && !macos);
 
   if (!windows && !macos && !linux) {

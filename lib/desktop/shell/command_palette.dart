@@ -15,7 +15,6 @@ import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/global_search_query.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
-import 'package:chessever/desktop/web/desktop_web_support.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/group_event/providers/supabase_combined_search_provider.dart';
@@ -720,8 +719,9 @@ class _PlayerRow extends StatelessWidget {
     return ClickCursor(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onSelect,
-        onDoubleTap: onOpen,
+        // One click opens, as in any command palette; arrow keys still
+        // move the highlight first.
+        onTap: onOpen,
         child: SingleMotionBuilder(
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,
@@ -848,8 +848,9 @@ class _TournamentRow extends StatelessWidget {
     return ClickCursor(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onSelect,
-        onDoubleTap: onOpen,
+        // One click opens, as in any command palette; arrow keys still
+        // move the highlight first.
+        onTap: onOpen,
         child: SingleMotionBuilder(
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,
@@ -1108,8 +1109,9 @@ class _OpeningRow extends StatelessWidget {
     return ClickCursor(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onSelect,
-        onDoubleTap: onOpen,
+        // One click opens, as in any command palette; arrow keys still
+        // move the highlight first.
+        onTap: onOpen,
         child: SingleMotionBuilder(
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,
@@ -1192,8 +1194,9 @@ class _PaletteRow extends StatelessWidget {
     return ClickCursor(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onSelect,
-        onDoubleTap: onOpen,
+        // One click opens, as in any command palette; arrow keys still
+        // move the highlight first.
+        onTap: onOpen,
         child: SingleMotionBuilder(
           value: selected ? 1.01 : 1.0,
           motion: DesktopMotion.hover,
@@ -1398,14 +1401,13 @@ enum CommandAction {
 List<_PaletteEntry> _buildPaneEntries() {
   return <_PaletteEntry>[
     for (final route in desktopMainRoutes)
-      if (desktopPaneAvailable(route.pane))
-        _PaletteEntry.pane(
-          pane: route.pane,
-          title: route.paletteTitle,
-          subtitle: route.paletteSubtitle,
-          icon: route.icon,
-          shortcut: desktopMainRouteShortcutLabel(route.pane),
-        ),
+      _PaletteEntry.pane(
+        pane: route.pane,
+        title: route.paletteTitle,
+        subtitle: route.paletteSubtitle,
+        icon: route.icon,
+        shortcut: desktopMainRouteShortcutLabel(route.pane),
+      ),
     const _PaletteEntry.pane(
       pane: DesktopPane.boardEditor,
       title: 'Open Board Editor',
@@ -1431,13 +1433,12 @@ List<_PaletteEntry> _buildPaneEntries() {
       icon: Icons.file_open_rounded,
       shortcut: desktopPrimaryShortcutLabel('O'),
     ),
-    if (desktopPaneAvailable(DesktopPane.library))
-      const _PaletteEntry.action(
-        action: CommandAction.openLocalChessFiles,
-        title: 'Import PGN in Library…',
-        subtitle: 'Add local PGN files from disk',
-        icon: Icons.snippet_folder_outlined,
-      ),
+    const _PaletteEntry.action(
+      action: CommandAction.openLocalChessFiles,
+      title: 'Import PGN in Library…',
+      subtitle: 'Add local PGN files from disk',
+      icon: Icons.snippet_folder_outlined,
+    ),
     _PaletteEntry.action(
       action: CommandAction.toggleSidebar,
       title: 'Toggle Sidebar',

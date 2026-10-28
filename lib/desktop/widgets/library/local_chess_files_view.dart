@@ -53,6 +53,7 @@ import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/local_pgn_metadata.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Commands an embedded [LocalChessFilesView] without moving its filter and
 /// pagination state into the parent toolbar.
@@ -3498,7 +3499,7 @@ Future<bool> showLocalPgnDeleteGamesConfirmation(
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'This rewrites "$databaseName" on this computer and removes the selected PGN ${count == 1 ? 'entry' : 'entries'}. This cannot be undone.',
+                    'This rewrites "$databaseName" on $hostLocalStorageName and removes the selected PGN ${count == 1 ? 'entry' : 'entries'}. This cannot be undone.',
                     style: const TextStyle(
                       color: kWhiteColor70,
                       fontSize: 12,

@@ -1,5 +1,6 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/repository/supabase/base_repository.dart';
+import 'package:chessever/repository/supabase/postgrest_filter_value.dart';
 
 // --- Model ---
 
@@ -75,7 +76,7 @@ class ChessPlayerRepository extends BaseRepository {
       return getTopPlayers(limit: limit, offset: offset, titles: titles);
     }
 
-    final term = '%${query.trim()}%';
+    final term = postgrestIlikeContains(query);
     var filtered = supabase
         .from('chess_players')
         .select('fideid, name, title, rating, country')
@@ -107,7 +108,7 @@ class ChessPlayerRepository extends BaseRepository {
         .lt('rating', 3300);
 
     if (searchQuery != null && searchQuery.trim().isNotEmpty) {
-      final term = '%${searchQuery.trim()}%';
+      final term = postgrestIlikeContains(searchQuery);
       builder = builder.or('name.ilike.$term,title.ilike.$term');
     }
 

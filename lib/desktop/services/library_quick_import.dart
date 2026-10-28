@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/services.dart';

@@ -1,10 +1,7 @@
 import 'package:path/path.dart' as p;
 
-// The exclusive move goes through libc / kernel32 FFI, which the web build
-// cannot import. The web variant refuses, since the browser has no local PGN
-// databases to rename.
-export 'local_pgn_move_io.dart'
-    if (dart.library.js_interop) 'local_pgn_move_web.dart';
+export 'package:chessever/desktop/services/local_pgn_move_native.dart'
+    if (dart.library.js_interop) 'package:chessever/desktop/services/local_pgn_move_web.dart';
 
 String localPgnRenameDestination(String source, String name) {
   if (p.extension(source).toLowerCase() != '.pgn') {

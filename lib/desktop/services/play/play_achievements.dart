@@ -1,16 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:dartchess/dartchess.dart' hide File;
+import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/services/play/play_models.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
 import 'package:chessever/desktop/state/play_session.dart';
+import 'package:chessever/desktop/services/play/play_local_store.dart';
 
 const String kAchievementBadgeSheetAsset =
     'assets/play/achievements/badge_sheet.png';
@@ -517,9 +515,9 @@ class PlayAchievementsNotifier extends StateNotifier<PlayAchievementsState> {
   }
 
   Future<void> _load() async {
-    final file = await _stateFile();
-    if (!await file.exists()) return;
-    final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+    final text = await const PlayLocalStore().read(_statePath);
+    if (text == null) return;
+    final json = jsonDecode(text) as Map<String, dynamic>;
     final unlocked = <PlayAchievementId>{};
     for (final name
         in (json['unlocked'] as List<dynamic>? ?? const <dynamic>[])) {
@@ -549,22 +547,17 @@ class PlayAchievementsNotifier extends StateNotifier<PlayAchievementsState> {
   }
 
   Future<void> _save() async {
-    final file = await _stateFile();
-    if (!await file.parent.exists()) await file.parent.create(recursive: true);
-    await file.writeAsString(
+    await const PlayLocalStore().write(
+      _statePath,
       const JsonEncoder.withIndent('  ').convert({
         'stats': state.stats.toJson(),
         'unlocked': [for (final id in state.unlocked) id.name],
         'claimable': [for (final id in state.claimable) id.name],
       }),
-      flush: true,
     );
   }
 
-  Future<File> _stateFile() async {
-    final support = await getApplicationSupportDirectory();
-    return File(p.join(support.path, 'play_achievements', 'achievements.json'));
-  }
+  static const _statePath = 'play_achievements/achievements.json';
 }
 
 const List<PlayAchievementDefinition> kPlayAchievementDefinitions = [

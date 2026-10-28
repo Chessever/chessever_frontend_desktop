@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:io' hide Platform;
+import 'dart:io';
 import 'dart:math';
 
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
@@ -16,7 +16,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'gamebase_providers.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 // Desktop port of the phone app's explorer games cache (chessever-frontend,
 // lib/screens/gamebase/providers/explorer_games_cache.dart). The behaviour is
@@ -240,7 +240,7 @@ class FileExplorerGamesDiskStore implements ExplorerGamesDiskStore {
   }
 
   File _file(Directory dir, String name) =>
-      File('${dir.path}${Platform.pathSeparator}$name');
+      File('${dir.path}$hostPathSeparator$name');
 
   Future<String?> _readOwnerMarker(Directory dir) async {
     final ownerFile = _file(dir, _ownerFileName);
@@ -1078,7 +1078,7 @@ void recordExplorerGamesPaint({
 
 bool _underFlutterTest() {
   try {
-    return Platform.environment.containsKey('FLUTTER_TEST');
+    return hostEnvironment.containsKey('FLUTTER_TEST');
   } catch (_) {
     return false;
   }
@@ -1095,7 +1095,7 @@ final explorerGamesDiskStoreProvider = Provider<ExplorerGamesDiskStore>((ref) {
     readOnly: ref.read(desktopWindowRoleProvider) != DesktopWindowRole.main,
     directory: () async {
       final base = await getApplicationCacheDirectory();
-      return Directory('${base.path}${Platform.pathSeparator}explorer_games');
+      return Directory('${base.path}${hostPathSeparator}explorer_games');
     },
   );
 });

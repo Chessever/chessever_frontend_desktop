@@ -344,8 +344,11 @@ class CollectionsPane extends HookConsumerWidget {
                       storageKey: 'collections_pane.home_split',
                       children: [
                         SplitChild(
-                          minSize: 124,
-                          initialWeight: 0.30,
+                          // Room for the column header and four rows; at
+                          // 0.30 two of seven collections were hidden with
+                          // no sign that the list scrolls.
+                          minSize: 220,
+                          initialWeight: 0.45,
                           label: 'Catalog',
                           child: _CatalogList(
                             state: catalog,
@@ -387,7 +390,7 @@ class CollectionsPane extends HookConsumerWidget {
                         ),
                         SplitChild(
                           minSize: 260,
-                          initialWeight: 0.70,
+                          initialWeight: 0.55,
                           label: 'Preview',
                           child:
                               selected != null
@@ -1442,7 +1445,7 @@ class _CollectionWorkspace extends HookConsumerWidget {
 
 String _sectionLabel(CollectionSection section) {
   final title = section.title?.trim() ?? '';
-  if (title.isEmpty) return section.label;
+  if (title.isEmpty || title == section.label.trim()) return section.label;
   return section.label.isEmpty ? title : '${section.label}: $title';
 }
 

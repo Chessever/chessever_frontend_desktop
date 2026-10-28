@@ -3919,26 +3919,11 @@ class ChessBoardScreenNotifierNew
     // Only ever an upgrade: an unusable value is left in place for the info
     // panel to display, and the export layer drops it there. Deleting it here
     // would blank the Time Control row for games whose category is all we know.
-    if (!isValidPgnTimeControl(metadata['TimeControl']?.toString())) {
-      final field = pgnTimeControlField(game.timeControlText);
-      if (field != null) {
-        // Keep the speed word on the key the app displays from, so library
-        // cards and the info row still read "Standard" rather than the machine
-        // field. Mirrors mobile.
-        final category = game.timeControl ?? metadata['TimeControl']?.toString();
-        if (category != null &&
-            category.isNotEmpty &&
-            category != '?' &&
-            (metadata['TcCategory'] == null ||
-                metadata['TcCategory'].toString().isEmpty)) {
-          metadata['TcCategory'] = category;
-        }
-        metadata['TimeControl'] = field;
-      } else if (metadata['TimeControl'] == null ||
-          metadata['TimeControl'] == '?') {
-        metadata['TimeControl'] = game.timeControl;
-      }
-    }
+    enrichPgnTimeControlMetadata(
+      metadata,
+      timeControlText: game.timeControlText,
+      category: game.timeControl,
+    );
 
     if (metadata['Result'] == null ||
         metadata['Result'] == '*' ||

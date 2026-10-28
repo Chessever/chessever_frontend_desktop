@@ -3,9 +3,10 @@
     "short_name": "ChessEver",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0C0C0E",
-    "theme_color": "#0C0C0E",
-    "description": "Live broadcasts, the game database and the opening explorer from the ChessEver desktop app.",
+    "background_color": "#0c0c0e",
+    "theme_color": "#0c0c0e",
+    "description": "ChessEver in your browser: live broadcasts, games, players and the opening explorer.",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

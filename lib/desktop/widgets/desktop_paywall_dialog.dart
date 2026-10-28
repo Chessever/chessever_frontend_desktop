@@ -956,7 +956,7 @@ class _PlanColumnState extends State<_PlanColumn> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    widget.detail,
+                    _keepSavingsTogether(widget.detail),
                     style: const TextStyle(
                       color: kWhiteColor70,
                       fontSize: 12,
@@ -1132,3 +1132,10 @@ class _DesktopPaywallHostState extends State<DesktopPaywallHost> {
   @override
   Widget build(BuildContext context) => widget.child;
 }
+
+/// "Save $21.89/yr" wraps as one unit: a line break inside it left "yr"
+/// alone on the next line.
+String _keepSavingsTogether(String detail) => detail.replaceAllMapped(
+  RegExp(r'Save (\S+)/yr'),
+  (match) => 'Save\u00A0${match[1]}\u2060/\u2060yr',
+);

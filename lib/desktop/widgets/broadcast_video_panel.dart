@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:webview_all/webview_all.dart';
@@ -14,13 +13,12 @@ import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/state/broadcast_video_streams_provider.dart';
 import 'package:chessever/desktop/state/broadcast_video_visibility_provider.dart';
-import 'package:chessever/desktop/widgets/broadcast_video_browser_controller.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_player_retention.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_toolbar.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Live-stream panel for the top of the Board pane's right rail.
 ///
@@ -153,7 +151,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   /// Windows only: WebView2's environment must exist before the first
   /// controller is constructed, or the controller wins the race and creates a
   /// default environment that can no longer receive the autoplay policy.
-  bool _environmentReady = !Platform.isWindows;
+  bool _environmentReady = !hostIsWindows;
 
   BroadcastVideoScope get _scope =>
       BroadcastVideoScope(tourId: widget.tourId, roundId: widget.roundId);
@@ -163,7 +161,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   @override
   void initState() {
     super.initState();
-    if (Platform.isWindows) {
+    if (hostIsWindows) {
       // WebView2 blocks autoplay with sound by default. The web embeds start
       // muted=false with autoplay on; request the same policy so the desktop
       // panel behaves identically. Idempotent across panels.
@@ -262,8 +260,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   WebViewController _createController() {
-    if (kIsWeb) return createBrowserVideoController();
-    if (Platform.isMacOS) {
+    if (hostIsMacOS) {
       // Inline HTML5 playback and autoplay, matching the web's autoplay
       // behaviour. Defaults (inline false, media requires a gesture) would
       // push the embed fullscreen and demand a click.
@@ -271,6 +268,13 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
         WebKitWebViewControllerCreationParams(
           allowsInlineMediaPlayback: true,
           mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+          // WKWebView ships with the HTML Fullscreen API off, which hides
+          // YouTube's fullscreen control and leaves Twitch's inert. With it
+          // on (our patched copy of the plugin), the player's own control
+          // works and WebKit presents the video in its own full-screen
+          // window; nothing of ours is drawn there and the player never
+          // leaves its mount.
+          elementFullscreenEnabled: true,
         ),
       );
     }
@@ -493,9 +497,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
         .where(
           (stream) => broadcastStreamSupportsPlatform(
             stream,
-            kIsWeb
-                ? BroadcastVideoClientPlatform.web
-                : BroadcastVideoClientPlatform.desktop,
+            BroadcastVideoClientPlatform.desktop,
           ),
         )
         .toList(growable: false);

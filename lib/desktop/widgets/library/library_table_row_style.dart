@@ -77,51 +77,59 @@ class LibraryTablePlayerCell extends StatelessWidget {
             ? libraryStandardTablePlayerName(name)
             : desktopTablePlayerValue(name);
     if (playerName.isEmpty) return const SizedBox.shrink();
-    return Row(
-      children: [
-        BackfilledFederationFlag(
-          federation: federation.isEmpty ? null : federation,
-          fideId: fideId,
-          width: 18,
-          height: 13,
-          borderRadius: BorderRadius.circular(2),
-        ),
-        const SizedBox(width: _kLibraryPlayerFlagGap),
-        if (title.isNotEmpty) ...[
-          Text(
-            title,
-            style: const TextStyle(
-              color: kLightYellowColor,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
+    // In a very narrow column the rating, then the title, give way so the
+    // name keeps room instead of the row spilling into the next column.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final showRating = constraints.maxWidth >= 120;
+        final showTitle = constraints.maxWidth >= 80;
+        return Row(
+          children: [
+            BackfilledFederationFlag(
+              federation: federation.isEmpty ? null : federation,
+              fideId: fideId,
+              width: 18,
+              height: 13,
+              borderRadius: BorderRadius.circular(2),
             ),
-          ),
-          const SizedBox(width: _kLibraryPlayerTitleGap),
-        ],
-        Expanded(
-          child: Text(
-            playerName,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: kWhiteColor,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w500,
+            const SizedBox(width: _kLibraryPlayerFlagGap),
+            if (title.isNotEmpty && showTitle) ...[
+              Text(
+                title,
+                style: const TextStyle(
+                  color: kLightYellowColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: _kLibraryPlayerTitleGap),
+            ],
+            Expanded(
+              child: Text(
+                playerName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ),
-          ),
-        ),
-        if (rating.trim().isNotEmpty) ...[
-          const SizedBox(width: _kLibraryPlayerRatingGap),
-          Text(
-            rating.trim(),
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 11,
-              fontFeatures: [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      ],
+            if (rating.trim().isNotEmpty && showRating) ...[
+              const SizedBox(width: _kLibraryPlayerRatingGap),
+              Text(
+                rating.trim(),
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 11,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }

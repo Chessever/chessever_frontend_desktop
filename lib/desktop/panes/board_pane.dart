@@ -17,8 +17,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart'
-    show ValueListenable, kDebugMode, listEquals, visibleForTesting;
+    show ValueListenable, kDebugMode, kIsWeb, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/widgets/pgn_attribution_editor.dart';
+import 'package:chessever/utils/pgn_time_control.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -152,6 +154,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/web/text_download.dart';
 
 // The corner grip and its drag maths now live with the Play pane's board too.
 // Re-exported so existing board-pane callers and tests keep their entry point.
@@ -301,15 +304,20 @@ GamesTourModel? selectFreshestBoardLiveBase({
   return selectFreshestNavigationGame(current: currentBase, incoming: argsSeed);
 }
 
+/// [heldPositionReset] marks a packet whose incomplete reset the merge held
+/// back. Its candidate equals [current], but it must still be confirmed
+/// exactly: accepting it as a no-op would skip that read, and the raw row
+/// would reach the board tree unconfirmed.
 @visibleForTesting
 bool shouldAcceptFocusedLiveCandidate({
   required GamesTourModel current,
   required GamesTourModel incoming,
   required bool serverConfirmedRegression,
+  bool heldPositionReset = false,
 }) {
   return serverConfirmedRegression ||
-      current == incoming ||
-      shouldReplaceBaseGame(current, incoming);
+      (!heldPositionReset &&
+          (current == incoming || shouldReplaceBaseGame(current, incoming)));
 }
 
 @immutable
@@ -534,11 +542,13 @@ bool shouldConfirmBoardTabCloseForLocalNotationEdits({
   required bool dirtySinceLoad,
   required String currentPgn,
   required String? lastAppliedPgn,
+  String? lastSavedAnalysisPgn,
 }) {
   return shouldConfirmBoardAnalysisDiscard(
     dirtySinceLoad: dirtySinceLoad,
     currentPgn: currentPgn,
     lastAppliedPgn: lastAppliedPgn,
+    lastSavedAnalysisPgn: lastSavedAnalysisPgn,
   );
 }
 
@@ -722,14 +732,36 @@ class _BoardPaneSplitView extends StatelessWidget {
     if (children.isEmpty) return const SizedBox.shrink();
     if (children.length == 1) return children.single.child;
 
-    return ResizableSplitView(
-      axis: Axis.horizontal,
-      controller: controller,
-      storageKey: storageKey,
-      children: children,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Too narrow for the panes side by side (their minimums alone are
+        // ~660 px), as in a phone-width browser window: stack the board over
+        // the notation and engine, and leave the games list out.
+        if (constraints.maxWidth < _kBoardPaneStackedWidth) {
+          final stacked = [
+            for (final child in children)
+              if (child.label != 'Games') child,
+          ];
+          if (stacked.length == 1) return stacked.single.child;
+          return ResizableSplitView(
+            axis: Axis.vertical,
+            controller: controller,
+            storageKey: storageKey == null ? null : '$storageKey.stacked',
+            children: stacked,
+          );
+        }
+        return ResizableSplitView(
+          axis: Axis.horizontal,
+          controller: controller,
+          storageKey: storageKey,
+          children: children,
+        );
+      },
     );
   }
 }
+
+const double _kBoardPaneStackedWidth = 660;
 
 class _BoardPaneContent extends HookConsumerWidget {
   const _BoardPaneContent({this.tabId});
@@ -892,6 +924,11 @@ class _BoardPaneContent extends HookConsumerWidget {
     final reportActivation = useRef<Object>(Object());
     final savedSourceSeedPgn = useRef(restoredSession?.savedSourceSeedPgn);
     final hasCommittedSave = useRef(restoredSession?.hasCommittedSave ?? false);
+    final lastSavedAnalysisPgn = useState(restoredSession?.lastSavedAnalysisPgn);
+    final lastBroadcastPgn = useRef(
+      restoredSession?.lastBroadcastPgn ??
+          restoredSession?.savedSourceSeedPgn ?? restoredSession?.lastAppliedPgn,
+    );
     final reportRevealState = useRef(const GameReportRevealState());
     // Listen synchronously: even coalesced A -> B -> A replacements invalidate
     // reveal/save ownership. Summary-only retained PGN refreshes keep the seed.
@@ -904,6 +941,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         reportActivation.value = Object();
         savedSourceSeedPgn.value = null;
         hasCommittedSave.value = false;
+        lastSavedAnalysisPgn.value = null;
+        lastBroadcastPgn.value = null;
         reportRevealState.value = const GameReportRevealState();
       },
     );
@@ -1118,12 +1157,13 @@ class _BoardPaneContent extends HookConsumerWidget {
     final boardRenderKey =
         '${_boardRenderKey(activeTabId: activeTabId, activeGameId: activeGameId, boardArgs: boardArgs, latestPgnImport: latestPgnImport, lastAppliedGameId: lastAppliedGameId.value, lastAppliedPgn: lastAppliedPgn.value)}:cut${boardCutEpoch.value}';
 
-    useEffect(
-      () {
-        final token = ++boardSessionWriteToken.value;
-        final tabId = activeTabId;
-        if (tabId == null) return null;
-        final session = BoardPaneSession(
+    final sessionUserNags = ref.watch(userMoveNagsProvider.select(
+      (state) => state[activeTabId ?? 'board-default'] ?? const <int, List<int>>{},
+    ));
+    // What a remount restores. The NAG overlay rides beside the tree, never
+    // inside it: the restored pane reads the overlay from the provider again.
+    BoardPaneSession retainedBoardSession(Map<int, List<int>> userNags) =>
+        BoardPaneSession(
           game: chessGame.value,
           pointer: List<int>.unmodifiable(pointer.value),
           pgnHeaders: Map<String, String>.unmodifiable(pgnHeaders.value),
@@ -1135,10 +1175,19 @@ class _BoardPaneContent extends HookConsumerWidget {
           dirtySinceLoad: dirtySinceLoad.value,
           hasUnseenMoves: hasUnseenMoves.value,
           undoStack: List<BoardUndoSnapshot>.unmodifiable(undoStack.value),
+          lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
+          lastBroadcastPgn: lastBroadcastPgn.value,
           savedSourceSeedPgn: savedSourceSeedPgn.value,
           hasCommittedSave: hasCommittedSave.value,
           detachedSeedPgn: restoredSession?.detachedSeedPgn,
+          userNags: userNags,
         );
+    useEffect(
+      () {
+        final token = ++boardSessionWriteToken.value;
+        final tabId = activeTabId;
+        if (tabId == null) return null;
+        final session = retainedBoardSession(sessionUserNags);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!context.mounted || token != boardSessionWriteToken.value) {
             return;
@@ -1152,16 +1201,44 @@ class _BoardPaneContent extends HookConsumerWidget {
       [
         activeTabId,
         chessGame.value,
+        sessionUserNags,
         pointer.value,
         pgnHeaders.value,
         flipped.value,
         loadedFrom.value,
         dirtySinceLoad.value,
         hasCommittedSave.value,
+        lastSavedAnalysisPgn.value,
+        lastBroadcastPgn.value,
+        lastAppliedPgn.value,
         savedSourceSeedPgn.value,
         hasUnseenMoves.value,
       ],
     );
+
+    // The board in the same form the close guard compares with the save.
+    String boardPgnForSavedAnalysis() => exportGameToPgn(
+      mergeUserMainlineNagsForGif(
+        chessGame.value,
+        ref.read(userMoveNagsProvider)[activeTabId ?? 'board-default'] ??
+            const <int, List<int>>{},
+      ),
+    );
+
+    // Event feed packets move a successful save's baseline along with them
+    // while the user has changed nothing since that save. Returns the
+    // "after" step, or null when there is no save to follow.
+    void Function()? followSavedAnalysisThroughFeed() {
+      if (lastSavedAnalysisPgn.value == null) return null;
+      final before = boardPgnForSavedAnalysis();
+      return () {
+        lastSavedAnalysisPgn.value = savedAnalysisBaselineAfterFeed(
+          lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
+          boardPgnBeforeFeed: before,
+          boardPgnAfterFeed: boardPgnForSavedAnalysis(),
+        );
+      };
+    }
 
     // We watch `activeGameId` here rather than after the listeners so
     // applyPgn can sync `lastAppliedGameId` to it. Without that sync, the
@@ -1192,6 +1269,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         reportActivation.value = Object();
         savedSourceSeedPgn.value = null;
         hasCommittedSave.value = false;
+        lastSavedAnalysisPgn.value = null;
+        lastBroadcastPgn.value = null;
         reportRevealState.value = const GameReportRevealState();
         reportRevealRevision.value++;
       }
@@ -1274,6 +1353,15 @@ class _BoardPaneContent extends HookConsumerWidget {
           (gameId == null ||
               tabArgs.gameId == null ||
               tabArgs.gameId == gameId)) {
+        // Paste/import may have no bound game id while old tab context remains.
+        // Only an owner-matched event parse may consume that source control.
+        if (gameId != null && gameId.trim().isNotEmpty && tabArgs.gameId == gameId) {
+          enrichPgnTimeControlMetadata(
+            updatedMetadata,
+            timeControlText: tabArgs.timeControlText,
+            category: tabArgs.sourceGame?.timeControl,
+          );
+        }
         putIfMissing('White', tabArgs.whiteName);
         putIfMissing('Black', tabArgs.blackName);
         putIfMissing('WhiteFed', tabArgs.whiteFederation);
@@ -1341,7 +1429,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       final localAnnotations =
           isCanonicalBroadcastSource
               ? _reconcileCanonicalBroadcastLocalAnnotations(
-                previousBroadcastPgn: lastAppliedPgn.value,
+                previousBroadcastPgn: lastBroadcastPgn.value ?? lastAppliedPgn.value,
                 currentGame: oldGame,
                 freshGame: freshGame,
                 userNags: currentUserNags,
@@ -1361,6 +1449,8 @@ class _BoardPaneContent extends HookConsumerWidget {
       final keepLocalEdits =
           localAnnotations?.hasLocalEdits ??
           (gameId != null && hasRetainedTree && dirtySinceLoad.value);
+      final followSave =
+          isCanonicalBroadcastSource ? followSavedAnalysisThroughFeed() : null;
       if (isCanonicalBroadcastSource) {
         suppressUserNagUndoSnapshot.value = true;
         try {
@@ -1374,6 +1464,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
       dirtySinceLoad.value = keepLocalEdits;
       lastAppliedPgn.value = trimmed;
+      lastBroadcastPgn.value = trimmed;
       lastAppliedInitialFenKey.value = initialFenKey;
       if (gameId != null) lastAppliedGameId.value = gameId;
       chessGame.value = game;
@@ -1381,6 +1472,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         (k, v) => MapEntry(k, v?.toString() ?? ''),
       );
       loadedFrom.value = origin;
+      followSave?.call();
 
       // Pointer placement on PGN reload:
       //  - first apply for this tree → live games jump to the tip so the
@@ -1488,11 +1580,13 @@ class _BoardPaneContent extends HookConsumerWidget {
         rawStatus: rawStatus,
       );
       if (metadata == null) return;
+      final followSave = followSavedAnalysisThroughFeed();
       final updatedGame = currentGame.copyWith(metadata: metadata);
       chessGame.value = updatedGame;
       pgnHeaders.value = updatedGame.metadata.map(
         (key, value) => MapEntry(key, value?.toString() ?? ''),
       );
+      followSave?.call();
     }
 
     bool tryApplyIncrementalLiveUpdate(
@@ -1596,6 +1690,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           if (entry.key >= 0 && entry.key < oldMainlineLen)
             entry.key: List<int>.unmodifiable(entry.value),
       };
+      final followSave = followSavedAnalysisThroughFeed();
       suppressUserNagUndoSnapshot.value = true;
       try {
         ref
@@ -1607,6 +1702,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       undoStack.value.clear();
       dirtySinceLoad.value = retainedUserNags.isNotEmpty;
       lastAppliedPgn.value = pgn;
+      lastBroadcastPgn.value = pgn;
       lastAppliedInitialFenKey.value = initialFenKey;
       lastAppliedGameId.value = gameId;
       chessGame.value = updatedGame;
@@ -1614,6 +1710,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         (k, v) => MapEntry(k, v?.toString() ?? ''),
       );
       loadedFrom.value = origin;
+      followSave?.call();
 
       if (oldPointer.isEmpty) {
         pointer.value = const <int>[];
@@ -1693,6 +1790,7 @@ class _BoardPaneContent extends HookConsumerWidget {
               : mergeLiveGameUpdateWithBase(
                 baseGame: sourceGame,
                 update: update,
+                serverConfirmed: serverConfirmedRegression,
               );
       GamesTourModel? mergedGame;
       var acceptedWholeRow = true;
@@ -1707,6 +1805,12 @@ class _BoardPaneContent extends HookConsumerWidget {
           current: sourceGame!,
           incoming: mergedCandidate,
           serverConfirmedRegression: serverConfirmedRegression,
+          heldPositionReset:
+              !serverConfirmedRegression &&
+              liveUpdateHoldsPlayedPosition(
+                baseGame: sourceGame,
+                update: update,
+              ),
         )) {
           acceptedWholeRow = false;
           // Position freshness and metadata freshness are independent. The
@@ -1847,6 +1951,9 @@ class _BoardPaneContent extends HookConsumerWidget {
             continue;
           }
           final nextArgs = args.copyWith(
+            // A live tick of the same game is not a replacement: keep the
+            // seed lifetime so a save on this board keeps its baseline.
+            retainedSeedIdentity: args.retainedSeedIdentity ?? args,
             pgn: shouldUpdatePgn ? livePgn : null,
             fenSeed: shouldUpdateFen ? liveFen : null,
             clearFenSeed: shouldClearFen,
@@ -2225,11 +2332,14 @@ class _BoardPaneContent extends HookConsumerWidget {
           reportActivation.value = Object();
           savedSourceSeedPgn.value = null;
           hasCommittedSave.value = false;
+        lastSavedAnalysisPgn.value = null;
+        lastBroadcastPgn.value = null;
           reportRevealState.value = const GameReportRevealState();
         }
         lastAppliedGameId.value = activeGameId;
         if (activeGameId != null) {
           lastAppliedPgn.value = null;
+          lastBroadcastPgn.value = null;
           lastAppliedInitialFenKey.value = null;
           chessGame.value = _emptyChessGame;
           pgnHeaders.value = const {};
@@ -2893,7 +3003,9 @@ class _BoardPaneContent extends HookConsumerWidget {
           lastAppliedInitialFenKey: lastAppliedInitialFenKey.value,
           dirtySinceLoad: dirtySinceLoad.value,
           hasUnseenMoves: hasUnseenMoves.value,
-          undoStack: const [],
+          undoStack: List<BoardUndoSnapshot>.unmodifiable(undoStack.value),
+          lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
+          lastBroadcastPgn: lastBroadcastPgn.value,
           savedSourceSeedPgn: savedSourceSeedPgn.value,
           hasCommittedSave: hasCommittedSave.value,
           detachedSeedPgn: restoredSession?.detachedSeedPgn,
@@ -2939,12 +3051,32 @@ class _BoardPaneContent extends HookConsumerWidget {
         );
         hasCommittedSave.value = true;
         savedSourceSeedPgn.value ??= lastAppliedPgn.value;
-        lastAppliedPgn.value = pgn.trim();
+        lastBroadcastPgn.value ??= lastAppliedPgn.value;
+        lastSavedAnalysisPgn.value = pgn.trim();
+        // Feed provenance is independent of the persisted analysis snapshot.
         chessGame.value = rebased;
         pgnHeaders.value = rebased.metadata.map(
           (key, value) => MapEntry(key, value?.toString() ?? ''),
         );
-        dirtySinceLoad.value = exportGameToPgn(rebased).trim() != pgn.trim();
+        dirtySinceLoad.value = shouldConfirmBoardAnalysisDiscard(
+          dirtySinceLoad: true,
+          currentPgn: exportGameToPgn(rebased),
+          lastAppliedPgn: lastAppliedPgn.value,
+          lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
+        );
+        // Publish before identity attachment can remount the pane, and retire
+        // any older post-frame writer that still carries the dirty snapshot.
+        final tabId = activeTabId;
+        if (tabId != null) {
+          final snapshot =
+              ref.read(boardPaneSnapshotReadersProvider)[tabId]?.call();
+          if (snapshot != null && identical(seed, snapshot.seed)) {
+            boardSessionWriteToken.value++;
+            ref
+                .read(boardPaneSessionByTabIdProvider.notifier)
+                .put(tabId, retainedBoardSession(currentUserNags()));
+          }
+        }
       }
       return (ownsActivation: ownsActivation, commit: commit);
     }
@@ -2966,7 +3098,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         } else {
           pgn = boardClipboardPgn(
             game: chessGame.value,
-            dirtySinceLoad: dirtySinceLoad.value,
+            dirtySinceLoad: dirtySinceLoad.value || lastSavedAnalysisPgn.value != null,
             lastAppliedPgn: lastAppliedPgn.value,
           );
         }
@@ -3072,6 +3204,19 @@ class _BoardPaneContent extends HookConsumerWidget {
         }
         metadata[ChessGame.metadataIsLiveKey] = false;
         metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
+        // A broadcast PGN can still say "*" after the game has ended; the
+        // board knows the final result, so the save dialog starts there.
+        final knownResult = switch (boardArgs?.sourceGame?.gameStatus) {
+          GameStatus.whiteWins => '1-0',
+          GameStatus.blackWins => '0-1',
+          GameStatus.draw => '1/2-1/2',
+          _ => null,
+        };
+        final savedResult = metadata['Result']?.toString().trim() ?? '';
+        if (knownResult != null &&
+            (savedResult.isEmpty || savedResult == '*')) {
+          metadata['Result'] = knownResult;
+        }
         final eventLabel = headers['Event']?.trim();
         final gameSnapshot = snapshot.copyWith(metadata: metadata);
 
@@ -3165,9 +3310,18 @@ class _BoardPaneContent extends HookConsumerWidget {
       try {
         final saveCompletion = captureBoardSaveCompletion();
         // Same opt-in hydrate as Copy PGN.
-        final pgn = exportGameToPgn(hydrateGameForUserOutput(chessGame.value));
+        final exportSnapshot = hydrateGameForUserOutput(chessGame.value);
+        final edited = await showPgnAttributionDialog(context, exportSnapshot);
+        if (edited == null || !saveCompletion.ownsActivation()) return;
+        final pgn = exportGameToPgn(edited);
         final headers = pgnHeaders.value;
         final defaultName = _suggestPgnFileName(headers);
+        if (kIsWeb) {
+          downloadTextFile(defaultName, pgn);
+          saveCompletion.commit(pgn);
+          showToast('Downloaded $defaultName');
+          return;
+        }
         final path = await FilePicker.platform.saveFile(
           dialogTitle: 'Save PGN',
           fileName: defaultName,
@@ -3297,9 +3451,15 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     void toggleMoveNag(ChessMovePointer target, int nag) {
-      final move = _moveAtPointer(chessGame.value, target);
-      if (move == null) return;
-      setMoveNags(target, _toggleNagList(move.nags ?? const <int>[], nag));
+      final nextGame = toggleBoardMoveNagAtPointer(
+        chessGame.value,
+        target,
+        nag,
+      );
+      if (identical(nextGame, chessGame.value)) return;
+      pushUndoSnapshot();
+      chessGame.value = nextGame;
+      dirtySinceLoad.value = true;
     }
 
     Future<void> commentAfterMoveAction() async {
@@ -3588,29 +3748,23 @@ class _BoardPaneContent extends HookConsumerWidget {
       goLast();
     }
 
-    void navigatePreviousGameManually() {
+    // A collapsed games list (narrow windows start that way) has loaded
+    // nothing; navigateActiveEventGame loads the event's games itself, so
+    // the list stays as the user left it.
+    Future<void> navigateGameManually(int delta) async {
       pauseAutoReplayForManualNavigation();
-      unawaited(
-        navigateActiveEventGame(
-          ref,
-          context: context,
-          delta: -1,
-          liveOnly: pictureInPictureMode,
-        ),
+      await navigateActiveEventGame(
+        ref,
+        context: context,
+        delta: delta,
+        liveOnly: pictureInPictureMode,
       );
     }
 
-    void navigateNextGameManually() {
-      pauseAutoReplayForManualNavigation();
-      unawaited(
-        navigateActiveEventGame(
-          ref,
-          context: context,
-          delta: 1,
-          liveOnly: pictureInPictureMode,
-        ),
-      );
-    }
+    void navigatePreviousGameManually() =>
+        unawaited(navigateGameManually(-1));
+
+    void navigateNextGameManually() => unawaited(navigateGameManually(1));
 
     Future<void> restoreMainWindowFromPictureInPictureAction() async {
       if (!pictureInPictureMode) return;
@@ -4420,8 +4574,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       bool hasLocalNotationEdits() {
         return shouldConfirmBoardTabCloseForLocalNotationEdits(
           dirtySinceLoad: dirtySinceLoad.value,
-          currentPgn: exportGameToPgn(chessGame.value),
+          currentPgn: exportGameToPgn(hydrateGameForUserOutput(chessGame.value)),
           lastAppliedPgn: lastAppliedPgn.value,
+          lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
         );
       }
 
@@ -4640,6 +4795,9 @@ class _BoardPaneContent extends HookConsumerWidget {
             ref.read(boardFocusModeProvider.notifier).state = false;
             return true;
           }
+          // In a browser Esc means "dismiss", and closing the tab on it is
+          // easy to hit by accident; Alt+W closes a tab there.
+          if (kIsWeb) return false;
           unawaited(closeActiveBoardTab(force: false));
           return true;
       }
@@ -5483,8 +5641,11 @@ class _BoardPaneContent extends HookConsumerWidget {
                         isForegroundTab: isForegroundSurface,
                         autoAnalysisAllowed:
                             allowGameAnalysis && isForegroundSurface,
+                        // A browser cannot float a second window over the
+                        // desktop the way the desktop app does.
                         onPictureInPicture:
-                            boardArgs == null ||
+                            kIsWeb ||
+                                    boardArgs == null ||
                                     (!isLiveGame &&
                                         !currentGameIsInPictureInPicture)
                                 ? null
@@ -5606,40 +5767,13 @@ ChessGame mergeGameReportAnnotationsForGif(
   List<GameReportMove> reportMoves,
 ) => mergeGameReportAnnotationsForExport(game, reportMoves);
 
+/// Existing call sites and tests; implementation lives in
+/// [board_report_output.dart] so the unsaved-analysis guard can share it.
 @visibleForTesting
 ChessGame mergeUserMainlineNagsForGif(
   ChessGame game,
   Map<int, List<int>> userNags,
-) {
-  if (userNags.isEmpty) return game;
-  var changed = false;
-  final mainline = <ChessMove>[
-    for (var index = 0; index < game.mainline.length; index++)
-      (() {
-        final overlay = userNags[index] ?? const <int>[];
-        if (overlay.isEmpty) return game.mainline[index];
-        final existing = game.mainline[index].nags ?? const <int>[];
-        final overlayHasQuality = overlay.any(_isQualityNag);
-        final mergedNags = <int>[
-          ...overlay,
-          ...existing.where(
-            (nag) =>
-                !overlay.contains(nag) &&
-                !(overlayHasQuality &&
-                    (_isQualityNag(nag) ||
-                        isChesseverClassificationNag(nag) ||
-                        nag == kChesseverUserQualityOverrideNag)),
-          ),
-          if (overlayHasQuality) kChesseverUserQualityOverrideNag,
-        ];
-        changed = true;
-        return game.mainline[index].copyWith(
-          nags: List<int>.unmodifiable(mergedNags),
-        );
-      })(),
-  ];
-  return changed ? game.copyWith(mainline: mainline) : game;
-}
+) => mergeUserMainlineNags(game, userNags);
 
 /// Applies generated report classifications without discarding incoming
 /// Lichess commentary attached to the same move.
@@ -7087,6 +7221,20 @@ ChessGame _setMoveGraphicCommentaryAtPointer(
   );
 }
 
+/// Pointer-scoped stored-NAG edit; the caller owns undo and dirty-state changes.
+ChessGame toggleBoardMoveNagAtPointer(
+  ChessGame game,
+  ChessMovePointer pointer,
+  int nag,
+) {
+  final move = _moveAtPointer(game, pointer);
+  if (move == null) return game;
+  final current = move.nags ?? const <int>[];
+  final next = _toggleNagList(current, nag);
+  if (identical(next, current)) return game;
+  return _setMoveNagsAtPointer(game, pointer, next);
+}
+
 ChessGame _setMoveNagsAtPointer(
   ChessGame game,
   ChessMovePointer pointer,
@@ -7207,16 +7355,28 @@ int? _qualityNagForChessComEffectType(String rawType) {
 final _pgnNamedDirectiveRegex = RegExp(r'\[%([a-zA-Z_]+)([^\]]*)\]');
 
 List<int> _toggleNagList(List<int> current, int nag) {
-  final tapped = getNagDisplay(nag);
-  if (tapped == null) return current;
+  // Classification codes deliberately have no generic text glyph, but they
+  // still occupy the same editable quality slot as !, ?, and the other NAGs.
+  final tappedCategory =
+      _isQualityNag(nag) ? NagCategory.quality : getNagDisplay(nag)?.category;
+  if (tappedCategory == null) return current;
 
   final next = List<int>.from(current);
   if (next.contains(nag)) {
-    next.remove(nag);
+    if (tappedCategory == NagCategory.quality) {
+      // Imported moves can carry a native badge and its portable !/? partner.
+      // Toggling off that assessment must clear both representations.
+      next.removeWhere(_isQualityNag);
+    } else {
+      next.remove(nag);
+    }
   } else {
     next.removeWhere((other) {
-      final display = getNagDisplay(other);
-      return display != null && display.category == tapped.category;
+      final category =
+          _isQualityNag(other)
+              ? NagCategory.quality
+              : getNagDisplay(other)?.category;
+      return category == tappedCategory;
     });
     next.add(nag);
   }
@@ -7435,6 +7595,37 @@ bool _uciPathsEqual(List<String> left, List<String> right) {
   return true;
 }
 
+/// Exercises the same tree replay used by the visible Board badge.
+@visibleForTesting
+Square? boardMoveBadgeSquareForTesting(
+  ChessGame game,
+  ChessMovePointer pointer,
+) => _pliesFromPath(
+  game.startingFen,
+  _pathFromPointer(game, pointer),
+).last.lastMoveSquare;
+
+@visibleForTesting
+Widget boardMoveBadgeWidgetForTesting({
+  required ChessGame game,
+  required ChessMovePointer pointer,
+  required double boardSize,
+  required bool flipped,
+  required Widget child,
+}) {
+  final square = boardMoveBadgeSquareForTesting(game, pointer);
+  if (square == null) return const SizedBox.shrink();
+  return _BoardBadge(
+    boardSize: boardSize,
+    square: square,
+    flipped: flipped,
+    color: Colors.green,
+    sizeFactor: 0.40,
+    selfContainedChild: true,
+    child: child,
+  );
+}
+
 /// Replay [path] (a list of moves from the starting position) into a
 /// flat list of [_Ply]s — one per visited position, including the
 /// initial one. This is the seam between the tree-model state and the
@@ -7464,7 +7655,7 @@ List<_Ply> _pliesFromPath(String startingFen, List<ChessMove> path) {
         nags: m.nags ?? const <int>[],
         comments: m.comments ?? const <String>[],
         move: move,
-        lastMoveSquare: _normaliseLastMoveSquare(move),
+        lastMoveSquare: _normaliseLastMoveSquare(position, next, move),
       ),
     );
     position = next;
@@ -8367,7 +8558,7 @@ String? _firstClockDisplay(
 ) {
   for (final value in [first, second, third, fallback]) {
     final trimmed = value?.trim();
-    if (trimmed != null && trimmed.isNotEmpty) return trimmed;
+    if (hasUsableClockDisplay(trimmed)) return trimmed;
   }
   return null;
 }
@@ -8658,13 +8849,13 @@ class _BoardArea extends ConsumerWidget {
       whiteClock,
       pgn('WhiteTimeDisplay'),
       sourceGame?.whiteTimeDisplay,
-      focusMode ? '--:--' : null,
+      null,
     );
     final blackClockDisplay = _firstClockDisplay(
       blackClock,
       pgn('BlackTimeDisplay'),
       sourceGame?.blackTimeDisplay,
-      focusMode ? '--:--' : null,
+      null,
     );
     final hasPlayerInfo =
         whiteName.isNotEmpty ||
@@ -9761,107 +9952,119 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           ),
         ),
       ),
-      child: Row(
-        children: [
-          Container(
-            key: const ValueKey<String>('desktop-board-player-avatar'),
-            width: 42,
-            height: 42,
-            padding: const EdgeInsets.all(1),
-            decoration: BoxDecoration(
-              color: kBlack3Color,
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
-            ),
-            child:
-                hasPhoto
-                    ? PlayerInitialsAvatarCompact(
-                      photoUrl: photoUrl,
-                      initials: _playerHeaderInitials(name),
-                      size: 40,
-                      borderRadius: 6,
-                    )
-                    : Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2A2B2F),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        _playerHeaderInitials(name),
-                        style: TextStyle(
-                          color: kWhiteColor.withValues(alpha: 0.78),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.4,
-                        ),
-                      ),
-                    ),
-          ),
-          const SizedBox(width: 8),
-          BackfilledFederationFlag(
-            federation: federation,
-            fideId: fideId,
-            playerName: name,
-            width: 24,
-            height: 17,
-            borderRadius: BorderRadius.circular(2),
-          ),
-          const SizedBox(width: 8),
-          if (resolvedTitle.isNotEmpty) ...[
-            Text(
-              resolvedTitle,
-              style: const TextStyle(
-                color: kPrimaryColor,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 6),
-          ],
-          Expanded(
-            child: Row(
+      // A phone-width browser board has no room for the photo and a name;
+      // the name matters more, so the photo steps aside. The desktop app's
+      // picture-in-picture window opens at 356 px and keeps its photos.
+      child: LayoutBuilder(
+        builder:
+            (context, constraints) => Row(
               children: [
-                Flexible(fit: FlexFit.loose, child: hoverPreview),
-                if (rating > 0) ...[
+                if (!kIsWeb || constraints.maxWidth >= 360) ...[
+                  Container(
+                    key: const ValueKey<String>('desktop-board-player-avatar'),
+                    width: 42,
+                    height: 42,
+                    padding: const EdgeInsets.all(1),
+                    decoration: BoxDecoration(
+                      color: kBlack3Color,
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
+                    ),
+                    child:
+                        hasPhoto
+                            ? PlayerInitialsAvatarCompact(
+                              photoUrl: photoUrl,
+                              initials: _playerHeaderInitials(name),
+                              size: 40,
+                              borderRadius: 6,
+                            )
+                            : Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF2A2B2F),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                _playerHeaderInitials(name),
+                                style: TextStyle(
+                                  color: kWhiteColor.withValues(alpha: 0.78),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ),
+                  ),
                   const SizedBox(width: 8),
+                ],
+                BackfilledFederationFlag(
+                  federation: federation,
+                  fideId: fideId,
+                  playerName: name,
+                  width: 24,
+                  height: 17,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+                const SizedBox(width: 8),
+                if (resolvedTitle.isNotEmpty) ...[
                   Text(
-                    '($rating)',
-                    style: TextStyle(
-                      color: kWhiteColor.withValues(alpha: 0.82),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+                    resolvedTitle,
+                    style: const TextStyle(
+                      color: kPrimaryColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
+                  const SizedBox(width: 6),
+                ],
+                Expanded(
+                  // In a narrow board (a phone-width window) the rating gives way
+                  // first; it used to keep its width while the name got none.
+                  child: LayoutBuilder(
+                    builder:
+                        (context, constraints) => Row(
+                          children: [
+                            Flexible(fit: FlexFit.loose, child: hoverPreview),
+                            if (rating > 0 && constraints.maxWidth >= 150) ...[
+                              const SizedBox(width: 8),
+                              Text(
+                                '($rating)',
+                                style: TextStyle(
+                                  color: kWhiteColor.withValues(alpha: 0.82),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  fontFeatures: const [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                  ),
+                ),
+                if (useLiveClock && activeGameId != null)
+                  _LiveBoardPlayerClock(
+                    gameId: activeGameId!,
+                    sourceGame: sourceGame,
+                    isWhite: isWhite,
+                    isToMove: isToMove,
+                    result: result,
+                    fallbackText: clockText ?? '',
+                  )
+                else if (hasUsableClockDisplay(clockText) || result != null) ...[
+                  const SizedBox(width: 10),
+                  _PlayerClock(
+                    text: clockText ?? '',
+                    isToMove: isToMove,
+                    result: result,
+                    customPoints: boardPlayerAwardedPoints(isWhite: isWhite, sourceGame: sourceGame, args: boardArgs),
+                  ),
+                ],
+                if (trailingControl != null) ...[
+                  const SizedBox(width: 8),
+                  trailingControl!,
                 ],
               ],
             ),
-          ),
-          if (useLiveClock && activeGameId != null)
-            _LiveBoardPlayerClock(
-              gameId: activeGameId!,
-              sourceGame: sourceGame,
-              isWhite: isWhite,
-              isToMove: isToMove,
-              result: result,
-              fallbackText: clockText ?? '',
-            )
-          else if ((clockText != null && clockText!.trim().isNotEmpty) ||
-              result != null) ...[
-            const SizedBox(width: 10),
-            _PlayerClock(
-              text: clockText ?? '',
-              isToMove: isToMove,
-              result: result,
-              customPoints: boardPlayerAwardedPoints(isWhite: isWhite, sourceGame: sourceGame, args: boardArgs),
-            ),
-          ],
-          if (trailingControl != null) ...[
-            const SizedBox(width: 8),
-            trailingControl!,
-          ],
-        ],
       ),
     );
 
@@ -10513,6 +10716,7 @@ GamesTourModel _gamesTourModelFromSummary(
     gameStatus: summary.status,
     fen: summary.fen,
     pgn: summary.pgn,
+    timeControlText: summary.timeControlText,
     boardNr: summary.boardNumber,
     roundId: summary.roundId,
     roundSlug: summary.roundSlug.trim().isEmpty ? null : summary.roundSlug,
@@ -10587,7 +10791,11 @@ class _LiveBoardPlayerClock extends ConsumerWidget {
         _LivePlayerClockSnapshot.fromGame(sourceGame, isWhite: isWhite);
     final liveClockSeconds = liveSnapshot?.seconds;
     final liveLastMoveTime = liveSnapshot?.lastMoveTime;
-    if (liveClockSeconds == null && liveLastMoveTime == null) {
+    final hasRecordedLiveClock =
+        liveClockSeconds != null && liveClockSeconds >= 0;
+    if (!hasRecordedLiveClock &&
+        !hasUsableClockDisplay(fallbackText) &&
+        result == null) {
       return const SizedBox.shrink();
     }
     return Row(
@@ -10598,9 +10806,10 @@ class _LiveBoardPlayerClock extends ConsumerWidget {
           text: fallbackText,
           isToMove: isToMove,
           result: result,
-          liveClockSeconds: liveClockSeconds,
-          liveLastMoveTime: liveLastMoveTime,
-          liveCountdownActive: isToMove && liveLastMoveTime != null,
+          liveClockSeconds: hasRecordedLiveClock ? liveClockSeconds : null,
+          liveLastMoveTime: hasRecordedLiveClock ? liveLastMoveTime : null,
+          liveCountdownActive:
+              hasRecordedLiveClock && isToMove && liveLastMoveTime != null,
         ),
       ],
     );
@@ -10678,16 +10887,21 @@ class _PlayerClock extends StatelessWidget {
   Widget build(BuildContext context) {
     // The static fallback string also decides whether the badge renders at
     // all (an empty PGN clock with no live snapshot hides it).
-    final hasLive = liveClockSeconds != null || liveLastMoveTime != null;
+    // A move timestamp alone is not a clock reading. Keep a recorded zero,
+    // but never invent 00:00 or display missing-clock sentinels.
+    final hasLive = liveClockSeconds != null && liveClockSeconds! >= 0;
     final fallbackText =
         hasLive
-            ? formatClockDisplayFromSeconds(liveClockSeconds ?? 0)
-            : formatPgnClockForDisplay(text);
+            ? formatClockDisplayFromSeconds(liveClockSeconds!)
+            : hasUsableClockDisplay(text)
+            ? formatPgnClockForDisplay(text)
+            : '';
     if (fallbackText.isEmpty && result == null) {
       return const SizedBox.shrink();
     }
 
-    final countdownActive = liveCountdownActive && liveLastMoveTime != null;
+    final countdownActive =
+        hasLive && liveCountdownActive && liveLastMoveTime != null;
 
     return SingleMotionBuilder(
       value: isToMove && result == null ? 1.0 : 0.0,
@@ -10954,16 +11168,21 @@ bool _shouldPlaySounds(WidgetRef ref, String? tabId) {
 /// Castling in dartchess is encoded as king-captures-rook; remap to the
 /// king's actual landing square so badge anchors and last-move feedback
 /// land where the king ends up rather than on the rook.
-Square? _normaliseLastMoveSquare(Move? move) {
+Square? _normaliseLastMoveSquare(
+  Position before,
+  Position after,
+  Move? move,
+) {
   if (move == null) return null;
   if (move is NormalMove) {
-    final from = move.from;
-    final to = move.to;
-    if (from == Square.e1 && to == Square.h1) return Square.g1;
-    if (from == Square.e1 && to == Square.a1) return Square.c1;
-    if (from == Square.e8 && to == Square.h8) return Square.g8;
-    if (from == Square.e8 && to == Square.a8) return Square.c8;
-    return to;
+    // A king-to-rook UCI castle must anchor to the resulting king, not its
+    // rook. The coordinates alone cannot identify castling: ordinary rook
+    // moves can use e1-a1/h1 or e8-a8/h8 too.
+    final movingPiece = before.board.pieceAt(move.from);
+    if (movingPiece != null && movingPiece.role == Role.king) {
+      return after.board.kingOf(movingPiece.color) ?? move.to;
+    }
+    return move.to;
   }
   final squares = move.squares.toList();
   return squares.isEmpty ? null : squares.last;

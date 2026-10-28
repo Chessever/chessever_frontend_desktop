@@ -1,9 +1,9 @@
-import 'dart:io' hide Platform;
+import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Small shared cache for Player Overview and Games.
 ///
@@ -26,7 +26,7 @@ class PlayerPgnCatalog {
     if (stat.type != FileSystemEntityType.file) {
       throw FileSystemException('Player PGN is not available.', clean);
     }
-    final key = Platform.isWindows ? clean.toLowerCase() : clean;
+    final key = hostIsWindows ? clean.toLowerCase() : clean;
     final cached = _entries[key];
     if (cached != null &&
         cached.sizeBytes == stat.size &&
@@ -57,7 +57,7 @@ class PlayerPgnCatalog {
 
   void invalidate(String path) {
     final clean = p.normalize(path.trim());
-    final key = Platform.isWindows ? clean.toLowerCase() : clean;
+    final key = hostIsWindows ? clean.toLowerCase() : clean;
     _entries.remove(key);
   }
 

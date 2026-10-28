@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart' show Icons;
 import 'package:flutter/widgets.dart';
 
@@ -19,7 +20,8 @@ bool libraryDatabaseShowsShowInFolder({
   required bool isCloudDatabase,
   required String? localPath,
 }) {
-  if (isCloudDatabase) return false;
+  // The web build's files live inside the page; there is no folder to show.
+  if (kIsWeb || isCloudDatabase) return false;
   return (localPath?.trim().isNotEmpty ?? false);
 }
 

@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' hide Platform;
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
@@ -9,7 +9,7 @@ import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Singleton SQLite database service for the app.
 /// Replaces SharedPreferences for all local storage except Supabase auth.
@@ -101,12 +101,9 @@ class AppDatabase {
   Future<String> _resolveDatabasePath() async {
     if (_cachedDbPath != null) return _cachedDbPath!;
 
-    // The browser build stores the database in IndexedDB through
-    // sqlite3.wasm, which takes a bare name rather than a filesystem path.
-    if (kIsWeb) {
-      _cachedDbPath = _dbFileName;
-      return _cachedDbPath!;
-    }
+    // The web build's IndexedDB-backed factory keys databases by name; there
+    // is no filesystem to resolve.
+    if (kIsWeb) return _cachedDbPath = _dbFileName;
 
     // Desktop bundles launched from Finder/Launchpad have cwd = "/", so
     // `getDatabasesPath()` (which returns a relative
@@ -114,7 +111,7 @@ class AppDatabase {
     // resolves to a non-writable filesystem root → SQLITE_CANTOPEN (code 14).
     // Pin to Application Support, which is always writable for unsandboxed
     // desktop apps.
-    if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
+    if (hostIsMacOS || hostIsWindows || hostIsLinux) {
       final dbDir = _desktopDataDirOverride.isNotEmpty
           ? Directory(_desktopDataDirOverride)
           : Directory((await getApplicationSupportDirectory()).path);
@@ -151,7 +148,9 @@ class AppDatabase {
 
     try {
       // sqflite helper uses platform-safe internals for journal mode setup.
-      await db.setJournalMode('WAL');
+      // The web build's IndexedDB storage accepts WAL once but cannot reopen
+      // a WAL database, so it keeps the default rollback journal.
+      if (!kIsWeb) await db.setJournalMode('WAL');
     } catch (e) {
       if (kDebugMode) {
         print('⚠️ SQLite journal mode WAL unavailable: $e');

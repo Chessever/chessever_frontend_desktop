@@ -1,13 +1,14 @@
+import 'converted_database_names.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' hide Platform;
+import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'cbh_dart_conversion.dart';
 import 'cbv_archive_reader.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// The application installs a navigator-backed consent handler. Non-UI callers
 /// cannot silently convert a source or register the original binary database.
@@ -69,7 +70,7 @@ class CbhConversionService {
   );
 
   static bool get isAvailable =>
-      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+      hostIsMacOS || hostIsWindows || hostIsLinux;
 
   Future<void> cancel() async {
     _cancelled = true;
@@ -118,6 +119,7 @@ class CbhConversionService {
                 'Converted Databases',
               ),
             );
+        registerConvertedDatabaseDirectory(root.path);
         try {
           var indexPath = source;
           if (p.extension(source).toLowerCase() == '.cbv') {
@@ -139,6 +141,16 @@ class CbhConversionService {
             final count = conversion.preservedAnnotationRecords;
             _preservationSummary =
                 '$count ${count == 1 ? 'record has' : 'records have'} ChessBase annotations retained exactly in PGN headers. Some annotation types are not displayed.';
+          }
+          if (conversion.normalizedMetadataRecords != 0) {
+            final count = conversion.normalizedMetadataRecords;
+            final detail =
+                '$count ${count == 1 ? 'record contains' : 'records contain'} '
+                'metadata tabs displayed as spaces; original metadata bytes are retained in PGN headers.';
+            _preservationSummary = [
+              if (_preservationSummary != null) _preservationSummary!,
+              detail,
+            ].join('\n');
           }
           if (_cancelled) {
             await copy.delete();

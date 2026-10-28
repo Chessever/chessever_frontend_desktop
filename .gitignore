@@ -81,6 +81,8 @@ analysis_benchmark.json
 .pub-cache/
 .pub/
 build/
+# wrangler dev state for the web build (wrangler.web.jsonc).
+.wrangler/
 build_codex*/
 flutter_*.png
 # Golden-test diff artifacts written next to a failing golden test.
@@ -239,7 +241,3 @@ sparkle_priv.pem
 !docs/agents/*.md
 # Kiro CLI runtime lock (machine-local).
 .kiro/settings/*.lock
-# Browser build (scripts/build_web.sh): sqflite's generated shared worker and
-# the pinned sqlite3.wasm it downloads.
-/web/sqflite_sw.js
-/web/sqlite3.wasm

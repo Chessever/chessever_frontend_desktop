@@ -3,6 +3,8 @@ import 'dart:async';
 
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
+import 'package:chessever/desktop/shell/browser_safe_shortcuts.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -78,8 +80,7 @@ import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
-import 'package:chessever/desktop/web/desktop_web_support.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const _sidebarExpandedPreferenceKey = 'desktop_sidebar_expanded_v1';
 const _sidebarAutoCollapseBreakpoint = 1500.0;
@@ -436,8 +437,7 @@ class DesktopShell extends HookConsumerWidget {
           Future<void> closeActiveTabWithUnsavedAnalysisGuard() async {
             final id = ref.read(desktopTabsProvider).activeId;
             if (id == null) return;
-            final session = ref.read(boardPaneSessionByTabIdProvider)[id];
-            if (boardSessionHasUnsavedAnalysis(session)) {
+            if (boardTabHasUnsavedAnalysis(tabId: id, read: ref.read)) {
               if (closeConfirmationOpen.value) return;
               closeConfirmationOpen.value = true;
               final confirmed = await confirmDiscardBoardAnalysis(
@@ -576,14 +576,29 @@ class DesktopShell extends HookConsumerWidget {
             // maps `closeWindow` (BoardActionKey) to Esc — that mapping is
             // applied later in this builder so the board's path takes
             // precedence when a board tab is active. Both paths route to
-            // the same `desktopTabsProvider.close(activeTabId)` call.
-            const SingleActivator(LogicalKeyboardKey.escape):
-                const _CloseTabIntent(),
+            // the same `desktopTabsProvider.close(activeTabId)` call. Not in
+            // a browser, where Esc means "dismiss" (it closed a profile tab
+            // mid-edit); Alt+W closes a tab there.
+            if (!kIsWeb)
+              const SingleActivator(LogicalKeyboardKey.escape):
+                  const _CloseTabIntent(),
             const SingleActivator(LogicalKeyboardKey.keyT, meta: true):
                 const _NewTabIntent(),
             const SingleActivator(LogicalKeyboardKey.keyB, meta: true):
                 const _ToggleSidebarIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyB, control: true):
+                const _ToggleSidebarIntent(),
           };
+          if (kIsWeb) {
+            shellShortcuts.addAll(
+              browserSafeTabShortcuts(
+                closeTab: const _CloseTabIntent(),
+                newTab: const _NewTabIntent(),
+                nextTab: const _NextTabIntent(),
+                previousTab: const _PreviousTabIntent(),
+              ),
+            );
+          }
           for (final binding in desktopMainRouteShortcutBindings()) {
             shellShortcuts[SingleActivator(
               binding.key,
@@ -795,7 +810,7 @@ class DesktopShell extends HookConsumerWidget {
                                     onOpenUserProfile:
                                         () => openCurrentUserProfileTab(ref),
                                     showSidebarToggle:
-                                        Platform.isMacOS && !sidebarExpanded,
+                                        hostIsMacOS && !sidebarExpanded,
                                     sidebarAutoCollapsed: autoCollapsed,
                                     onToggleSidebar: toggleSidebar,
                                   ),
@@ -1019,9 +1034,6 @@ Widget resolveDesktopTabContent(
       title: 'No tab',
       description: 'Open a tab from the sidebar to start.',
     );
-  }
-  if (!desktopTabKindAvailable(tab.kind)) {
-    return DesktopAppOnlyPane(kind: tab.kind);
   }
   switch (tab.kind) {
     case TabKind.inbox:

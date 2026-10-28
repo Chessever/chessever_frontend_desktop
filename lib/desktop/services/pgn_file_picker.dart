@@ -24,18 +24,13 @@ class PgnFilePicker {
         type: FileType.custom,
         allowedExtensions: const ['pgn'],
         allowMultiple: false,
-        // A browser hands over the file's bytes and never a path.
-        withData: kIsWeb,
+        withData: false,
       );
       if (result == null || result.files.isEmpty) return false;
-      final file = result.files.single;
-      final path = kIsWeb ? file.name : file.path;
+      final path = result.files.single.path;
       if (path == null) return false;
 
-      final pgn =
-          kIsWeb
-              ? _pgnTextFromBytes(file.bytes, path, onError: onError)
-              : await loadPgnTextForBoard(path, onError: onError);
+      final pgn = await loadPgnTextForBoard(path, onError: onError);
       if (pgn == null) return false;
 
       openDetachedPgnTab(
@@ -61,7 +56,15 @@ Future<String?> loadPgnTextForBoard(
 }) async {
   try {
     final bytes = await readStableLocalChessFileBytesInWorker(path);
-    return _pgnTextFromBytes(bytes, path, onError: onError);
+    final pgn = utf8.decode(bytes, allowMalformed: true);
+    if (pgn.trim().isEmpty) {
+      onError?.call(
+        'No playable PGN entries were found in '
+        '"${localChessFileNameFromPath(path)}".',
+      );
+      return null;
+    }
+    return pgn;
   } on LocalChessFileAccessException catch (e) {
     onError?.call(e.userMessage);
     if (kDebugMode) debugPrint('⚠️ loadPgnTextForBoard: $e');
@@ -71,20 +74,4 @@ Future<String?> loadPgnTextForBoard(
     if (kDebugMode) debugPrint('⚠️ loadPgnTextForBoard: $e');
     return null;
   }
-}
-
-String? _pgnTextFromBytes(
-  List<int>? bytes,
-  String path, {
-  void Function(String message)? onError,
-}) {
-  final pgn = bytes == null ? '' : utf8.decode(bytes, allowMalformed: true);
-  if (pgn.trim().isEmpty) {
-    onError?.call(
-      'No playable PGN entries were found in '
-      '"${localChessFileNameFromPath(path)}".',
-    );
-    return null;
-  }
-  return pgn;
 }

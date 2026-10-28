@@ -1,4 +1,5 @@
-import 'dart:io' hide Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 
@@ -7,7 +8,8 @@ import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/library/utils/folder_pgn_exporter.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/text_download.dart';
 
 /// Outcome of [exportFolderToDisk] surfaced to the calling UI so it can
 /// render accurate desktop feedback (or stay silent on user cancel).
@@ -79,6 +81,14 @@ Future<LibraryExportResult> _exportSingle({
     return const LibraryExportResult(cancelled: false);
   }
   final defaultName = suggestedExportFilename(folder.name);
+  if (kIsWeb) {
+    downloadTextFile(defaultName, pgn);
+    return LibraryExportResult(
+      cancelled: false,
+      writtenFiles: [defaultName],
+      totalGames: _countGames(pgn),
+    );
+  }
   final destination = await FilePicker.platform.saveFile(
     dialogTitle: 'Export "${folder.name}" as PGN',
     fileName: defaultName,
@@ -116,6 +126,19 @@ Future<LibraryExportResult> _exportTree({
   if (files.isEmpty) {
     return const LibraryExportResult(cancelled: false);
   }
+  // Browsers cannot write into a chosen folder: each file is a download.
+  if (kIsWeb) {
+    var totalGames = 0;
+    for (final entry in files) {
+      downloadTextFile(entry.filename, entry.pgn);
+      totalGames += entry.gameCount;
+    }
+    return LibraryExportResult(
+      cancelled: false,
+      writtenFiles: [for (final entry in files) entry.filename],
+      totalGames: totalGames,
+    );
+  }
   final destination = await FilePicker.platform.getDirectoryPath(
     dialogTitle: 'Choose a folder to export "${folder.name}"',
   );
@@ -123,7 +146,7 @@ Future<LibraryExportResult> _exportTree({
     return const LibraryExportResult(cancelled: true);
   }
 
-  final separator = Platform.isWindows ? '\\' : '/';
+  final separator = hostIsWindows ? '\\' : '/';
   final written = <String>[];
   var totalGames = 0;
   for (final entry in files) {
@@ -160,6 +183,14 @@ Future<LibraryExportResult> exportSingleAnalysisToDisk({
     final defaultName = suggestedExportFilename(
       analysis.title.isEmpty ? 'game' : analysis.title,
     );
+    if (kIsWeb) {
+      downloadTextFile(defaultName, pgn);
+      return LibraryExportResult(
+        cancelled: false,
+        writtenFiles: [defaultName],
+        totalGames: 1,
+      );
+    }
     final destination = await FilePicker.platform.saveFile(
       dialogTitle: 'Export "${analysis.title}" as PGN',
       fileName: defaultName,

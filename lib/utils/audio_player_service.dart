@@ -4,7 +4,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:chessever/utils/sound_preferences.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/web_sfx_player_stub.dart'
+    if (dart.library.js_interop) 'package:chessever/web/web_sfx_player.dart';
 
 /// Sound effect types — used instead of raw AudioSource to avoid stale native
 /// handles after the SoLoud engine is torn down and reinitialized.
@@ -35,14 +37,14 @@ class AudioPlayerService with WidgetsBindingObserver {
   bool _initialized = false;
   bool _assetsLoaded = false;
   Future<void>? _initializing;
-
-  /// In a browser, a failed engine start aborts flutter_soloud's WebAssembly
-  /// module, and every later call into it aborts again. Once that happens the
-  /// session stays silent instead of retrying on every move.
-  bool _browserEngineFailed = false;
   bool _audioSessionConfigured = false;
   SoundTheme _soundTheme = SoundTheme.standard;
   double _soundVolume = kDefaultSoundVolume;
+
+  // The web build never starts SoLoud (its web backend blocks the main
+  // thread); sounds play through WebSfxPlayer from these resolved paths.
+  final WebSfxPlayer _webPlayer = WebSfxPlayer();
+  Future<Map<SfxType, String>>? _webPaths;
 
   /// Applies the user's move-sound theme and volume.
   Future<void> applySoundPreferences({
@@ -58,7 +60,8 @@ class AudioPlayerService with WidgetsBindingObserver {
     if (themeChanged) {
       _assetsLoaded = false;
       _initialized = false;
-      if (player.isInitialized) {
+      _webPaths = null;
+      if (!kIsWeb && player.isInitialized) {
         try {
           await player.disposeAllSources();
         } catch (err, st) {
@@ -69,6 +72,10 @@ class AudioPlayerService with WidgetsBindingObserver {
       }
     }
 
+    if (preview && kIsWeb) {
+      await _playWeb(SfxType.move);
+      return;
+    }
     if (preview) {
       await initializeAndLoadAllAssets(force: themeChanged);
       if (player.isInitialized && _assetsLoaded) {
@@ -81,7 +88,7 @@ class AudioPlayerService with WidgetsBindingObserver {
   Future<void> _configureAudioSession() async {
     if (_audioSessionConfigured) return;
 
-    if (Platform.isIOS) {
+    if (hostIsIOS) {
       try {
         // Configure iOS AVAudioSession to ambient mode which:
         // - Doesn't interrupt other audio (music, podcasts, etc.)
@@ -104,7 +111,8 @@ class AudioPlayerService with WidgetsBindingObserver {
   }
 
   Future<void> initializeAndLoadAllAssets({bool force = false}) {
-    if (_browserEngineFailed) return Future.value();
+    if (kIsWeb) return _resolveWebPaths();
+
     // Always reuse the in-flight initialization to avoid racing init/deinit.
     if (_initializing != null) return _initializing!;
 
@@ -161,7 +169,7 @@ class AudioPlayerService with WidgetsBindingObserver {
   void playSfxForSan(String san) => playSound(sfxTypeForSan(san));
 
   Future<void> _playWithRecovery(SfxType type) async {
-    if (_browserEngineFailed) return;
+    if (kIsWeb) return _playWeb(type);
     try {
       await initializeAndLoadAllAssets();
       // soloud 4.x: play() is sync — no await.
@@ -177,6 +185,22 @@ class AudioPlayerService with WidgetsBindingObserver {
         debugPrint('⚠️ Audio playback failed after recovery: $err\n$st');
       }
     }
+  }
+
+  Future<Map<SfxType, String>> _resolveWebPaths() {
+    return _webPaths ??= () async {
+      final paths = await Future.wait(SfxType.values.map(_assetPathFor));
+      _webPlayer.preload(paths);
+      return {
+        for (var i = 0; i < SfxType.values.length; i++)
+          SfxType.values[i]: paths[i],
+      };
+    }();
+  }
+
+  Future<void> _playWeb(SfxType type) async {
+    final paths = await _resolveWebPaths();
+    _webPlayer.play(paths[type]!, _soundVolume);
   }
 
   Future<String> _assetPathFor(SfxType type) async {
@@ -255,12 +279,7 @@ class AudioPlayerService with WidgetsBindingObserver {
     await _configureAudioSession();
 
     if (!player.isInitialized) {
-      try {
-        await SoLoud.instance.init();
-      } catch (_) {
-        if (kIsWeb) _browserEngineFailed = true;
-        rethrow;
-      }
+      await SoLoud.instance.init();
       // Re-apply after init just in case SoLoud native layer reset the category
       _audioSessionConfigured = false;
       await _configureAudioSession();
@@ -337,6 +356,7 @@ class AudioPlayerService with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (kIsWeb) return;
     debugPrint('🎧 AudioPlayerService: lifecycle changed to $state');
     if (state == AppLifecycleState.resumed) {
       // Only reinitialize if the native engine is gone. Avoids unnecessary

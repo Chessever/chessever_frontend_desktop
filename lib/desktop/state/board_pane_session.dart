@@ -42,9 +42,12 @@ class BoardPaneSession {
     required this.dirtySinceLoad,
     required this.hasUnseenMoves,
     required this.undoStack,
+    this.lastSavedAnalysisPgn,
+    this.lastBroadcastPgn,
     this.savedSourceSeedPgn,
     this.hasCommittedSave = false,
     this.detachedSeedPgn,
+    this.userNags = const <int, List<int>>{},
   });
 
   final ChessGame game;
@@ -63,11 +66,23 @@ class BoardPaneSession {
   /// must not reapply it over the committed baseline or post-save edits.
   final String? savedSourceSeedPgn;
 
+  /// Exact successful save baseline, independent of incoming Event PGNs.
+  final String? lastSavedAnalysisPgn;
+
+  /// Canonical feed provenance must never become a private saved tree.
+  final String? lastBroadcastPgn;
+
   /// Clean after saving is not the unchanged opening source.
   final bool hasCommittedSave;
 
   /// Transport seed already represented by the restored working tree.
   final String? detachedSeedPgn;
+
+  /// The tab's user NAGs (`userMoveNagsProvider`) when this was written. They
+  /// stay out of [game]: a restore keeps reading them from the provider, so a
+  /// copy baked into the tree would show twice and survive being toggled off.
+  /// Only the close guard and exports merge them in.
+  final Map<int, List<int>> userNags;
 }
 
 /// Mounted panes expose a synchronous reader: the retained post-frame session

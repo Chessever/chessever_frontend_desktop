@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' hide Platform;
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -7,7 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/auth/guest_account_merge.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Reads and writes one account's mergeable rows.
 abstract interface class GuestAccountMergeGateway {
@@ -337,7 +337,7 @@ class FileGuestMergePendingStore implements GuestMergePendingStore {
   Future<File> _file() async {
     final base = await _directory();
     return File(
-      '${base.path}${Platform.pathSeparator}guest_merge_pending_v1.json',
+      '${base.path}${hostPathSeparator}guest_merge_pending_v1.json',
     );
   }
 

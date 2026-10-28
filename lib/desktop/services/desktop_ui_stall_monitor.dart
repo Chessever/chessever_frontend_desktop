@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Detects Windows UI-isolate stalls after the event loop becomes responsive.
 ///
@@ -34,7 +34,7 @@ class DesktopUiStallMonitor with WidgetsBindingObserver {
   AppLifecycleState? _lifecycleState;
 
   void start() {
-    if (!Platform.isWindows || _timer != null) return;
+    if (!hostIsWindows || _timer != null) return;
 
     final binding = WidgetsBinding.instance;
     binding.addObserver(this);

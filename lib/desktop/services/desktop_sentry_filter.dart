@@ -28,6 +28,8 @@ const List<String> _dropContains = <String>[
   // The user closed the browser tab without finishing sign-in.
   'oauth flow timed out', // CHESSEVER-238/1FM
   'sign-in timed out', // CHESSEVER-1ZG
+  // ...or closed the Mac App Store edition's in-app sign-in sheet.
+  'sign-in was canceled',
   // flutter_cache_manager racing itself on one image key; the image loads.
   'unique constraint failed: cacheobject.key', // CHESSEVER-22B
 ];

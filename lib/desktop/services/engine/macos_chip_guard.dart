@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' hide Platform;
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -7,7 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:chessever/desktop/services/engine/macos_release_arch.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/platform/io_platform.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Resolves the host machine arch for wrong-chip detection.
 ///
@@ -58,7 +58,7 @@ Future<MacOsChipMismatch?> detectMacOsChipMismatch({
   MacOsReleaseArch? buildFlavor,
   MacOsHostMachineResolver machineResolver = defaultMacOsHostMachine,
 }) async {
-  if (!Platform.isMacOS) return null;
+  if (!hostIsMacOS) return null;
   final flavor = buildFlavor ?? macosReleaseArchFromDefine();
   final machine = await machineResolver();
   return evaluateMacOsChipMismatch(
@@ -113,7 +113,7 @@ void scheduleMacOsWrongChipCheck({
   MacOsReleaseArch? buildFlavor,
   MacOsHostMachineResolver machineResolver = defaultMacOsHostMachine,
 }) {
-  if (!Platform.isMacOS) return;
+  if (!hostIsMacOS) return;
   unawaited(() async {
     try {
       final mismatch = await detectMacOsChipMismatch(

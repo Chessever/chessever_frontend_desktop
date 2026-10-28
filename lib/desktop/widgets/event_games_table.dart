@@ -3051,6 +3051,32 @@ Future<void> _navigateActiveEventGameNow(
     _normalizeRailTab(ref.read(_gameRailTabProvider(activeTabId)), rail),
   );
   var navigationRoundCatalog = const <EventRailRoundMetadata>[];
+  final eventKey = activeArgs?.eventGamesKey;
+  if ((resolved == null || resolved.games.isEmpty) &&
+      eventKey != null &&
+      activeArgs?.eventPlayerScope == null) {
+    // The games list is collapsed, so nothing has loaded this event's games
+    // yet; load them here so Cmd/Ctrl+Up/Down works without opening it.
+    final provider = eventRailGamesProvider(
+      EventRailGamesProviderKey(ownerId: activeTabId, eventKey: eventKey),
+    );
+    // Held until the games are read below, or the provider would dispose.
+    final hold = ref.listenManual(provider, (_, _) {});
+    try {
+      await ref.read(provider.future);
+      if (!context.mounted || isCurrentOwner?.call() == false) return;
+      activeArgs = _readNavigationBoardArgs(ref, activeTabId);
+      legacy = activeArgs == null ? ref.read(tournamentGamesProvider) : null;
+      rail = _resolveGameRail(activeArgs, legacy);
+      resolved = rail.resolve(
+        _normalizeRailTab(ref.read(_gameRailTabProvider(activeTabId)), rail),
+      );
+    } catch (_) {
+      return;
+    } finally {
+      hold.close();
+    }
+  }
   if (resolved == null || resolved.games.isEmpty) return;
 
   // A keyed event rail may still be publishing its initial bounded page.
@@ -3307,7 +3333,9 @@ BoardTabGameArgs? _readNavigationBoardArgs(WidgetRef ref, String activeTabId) {
                 fallbackRail,
               ),
             );
-    if (selected?.kind == _GameListKind.event) {
+    // With no rows of its own yet (opened from a link, games list closed),
+    // the event rail provider is the only place this tab's games can be.
+    if (selected?.kind == _GameListKind.event || fallbackRail.isEmpty) {
       final providerState =
           ref
               .read(
@@ -3825,6 +3853,12 @@ TournamentGameSummary _mergeFreshEventGameSummary(
     hasPgn: fresh.hasPgn || current.hasPgn,
     tourId: fresh.tourId.isNotEmpty ? fresh.tourId : current.tourId,
     tourSlug: fresh.tourSlug.isNotEmpty ? fresh.tourSlug : current.tourSlug,
+    timeControlText: (fresh.timeControlText?.trim().isNotEmpty ?? false)
+        ? fresh.timeControlText
+        : fresh.id == current.id &&
+              (fresh.tourId.isEmpty || fresh.tourId == current.tourId)
+        ? current.timeControlText
+        : null,
     whiteFederation:
         fresh.whiteFederation.isNotEmpty
             ? fresh.whiteFederation
@@ -5256,8 +5290,9 @@ Future<bool> _confirmReplaceActiveBoardGameIfNeeded({
   // a no-op unless the caller explicitly asked for a new tab.
   if (selectedId == nextGame.id) return false;
 
-  final session = ref.read(boardPaneSessionByTabIdProvider)[activeTabId];
-  if (!boardSessionHasUnsavedAnalysis(session)) return true;
+  if (!boardTabHasUnsavedAnalysis(tabId: activeTabId, read: ref.read)) {
+    return true;
+  }
 
   if (context == null || !context.mounted) return false;
   if (_eventGameReplacementConfirmationOpen) return false;
