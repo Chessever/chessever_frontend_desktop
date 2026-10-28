@@ -52,7 +52,7 @@ List<DesktopUnsavedBoard> collectDesktopUnsavedBoards({
     }
     session ??= retainedSessions[tabId];
     if (!boardSessionHasUnsavedAnalysis(session)) continue;
-    final pgn = exportGameToPgn(session!.game).trim();
+    final pgn = exportGameToPgn(boardSessionUserGame(session!)).trim();
     if (pgn.isEmpty) continue;
     final title = titlesByTabId[tabId]?.trim();
     result.add(

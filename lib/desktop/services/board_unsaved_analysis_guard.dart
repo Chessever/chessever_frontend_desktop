@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/services/board_report_output.dart'
+    show mergeUserMainlineNags;
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -28,11 +30,36 @@ bool shouldConfirmBoardAnalysisDiscard({
   return current != applied;
 }
 
+/// The board as the user sees it: the retained tree plus the tab's NAGs.
+/// For comparison and export only; a restore uses [BoardPaneSession.game].
+ChessGame boardSessionUserGame(BoardPaneSession session) =>
+    mergeUserMainlineNags(session.game, session.userNags);
+
+/// The saved baseline after an Event feed packet. A packet is not the user's
+/// analysis: when the board matched its last successful save right before the
+/// packet, the board after it is the new clean baseline. Otherwise the user
+/// already had unsaved edits and the old baseline stays, so they still warn.
+String? savedAnalysisBaselineAfterFeed({
+  required String? lastSavedAnalysisPgn,
+  required String boardPgnBeforeFeed,
+  required String boardPgnAfterFeed,
+}) {
+  final saved = lastSavedAnalysisPgn?.trim();
+  if (saved == null || saved.isEmpty) return lastSavedAnalysisPgn;
+  final matchedSave = !shouldConfirmBoardAnalysisDiscard(
+    dirtySinceLoad: true,
+    currentPgn: boardPgnBeforeFeed,
+    lastAppliedPgn: null,
+    lastSavedAnalysisPgn: saved,
+  );
+  return matchedSave ? boardPgnAfterFeed.trim() : lastSavedAnalysisPgn;
+}
+
 bool boardSessionHasUnsavedAnalysis(BoardPaneSession? session) {
   if (session == null) return false;
   return shouldConfirmBoardAnalysisDiscard(
     dirtySinceLoad: session.dirtySinceLoad,
-    currentPgn: exportGameToPgn(session.game),
+    currentPgn: exportGameToPgn(boardSessionUserGame(session)),
     lastAppliedPgn: session.lastAppliedPgn,
     lastSavedAnalysisPgn: session.lastSavedAnalysisPgn,
   );
