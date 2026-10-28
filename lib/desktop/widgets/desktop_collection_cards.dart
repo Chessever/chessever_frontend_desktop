@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
@@ -39,8 +40,7 @@ class DesktopCollectionCards extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 24),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
+      child: _CollectionShelf(
         child: Row(
           children: [
             SizedBox(
@@ -71,7 +71,9 @@ class DesktopCollectionCards extends StatelessWidget {
               title: 'Live',
               hint: 'All live games',
               icon: Icons.bolt_rounded,
-              colors: const [Color(0xFF0EA5E9), Color(0xFF14B8A6)],
+              // Deep enough that the white subtitle reads (the lighter
+              // sky-to-teal measured about 2.1:1).
+              colors: const [Color(0xFF0369A1), Color(0xFF0F766E)],
               onTap: () => onSmartCollectionTap(PremiumGamesType.live),
             ),
             const SizedBox(width: _gap),
@@ -191,7 +193,7 @@ class _SmartCollectionCardState extends State<_SmartCollectionCard> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: kWhiteColor.withValues(alpha: 0.76),
+                            color: kWhiteColor.withValues(alpha: 0.9),
                             fontSize: 11,
                           ),
                         ),
@@ -449,6 +451,100 @@ class _CollectionCardState extends State<_CollectionCard> {
                 ),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The shelf scrolls sideways when the window is too narrow for every card:
+/// a vertical mouse wheel moves it, and the edge with more cards beyond it
+/// fades out so the hidden cards read as "more this way".
+class _CollectionShelf extends StatefulWidget {
+  const _CollectionShelf({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_CollectionShelf> createState() => _CollectionShelfState();
+}
+
+class _CollectionShelfState extends State<_CollectionShelf> {
+  final ScrollController _controller = ScrollController();
+  bool _moreLeft = false;
+  bool _moreRight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_updateEdges);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateEdges());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _updateEdges() {
+    if (!mounted || !_controller.hasClients) return;
+    final position = _controller.position;
+    final moreLeft = position.pixels > position.minScrollExtent + 1;
+    final moreRight = position.pixels < position.maxScrollExtent - 1;
+    if (moreLeft != _moreLeft || moreRight != _moreRight) {
+      setState(() {
+        _moreLeft = moreLeft;
+        _moreRight = moreRight;
+      });
+    }
+  }
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_controller.hasClients) return;
+    final delta = event.scrollDelta;
+    final position = _controller.position;
+    if (delta.dy.abs() <= delta.dx.abs() || position.maxScrollExtent <= 0) {
+      return;
+    }
+    final target = (position.pixels + delta.dy).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    // Hand the wheel to the page once the shelf is at its end.
+    if (target == position.pixels) return;
+    GestureBinding.instance.pointerSignalResolver.register(
+      event,
+      (_) => _controller.jumpTo(target),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationListener<ScrollMetricsNotification>(
+      onNotification: (_) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _updateEdges());
+        return false;
+      },
+      child: Listener(
+        onPointerSignal: _onPointerSignal,
+        child: ShaderMask(
+          blendMode: BlendMode.dstIn,
+          shaderCallback:
+              (bounds) => LinearGradient(
+                colors: [
+                  _moreLeft ? Colors.transparent : Colors.black,
+                  Colors.black,
+                  Colors.black,
+                  _moreRight ? Colors.transparent : Colors.black,
+                ],
+                stops: const [0, 0.06, 0.94, 1],
+              ).createShader(bounds),
+          child: SingleChildScrollView(
+            controller: _controller,
+            scrollDirection: Axis.horizontal,
+            child: widget.child,
           ),
         ),
       ),

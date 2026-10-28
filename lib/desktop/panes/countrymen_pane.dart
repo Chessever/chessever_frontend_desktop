@@ -1391,7 +1391,9 @@ class _CountrymenHero extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           _StatChip(
-            label: 'Total',
+            // The count is today's games (see the build above); "Total" over
+            // a list of 186 earlier games read as a bug.
+            label: 'Today',
             value: totalCount,
             tone: _StatTone.neutral,
             delay: const Duration(milliseconds: 220),
