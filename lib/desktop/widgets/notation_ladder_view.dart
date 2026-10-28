@@ -2833,7 +2833,8 @@ class _InlineMove extends StatelessWidget {
           hasStoredQualityNag: (move.nags ?? const <int>[]).any(
             _isMoveQualityNag,
           ),
-
+          clockText: _formatClockChip(move.clockTime),
+          clockSeconds: _clockSeconds(move.clockTime),
           onSetUserQualityNag:
               onSetUserQualityNag == null
                   ? null
@@ -3344,7 +3345,8 @@ class _PairRow extends StatelessWidget {
                         userHasQualityNag: whiteUserHasQuality,
                         hasStoredQualityNag: (whiteMove!.nags ?? const <int>[])
                             .any(_isMoveQualityNag),
-
+                        clockText: _formatClockChip(whiteMove!.clockTime),
+                        clockSeconds: _clockSeconds(whiteMove!.clockTime),
                         onSetUserQualityNag:
                             onSetUserQualityNag == null
                                 ? null
@@ -3407,7 +3409,8 @@ class _PairRow extends StatelessWidget {
                         userHasQualityNag: blackUserHasQuality,
                         hasStoredQualityNag: (blackMove!.nags ?? const <int>[])
                             .any(_isMoveQualityNag),
-
+                        clockText: _formatClockChip(blackMove!.clockTime),
+                        clockSeconds: _clockSeconds(blackMove!.clockTime),
                         onSetUserQualityNag:
                             onSetUserQualityNag == null
                                 ? null
@@ -3482,7 +3485,8 @@ class _LadderChip extends StatefulWidget {
     required this.useFigurine,
     required this.pieceAssets,
     this.compact = false,
-
+    this.clockText,
+    this.clockSeconds,
     this.variationHead = false,
     this.mainlineDominant = false,
   });
@@ -3521,6 +3525,13 @@ class _LadderChip extends StatefulWidget {
   /// matching the reference hierarchy.
   final bool mainlineDominant;
 
+  /// Compact `M:SS` from a `[%clk]` PGN extension, shown only when the move
+  /// has no elapsed time. Null hides the clock pill.
+  final String? clockText;
+
+  /// Total seconds remaining at the clock annotation; used to colour
+  /// the badge red when under 30s (time-pressure indicator).
+  final int? clockSeconds;
 
   @override
   State<_LadderChip> createState() => _LadderChipState();
@@ -3882,6 +3893,8 @@ class _LadderChipState extends State<_LadderChip>
     final transpositionCount = transpositionPointers?.length ?? 0;
 
     // Timing is presentation-only; stored remaining clocks stay unchanged.
+    // Elapsed time leads; the remaining clock shows only when it is unknown.
+    final clockText = elapsedLabel == null ? widget.clockText : null;
     final children = <Widget>[
       if (widget.compact) sanText else Flexible(child: sanText),
       if (classificationType != null) ...[
@@ -3933,6 +3946,13 @@ class _LadderChipState extends State<_LadderChip>
           text: elapsedLabel,
           selected: widget.selected,
           tooltip: timing!.tooltip,
+        ),
+      ] else if (clockText != null) ...[
+        const SizedBox(width: 6),
+        _ClockBadge(
+          text: clockText,
+          selected: widget.selected,
+          totalSeconds: widget.clockSeconds,
         ),
       ],
     ];
@@ -4263,6 +4283,46 @@ class _MoveCommentEditorState extends State<_MoveCommentEditor> {
   }
 }
 
+/// Tiny `M:SS` pill rendered to the right of a move chip when the PGN
+/// supplied a `[%clk]` extension but no elapsed time. Inverts color when the
+/// chip is selected so it stays readable on the cyan active background. Goes
+/// red under 30s remaining as a time-pressure cue chess masters scan for.
+class _ClockBadge extends StatelessWidget {
+  const _ClockBadge({
+    required this.text,
+    required this.selected,
+    this.totalSeconds,
+  });
+
+  final String text;
+  final bool selected;
+  final int? totalSeconds;
+
+  @override
+  Widget build(BuildContext context) {
+    final lowOnTime = totalSeconds != null && totalSeconds! < 30;
+    final Color fg;
+    if (selected) {
+      fg = kBackgroundColor.withValues(alpha: 0.85);
+    } else if (lowOnTime) {
+      fg = kRedColor;
+    } else {
+      fg = const Color(0xFF8E8E93);
+    }
+    return Text(
+      text,
+      style: TextStyle(
+        color: fg,
+        fontSize: 10,
+        fontWeight: lowOnTime ? FontWeight.w700 : FontWeight.w500,
+        height: 1.0,
+        letterSpacing: -0.2,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+  }
+}
+
 /// Neutral elapsed label: a quick move must never look like a low clock.
 class _ElapsedTimeBadge extends StatelessWidget {
   const _ElapsedTimeBadge({required this.text, required this.selected, required this.tooltip});
@@ -4478,6 +4538,45 @@ String _branchLabel(int variationIndex) {
 }
 
 // Elapsed-time formatting lives in notation_move_timing.dart.
+
+/// Compact clock display from `[%clk H:MM:SS]`: drops leading zero hour,
+/// shows `M:SS` under a minute. Returns null when input is null/empty.
+String? _formatClockChip(String? clockTime) {
+  if (clockTime == null || clockTime.isEmpty) return null;
+  final parts = clockTime.trim().split(':');
+  if (parts.length == 3) {
+    final h = int.tryParse(parts[0]) ?? 0;
+    final m = int.tryParse(parts[1]) ?? 0;
+    final s = int.tryParse(parts[2]) ?? 0;
+    if (h > 0) return '$h:${m.toString().padLeft(2, '0')}';
+    if (m > 0) return '$m:${s.toString().padLeft(2, '0')}';
+    return '0:${s.toString().padLeft(2, '0')}';
+  }
+  return clockTime.trim();
+}
+
+/// Total seconds remaining at a `[%clk H:MM:SS]` annotation. Returns
+/// null on parse failure. Used by the chip badge to colour clocks under
+/// 30s red — the visual cue chess masters use to spot time-pressure
+/// blunders when reviewing a game.
+int? _clockSeconds(String? clockTime) {
+  if (clockTime == null || clockTime.isEmpty) return null;
+  final parts = clockTime.trim().split(':');
+  if (parts.length == 3) {
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    final s = int.tryParse(parts[2]);
+    if (h == null || m == null || s == null) return null;
+    return h * 3600 + m * 60 + s;
+  }
+  if (parts.length == 2) {
+    final m = int.tryParse(parts[0]);
+    final s = int.tryParse(parts[1]);
+    if (m == null || s == null) return null;
+    return m * 60 + s;
+  }
+  return null;
+}
 
 /// Result chip text from PGN headers. Returns "1–0", "0–1", "½–½", or
 /// null when game isn't decided.

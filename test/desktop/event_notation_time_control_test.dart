@@ -23,6 +23,7 @@ import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/utils/pgn_time_control.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -522,6 +523,23 @@ void main() {
         source(rawPgn, control: control),
       );
       expect(metadata['TimeControl'], isNull, reason: control);
+    }
+  });
+
+  test('an unsupported detailed control still keeps the speed category', () {
+    for (final control in [
+      'Armageddon: White 5 min, Black 4 min',
+      '1 min + 2 sec delay',
+      '5 min White vs 4 min Black',
+    ]) {
+      final metadata = <String, dynamic>{};
+      enrichPgnTimeControlMetadata(
+        metadata,
+        timeControlText: control,
+        category: 'blitz',
+      );
+      // The field parse is skipped, but the category fallback still applies.
+      expect(metadata['TimeControl'], 'blitz', reason: control);
     }
   });
 

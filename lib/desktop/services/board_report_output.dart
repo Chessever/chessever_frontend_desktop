@@ -28,6 +28,45 @@ Future<ChessGame> resolveBoardLibrarySaveGame({
   required Future<ChessGame> Function() resolveOpeningSource,
 }) async => useOpeningSource ? await resolveOpeningSource() : workingGame;
 
+/// Overlays a tab's user NAGs (`userMoveNagsProvider`) on the mainline. A user
+/// quality glyph replaces the move's other quality and classification marks
+/// and adds [kChesseverUserQualityOverrideNag]. Merging twice gives the same
+/// result as merging once.
+ChessGame mergeUserMainlineNags(
+  ChessGame game,
+  Map<int, List<int>> userNags,
+) {
+  if (userNags.isEmpty) return game;
+  bool isQuality(int nag) =>
+      (nag >= 1 && nag <= 7) || isChesseverClassificationNag(nag);
+  var changed = false;
+  final mainline = <ChessMove>[
+    for (var index = 0; index < game.mainline.length; index++)
+      (() {
+        final overlay = userNags[index] ?? const <int>[];
+        if (overlay.isEmpty) return game.mainline[index];
+        final existing = game.mainline[index].nags ?? const <int>[];
+        final overlayHasQuality = overlay.any(isQuality);
+        final mergedNags = <int>[
+          ...overlay,
+          ...existing.where(
+            (nag) =>
+                !overlay.contains(nag) &&
+                !(overlayHasQuality &&
+                    (isQuality(nag) ||
+                        nag == kChesseverUserQualityOverrideNag)),
+          ),
+          if (overlayHasQuality) kChesseverUserQualityOverrideNag,
+        ];
+        changed = true;
+        return game.mainline[index].copyWith(
+          nags: List<int>.unmodifiable(mergedNags),
+        );
+      })(),
+  ];
+  return changed ? game.copyWith(mainline: mainline) : game;
+}
+
 // Quality and positional symbols are independent fields. A late positional
 // edit must not accidentally erase committed report quality, while an explicit
 // late quality edit/clear must replace the whole verdict (including metadata).

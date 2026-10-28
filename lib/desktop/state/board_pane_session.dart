@@ -47,6 +47,7 @@ class BoardPaneSession {
     this.savedSourceSeedPgn,
     this.hasCommittedSave = false,
     this.detachedSeedPgn,
+    this.userNags = const <int, List<int>>{},
   });
 
   final ChessGame game;
@@ -76,6 +77,12 @@ class BoardPaneSession {
 
   /// Transport seed already represented by the restored working tree.
   final String? detachedSeedPgn;
+
+  /// The tab's user NAGs (`userMoveNagsProvider`) when this was written. They
+  /// stay out of [game]: a restore keeps reading them from the provider, so a
+  /// copy baked into the tree would show twice and survive being toggled off.
+  /// Only the close guard and exports merge them in.
+  final Map<int, List<int>> userNags;
 }
 
 /// Mounted panes expose a synchronous reader: the retained post-frame session
