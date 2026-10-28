@@ -242,8 +242,6 @@ ForYouEventGamesSnapshot buildForYouEventGamesSnapshot({
     isKnockoutTournament: isKnockoutTournament,
   );
 
-  _sortRounds(processedRounds, roundSortMeta);
-
   final gamesByRound = _buildGamesByRound(
     selectedTour: selectedTour,
     processedRounds: processedRounds,
@@ -253,6 +251,8 @@ ForYouEventGamesSnapshot buildForYouEventGamesSnapshot({
     isKnockoutTournament: isKnockoutTournament,
     pinnedIds: pinnedIds,
   );
+
+  _sortRounds(processedRounds, roundSortMeta, gamesByRound);
 
   final visibleRounds = _visibleRounds(
     rounds: processedRounds,
@@ -922,10 +922,13 @@ DateTime? _resolveStageStartDate({
 void _sortRounds(
   List<GamesAppBarModel> rounds,
   Map<String, _RoundSortMeta> roundSortMeta,
+  Map<String, List<GamesTourModel>> gamesByRound,
 ) {
+  // Only a round with boards can be pinned as the next round.
   final ordered = sortRoundsForDisplay(
     rounds,
     resolveDate: (round) => _roundEventDateTime(round, roundSortMeta),
+    hasGames: (round) => gamesByRound[round.id]?.isNotEmpty ?? false,
   );
   rounds
     ..clear()

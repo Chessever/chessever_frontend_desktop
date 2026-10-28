@@ -286,11 +286,10 @@ Future<void> _desktopBoot({
   });
 
   await _initializeFirebaseForCurrentPlatform(tag: 'desktop.firebase_init');
-  await AnalyticsService.instance.initialize();
-
   // SQLite must be initialized before any AppDatabase access.
   initializeDesktopDatabaseFactory();
   print('[desktop] sqflite ffi initialized');
+  await AnalyticsService.instance.initialize();
 
   // Window manager wiring (size, min size, hide-until-ready).
   await DesktopWindow.initialize();
