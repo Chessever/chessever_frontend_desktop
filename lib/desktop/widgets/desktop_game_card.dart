@@ -1832,6 +1832,9 @@ class DesktopGameCardsFlow extends StatelessWidget {
     final metrics = metricsFor(layout);
     if (!width.isFinite || width <= 0) return metrics.minCols;
     final raw = (width / metrics.targetWidth).floor();
+    // Too narrow for even two cards (a phone-width browser window): one
+    // full-width card, rather than two too narrow to show the players.
+    if (raw < 2) return 1;
     return raw.clamp(metrics.minCols, metrics.maxCols).toInt();
   }
 
