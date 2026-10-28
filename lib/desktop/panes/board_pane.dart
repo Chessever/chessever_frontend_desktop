@@ -1186,6 +1186,30 @@ class _BoardPaneContent extends HookConsumerWidget {
       ],
     );
 
+    // The board in the same form the close guard compares with the save.
+    String boardPgnForSavedAnalysis() => exportGameToPgn(
+      mergeUserMainlineNagsForGif(
+        chessGame.value,
+        ref.read(userMoveNagsProvider)[activeTabId ?? 'board-default'] ??
+            const <int, List<int>>{},
+      ),
+    );
+
+    // Event feed packets move a successful save's baseline along with them
+    // while the user has changed nothing since that save. Returns the
+    // "after" step, or null when there is no save to follow.
+    void Function()? followSavedAnalysisThroughFeed() {
+      if (lastSavedAnalysisPgn.value == null) return null;
+      final before = boardPgnForSavedAnalysis();
+      return () {
+        lastSavedAnalysisPgn.value = savedAnalysisBaselineAfterFeed(
+          lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
+          boardPgnBeforeFeed: before,
+          boardPgnAfterFeed: boardPgnForSavedAnalysis(),
+        );
+      };
+    }
+
     // We watch `activeGameId` here rather than after the listeners so
     // applyPgn can sync `lastAppliedGameId` to it. Without that sync, the
     // useEffect below races with the pgnIntake listener and stomps the
@@ -1386,6 +1410,8 @@ class _BoardPaneContent extends HookConsumerWidget {
       final keepLocalEdits =
           localAnnotations?.hasLocalEdits ??
           (gameId != null && hasRetainedTree && dirtySinceLoad.value);
+      final followSave =
+          isCanonicalBroadcastSource ? followSavedAnalysisThroughFeed() : null;
       if (isCanonicalBroadcastSource) {
         suppressUserNagUndoSnapshot.value = true;
         try {
@@ -1407,6 +1433,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         (k, v) => MapEntry(k, v?.toString() ?? ''),
       );
       loadedFrom.value = origin;
+      followSave?.call();
 
       // Pointer placement on PGN reload:
       //  - first apply for this tree → live games jump to the tip so the
@@ -1514,11 +1541,13 @@ class _BoardPaneContent extends HookConsumerWidget {
         rawStatus: rawStatus,
       );
       if (metadata == null) return;
+      final followSave = followSavedAnalysisThroughFeed();
       final updatedGame = currentGame.copyWith(metadata: metadata);
       chessGame.value = updatedGame;
       pgnHeaders.value = updatedGame.metadata.map(
         (key, value) => MapEntry(key, value?.toString() ?? ''),
       );
+      followSave?.call();
     }
 
     bool tryApplyIncrementalLiveUpdate(
@@ -1622,6 +1651,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           if (entry.key >= 0 && entry.key < oldMainlineLen)
             entry.key: List<int>.unmodifiable(entry.value),
       };
+      final followSave = followSavedAnalysisThroughFeed();
       suppressUserNagUndoSnapshot.value = true;
       try {
         ref
@@ -1641,6 +1671,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         (k, v) => MapEntry(k, v?.toString() ?? ''),
       );
       loadedFrom.value = origin;
+      followSave?.call();
 
       if (oldPointer.isEmpty) {
         pointer.value = const <int>[];
@@ -1874,6 +1905,9 @@ class _BoardPaneContent extends HookConsumerWidget {
             continue;
           }
           final nextArgs = args.copyWith(
+            // A live tick of the same game is not a replacement: keep the
+            // seed lifetime so a save on this board keeps its baseline.
+            retainedSeedIdentity: args.retainedSeedIdentity ?? args,
             pgn: shouldUpdatePgn ? livePgn : null,
             fenSeed: shouldUpdateFen ? liveFen : null,
             clearFenSeed: shouldClearFen,

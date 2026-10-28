@@ -35,6 +35,26 @@ bool shouldConfirmBoardAnalysisDiscard({
 ChessGame boardSessionUserGame(BoardPaneSession session) =>
     mergeUserMainlineNags(session.game, session.userNags);
 
+/// The saved baseline after an Event feed packet. A packet is not the user's
+/// analysis: when the board matched its last successful save right before the
+/// packet, the board after it is the new clean baseline. Otherwise the user
+/// already had unsaved edits and the old baseline stays, so they still warn.
+String? savedAnalysisBaselineAfterFeed({
+  required String? lastSavedAnalysisPgn,
+  required String boardPgnBeforeFeed,
+  required String boardPgnAfterFeed,
+}) {
+  final saved = lastSavedAnalysisPgn?.trim();
+  if (saved == null || saved.isEmpty) return lastSavedAnalysisPgn;
+  final matchedSave = !shouldConfirmBoardAnalysisDiscard(
+    dirtySinceLoad: true,
+    currentPgn: boardPgnBeforeFeed,
+    lastAppliedPgn: null,
+    lastSavedAnalysisPgn: saved,
+  );
+  return matchedSave ? boardPgnAfterFeed.trim() : lastSavedAnalysisPgn;
+}
+
 bool boardSessionHasUnsavedAnalysis(BoardPaneSession? session) {
   if (session == null) return false;
   return shouldConfirmBoardAnalysisDiscard(

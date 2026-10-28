@@ -458,6 +458,53 @@ void main() {
     },
   );
 
+  test('a feed move follows a clean save; edits made before it still warn', () {
+    final fed = reconcileCanonicalBroadcastLocalAnnotationsForTesting(
+      previousBroadcastPgn: sourcePgn,
+      currentGame: savedGame,
+      freshGame: ChessGame.fromPgn(
+        'event-game',
+        sourcePgn.replaceAll('Nc6 *', 'Nc6 3. Bb5 *'),
+      ),
+      userNags: const {},
+    ).game;
+    expect(exportGameToPgn(fed), contains('Saved private variation'));
+    // The probe: the old baseline lacks the feed move, so it warns.
+    expect(
+      boardSessionHasUnsavedAnalysis(sessionFor(fed, savedPgn: savedPgn)),
+      isTrue,
+    );
+    final followed = savedAnalysisBaselineAfterFeed(
+      lastSavedAnalysisPgn: savedPgn,
+      boardPgnBeforeFeed: exportGameToPgn(savedGame),
+      boardPgnAfterFeed: exportGameToPgn(fed),
+    );
+    expect(
+      boardSessionHasUnsavedAnalysis(sessionFor(fed, savedPgn: followed)),
+      isFalse,
+    );
+    final edited = ChessGame.fromPgn(
+      'event-game',
+      analysisPgn.replaceAll('Saved private variation', 'Edited after save'),
+    );
+    expect(
+      savedAnalysisBaselineAfterFeed(
+        lastSavedAnalysisPgn: savedPgn,
+        boardPgnBeforeFeed: exportGameToPgn(edited),
+        boardPgnAfterFeed: exportGameToPgn(fed),
+      ),
+      savedPgn,
+    );
+    expect(
+      savedAnalysisBaselineAfterFeed(
+        lastSavedAnalysisPgn: null,
+        boardPgnBeforeFeed: exportGameToPgn(savedGame),
+        boardPgnAfterFeed: exportGameToPgn(fed),
+      ),
+      isNull,
+    );
+  });
+
   test('retained NAGs stay beside the tree but count as analysis', () {
     final plain = ChessGame.fromPgn('event-game', sourcePgn);
     final marked = BoardPaneSession(
@@ -511,6 +558,52 @@ void main() {
         await databaseDirectory.delete(recursive: true);
       }
     });
+
+    testWidgets(
+      'a feed move after a save does not make the untouched board unsaved',
+      (tester) async {
+        final board = await _pumpBoard(tester, live: true);
+        // Private analysis the user then saves: a mark on the first move.
+        board.toggleNag(0, 1);
+        await board.settle();
+        // A save persists the board as the user sees it, marks included.
+        final savedPgn = exportGameToPgn(board.liveSession().game).trim();
+        final retained = board.retained();
+        await board.remountFrom(
+          _copySession(
+            retained,
+            lastSavedAnalysisPgn: savedPgn,
+            hasCommittedSave: true,
+            savedSourceSeedPgn: retained.lastAppliedPgn,
+            lastBroadcastPgn:
+                retained.lastBroadcastPgn ?? retained.lastAppliedPgn,
+          ),
+        );
+        expect(board.closeWarns(), isFalse, reason: 'clean right after save');
+
+        await board.feed(_row(_liveGameId, nextMove: true));
+        // Positive controls: the packet landed and the saved mark survived.
+        expect(board.fen(), _nextMoveFen);
+        expect(
+          exportGameToPgn(board.liveSession().game),
+          allOf(contains('2. Nf3'), contains(r'1. e4 $1')),
+        );
+        expect(
+          board.closeWarns(),
+          isFalse,
+          reason: 'only the Event feed changed the board after the save',
+        );
+        expect(boardSessionHasUnsavedAnalysis(board.retained()), isFalse);
+
+        // A user edit after the save must still be protected, in both the
+        // mounted snapshot and the retained session the shell falls back to.
+        board.toggleNag(2, 1);
+        await board.settle();
+        expect(board.closeWarns(), isTrue);
+        expect(boardSessionHasUnsavedAnalysis(board.retained()), isTrue);
+        await board.dispose();
+      },
+    );
 
     testWidgets('a restored board does not keep a NAG the user toggled off', (
       tester,
@@ -583,6 +676,31 @@ Map<String, dynamic> _row(String gameId, {required bool nextMove}) => {
   'last_clock_white': nextMove ? 176 : 177,
   'last_clock_black': 179,
 };
+
+BoardPaneSession _copySession(
+  BoardPaneSession s, {
+  String? lastSavedAnalysisPgn,
+  bool? hasCommittedSave,
+  String? savedSourceSeedPgn,
+  String? lastBroadcastPgn,
+}) => BoardPaneSession(
+  game: s.game,
+  pointer: s.pointer,
+  pgnHeaders: s.pgnHeaders,
+  flipped: s.flipped,
+  loadedFrom: s.loadedFrom,
+  lastAppliedPgn: s.lastAppliedPgn,
+  lastAppliedGameId: s.lastAppliedGameId,
+  lastAppliedInitialFenKey: s.lastAppliedInitialFenKey,
+  dirtySinceLoad: s.dirtySinceLoad,
+  hasUnseenMoves: s.hasUnseenMoves,
+  undoStack: s.undoStack,
+  lastSavedAnalysisPgn: lastSavedAnalysisPgn ?? s.lastSavedAnalysisPgn,
+  lastBroadcastPgn: lastBroadcastPgn ?? s.lastBroadcastPgn,
+  savedSourceSeedPgn: savedSourceSeedPgn ?? s.savedSourceSeedPgn,
+  hasCommittedSave: hasCommittedSave ?? s.hasCommittedSave,
+  detachedSeedPgn: s.detachedSeedPgn,
+);
 
 class _MountedBoard {
   _MountedBoard(
