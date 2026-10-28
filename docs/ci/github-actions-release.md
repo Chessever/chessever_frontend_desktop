@@ -76,7 +76,20 @@ No pull-request or push event can invoke either production release workflow.
 The Codemagic CLI tools are pinned open-source utilities running on GitHub
 runners. Their use does not invoke the hosted Codemagic build service.
 
-Platform jobs stop after 30 minutes, including setup, packaging and upload.
-Build steps stop after 20 minutes; mobile and Mac App Store upload/review steps
-stop after 10 minutes. Apple processing is external: a timeout is a failed run,
-not proof of submission. An already uploaded build is reused on a submission retry.
+Every job has a time limit, so a stalled build fails instead of running for
+three hours. The limits sit above the slowest successful release (23 October
+2026), where macOS Intel took 63 minutes and the R2 publish steps took 23-30
+minutes:
+
+| Job | Job limit | Build step limit |
+|---|---|---|
+| macOS (Apple Silicon, Intel) | 90 min | 75 min (build, notarize and publish) |
+| Windows | 75 min | 30 min |
+| Linux | 60 min | 20 min |
+| Mac App Store | 75 min | 45 min, then 30 min for upload and review |
+| macOS on Flutter master | 60 min | 40 min |
+
+Revisit the limits when release durations change. The review script waits at
+most 10 minutes for Apple to process a build. Apple processing is external: a
+timeout is a failed run, not proof of submission. A retry reuses a build that
+was already uploaded.
