@@ -1,8 +1,9 @@
 # Desktop distribution through GitHub Actions
 
 The production branch is `main`. Both release workflows are manually dispatched
-and use the protected `release` environment. Only approved production jobs receive
-signing or publishing credentials. Setup uses native background steps followed by
+and use the protected `release` environment. Only jobs running from `main` receive
+signing or publishing credentials. The environment has no required reviewer, so a
+dispatched run starts at once: dispatching it is the approval. Setup uses native background steps followed by
 `wait-all`; no signing or publishing step runs in the background.
 
 ## Website downloads
@@ -30,11 +31,19 @@ Developer ID signing and Apple notarization, rather than App Review.
 ## Mac App Store
 
 Run **Mac App Store review** (`desktop-app-store.yml`). It produces a universal
-Apple Silicon + Intel `.pkg` for **ChessEver for Mac**, app `6824524785`, bundle
+Apple Silicon + Intel `.pkg` for App Store Connect app `6824524785`, bundle
 `com.chessever.desktop`. The dedicated build script sets both
 `MAC_APP_STORE=true` and `CHESSEVER_APP_STORE=YES`, uses sandbox entitlements,
 bundles signed universal engines, and uses Apple purchases. It does not invoke
 the website updater or R2 publishing scripts.
+
+App Review rejected 22.15.1 (481) on two points that the store edition must keep
+honoring. Guideline 5.2.5: no Apple trademark ("Mac", "for Mac", "macOS") in
+the app name, subtitle or screenshot captions. Guideline 4: sign-in never leaves
+the app. The edition shows the native Sign in with Apple sheet, which requires
+`com.apple.developer.applesignin` in `macos/Runner/AppStore.entitlements` and in
+the store profile. Google opens in an `ASWebAuthenticationSession` sheet
+(`DesktopWebAuthBridge.swift`) instead of the default browser.
 
 **Submit review** defaults to checked. The workflow uploads the package, waits for
 processing, and submits for App Review with `--platform MAC_OS --release-type
@@ -66,3 +75,21 @@ No pull-request or push event can invoke either production release workflow.
 
 The Codemagic CLI tools are pinned open-source utilities running on GitHub
 runners. Their use does not invoke the hosted Codemagic build service.
+
+Every job has a time limit, so a stalled build fails instead of running for
+three hours. The limits sit above the slowest successful release (23 October
+2026), where macOS Intel took 63 minutes and the R2 publish steps took 23-30
+minutes:
+
+| Job | Job limit | Build step limit |
+|---|---|---|
+| macOS (Apple Silicon, Intel) | 90 min | 75 min (build, notarize and publish) |
+| Windows | 75 min | 30 min |
+| Linux | 60 min | 20 min |
+| Mac App Store | 75 min | 45 min, then 30 min for upload and review |
+| macOS on Flutter master | 60 min | 40 min |
+
+Revisit the limits when release durations change. The review script waits at
+most 10 minutes for Apple to process a build. Apple processing is external: a
+timeout is a failed run, not proof of submission. A retry reuses a build that
+was already uploaded.

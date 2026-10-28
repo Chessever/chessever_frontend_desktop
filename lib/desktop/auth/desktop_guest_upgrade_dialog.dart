@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/auth/desktop_auth_browser.dart';
 import 'package:chessever/desktop/services/auth/desktop_guest_unsaved_work.dart';
 import 'package:chessever/desktop/services/auth/desktop_guest_upgrade.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
@@ -276,9 +277,14 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
           if (busy) ...[
             const SizedBox(height: 12),
             Text(
-              _busyProvider == DesktopAccountProvider.google
-                  ? 'Finish signing in with Google in your browser.'
-                  : 'Finish signing in with Apple in your browser.',
+              switch ((_busyProvider, DesktopAuthBrowser.inApp)) {
+                (DesktopAccountProvider.google, false) =>
+                  'Finish signing in with Google in your browser.',
+                (DesktopAccountProvider.google, true) =>
+                  'Finish signing in with Google in the sign-in window.',
+                (_, false) => 'Finish signing in with Apple in your browser.',
+                (_, true) => 'Finish signing in with Apple.',
+              },
               style: const TextStyle(
                 color: kWhiteColor70,
                 fontSize: 13,
