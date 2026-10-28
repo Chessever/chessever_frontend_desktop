@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/services/board_report_output.dart'
+    show mergeUserMainlineNags;
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -28,11 +30,16 @@ bool shouldConfirmBoardAnalysisDiscard({
   return current != applied;
 }
 
+/// The board as the user sees it: the retained tree plus the tab's NAGs.
+/// For comparison and export only; a restore uses [BoardPaneSession.game].
+ChessGame boardSessionUserGame(BoardPaneSession session) =>
+    mergeUserMainlineNags(session.game, session.userNags);
+
 bool boardSessionHasUnsavedAnalysis(BoardPaneSession? session) {
   if (session == null) return false;
   return shouldConfirmBoardAnalysisDiscard(
     dirtySinceLoad: session.dirtySinceLoad,
-    currentPgn: exportGameToPgn(session.game),
+    currentPgn: exportGameToPgn(boardSessionUserGame(session)),
     lastAppliedPgn: session.lastAppliedPgn,
     lastSavedAnalysisPgn: session.lastSavedAnalysisPgn,
   );

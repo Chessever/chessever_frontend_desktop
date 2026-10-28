@@ -1130,13 +1130,11 @@ class _BoardPaneContent extends HookConsumerWidget {
     final sessionUserNags = ref.watch(userMoveNagsProvider.select(
       (state) => state[activeTabId ?? 'board-default'] ?? const <int, List<int>>{},
     ));
-    useEffect(
-      () {
-        final token = ++boardSessionWriteToken.value;
-        final tabId = activeTabId;
-        if (tabId == null) return null;
-        final session = BoardPaneSession(
-          game: mergeUserMainlineNagsForGif(chessGame.value, sessionUserNags),
+    // What a remount restores. The NAG overlay rides beside the tree, never
+    // inside it: the restored pane reads the overlay from the provider again.
+    BoardPaneSession retainedBoardSession(Map<int, List<int>> userNags) =>
+        BoardPaneSession(
+          game: chessGame.value,
           pointer: List<int>.unmodifiable(pointer.value),
           pgnHeaders: Map<String, String>.unmodifiable(pgnHeaders.value),
           flipped: flipped.value,
@@ -1152,7 +1150,14 @@ class _BoardPaneContent extends HookConsumerWidget {
           savedSourceSeedPgn: savedSourceSeedPgn.value,
           hasCommittedSave: hasCommittedSave.value,
           detachedSeedPgn: restoredSession?.detachedSeedPgn,
+          userNags: userNags,
         );
+    useEffect(
+      () {
+        final token = ++boardSessionWriteToken.value;
+        final tabId = activeTabId;
+        if (tabId == null) return null;
+        final session = retainedBoardSession(sessionUserNags);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!context.mounted || token != boardSessionWriteToken.value) {
             return;
@@ -2989,7 +2994,7 @@ class _BoardPaneContent extends HookConsumerWidget {
             boardSessionWriteToken.value++;
             ref
                 .read(boardPaneSessionByTabIdProvider.notifier)
-                .put(tabId, snapshot.session);
+                .put(tabId, retainedBoardSession(currentUserNags()));
           }
         }
       }
@@ -5654,40 +5659,13 @@ ChessGame mergeGameReportAnnotationsForGif(
   List<GameReportMove> reportMoves,
 ) => mergeGameReportAnnotationsForExport(game, reportMoves);
 
+/// Existing call sites and tests; implementation lives in
+/// [board_report_output.dart] so the unsaved-analysis guard can share it.
 @visibleForTesting
 ChessGame mergeUserMainlineNagsForGif(
   ChessGame game,
   Map<int, List<int>> userNags,
-) {
-  if (userNags.isEmpty) return game;
-  var changed = false;
-  final mainline = <ChessMove>[
-    for (var index = 0; index < game.mainline.length; index++)
-      (() {
-        final overlay = userNags[index] ?? const <int>[];
-        if (overlay.isEmpty) return game.mainline[index];
-        final existing = game.mainline[index].nags ?? const <int>[];
-        final overlayHasQuality = overlay.any(_isQualityNag);
-        final mergedNags = <int>[
-          ...overlay,
-          ...existing.where(
-            (nag) =>
-                !overlay.contains(nag) &&
-                !(overlayHasQuality &&
-                    (_isQualityNag(nag) ||
-                        isChesseverClassificationNag(nag) ||
-                        nag == kChesseverUserQualityOverrideNag)),
-          ),
-          if (overlayHasQuality) kChesseverUserQualityOverrideNag,
-        ];
-        changed = true;
-        return game.mainline[index].copyWith(
-          nags: List<int>.unmodifiable(mergedNags),
-        );
-      })(),
-  ];
-  return changed ? game.copyWith(mainline: mainline) : game;
-}
+) => mergeUserMainlineNags(game, userNags);
 
 /// Applies generated report classifications without discarding incoming
 /// Lichess commentary attached to the same move.
