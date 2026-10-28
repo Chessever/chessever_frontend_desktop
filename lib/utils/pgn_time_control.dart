@@ -94,9 +94,12 @@ void enrichPgnTimeControlMetadata(
 }) {
   if (isValidPgnTimeControl(metadata['TimeControl']?.toString())) return;
   // The human-text parser models conventional periods and Fischer increment.
-  // Do not silently reinterpret delay, byo-yomi or unequal-side controls.
-  if (_unsupportedDetailedControl.hasMatch(timeControlText ?? '')) return;
-  final field = pgnTimeControlField(timeControlText);
+  // Do not silently reinterpret delay, byo-yomi or unequal-side controls, but
+  // still fall back to the speed category below.
+  final field =
+      _unsupportedDetailedControl.hasMatch(timeControlText ?? '')
+          ? null
+          : pgnTimeControlField(timeControlText);
   if (field != null) {
     final speed = category ?? metadata['TimeControl']?.toString();
     if (speed != null && speed.isNotEmpty && speed != '?' &&
