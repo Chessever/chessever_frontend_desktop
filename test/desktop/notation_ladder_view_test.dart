@@ -483,9 +483,11 @@ void main() {
 
     expect(find.text('?!'), findsNothing);
     expect(find.text('?'), findsNothing);
-    expect(find.text('??'), findsOneWidget);
+    expect(find.text('??'), findsNothing);
+    expect(_qualityBadge('Blunder'), findsOneWidget);
+    expect(_qualityBadge('Inaccuracy'), findsNothing);
     expect(find.text('±'), findsOneWidget);
-    expect(find.byType(SvgPicture), findsNothing);
+    expect(find.byType(SvgPicture), findsOneWidget);
 
     await tester.pumpWidget(
       _host(
@@ -531,9 +533,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('??'), findsOneWidget);
+    expect(find.text('??'), findsNothing);
+    expect(_qualityBadge('Blunder'), findsOneWidget);
+    expect(_qualityBadge('Inaccuracy'), findsNothing);
     expect(find.text('±'), findsOneWidget);
-    expect(find.byType(SvgPicture), findsNothing);
+    expect(find.byType(SvgPicture), findsOneWidget);
   });
 
   testWidgets(
@@ -934,7 +938,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final glyph = find.text('!', findRichText: false).last;
+    final glyph = _qualityBadge('Good Move').last;
     final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer();
     await gesture.moveTo(tester.getCenter(glyph));
@@ -1164,14 +1168,14 @@ void main() {
     );
 
     final move = find.text('Nf3', findRichText: true);
-    expect(find.text('!'), findsOneWidget);
+    expect(_qualityBadge('Good Move'), findsOneWidget);
 
     await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Hide All Annotations'));
     await tester.pumpAndSettle();
 
-    expect(find.text('!'), findsNothing);
+    expect(_qualityBadge('Good Move'), findsNothing);
 
     await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
@@ -1556,6 +1560,10 @@ ChessGame _transpositionMarkerGame() {
     ],
   );
 }
+
+Finder _qualityBadge(String label) => find.byWidgetPredicate(
+  (widget) => widget is DesktopTooltip && widget.message == label,
+);
 
 ChessGame _sampleGame() {
   final e4 = Chess.initial.play(NormalMove.fromUci('e2e4'));
