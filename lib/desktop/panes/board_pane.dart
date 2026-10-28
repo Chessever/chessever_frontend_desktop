@@ -7435,6 +7435,37 @@ bool _uciPathsEqual(List<String> left, List<String> right) {
   return true;
 }
 
+/// Exercises the same tree replay used by the visible Board badge.
+@visibleForTesting
+Square? boardMoveBadgeSquareForTesting(
+  ChessGame game,
+  ChessMovePointer pointer,
+) => _pliesFromPath(
+  game.startingFen,
+  _pathFromPointer(game, pointer),
+).last.lastMoveSquare;
+
+@visibleForTesting
+Widget boardMoveBadgeWidgetForTesting({
+  required ChessGame game,
+  required ChessMovePointer pointer,
+  required double boardSize,
+  required bool flipped,
+  required Widget child,
+}) {
+  final square = boardMoveBadgeSquareForTesting(game, pointer);
+  if (square == null) return const SizedBox.shrink();
+  return _BoardBadge(
+    boardSize: boardSize,
+    square: square,
+    flipped: flipped,
+    color: Colors.green,
+    sizeFactor: 0.40,
+    selfContainedChild: true,
+    child: child,
+  );
+}
+
 /// Replay [path] (a list of moves from the starting position) into a
 /// flat list of [_Ply]s — one per visited position, including the
 /// initial one. This is the seam between the tree-model state and the
@@ -7464,7 +7495,7 @@ List<_Ply> _pliesFromPath(String startingFen, List<ChessMove> path) {
         nags: m.nags ?? const <int>[],
         comments: m.comments ?? const <String>[],
         move: move,
-        lastMoveSquare: _normaliseLastMoveSquare(move),
+        lastMoveSquare: _normaliseLastMoveSquare(position, next, move),
       ),
     );
     position = next;
@@ -10963,16 +10994,21 @@ bool _shouldPlaySounds(WidgetRef ref, String? tabId) {
 /// Castling in dartchess is encoded as king-captures-rook; remap to the
 /// king's actual landing square so badge anchors and last-move feedback
 /// land where the king ends up rather than on the rook.
-Square? _normaliseLastMoveSquare(Move? move) {
+Square? _normaliseLastMoveSquare(
+  Position before,
+  Position after,
+  Move? move,
+) {
   if (move == null) return null;
   if (move is NormalMove) {
-    final from = move.from;
-    final to = move.to;
-    if (from == Square.e1 && to == Square.h1) return Square.g1;
-    if (from == Square.e1 && to == Square.a1) return Square.c1;
-    if (from == Square.e8 && to == Square.h8) return Square.g8;
-    if (from == Square.e8 && to == Square.a8) return Square.c8;
-    return to;
+    // A king-to-rook UCI castle must anchor to the resulting king, not its
+    // rook. The coordinates alone cannot identify castling: ordinary rook
+    // moves can use e1-a1/h1 or e8-a8/h8 too.
+    final movingPiece = before.board.pieceAt(move.from);
+    if (movingPiece != null && movingPiece.role == Role.king) {
+      return after.board.kingOf(movingPiece.color) ?? move.to;
+    }
+    return move.to;
   }
   final squares = move.squares.toList();
   return squares.isEmpty ? null : squares.last;
