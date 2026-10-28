@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/providers/engine_settings_provider.dart';
+import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 
@@ -169,20 +170,32 @@ BoardEvalState? terminalBoardEvalStateForFen(String fen) {
 }
 
 class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
-  BoardEvalNotifier(this.ref, this.fen, this.config)
-    : super(
-        terminalBoardEvalStateForFen(fen) ?? const BoardEvalState.evaluating(),
-      ) {
+  BoardEvalNotifier(
+    this.ref,
+    this.fen,
+    this.config, {
+    @visibleForTesting StockfishSingleton? stockfish,
+  }) : _stockfish = stockfish ?? StockfishSingleton(),
+       super(
+         terminalBoardEvalStateForFen(fen) ?? const BoardEvalState.evaluating(),
+       ) {
     ref.onCancel(() {
       _listening = false;
       _generation++;
       _cancelPendingSearchUpdate();
-      unawaited(StockfishSingleton().cancelEvaluationsForOwner(_ownerId));
+      unawaited(_stockfish.cancelEvaluationsForOwner(_ownerId));
       // Do not revive a completed A snapshot during the auto-dispose grace
       // frame in A -> B -> A. The next listener creates a fresh request owner;
       // only the panel-local display cache survives navigation.
       ref.invalidateSelf();
     });
+    // Hidden or minimized, not unfocused: an endless search keeps running
+    // while the user looks at another app, but not while nobody can see it.
+    _windowVisible = ref.read(liveGameStreamingLifecycleProvider);
+    ref.listen<bool>(
+      liveGameStreamingLifecycleProvider,
+      (_, visible) => _onWindowVisibilityChanged(visible),
+    );
     // _start mutates the shared depth tracker; keep provider creation side-effect free.
     _startTimer = Timer(Duration.zero, () {
       _startTimer = null;
@@ -194,6 +207,7 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
   final Ref ref;
   final String fen;
   final BoardEvalConfig config;
+  final StockfishSingleton _stockfish;
   static const Duration _minUiUpdateInterval = Duration(milliseconds: 80);
   Timer? _startTimer;
   bool _listening = true;
@@ -209,6 +223,43 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
   int _pendingKnodes = 0;
   bool _pendingIsEvaluating = true;
   bool _pendingHasDepthProgress = false;
+  bool _windowVisible = true;
+  bool _searchInFlight = false;
+  // An infinite search stopped for a hidden window owes one restart.
+  bool _pausedWhileHidden = false;
+  // A resumed search re-climbs from depth 1; shallower batches are not shown.
+  int _resumeDepthFloor = 0;
+
+  bool get _infiniteSearch =>
+      config.toEngineSettings().searchDurationFor(
+        EngineComponent.principalVariation,
+      ) ==
+      null;
+
+  void _onWindowVisibilityChanged(bool visible) {
+    if (_windowVisible == visible) return;
+    _windowVisible = visible;
+    if (!mounted || !_listening) return;
+    if (!visible) {
+      if (_searchInFlight && _infiniteSearch) _pauseWhileHidden();
+    } else if (_pausedWhileHidden) {
+      _pausedWhileHidden = false;
+      unawaited(_start());
+    }
+  }
+
+  void _pauseWhileHidden() {
+    // Keep the freshest complete reading, then free the engine (and the
+    // low-priority report queue behind it) until the window is back.
+    _flushPendingSearchUpdate();
+    _cancelPendingSearchUpdate();
+    _generation++;
+    _searchInFlight = false;
+    _pausedWhileHidden = true;
+    _resumeDepthFloor = state.depth;
+    unawaited(_stockfish.cancelEvaluationsForOwner(_ownerId));
+    state = state.copyWith(isEvaluating: false);
+  }
 
   Future<void> _start() async {
     if (!mounted || !_listening) return;
@@ -233,7 +284,6 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
       state = terminalState;
       return;
     }
-    _clearDepth();
     final settings = config.toEngineSettings();
     // The UCI boundary caps this to the actual legal root-move count.
     final multiPV = settings.multiPvForStockfish();
@@ -241,9 +291,17 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
       EngineComponent.principalVariation,
     );
     final maxDepth = settings.maxDepthFor(EngineComponent.principalVariation);
+    if (searchDuration == null && !_windowVisible) {
+      _pausedWhileHidden = true;
+      if (state.isEvaluating) state = state.copyWith(isEvaluating: false);
+      return;
+    }
+    _clearDepth();
+    if (!state.isEvaluating) state = state.copyWith(isEvaluating: true);
 
+    _searchInFlight = true;
     try {
-      final result = await StockfishSingleton().evaluatePosition(
+      final result = await _stockfish.evaluatePosition(
         fen,
         depth: maxDepth,
         maxDepth: searchDuration == null ? null : maxDepth,
@@ -288,6 +346,8 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
       if (!current()) return;
       _cancelPendingSearchUpdate();
       state = const BoardEvalState(pvs: [], isEvaluating: false, depth: 0);
+    } finally {
+      if (generation == _generation) _searchInFlight = false;
     }
   }
 
@@ -299,6 +359,8 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
 
   void _onPvUpdate(List<Pv> snapshot, int depth) {
     if (!mounted) return;
+    if (depth < _resumeDepthFloor) return;
+    _resumeDepthFloor = 0;
     _scheduleSearchUpdate(
       pvs: _toBoardPvs(snapshot, alreadyWhite: false),
       depth: depth,
@@ -434,7 +496,7 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
     _cancelPendingSearchUpdate();
     // Tear down the in-flight Stockfish job tied to this widget so the engine
     // can move on to the next position immediately rather than burning cycles.
-    unawaited(StockfishSingleton().cancelEvaluationsForOwner(_ownerId));
+    unawaited(_stockfish.cancelEvaluationsForOwner(_ownerId));
     super.dispose();
   }
 }
