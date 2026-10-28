@@ -44,6 +44,9 @@ This file is the orientation Claude reads on every Ralph-loop iteration. It is t
 - Turn the existing iOS/Android Chessever app into a **first-class native desktop application** for macOS and Windows.
 - Match or exceed professional desktop-database ergonomics on the parts we already do well: live broadcast viewing, engine analysis, opening prep, game library, FEN/PGN import, study tools.
 - Preserve the *visual identity* and *domain logic* of mobile. Replace only the things that are demonstrably wrong for keyboard+mouse on a 1440p display.
+- Keep the browser port at **app.chessever.com** updated together with the
+  desktop app. Full desktop feature parity is the target; shared features and
+  fixes must reach both distributions.
 
 ## 2. Non-negotiables
 
@@ -130,8 +133,8 @@ On demand — read `docs/agents/definition-of-done.md` before working on this ar
 - ❌ Reimplementing the chess board, eval bar, or PV list because it "looks mobile-y." Resize and reuse. (Game cards in `desktop_game_card.dart` are NOT covered by this rule — redesign them however reads best on desktop.)
 - ❌ Adding `if (kIsWeb)` branches for features. The browser build at
   app.chessever.com (`lib/web/`, `scripts/build_web.sh`, `scripts/deploy_web.sh`)
-  runs this shell as Wasm with desktop-only features (local engines, local
-  library, windows, updater) unavailable. Keep it compiling: ask
+  runs this same shell as Wasm. Adapt platform mechanisms through browser
+  implementations instead of hiding shared features. Keep it compiling: ask
   `lib/utils/host_platform.dart` (`hostIsMacOS`, …) instead of `dart:io`'s
   `Platform`, which throws in the browser, and import FFI packages through
   `lib/web/shims/`.
@@ -287,6 +290,39 @@ that redirects back to the page (PKCE), because a tab cannot run the loopback
 server. It has no desktop updater. `docs/web_build_feature_parity.md` lists
 what else differs. Put a `kIsWeb` check before an `isMacAppStore` one, so
 native builds take the same branch as before.
+
+### Web port parity and synchronized updates
+
+**app.chessever.com is the web port of this desktop app, with full feature
+parity as the goal.** This repository owns its Flutter source and deployment:
+`lib/web/web_main.dart` boots the shared `lib/desktop/` shell. The sibling
+`../chessever_web_frontend` repository owns the separate Next.js site at
+chessever.com, not the app.chessever.com deployment. Keep this policy in both
+repositories' `AGENTS.md` files.
+
+- For every desktop feature, fix, auth change or shared behavior change,
+  assess and update the browser path in the same change. Reuse shared widgets,
+  providers and domain logic; add browser adapters only for platform mechanisms.
+  Hiding a feature behind a platform check does not satisfy parity.
+- Keep keyboard behavior, account/guest transitions, library and analysis data,
+  imports/exports and persistence equivalent. Browser-native mechanisms such
+  as OAuth redirects, IndexedDB and downloads can differ while preserving the
+  user's capability. Preserve the website and Mac App Store edition branches.
+- Track actual browser limitations and remaining feature gaps in
+  `docs/web_build_feature_parity.md`, including their cause and follow-up.
+  Those gaps are work to close, not permanent exemptions. Report any new gap
+  rather than claiming full parity or silently disabling the feature.
+- Publish the web port alongside authorized desktop releases from the same
+  source revision and `pubspec.yaml` version. Use `scripts/build_web.sh` with
+  allowlisted public configuration, then `scripts/deploy_web.sh`; never deploy
+  an older worktree's `build/web`. Building assets for a requested deployment
+  is a release action; the ban on builds as self-verification still applies.
+- Check shared changes with focused tests and `flutter analyze`, reason through
+  browser APIs, and exercise the affected browser surface when available.
+  After deployment, verify the active Worker and the served `/version.json`
+  against the intended version/build. A desktop push alone does not update
+  app.chessever.com. State explicitly if web deployment or verification remains
+  incomplete.
 
 When a change touches sign-in, billing or the paywall, updates, engine paths,
 file access, entitlements, feedback or analytics:

@@ -1,5 +1,20 @@
 # Web build (app.chessever.com): feature parity and packages
 
+## Required parity policy
+
+The browser app is the shared-source port of the desktop app, and full feature
+parity is the target. Ship shared desktop features and fixes to both paths in
+the same change, and publish authorized releases from the same source revision
+and application version. Browser-native mechanisms may differ while preserving
+the capability. The limitations below remain work to close, not permanent
+exclusions. Keep this inventory current and report new gaps explicitly.
+
+This Flutter repository owns app.chessever.com (Worker `chessever-app`). The
+sibling `chessever_web_frontend` repository owns the separate Next.js site at
+chessever.com. Both `AGENTS.md` files carry the synchronized-update policy.
+
+## Previous verification baseline
+
 What the desktop shell does in a browser, how, and which pub.dev packages
 were weighed for the gaps. Checked against pub.dev on 2026-10-28; build
 22.17.15. Verified in headless Chromium and WebKit; Firefox and real Safari
