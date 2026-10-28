@@ -354,16 +354,21 @@ class _ProfileCardState extends ConsumerState<_ProfileCard> {
                           letterSpacing: -0.2,
                         ),
                       ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'ChessEver Player',
-                      style: TextStyle(
-                        color: _accentFor(p.headlineTimeControl),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.8,
+                    // The default display name is this same tag line; one
+                    // copy is enough.
+                    if (_editing ||
+                        p.displayName.trim() != 'ChessEver Player') ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'ChessEver Player',
+                        style: TextStyle(
+                          color: _accentFor(p.headlineTimeControl),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -2074,6 +2079,8 @@ class _AchievementsBody extends ConsumerWidget {
             );
           },
         ),
+        // Lets the last row scroll fully clear of the pane's bottom edge.
+        const SliverToBoxAdapter(child: SizedBox(height: 32)),
       ],
     );
   }

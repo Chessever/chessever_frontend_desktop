@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -793,7 +794,11 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                         (_generatedGifPath == null
                                 ? boardShareActionDescriptors(
                                   copyImage: _copyImage,
-                                  generateGif: _generateGif,
+                                  // The GIF renderer does not accept
+                                  // requests from app.chessever.com yet
+                                  // (no CORS), so the web build leaves the
+                                  // action out rather than always failing.
+                                  generateGif: kIsWeb ? null : _generateGif,
                                   downloadImage: _downloadImage,
                                   copyPgn:
                                       widget.allowPgnCopy ? _copyPgn : null,
@@ -863,7 +868,7 @@ class BoardShareActionDescriptor {
 @visibleForTesting
 List<BoardShareActionDescriptor> boardShareActionDescriptors({
   required VoidCallback copyImage,
-  required VoidCallback generateGif,
+  required VoidCallback? generateGif,
   required VoidCallback downloadImage,
   required VoidCallback? copyPgn,
 }) {
@@ -873,11 +878,12 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
       label: 'Copy Image',
       onTap: copyImage,
     ),
-    BoardShareActionDescriptor(
-      icon: Icons.gif_box_outlined,
-      label: 'Generate GIF',
-      onTap: generateGif,
-    ),
+    if (generateGif != null)
+      BoardShareActionDescriptor(
+        icon: Icons.gif_box_outlined,
+        label: 'Generate GIF',
+        onTap: generateGif,
+      ),
     BoardShareActionDescriptor(
       icon: Icons.download_rounded,
       label: 'Download PNG',
