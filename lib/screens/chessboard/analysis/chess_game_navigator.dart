@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'chess_game.dart';
+import '../utils/pgn_source_credit.dart';
 
 typedef ChessMovePointer = List<Number>;
 
@@ -745,7 +746,42 @@ class ChessGameNavigator extends StateNotifier<ChessGameNavigatorState> {
         if (keepLength == line.length) {
           return line;
         }
-        return List<ChessMove>.of(line.take(keepLength));
+        final kept = List<ChessMove>.of(line.take(keepLength));
+        // A source footer belongs to its inserted run, not the discarded ply.
+        // Only inspect this exact line: never lift a sibling/nested credit or
+        // copy arbitrary prose from moves the user intentionally deleted.
+        if (kept.isNotEmpty &&
+            sourceCreditDirectives(kept.last.comments).isEmpty) {
+          for (var i = keepLength; i < line.length; i++) {
+            final credits = sourceCreditDirectives(line[i].comments);
+            if (credits.isEmpty) continue;
+            final owned = <String>[];
+            for (final credit in credits) {
+              final plies = insertedSourceCreditPlies(credit);
+              // A variation itself supplies the legacy credit's line scope.
+              // Mainline credits require an explicit inserted-span proof.
+              if (plies == null) {
+                if (targetPointer.length > 1) owned.add(credit);
+                continue;
+              }
+              // Re-count the span to the inserted plies this trim keeps, so
+              // a later trim cannot stretch it back over original moves.
+              final keptPlies = trimIndex - (i - plies + 1) + 1;
+              if (keptPlies > 0) {
+                owned.add(withInsertedSourceCreditPlies(credit, keptPlies));
+              }
+            }
+            if (owned.isNotEmpty) {
+              kept[kept.length - 1] = kept.last.copyWith(
+                comments: [...?kept.last.comments, ...owned],
+              );
+            }
+            // The first footer is the ownership boundary; a later credit can
+            // describe a different insertion which was removed entirely.
+            break;
+          }
+        }
+        return kept;
       },
     );
 

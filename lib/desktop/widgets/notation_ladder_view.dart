@@ -21,6 +21,7 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart';
 import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_source_credit.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -2215,33 +2216,24 @@ class _InlineNotationBlock extends StatelessWidget {
         ),
       );
 
-      final sourceLabel = _sourceLabelFromComments(move.comments);
-      if (sourceLabel != null) {
-        // `_InlineSourceMetadata` renders either the richer reference-style
-        // game footer banner (when the label parses as players+result+date)
-        // or a typographic pill fallback (for short labels). Either way it
-        // surfaces a standalone Text widget so `find.text(sourceLabel)`
-        // still hits the source label the tests assert on.
-        spans.add(
-          WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: _InlineSourceMetadata(
-                depth: depth,
-                sourceLabel: sourceLabel,
-              ),
-            ),
-          ),
-        );
-      }
-
       if (!annotationsHidden) {
         for (final comment in _cleanPgnComments(move.comments)) {
           // Bare text — flows with the move stream and breaks at word
           // boundaries when the column wraps, instead of forcing its own row.
           spans.add(TextSpan(text: '$comment ', style: commentStyle));
         }
+      }
+
+      final sourceLabel = _sourceLabelFromComments(move.comments);
+      if (sourceLabel != null) {
+        // Credit is the readable tail of its owning move/branch, not a pill.
+        // A real TextSpan wraps fully and keeps the closing bracket after it.
+        // It precedes this move's sub-variations so it never reads as part
+        // of their block.
+        spans.add(TextSpan(
+          text: '${sourceCreditText(sourceLabel)} ',
+          style: commentStyle,
+        ));
       }
 
       final vars = move.variations;
@@ -2865,160 +2857,36 @@ class _InlineMove extends StatelessWidget {
   }
 }
 
-class _InlineSourceMetadata extends StatelessWidget {
-  const _InlineSourceMetadata({required this.depth, required this.sourceLabel});
 
-  final int depth;
-  final String sourceLabel;
 
-  @override
-  Widget build(BuildContext context) {
-    final meta = _tryParseGameSourceMetadata(sourceLabel);
-    if (meta != null) {
-      return _InlineGameSourceBanner(metadata: meta, depth: depth);
-    }
-    return _SourceMetadataPill(
-      sourceLabel: sourceLabel,
-      depth: depth,
-      inline: true,
-    );
-  }
-}
 
-/// Inline reference-style game footer rendered at the end of an inserted
-/// continuation: `1–0 (38) Sindarov, J (2776) − Gukesh, D (2732) Warsaw 2026`.
-///
-/// Stays on the same Wrap-row as the trailing moves so it reads as the
-/// natural tail of the run. The result and Elo numbers use tabular
-/// figures to keep digit columns even when re-rendered.
-class _InlineGameSourceBanner extends StatelessWidget {
-  const _InlineGameSourceBanner({required this.metadata, required this.depth});
-
-  final _GameSourceMetadata metadata;
-  final int depth;
-
-  @override
-  Widget build(BuildContext context) {
-    final result = metadata.resultChip;
-    final resultTint = _resultChipTint(result);
-    final baseColor =
-        depth == 0 ? kWhiteColor.withValues(alpha: 0.85) : kWhiteColor70;
-    final dimColor = depth == 0 ? kWhiteColor70 : kLightGreyColor;
-    final spans = <InlineSpan>[];
-
-    void addText(String text, {required TextStyle style}) {
-      spans.add(TextSpan(text: text, style: style));
-    }
-
-    final baseStyle = TextStyle(
-      color: baseColor,
-      fontSize: depth == 0 ? 12.4 : 11.2,
-      height: 1.25,
-      fontWeight: FontWeight.w500,
-      letterSpacing: 0.05,
-      fontFeatures: const [FontFeature.tabularFigures()],
-    );
-    final dimStyle = baseStyle.copyWith(color: dimColor);
-    final boldStyle = baseStyle.copyWith(
-      color: depth == 0 ? kWhiteColor : kWhiteColor70,
-      fontWeight: FontWeight.w700,
-    );
-    final venueStyle = baseStyle.copyWith(
-      color: dimColor,
-      fontStyle: FontStyle.italic,
-    );
-
-    if (result != null) {
-      spans.add(
-        WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: _ResultBadge(label: result, tint: resultTint, compact: true),
-        ),
-      );
-    }
-    if (metadata.plies != null) {
-      if (spans.isNotEmpty) addText(' ', style: dimStyle);
-      addText('(${metadata.plies})', style: dimStyle);
-    }
-
-    void addPlayer(String? name, int? elo, String? title) {
-      if (name == null) return;
-      if (spans.isNotEmpty) addText('  ', style: baseStyle);
-      if (title != null && title.isNotEmpty) {
-        addText(
-          '$title ',
-          style: dimStyle.copyWith(fontWeight: FontWeight.w700),
-        );
-      }
-      addText(name, style: boldStyle);
-      if (elo != null) {
-        addText(' ', style: baseStyle);
-        addText('($elo)', style: dimStyle);
-      }
-    }
-
-    final hasWhite = metadata.whiteName != null;
-    final hasBlack = metadata.blackName != null;
-    addPlayer(metadata.whiteName, metadata.whiteElo, metadata.whiteTitle);
-    if (hasWhite && hasBlack) {
-      addText('  − ', style: dimStyle);
-    }
-    addPlayer(metadata.blackName, metadata.blackElo, metadata.blackTitle);
-
-    final venue = <String>[
-      if (metadata.event != null) metadata.event!,
-      if (metadata.site != null && metadata.site != metadata.event)
-        metadata.site!,
-      if (metadata.round != null) 'R${metadata.round}',
-      if (metadata.year != null) metadata.year!,
-    ];
-    if (venue.isNotEmpty) {
-      if (spans.isNotEmpty) addText('  ', style: baseStyle);
-      addText(venue.join(' · '), style: venueStyle);
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(left: 6, right: 2),
-      child: Text.rich(
-        TextSpan(children: spans),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-  }
-}
-
-/// Compact result pill used inline next to the inserted line and inside the
-/// ladder source card. Mirrors the larger `_GameResultRow` chip so the eye
-/// links the inline footer to the terminal banner at the bottom of the line.
+/// Result badge inside a ladder source card; inline credits use plain text.
 class _ResultBadge extends StatelessWidget {
   const _ResultBadge({
     required this.label,
     required this.tint,
-    this.compact = false,
   });
 
   final String label;
   final Color tint;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: compact ? 7 : 10,
-        vertical: compact ? 2 : 4,
+        horizontal: 10,
+        vertical: 4,
       ),
       decoration: BoxDecoration(
         color: tint.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(compact ? 4 : 5),
+        borderRadius: BorderRadius.circular(5),
         border: Border.all(color: tint.withValues(alpha: 0.55), width: 1),
       ),
       child: Text(
         label,
         style: TextStyle(
           color: tint,
-          fontSize: compact ? 11 : 13,
+          fontSize: 13,
           fontWeight: FontWeight.w800,
           letterSpacing: 0.5,
           height: 1.0,
@@ -3033,12 +2901,10 @@ class _SourceMetadataPill extends StatelessWidget {
   const _SourceMetadataPill({
     required this.sourceLabel,
     required this.depth,
-    this.inline = false,
   });
 
   final String sourceLabel;
   final int depth;
-  final bool inline;
 
   @override
   Widget build(BuildContext context) {
@@ -3048,14 +2914,14 @@ class _SourceMetadataPill extends StatelessWidget {
             : _depthBaseColor(depth).withValues(alpha: 0.95);
     final display = _sourceMetadataDisplay(sourceLabel);
     return ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: inline ? 320 : 460),
+      constraints: BoxConstraints(maxWidth: 460),
       child: Container(
         padding: EdgeInsets.symmetric(
-          horizontal: inline ? 7 : 8,
-          vertical: inline ? 3 : 4,
+          horizontal: 8,
+          vertical: 4,
         ),
         decoration: BoxDecoration(
-          color: accent.withValues(alpha: inline ? 0.10 : 0.08),
+          color: accent.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(5),
           border: Border.all(color: accent.withValues(alpha: 0.22)),
         ),
@@ -3064,7 +2930,7 @@ class _SourceMetadataPill extends StatelessWidget {
           children: [
             Icon(
               Icons.article_outlined,
-              size: inline ? 12 : 13,
+              size: 13,
               color: accent.withValues(alpha: 0.95),
             ),
             const SizedBox(width: 5),
@@ -3075,7 +2941,7 @@ class _SourceMetadataPill extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: kWhiteColor.withValues(alpha: 0.82),
-                  fontSize: inline ? 10.8 : 11.4,
+                  fontSize: 11.4,
                   height: 1.05,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.05,
@@ -4818,7 +4684,7 @@ String _sourceMetadataDisplay(String sourceLabel) {
 
 String? _firstPgnComment(List<String>? comments) => firstPgnComment(comments);
 
-final _sourceDirectiveRegex = RegExp(r'\[%src\s+([^\]]+)\]');
+final _sourceDirectiveRegex = pgnSourceCreditDirective;
 
 /// Structured game-header payload encoded by the explorer/games-table when
 /// it inserts a continuation into the active board. Carries the data needed
