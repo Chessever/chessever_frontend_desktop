@@ -31,7 +31,7 @@ void main() {
   );
 
   test(
-    'rejects an annotated source without publishing a partial PGN',
+    'rejects a malformed annotation frame without publishing a partial PGN',
     () async {
       final root = await Directory.systemTemp.createTemp('cbh-dart-reject-');
       addTearDown(() => root.delete(recursive: true));
@@ -41,7 +41,7 @@ void main() {
       await source.writeAsBytes(index);
       final annotation = Uint8List(47);
       annotation[39] = 21;
-      annotation[45] = 7;
+      annotation[45] = 5; // Below the six-byte annotation-entry header.
       annotation[46] = 42;
       await File(p.join(root.path, 'sample.cba')).writeAsBytes(annotation);
       final output = Directory(p.join(root.path, 'converted'));
@@ -60,7 +60,7 @@ Future<File> _plainGame(Directory root) async {
   index[2] = 0x2c;
   index[4] = 0x2e;
   index[5] = 1;
-  index[9] = 1;
+  index[9] = index.length ~/ 46; // Header count includes its own record.
   index[50] = 26;
   index[60] = 1;
   index[73] = 2;

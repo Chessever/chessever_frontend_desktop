@@ -4,6 +4,22 @@ import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('evp evaluation profiles are display-only and raw PGN survives', () {
+    const profile = '[%evp 0,51,16,15,24,18,33,29,26,32767,-34]';
+    final game = ChessGame.fromPgn(
+      'evp-profile-display',
+      '[Result "*"]\n\n{$profile} 1. d4 {Main prose $profile} d5 (1... Nf6 {Variation prose $profile}) *',
+    );
+    expect(cleanPgnCommentText(profile), isEmpty);
+    expect(cleanPgnCommentText('Before $profile after'), 'Before after');
+    expect(cleanPgnCommentText('[%EVP 0,32767,-379]'), isEmpty);
+    expect(game.rootComments.any((c) => c.contains('%evp')), isTrue);
+    expect(
+      game.mainline.first.comments!.any((c) => c.contains('%evp')),
+      isTrue,
+    );
+    expect(cleanPgnComments(game.mainline.first.comments), ['Main prose']);
+  });
   group('cleanPgnCommentText / cleanPgnComments', () {
     test('strips Granada-shaped machine tags including chessever_annotation', () {
       final cleaned = cleanPgnComments(const [
