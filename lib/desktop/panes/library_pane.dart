@@ -471,6 +471,14 @@ class LibraryPane extends HookConsumerWidget {
       if (path != null) activateLocalPath(path);
     }
 
+    // Read without a MediaQuery dependency, as the board pane does: it only
+    // picks the starting layout. A phone-width window starts with the
+    // folder rail closed so the databases get the width.
+    final narrowWindow =
+        (context.getInheritedWidgetOfExactType<MediaQuery>()?.data.size.width ??
+            double.infinity) <
+        700;
+
     return FTheme(
       data: FThemes.zinc.dark,
       child: Container(
@@ -490,6 +498,7 @@ class LibraryPane extends HookConsumerWidget {
                   initialWeight: 0.20,
                   label: 'Cloud Library',
                   collapsedIcon: Icons.view_sidebar_outlined,
+                  initialCollapsed: narrowWindow,
                   child: _FolderRail(
                     ownedFolders: ownedSorted,
                     subscribedFolders: subscribedSorted,
@@ -5743,6 +5752,15 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
                         minSize: 380,
                         initialWeight: 0.48,
                         label: 'Preview',
+                        // No room beside the table in a phone-width window.
+                        initialCollapsed:
+                            (context
+                                    .getInheritedWidgetOfExactType<MediaQuery>()
+                                    ?.data
+                                    .size
+                                    .width ??
+                                double.infinity) <
+                            700,
                         child: _TwicPreviewPanel(
                           game: selected,
                           previewGame: selectedPreviewGame,
@@ -10992,9 +11010,11 @@ class _TwicGamesTable extends StatelessWidget {
           builder: (context, constraints) {
             final showDetails =
                 constraints.maxWidth >= _kPreviewDetailColumnsMinWidth;
+            final showDate =
+                constraints.maxWidth >= _kPreviewDateColumnMinWidth;
             return Column(
           children: [
-            _TwicTableHeader(showDetails: showDetails),
+            _TwicTableHeader(showDetails: showDetails, showDate: showDate),
             const Divider(height: 1, color: kDividerColor),
             Expanded(
               child: ListView.builder(
@@ -11015,6 +11035,7 @@ class _TwicGamesTable extends StatelessWidget {
                     child: _TwicTableRow(
                       game: game,
                       showDetails: showDetails,
+                      showDate: showDate,
                       selected:
                           (selectedGameIds?.contains(game.gameId) ?? false) ||
                           game.gameId == selectedGameId,
@@ -11051,6 +11072,10 @@ const double _kPreviewColGap = 8.0;
 /// Below this width the Event and ECO columns step aside so both player
 /// cells keep room for a name and rating instead of drawing over the result.
 const double _kPreviewDetailColumnsMinWidth = 620.0;
+
+/// Below this the Date column steps aside as well (a phone-width window),
+/// leaving White, Result and Black.
+const double _kPreviewDateColumnMinWidth = 360.0;
 const EdgeInsets _kPreviewTableCellPadding = EdgeInsets.fromLTRB(
   10,
   10,
@@ -11059,9 +11084,10 @@ const EdgeInsets _kPreviewTableCellPadding = EdgeInsets.fromLTRB(
 );
 
 class _TwicTableHeader extends StatelessWidget {
-  const _TwicTableHeader({this.showDetails = true});
+  const _TwicTableHeader({this.showDetails = true, this.showDate = true});
 
   final bool showDetails;
+  final bool showDate;
 
   @override
   Widget build(BuildContext context) {
@@ -11095,13 +11121,14 @@ class _TwicTableHeader extends StatelessWidget {
             SizedBox(width: _kPreviewColEco, child: label('ECO')),
             const SizedBox(width: _kPreviewColGap),
           ],
-          SizedBox(
-            width: _kPreviewColDate,
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: label('Date', alignEnd: true),
+          if (showDate)
+            SizedBox(
+              width: _kPreviewColDate,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: label('Date', alignEnd: true),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -11112,6 +11139,7 @@ class _TwicTableRow extends StatefulWidget {
   const _TwicTableRow({
     required this.game,
     required this.showDetails,
+    this.showDate = true,
     required this.selected,
     this.onRangeSelect,
     required this.onTap,
@@ -11121,6 +11149,7 @@ class _TwicTableRow extends StatefulWidget {
 
   final GamesTourModel game;
   final bool showDetails;
+  final bool showDate;
   final bool selected;
   final VoidCallback? onRangeSelect;
   final VoidCallback onTap;
@@ -11253,18 +11282,19 @@ class _TwicTableRowState extends State<_TwicTableRow>
                     ),
                     const SizedBox(width: _kPreviewColGap),
                   ],
-                  SizedBox(
-                    width: _kPreviewColDate,
-                    child: Text(
-                      dateLabel,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: kLightGreyColor,
-                        fontSize: 11,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                  if (widget.showDate)
+                    SizedBox(
+                      width: _kPreviewColDate,
+                      child: Text(
+                        dateLabel,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          color: kLightGreyColor,
+                          fontSize: 11,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),

@@ -409,14 +409,17 @@ class _AccountSection extends ConsumerWidget {
               style: const TextStyle(color: kWhiteColor70, fontSize: 13),
             ),
             const SizedBox(height: 16),
-            Row(
+            // Wraps to a second line in a narrow window rather than pushing
+            // the Apple button past the card's edge.
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 _PrimaryButton(
                   icon: Icons.account_circle_rounded,
                   label: signingIn ? 'Signing in…' : 'Sign in with Google',
                   onTap: signingIn ? null : onGoogleSignIn,
                 ),
-                const SizedBox(width: 8),
                 _SecondaryButton(
                   label: 'Sign in with Apple',
                   onTap: signingIn ? null : onAppleSignIn,
