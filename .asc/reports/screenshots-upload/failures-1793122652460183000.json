@@ -1,0 +1,41 @@
+{
+  "versionLocalizationId": "4635d820-2097-4816-bb00-83bca6861381",
+  "path": ".asc/reports/screenshots-upload/failures-1793122652460183000.json",
+  "deviceType": "DESKTOP",
+  "displayType": "APP_DESKTOP",
+  "replace": true,
+  "setId": "8e529afb-d444-4394-a3b7-ad491549bfbf",
+  "files": [
+    "/tmp/mas-screenshots-no-mac/en-US/01-live-events.png",
+    "/tmp/mas-screenshots-no-mac/en-US/02-live-analysis.png",
+    "/tmp/mas-screenshots-no-mac/en-US/03-opening-explorer.png",
+    "/tmp/mas-screenshots-no-mac/en-US/04-player-profile.png",
+    "/tmp/mas-screenshots-no-mac/en-US/05-event-calendar.png"
+  ],
+  "orderedIds": [
+    "6dc00019-6c5f-8bf1-8004-71c5996f2536"
+  ],
+  "pendingFiles": [
+    "/tmp/mas-screenshots-no-mac/en-US/02-live-analysis.png",
+    "/tmp/mas-screenshots-no-mac/en-US/03-opening-explorer.png",
+    "/tmp/mas-screenshots-no-mac/en-US/04-player-profile.png",
+    "/tmp/mas-screenshots-no-mac/en-US/05-event-calendar.png"
+  ],
+  "results": [
+    {
+      "fileName": "01-live-events.png",
+      "filePath": "/tmp/mas-screenshots-no-mac/en-US/01-live-events.png",
+      "assetId": "6dc00019-6c5f-8bf1-8004-71c5996f2536",
+      "state": "COMPLETE"
+    }
+  ],
+  "failures": [
+    {
+      "fileName": "02-live-analysis.png",
+      "filePath": "/tmp/mas-screenshots-no-mac/en-US/02-live-analysis.png",
+      "error": "timed out waiting for asset e7c00019-6c5f-8bf1-8027-608805b12f2e delivery: context deadline exceeded"
+    }
+  ],
+  "error": "timed out waiting for asset e7c00019-6c5f-8bf1-8027-608805b12f2e delivery: context deadline exceeded",
+  "generatedAt": "2026-10-27T17:37:32Z"
+}

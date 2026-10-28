@@ -6,13 +6,17 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/panes/play_pane.dart'
     show PlayPaneTab, playPaneTabByTabIdProvider, playPaneTabProvider;
+import 'package:chessever/desktop/services/auth/desktop_guest_upgrade.dart';
+import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/services/play/play_achievements.dart';
 import 'package:chessever/desktop/services/play/play_elo.dart';
 import 'package:chessever/desktop/services/play/play_game_analysis.dart';
 import 'package:chessever/desktop/services/play/play_profile_repository.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
+import 'package:chessever/desktop/widgets/desktop_profile_sign_in.dart';
 import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/play_achievement_badge.dart';
@@ -107,6 +111,39 @@ class PlayProfilePane extends ConsumerStatefulWidget {
 class _PlayProfilePaneState extends ConsumerState<PlayProfilePane> {
   _ProfileTab _tab = _ProfileTab.overview;
   RatedTimeControl? _ratingsTc;
+  DesktopAccountProvider? _busyProvider;
+  String? _signInError;
+
+  Future<void> _signIn(DesktopAccountProvider provider) async {
+    if (_busyProvider != null) return;
+    setState(() {
+      _busyProvider = provider;
+      _signInError = null;
+    });
+    try {
+      final signedIn = await signInDesktopPermanentAccount(
+        ref,
+        provider,
+        surface: 'profile',
+      );
+      if (!mounted) return;
+      if (signedIn) {
+        ref.invalidate(playUserProfileProvider);
+        ref.invalidate(playRecentGamesProvider);
+      } else {
+        setState(
+          () => _signInError = 'Sign-in did not finish. Please try again.',
+        );
+      }
+    } catch (error, stackTrace) {
+      ErrorReporter.report(error, stackTrace: stackTrace, tag: 'auth.profile');
+      if (mounted) {
+        setState(() => _signInError = desktopSignInErrorMessage(error));
+      }
+    } finally {
+      if (mounted) setState(() => _busyProvider = null);
+    }
+  }
 
   void _setTab(_ProfileTab t) => setState(() => _tab = t);
   void _openRatings(RatedTimeControl tc) => setState(() {
@@ -116,34 +153,50 @@ class _PlayProfilePaneState extends ConsumerState<PlayProfilePane> {
 
   @override
   Widget build(BuildContext context) {
+    final isPermanent = ref.watch(desktopAccountIdentityProvider).isPermanent;
     final profileAsync = ref.watch(playUserProfileProvider);
     final achievements = ref.watch(playAchievementsProvider);
     final gamesAsync = ref.watch(playRecentGamesProvider);
     return FTheme(
       data: FThemes.zinc.dark,
-      child: profileAsync.when(
-        loading: () => const _Loading(),
-        error:
-            (e, _) => _ErrorState(
-              message: 'Profile could not load: $e',
-              onRetry: () => ref.invalidate(playUserProfileProvider),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (!isPermanent)
+            DesktopProfileSignIn(
+              busyProvider: _busyProvider,
+              error: _signInError,
+              onSignIn: _signIn,
             ),
-        data: (profile) {
-          final games = gamesAsync.valueOrNull ?? const <PlayGameRecord>[];
-          return _Body(
-            profile: profile,
-            achievements: achievements,
-            games: games,
-            historyLoading: gamesAsync.isLoading,
-            historyError: gamesAsync.hasError ? '${gamesAsync.error}' : null,
-            playTabId: widget.playTabId,
-            tab: _tab,
-            ratingsTc: _ratingsTc ?? profile.headlineTimeControl,
-            onTabChanged: _setTab,
-            onShowRatings: _openRatings,
-            onRatingsTcChanged: (tc) => setState(() => _ratingsTc = tc),
-          );
-        },
+          Expanded(
+            child: profileAsync.when(
+              loading: () => const _Loading(),
+              error:
+                  (e, _) => _ErrorState(
+                    message: 'Profile could not load: $e',
+                    onRetry: () => ref.invalidate(playUserProfileProvider),
+                  ),
+              data: (profile) {
+                final games =
+                    gamesAsync.valueOrNull ?? const <PlayGameRecord>[];
+                return _Body(
+                  profile: profile,
+                  achievements: achievements,
+                  games: games,
+                  historyLoading: gamesAsync.isLoading,
+                  historyError:
+                      gamesAsync.hasError ? '${gamesAsync.error}' : null,
+                  playTabId: widget.playTabId,
+                  tab: _tab,
+                  ratingsTc: _ratingsTc ?? profile.headlineTimeControl,
+                  onTabChanged: _setTab,
+                  onShowRatings: _openRatings,
+                  onRatingsTcChanged: (tc) => setState(() => _ratingsTc = tc),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -316,6 +369,11 @@ class _ProfileCardState extends ConsumerState<_ProfileCard> {
   @override
   Widget build(BuildContext context) {
     final p = widget.profile;
+    final isPermanent = ref.watch(desktopAccountIdentityProvider).isPermanent;
+    final displayName =
+        !isPermanent && p.displayName == 'ChessEver Player'
+            ? 'Guest player'
+            : p.displayName;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: _panel(),
@@ -326,7 +384,7 @@ class _ProfileCardState extends ConsumerState<_ProfileCard> {
             children: [
               DesktopUserAvatar(
                 size: 76,
-                displayName: p.displayName,
+                displayName: displayName,
                 borderRadius: 18,
               ),
               const SizedBox(width: 14),
@@ -344,7 +402,7 @@ class _ProfileCardState extends ConsumerState<_ProfileCard> {
                       )
                     else
                       Text(
-                        p.displayName,
+                        displayName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -356,13 +414,17 @@ class _ProfileCardState extends ConsumerState<_ProfileCard> {
                       ),
                     // The default display name is this same tag line; one
                     // copy is enough.
-                    if (_editing ||
+                    if (!isPermanent ||
+                        _editing ||
                         p.displayName.trim() != 'ChessEver Player') ...[
                       const SizedBox(height: 4),
                       Text(
-                        'ChessEver Player',
+                        isPermanent ? 'ChessEver Player' : 'Guest profile',
                         style: TextStyle(
-                          color: _accentFor(p.headlineTimeControl),
+                          color:
+                              isPermanent
+                                  ? _accentFor(p.headlineTimeControl)
+                                  : kWhiteColor70,
                           fontSize: 11,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 0.8,
