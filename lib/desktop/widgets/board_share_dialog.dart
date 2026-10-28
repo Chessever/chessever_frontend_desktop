@@ -25,6 +25,7 @@ import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/text_download.dart';
 
 const _defaultBoardShareShowEvalBar = false;
 
@@ -331,6 +332,19 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   Future<void> _saveGeneratedGif() async {
     final generatedGifPath = _generatedGifPath;
     if (generatedGifPath == null) return;
+
+    if (kIsWeb) {
+      // The browser's download stands in for the desktop save dialog.
+      try {
+        final bytes = await io.File(generatedGifPath).readAsBytes();
+        downloadBytesFile(_defaultExportName('gif'), bytes, 'image/gif');
+        _showToast('GIF downloaded', isError: false);
+      } catch (error) {
+        debugPrint('Failed to download generated GIF: $error');
+        _showToast('Failed to download GIF', isError: true);
+      }
+      return;
+    }
 
     final outputPath = await BoardShareService.chooseGifSavePath(
       defaultName: _defaultExportName('gif'),
@@ -794,11 +808,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                         (_generatedGifPath == null
                                 ? boardShareActionDescriptors(
                                   copyImage: _copyImage,
-                                  // The GIF renderer does not accept
-                                  // requests from app.chessever.com yet
-                                  // (no CORS), so the web build leaves the
-                                  // action out rather than always failing.
-                                  generateGif: kIsWeb ? null : _generateGif,
+                                  generateGif: _generateGif,
                                   downloadImage: _downloadImage,
                                   copyPgn:
                                       widget.allowPgnCopy ? _copyPgn : null,
