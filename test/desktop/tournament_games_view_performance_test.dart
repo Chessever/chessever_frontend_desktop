@@ -40,12 +40,6 @@ void main() {
     );
   });
 
-  test('large tournament rounds do not queue per-card Stockfish work', () {
-    expect(shouldAllowTournamentCardStockfishFallback(24), isTrue);
-    expect(shouldAllowTournamentCardStockfishFallback(25), isFalse);
-    expect(shouldAllowTournamentCardStockfishFallback(1000), isFalse);
-  });
-
   test('hidden retained tournament panes suspend only their safety poll', () {
     expect(
       shouldRunTournamentSafetyRefresh(

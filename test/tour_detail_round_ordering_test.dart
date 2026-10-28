@@ -105,47 +105,44 @@ void main() {
       expect(_ids(sorted), ['r3', 'r2', 'r1']);
     });
 
-    test(
-      'promotes next round inside two hours when all started rounds finished',
-      () {
-        final now = DateTime(2026, 3, 30, 16);
-        final rounds = [
-          _round(
-            id: 'r1',
-            name: 'Round 1',
-            startsAt: now.subtract(const Duration(hours: 4)),
-            status: RoundStatus.completed,
-          ),
-          _round(
-            id: 'r2',
-            name: 'Round 2',
-            startsAt: now.add(const Duration(minutes: 119)),
-            status: RoundStatus.upcoming,
-          ),
-          _round(
-            id: 'r3',
-            name: 'Round 3',
-            startsAt: now.add(const Duration(days: 1)),
-            status: RoundStatus.upcoming,
-          ),
-          _round(
-            id: 'r4',
-            name: 'Round 4',
-            startsAt: now.add(const Duration(days: 2)),
-            status: RoundStatus.upcoming,
-          ),
-        ];
+    test('promotes the next round once every started round is finished', () {
+      final now = DateTime(2026, 3, 30, 16);
+      final rounds = [
+        _round(
+          id: 'r1',
+          name: 'Round 1',
+          startsAt: now.subtract(const Duration(hours: 4)),
+          status: RoundStatus.completed,
+        ),
+        _round(
+          id: 'r2',
+          name: 'Round 2',
+          startsAt: now.add(const Duration(minutes: 119)),
+          status: RoundStatus.upcoming,
+        ),
+        _round(
+          id: 'r3',
+          name: 'Round 3',
+          startsAt: now.add(const Duration(days: 1)),
+          status: RoundStatus.upcoming,
+        ),
+        _round(
+          id: 'r4',
+          name: 'Round 4',
+          startsAt: now.add(const Duration(days: 2)),
+          status: RoundStatus.upcoming,
+        ),
+      ];
 
-        final sorted = sortRoundsForDisplay(
-          rounds,
-          resolveDate: (round) => round.startsAt,
-          isRoundFullyPlayed: (round) => round.id == 'r1',
-          now: now,
-        );
+      final sorted = sortRoundsForDisplay(
+        rounds,
+        resolveDate: (round) => round.startsAt,
+        isRoundFullyPlayed: (round) => round.id == 'r1',
+        now: now,
+      );
 
-        expect(_ids(sorted), ['r2', 'r1', 'r4', 'r3']);
-      },
-    );
+      expect(_ids(sorted), ['r2', 'r1', 'r4', 'r3']);
+    });
 
     test('does not promote while a started round is unfinished', () {
       final now = DateTime(2026, 3, 30, 16);
@@ -180,7 +177,152 @@ void main() {
       expect(_ids(sorted), ['r1', 'r3', 'r2']);
     });
 
-    test('keeps previously started rounds in reverse chronological order', () {
+    test('promotes a next round whose pairings are out days ahead', () {
+      final now = DateTime(2026, 3, 30, 16);
+      final rounds = [
+        _round(
+          id: 'r1',
+          name: 'Round 1',
+          startsAt: now.subtract(const Duration(hours: 4)),
+          status: RoundStatus.completed,
+        ),
+        _round(
+          id: 'r2',
+          name: 'Round 2',
+          startsAt: now.add(const Duration(days: 3)),
+          status: RoundStatus.upcoming,
+        ),
+        _round(
+          id: 'r3',
+          name: 'Round 3',
+          startsAt: now.add(const Duration(days: 4)),
+          status: RoundStatus.upcoming,
+        ),
+      ];
+
+      final sorted = sortRoundsForDisplay(
+        rounds,
+        resolveDate: (round) => round.startsAt,
+        hasGames: (_) => true,
+        isRoundFullyPlayed: (round) => round.id == 'r1',
+        hasStartedActivity: (round) => round.id == 'r1',
+        now: now,
+      );
+
+      expect(_ids(sorted), ['r2', 'r1', 'r3']);
+    });
+
+    test('promotes a start-after-previous round that has no start time', () {
+      // Khelo Chess India 94.0: round 9 was set to start after round 8, so it
+      // had no start time, and it sat below round 1 once its boards were out.
+      final now = DateTime(2026, 10, 23, 10);
+      final rounds = [
+        for (var i = 1; i <= 8; i++)
+          _round(
+            id: 'r$i',
+            name: 'Round $i',
+            startsAt: DateTime(2026, 10, 16 + i, 9),
+            status: RoundStatus.completed,
+          ),
+        _round(
+          id: 'r9',
+          name: 'Round 9',
+          startsAt: null,
+          status: RoundStatus.upcoming,
+        ),
+        _round(
+          id: 'r10',
+          name: 'Round 10',
+          startsAt: null,
+          status: RoundStatus.upcoming,
+        ),
+      ];
+
+      final sorted = sortRoundsForDisplay(
+        rounds,
+        resolveDate: (round) => round.startsAt,
+        hasGames: (round) => round.id != 'r10',
+        isRoundFullyPlayed: (round) => round.id != 'r9' && round.id != 'r10',
+        now: now,
+      );
+
+      expect(_ids(sorted), [
+        'r9',
+        'r8',
+        'r7',
+        'r6',
+        'r5',
+        'r4',
+        'r3',
+        'r2',
+        'r1',
+        'r10',
+      ]);
+    });
+
+    test('treats a round holding only pairings as not yet started', () {
+      final now = DateTime(2026, 3, 30, 16);
+      final rounds = [
+        _round(
+          id: 'r1',
+          name: 'Round 1',
+          startsAt: now.subtract(const Duration(days: 1)),
+          status: RoundStatus.completed,
+        ),
+        _round(
+          id: 'r2',
+          name: 'Round 2',
+          startsAt: now.subtract(const Duration(minutes: 10)),
+          status: RoundStatus.ongoing,
+        ),
+      ];
+
+      final sorted = sortRoundsForDisplay(
+        rounds,
+        resolveDate: (round) => round.startsAt,
+        hasGames: (_) => true,
+        isRoundFullyPlayed: (round) => round.id == 'r1',
+        hasStartedActivity: (round) => round.id == 'r1',
+        now: now,
+      );
+
+      expect(_ids(sorted), ['r2', 'r1']);
+    });
+
+    test('never promotes over a live round', () {
+      final now = DateTime(2026, 3, 30, 16);
+      final rounds = [
+        _round(
+          id: 'r4',
+          name: 'Round 4',
+          startsAt: now.subtract(const Duration(hours: 3)),
+          status: RoundStatus.completed,
+        ),
+        _round(
+          id: 'r5',
+          name: 'Round 5',
+          startsAt: now.subtract(const Duration(minutes: 25)),
+          status: RoundStatus.live,
+        ),
+        _round(
+          id: 'r6',
+          name: 'Round 6',
+          startsAt: now.add(const Duration(minutes: 35)),
+          status: RoundStatus.upcoming,
+        ),
+      ];
+
+      final sorted = sortRoundsForDisplay(
+        rounds,
+        resolveDate: (round) => round.startsAt,
+        isRoundFullyPlayed: (_) => true,
+        now: now,
+      );
+
+      expect(_ids(sorted), ['r5', 'r4', 'r6']);
+    });
+
+    test('keeps future rounds without boards below the started rounds', () {
       final now = DateTime(2026, 3, 31, 16);
       final rounds = [
         _round(
@@ -212,6 +354,7 @@ void main() {
       final sorted = sortRoundsForDisplay(
         rounds,
         resolveDate: (round) => round.startsAt,
+        hasGames: (round) => round.roundStatus != RoundStatus.upcoming,
         now: now,
       );
 
@@ -279,42 +422,73 @@ void main() {
   });
 
   group('pickPreferredRoundForSelection', () {
-    test(
-      'selects next round inside two hours when latest round is fully played',
-      () {
-        final now = DateTime(2026, 3, 30, 16);
-        final rounds = [
-          _round(
-            id: 'r1',
-            name: 'Round 1',
-            startsAt: now.subtract(const Duration(hours: 4)),
-            status: RoundStatus.completed,
-          ),
-          _round(
-            id: 'r2',
-            name: 'Round 2',
-            startsAt: now.add(const Duration(minutes: 119)),
-            status: RoundStatus.upcoming,
-          ),
-          _round(
-            id: 'r3',
-            name: 'Round 3',
-            startsAt: now.add(const Duration(days: 1)),
-            status: RoundStatus.upcoming,
-          ),
-        ];
+    test('selects the next round when the latest round is fully played', () {
+      final now = DateTime(2026, 3, 30, 16);
+      final rounds = [
+        _round(
+          id: 'r1',
+          name: 'Round 1',
+          startsAt: now.subtract(const Duration(hours: 4)),
+          status: RoundStatus.completed,
+        ),
+        _round(
+          id: 'r2',
+          name: 'Round 2',
+          startsAt: now.add(const Duration(minutes: 119)),
+          status: RoundStatus.upcoming,
+        ),
+        _round(
+          id: 'r3',
+          name: 'Round 3',
+          startsAt: now.add(const Duration(days: 1)),
+          status: RoundStatus.upcoming,
+        ),
+      ];
 
-        final selected = pickPreferredRoundForSelection(
-          rounds,
-          resolveDate: (round) => round.startsAt,
-          hasGames: (_) => true,
-          isRoundFullyPlayed: (round) => round.id == 'r1',
-          now: now,
-        );
+      final selected = pickPreferredRoundForSelection(
+        rounds,
+        resolveDate: (round) => round.startsAt,
+        hasGames: (_) => true,
+        isRoundFullyPlayed: (round) => round.id == 'r1',
+        now: now,
+      );
 
-        expect(selected?.id, 'r2');
-      },
-    );
+      expect(selected?.id, 'r2');
+    });
+
+    test('selects a next round without a start time once play is over', () {
+      final now = DateTime(2026, 10, 23, 10);
+      final rounds = [
+        _round(
+          id: 'r7',
+          name: 'Round 7',
+          startsAt: DateTime(2026, 10, 20, 9),
+          status: RoundStatus.completed,
+        ),
+        _round(
+          id: 'r8',
+          name: 'Round 8',
+          startsAt: DateTime(2026, 10, 20, 14),
+          status: RoundStatus.completed,
+        ),
+        _round(
+          id: 'r9',
+          name: 'Round 9',
+          startsAt: null,
+          status: RoundStatus.upcoming,
+        ),
+      ];
+
+      final selected = pickPreferredRoundForSelection(
+        rounds,
+        resolveDate: (round) => round.startsAt,
+        hasGames: (_) => true,
+        isRoundFullyPlayed: (round) => round.id != 'r9',
+        now: now,
+      );
+
+      expect(selected?.id, 'r9');
+    });
 
     test('returns null when hasGames filters out every round', () {
       final now = DateTime(2026, 3, 30, 16);
