@@ -7467,6 +7467,37 @@ bool _uciPathsEqual(List<String> left, List<String> right) {
   return true;
 }
 
+/// Exercises the same tree replay used by the visible Board badge.
+@visibleForTesting
+Square? boardMoveBadgeSquareForTesting(
+  ChessGame game,
+  ChessMovePointer pointer,
+) => _pliesFromPath(
+  game.startingFen,
+  _pathFromPointer(game, pointer),
+).last.lastMoveSquare;
+
+@visibleForTesting
+Widget boardMoveBadgeWidgetForTesting({
+  required ChessGame game,
+  required ChessMovePointer pointer,
+  required double boardSize,
+  required bool flipped,
+  required Widget child,
+}) {
+  final square = boardMoveBadgeSquareForTesting(game, pointer);
+  if (square == null) return const SizedBox.shrink();
+  return _BoardBadge(
+    boardSize: boardSize,
+    square: square,
+    flipped: flipped,
+    color: Colors.green,
+    sizeFactor: 0.40,
+    selfContainedChild: true,
+    child: child,
+  );
+}
+
 /// Replay [path] (a list of moves from the starting position) into a
 /// flat list of [_Ply]s — one per visited position, including the
 /// initial one. This is the seam between the tree-model state and the
@@ -7496,7 +7527,7 @@ List<_Ply> _pliesFromPath(String startingFen, List<ChessMove> path) {
         nags: m.nags ?? const <int>[],
         comments: m.comments ?? const <String>[],
         move: move,
-        lastMoveSquare: _normaliseLastMoveSquare(move),
+        lastMoveSquare: _normaliseLastMoveSquare(position, next, move),
       ),
     );
     position = next;
@@ -8399,7 +8430,7 @@ String? _firstClockDisplay(
 ) {
   for (final value in [first, second, third, fallback]) {
     final trimmed = value?.trim();
-    if (trimmed != null && trimmed.isNotEmpty) return trimmed;
+    if (hasUsableClockDisplay(trimmed)) return trimmed;
   }
   return null;
 }
@@ -8690,13 +8721,13 @@ class _BoardArea extends ConsumerWidget {
       whiteClock,
       pgn('WhiteTimeDisplay'),
       sourceGame?.whiteTimeDisplay,
-      focusMode ? '--:--' : null,
+      null,
     );
     final blackClockDisplay = _firstClockDisplay(
       blackClock,
       pgn('BlackTimeDisplay'),
       sourceGame?.blackTimeDisplay,
-      focusMode ? '--:--' : null,
+      null,
     );
     final hasPlayerInfo =
         whiteName.isNotEmpty ||
@@ -9879,8 +9910,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
               result: result,
               fallbackText: clockText ?? '',
             )
-          else if ((clockText != null && clockText!.trim().isNotEmpty) ||
-              result != null) ...[
+          else if (hasUsableClockDisplay(clockText) || result != null) ...[
             const SizedBox(width: 10),
             _PlayerClock(
               text: clockText ?? '',
@@ -10619,7 +10649,11 @@ class _LiveBoardPlayerClock extends ConsumerWidget {
         _LivePlayerClockSnapshot.fromGame(sourceGame, isWhite: isWhite);
     final liveClockSeconds = liveSnapshot?.seconds;
     final liveLastMoveTime = liveSnapshot?.lastMoveTime;
-    if (liveClockSeconds == null && liveLastMoveTime == null) {
+    final hasRecordedLiveClock =
+        liveClockSeconds != null && liveClockSeconds >= 0;
+    if (!hasRecordedLiveClock &&
+        !hasUsableClockDisplay(fallbackText) &&
+        result == null) {
       return const SizedBox.shrink();
     }
     return Row(
@@ -10630,9 +10664,10 @@ class _LiveBoardPlayerClock extends ConsumerWidget {
           text: fallbackText,
           isToMove: isToMove,
           result: result,
-          liveClockSeconds: liveClockSeconds,
-          liveLastMoveTime: liveLastMoveTime,
-          liveCountdownActive: isToMove && liveLastMoveTime != null,
+          liveClockSeconds: hasRecordedLiveClock ? liveClockSeconds : null,
+          liveLastMoveTime: hasRecordedLiveClock ? liveLastMoveTime : null,
+          liveCountdownActive:
+              hasRecordedLiveClock && isToMove && liveLastMoveTime != null,
         ),
       ],
     );
@@ -10710,16 +10745,21 @@ class _PlayerClock extends StatelessWidget {
   Widget build(BuildContext context) {
     // The static fallback string also decides whether the badge renders at
     // all (an empty PGN clock with no live snapshot hides it).
-    final hasLive = liveClockSeconds != null || liveLastMoveTime != null;
+    // A move timestamp alone is not a clock reading. Keep a recorded zero,
+    // but never invent 00:00 or display missing-clock sentinels.
+    final hasLive = liveClockSeconds != null && liveClockSeconds! >= 0;
     final fallbackText =
         hasLive
-            ? formatClockDisplayFromSeconds(liveClockSeconds ?? 0)
-            : formatPgnClockForDisplay(text);
+            ? formatClockDisplayFromSeconds(liveClockSeconds!)
+            : hasUsableClockDisplay(text)
+            ? formatPgnClockForDisplay(text)
+            : '';
     if (fallbackText.isEmpty && result == null) {
       return const SizedBox.shrink();
     }
 
-    final countdownActive = liveCountdownActive && liveLastMoveTime != null;
+    final countdownActive =
+        hasLive && liveCountdownActive && liveLastMoveTime != null;
 
     return SingleMotionBuilder(
       value: isToMove && result == null ? 1.0 : 0.0,
@@ -10986,16 +11026,21 @@ bool _shouldPlaySounds(WidgetRef ref, String? tabId) {
 /// Castling in dartchess is encoded as king-captures-rook; remap to the
 /// king's actual landing square so badge anchors and last-move feedback
 /// land where the king ends up rather than on the rook.
-Square? _normaliseLastMoveSquare(Move? move) {
+Square? _normaliseLastMoveSquare(
+  Position before,
+  Position after,
+  Move? move,
+) {
   if (move == null) return null;
   if (move is NormalMove) {
-    final from = move.from;
-    final to = move.to;
-    if (from == Square.e1 && to == Square.h1) return Square.g1;
-    if (from == Square.e1 && to == Square.a1) return Square.c1;
-    if (from == Square.e8 && to == Square.h8) return Square.g8;
-    if (from == Square.e8 && to == Square.a8) return Square.c8;
-    return to;
+    // A king-to-rook UCI castle must anchor to the resulting king, not its
+    // rook. The coordinates alone cannot identify castling: ordinary rook
+    // moves can use e1-a1/h1 or e8-a8/h8 too.
+    final movingPiece = before.board.pieceAt(move.from);
+    if (movingPiece != null && movingPiece.role == Role.king) {
+      return after.board.kingOf(movingPiece.color) ?? move.to;
+    }
+    return move.to;
   }
   final squares = move.squares.toList();
   return squares.isEmpty ? null : squares.last;

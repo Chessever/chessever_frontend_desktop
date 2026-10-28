@@ -18,6 +18,49 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   for (final mode in NotationLayoutMode.values) {
+    testWidgets('evp stays hidden in root mainline and variation ${mode.name}', (
+      tester,
+    ) async {
+      const profile = '[%evp 0,51,16,32767,-34]';
+      final game = ChessGame.fromPgn(
+        'evp-ui-fixture',
+        '[Result "*"]\n\n{Root note $profile} 1. d4 {Main note $profile} d5 (1... Nf6 {Variation note $profile}) *',
+      );
+      final before = game.toJson();
+      final layout = ValueNotifier(mode);
+      addTearDown(layout.dispose);
+      await tester.pumpWidget(
+        _host(
+          game: game,
+          onJump: (_) {},
+          width: 780,
+          height: 560,
+          layoutModeController: layout,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('%evp', findRichText: true), findsNothing);
+      expect(
+        find.textContaining('Root note', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Main note', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Variation note', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        game.toJson(),
+        before,
+        reason: 'Rendering must not rewrite raw comments or the game tree',
+      );
+      expect(game.rootComments.single, contains(profile));
+    });
+  }
+  for (final mode in NotationLayoutMode.values) {
     testWidgets('large PGN starts fully expanded in ${mode.name}', (
       tester,
     ) async {

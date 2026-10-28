@@ -255,11 +255,38 @@ End of AGENTS.md.
 ## Desktop distribution editions
 
 Maintain the four website downloads (macOS Apple Silicon, macOS Intel, Windows,
-Linux) and the separate Mac App Store edition from `main`. Website editions keep
-Stripe and the existing updater. Only `scripts/build_mac_app_store.sh` enables
-`MAC_APP_STORE=true` together with native `CHESSEVER_APP_STORE=YES`; that edition
-uses Apple billing and App Store updates. Never apply store sandbox or billing
-flags to the direct-download lanes.
+Linux) and the separate Mac App Store edition from `main`. **The two macOS
+editions are the same code but do not behave the same.** Only
+`scripts/build_mac_app_store.sh` enables `MAC_APP_STORE=true` together with
+native `CHESSEVER_APP_STORE=YES`. In Dart every difference goes through
+`isMacAppStore` (`lib/desktop/services/mac_app_store.dart`), which is false in
+every website build. Never apply store sandbox, billing or sign-in behavior to
+the direct-download lanes, and never route the store edition through a website
+path.
+
+| | Website downloads (Developer ID macOS, Windows, Linux) | Mac App Store edition |
+|---|---|---|
+| Apple sign-in | Sent to the web: Supabase-hosted Apple OAuth in the default browser, back through the loopback callback (`SupabaseOAuthLoopback`) | In the app: the native Sign in with Apple sheet (`_signInWithAppleNatively` → `signInWithIdToken`). App Review guideline 4 forbids leaving the app |
+| Google sign-in | Loopback OAuth in the default browser | Same loopback flow, but the page opens in an in-app `ASWebAuthenticationSession` sheet (`DesktopAuthBrowser`, `macos/Runner/DesktopWebAuthBridge.swift`) |
+| Subscriptions | Stripe Checkout through chessever.com; cancelling goes to the web account page | RevenueCat with App Store in-app purchases (`MacAppStoreBilling`, `MacAppStorePlans`; same account id and `Chessever Subscription` entitlement as mobile). Stripe checkout throws here |
+| Updates | `desktop_updater` and the Settings Updates card | The App Store. The updater and its UI are off |
+| Engines | Bundled or downloaded into Application Support | Sealed helpers in `Contents/Helpers` only (`macAppStoreBundledPath`); nothing is extracted, downloaded or discovered elsewhere |
+| Files | Unsandboxed | App Sandbox: only user-picked files and folders, retained through `MacSandboxFilePicker` (security-scoped bookmarks) |
+| Signing | `Release.entitlements`, Developer ID | `AppStore.entitlements` (+ `AppStoreHelper.entitlements` for helpers) and the store provisioning profile |
+| Feedback, analytics | Screenshot on by default | Screenshot off by default, feedback needs a session, ad consent denied |
+
+When a change touches sign-in, billing or the paywall, updates, engine paths,
+file access, entitlements, feedback or analytics:
+
+- Keep the existing `isMacAppStore` branch, and reason through both editions.
+  Test both. `desktop_in_app_sign_in_test.dart` and
+  `desktop_website_sign_in_test.dart` are the pattern.
+- A new capability (camera, microphone, network server, a new helper binary)
+  is denied in the store edition until it is added to `AppStore.entitlements`
+  on purpose. App Review sees every entitlement. Either add it with a
+  justification or hide the feature when `isMacAppStore` is true.
+- Don't put Mac or macOS in the store listing's name, subtitle or screenshot
+  captions (guideline 5.2.5). The listing name is "ChessEver".
 
 Release instructions: `docs/ci/github-actions-release.md`. The Mac App Store
 workflow must upload and submit for review with `releaseType=MANUAL`; never add
