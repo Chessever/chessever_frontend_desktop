@@ -147,19 +147,30 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.textContaining('Windows-1252'), findsNothing);
+    expect(
+      find.textContaining('Classic CBH requires its seven companion files.'),
+      findsNothing,
+    );
     await tester.tap(find.text('Details'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Windows-1252'), findsOneWidget);
-    expect(converter.calls, 0);
     expect(
-      find.textContaining('retained as raw metadata, not displayed'),
+      find.textContaining('Classic CBH requires its seven companion files.'),
       findsOneWidget,
     );
-    expect(find.textContaining('UTF-8'), findsOneWidget);
+    expect(converter.calls, 0);
+    expect(
+      find.textContaining(
+        'Original annotation frames are kept exactly in PGN headers',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('No records are skipped.'), findsOneWidget);
     await tester.tap(find.text('Hide details'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Windows-1252'), findsNothing);
+    expect(
+      find.textContaining('Classic CBH requires its seven companion files.'),
+      findsNothing,
+    );
     await tester.tap(find.text('Convert & Open'));
     await tester.pumpAndSettle();
     expect(converter.calls, 1);

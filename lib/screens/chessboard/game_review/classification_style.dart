@@ -39,6 +39,30 @@ String moveAnnotationIconAsset(LichessMoveAnnotationType type) =>
       LichessMoveAnnotationType.forced => 'assets/svgs/forced_move.svg',
     };
 
+/// Visual equivalents for standard manual quality marks, without changing
+/// their stored NAG or inventing a report classification for speculative !?.
+String? manualQualityIconAsset(String glyph) => switch (glyph) {
+  '!' => moveAnnotationIconAsset(LichessMoveAnnotationType.goodMove),
+  '?' => moveAnnotationIconAsset(LichessMoveAnnotationType.mistake),
+  '!!' => moveAnnotationIconAsset(LichessMoveAnnotationType.brilliant),
+  '??' => moveAnnotationIconAsset(LichessMoveAnnotationType.blunder),
+  '!?' => 'assets/svgs/speculative.svg',
+  '?!' => moveAnnotationIconAsset(LichessMoveAnnotationType.inaccuracy),
+  '□' => moveAnnotationIconAsset(LichessMoveAnnotationType.forced),
+  _ => null,
+};
+
+String manualQualityIconLabel(String glyph) => switch (glyph) {
+  '!' => 'Good Move',
+  '?' => 'Mistake',
+  '!!' => 'Brilliant',
+  '??' => 'Blunder',
+  '!?' => 'Interesting move',
+  '?!' => 'Inaccuracy',
+  '□' => 'Forced',
+  _ => glyph,
+};
+
 LichessMoveAnnotationType annotationTypeForClassification(
   GameMoveClassification classification,
 ) => switch (classification) {

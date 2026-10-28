@@ -18,6 +18,49 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   for (final mode in NotationLayoutMode.values) {
+    testWidgets('evp stays hidden in root mainline and variation ${mode.name}', (
+      tester,
+    ) async {
+      const profile = '[%evp 0,51,16,32767,-34]';
+      final game = ChessGame.fromPgn(
+        'evp-ui-fixture',
+        '[Result "*"]\n\n{Root note $profile} 1. d4 {Main note $profile} d5 (1... Nf6 {Variation note $profile}) *',
+      );
+      final before = game.toJson();
+      final layout = ValueNotifier(mode);
+      addTearDown(layout.dispose);
+      await tester.pumpWidget(
+        _host(
+          game: game,
+          onJump: (_) {},
+          width: 780,
+          height: 560,
+          layoutModeController: layout,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('%evp', findRichText: true), findsNothing);
+      expect(
+        find.textContaining('Root note', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Main note', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Variation note', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        game.toJson(),
+        before,
+        reason: 'Rendering must not rewrite raw comments or the game tree',
+      );
+      expect(game.rootComments.single, contains(profile));
+    });
+  }
+  for (final mode in NotationLayoutMode.values) {
     testWidgets('large PGN starts fully expanded in ${mode.name}', (
       tester,
     ) async {
@@ -440,9 +483,11 @@ void main() {
 
     expect(find.text('?!'), findsNothing);
     expect(find.text('?'), findsNothing);
-    expect(find.text('??'), findsOneWidget);
+    expect(find.text('??'), findsNothing);
+    expect(_qualityBadge('Blunder'), findsOneWidget);
+    expect(_qualityBadge('Inaccuracy'), findsNothing);
     expect(find.text('±'), findsOneWidget);
-    expect(find.byType(SvgPicture), findsNothing);
+    expect(find.byType(SvgPicture), findsOneWidget);
 
     await tester.pumpWidget(
       _host(
@@ -488,9 +533,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('??'), findsOneWidget);
+    expect(find.text('??'), findsNothing);
+    expect(_qualityBadge('Blunder'), findsOneWidget);
+    expect(_qualityBadge('Inaccuracy'), findsNothing);
     expect(find.text('±'), findsOneWidget);
-    expect(find.byType(SvgPicture), findsNothing);
+    expect(find.byType(SvgPicture), findsOneWidget);
   });
 
   testWidgets(
@@ -891,7 +938,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final glyph = find.text('!', findRichText: false).last;
+    final glyph = _qualityBadge('Good Move').last;
     final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer();
     await gesture.moveTo(tester.getCenter(glyph));
@@ -1121,14 +1168,14 @@ void main() {
     );
 
     final move = find.text('Nf3', findRichText: true);
-    expect(find.text('!'), findsOneWidget);
+    expect(_qualityBadge('Good Move'), findsOneWidget);
 
     await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Hide All Annotations'));
     await tester.pumpAndSettle();
 
-    expect(find.text('!'), findsNothing);
+    expect(_qualityBadge('Good Move'), findsNothing);
 
     await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
@@ -1513,6 +1560,10 @@ ChessGame _transpositionMarkerGame() {
     ],
   );
 }
+
+Finder _qualityBadge(String label) => find.byWidgetPredicate(
+  (widget) => widget is DesktopTooltip && widget.message == label,
+);
 
 ChessGame _sampleGame() {
   final e4 = Chess.initial.play(NormalMove.fromUci('e2e4'));

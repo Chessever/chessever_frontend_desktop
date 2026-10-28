@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
+import 'package:chessever/desktop/services/engine/pv_san_formatter.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -45,6 +46,8 @@ void main() {
                         sideToMove: 'w',
                         reportController: controller,
                         onPlayUci: played.add,
+                        pvSanFormatter:
+                            (input) async => formatEnginePvSanLine(input),
                       ),
                 ),
               ),
@@ -64,6 +67,9 @@ void main() {
         depth: 12,
       );
       notifiers[a]!.emit(snapshot);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 121));
+      await tester.pump();
       await tester.pump();
       final before = tester.getRect(find.byType(ListView).first);
       expect(find.text('Searching…'), findsNothing);
@@ -99,7 +105,9 @@ class _ManualEval extends BoardEvalNotifier {
           principalVariationIndex: 0,
         ),
       );
-  void emit(BoardEvalState value) => state = value;
+  @override
+  set state(BoardEvalState value) {}
+  void emit(BoardEvalState value) => super.state = value;
 }
 
 class _Settings extends EngineSettingsNotifierNew {

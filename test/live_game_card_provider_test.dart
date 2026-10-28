@@ -424,7 +424,7 @@ void main() {
     );
 
     test(
-      'full canonical row preserves zeroes and clears nullable live fields',
+      'full canonical row preserves player clears without erasing a played position or splitting its clock anchor',
       () {
         final base = _game(
           id: 'game-1',
@@ -441,46 +441,63 @@ void main() {
           ).copyWith(title: 'GM', rating: 2700, fideId: 123, team: 'Old Team'),
         );
 
+        const update = LiveGameUpdate(
+          gameId: 'game-1',
+          lastClockWhite: 0,
+          lastClockBlack: 0,
+          status: 'live',
+          players: <Object>[
+            <String, Object?>{
+              'name': 'White',
+              'fed': '',
+              'title': null,
+              'rating': 0,
+              'fideId': null,
+              'team': null,
+              'clock': null,
+            },
+            <String, Object?>{
+              'name': 'Black',
+              'fed': 'USA',
+              'title': 'GM',
+              'rating': 2700,
+            },
+          ],
+          isFullRow: true,
+        );
         final merged = mergeLiveGameUpdateWithBase(
           baseGame: base,
-          update: const LiveGameUpdate(
-            gameId: 'game-1',
-            lastClockWhite: 0,
-            lastClockBlack: 0,
-            status: 'live',
-            players: <Object>[
-              <String, Object?>{
-                'name': 'White',
-                'fed': '',
-                'title': null,
-                'rating': 0,
-                'fideId': null,
-                'team': null,
-                'clock': null,
-              },
-              <String, Object?>{
-                'name': 'Black',
-                'fed': 'USA',
-                'title': 'GM',
-                'rating': 2700,
-              },
-            ],
-            isFullRow: true,
-          ),
+          update: update,
         );
 
-        expect(merged.pgn, isNull);
-        expect(merged.fen, isNull);
-        expect(merged.lastMove, isNull);
-        expect(merged.lastMoveTime, isNull);
-        expect(merged.whiteClockSeconds, 0);
-        expect(merged.blackClockSeconds, 0);
-        expect(merged.whiteClockCentiseconds, 0);
-        expect(merged.blackClockCentiseconds, 0);
+        expect(merged.pgn, base.pgn);
+        expect(merged.fen, base.fen);
+        expect(merged.lastMove, base.lastMove);
+        expect(merged.lastMoveTime, base.lastMoveTime);
+        // The retained move time anchors the retained clocks, not the row's.
+        expect(merged.whiteClockSeconds, base.whiteClockSeconds);
+        expect(merged.blackClockSeconds, base.blackClockSeconds);
+        expect(merged.whiteClockCentiseconds, base.whiteClockCentiseconds);
+        expect(merged.blackClockCentiseconds, base.blackClockCentiseconds);
         expect(merged.whitePlayer.title, isEmpty);
         expect(merged.whitePlayer.rating, 0);
         expect(merged.whitePlayer.fideId, isNull);
         expect(merged.whitePlayer.team, isNull);
+
+        // Once an exact read confirms the row, its clears and zeroes apply.
+        final confirmed = mergeLiveGameUpdateWithBase(
+          baseGame: base,
+          update: update,
+          serverConfirmed: true,
+        );
+        expect(confirmed.pgn, isNull);
+        expect(confirmed.fen, isNull);
+        expect(confirmed.lastMove, isNull);
+        expect(confirmed.lastMoveTime, isNull);
+        expect(confirmed.whiteClockSeconds, 0);
+        expect(confirmed.blackClockSeconds, 0);
+        expect(confirmed.whiteClockCentiseconds, 0);
+        expect(confirmed.blackClockCentiseconds, 0);
       },
     );
 
