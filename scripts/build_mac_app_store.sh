@@ -26,6 +26,9 @@ if (profile['Entitlements'].get('com.apple.application-identifier') !=
         'N8J7TUZMYR.com.chessever.desktop' or
         profile.get('ProvisionedDevices') or profile.get('ProvisionsAllDevices')):
     raise SystemExit('Expected the production ChessEver Mac App Store profile.')
+# App Review requires the native Sign in with Apple sheet in this edition.
+if 'Default' not in profile['Entitlements'].get('com.apple.developer.applesignin', []):
+    raise SystemExit('The store profile must grant Sign in with Apple.')
 PY
 
 unlock_release_keychain() {

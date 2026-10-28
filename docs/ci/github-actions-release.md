@@ -1,8 +1,9 @@
 # Desktop distribution through GitHub Actions
 
 The production branch is `main`. Both release workflows are manually dispatched
-and use the protected `release` environment. Only approved production jobs receive
-signing or publishing credentials. Setup uses native background steps followed by
+and use the protected `release` environment. Only jobs running from `main` receive
+signing or publishing credentials. The environment has no required reviewer, so a
+dispatched run starts at once: dispatching it is the approval. Setup uses native background steps followed by
 `wait-all`; no signing or publishing step runs in the background.
 
 ## Website downloads
@@ -30,11 +31,19 @@ Developer ID signing and Apple notarization, rather than App Review.
 ## Mac App Store
 
 Run **Mac App Store review** (`desktop-app-store.yml`). It produces a universal
-Apple Silicon + Intel `.pkg` for **ChessEver for Mac**, app `6824524785`, bundle
+Apple Silicon + Intel `.pkg` for App Store Connect app `6824524785`, bundle
 `com.chessever.desktop`. The dedicated build script sets both
 `MAC_APP_STORE=true` and `CHESSEVER_APP_STORE=YES`, uses sandbox entitlements,
 bundles signed universal engines, and uses Apple purchases. It does not invoke
 the website updater or R2 publishing scripts.
+
+App Review rejected 22.15.1 (481) on two points that the store edition must keep
+honoring. Guideline 5.2.5: no Apple trademark ("Mac", "for Mac", "macOS") in
+the app name, subtitle or screenshot captions. Guideline 4: sign-in never leaves
+the app. The edition shows the native Sign in with Apple sheet, which requires
+`com.apple.developer.applesignin` in `macos/Runner/AppStore.entitlements` and in
+the store profile. Google opens in an `ASWebAuthenticationSession` sheet
+(`DesktopWebAuthBridge.swift`) instead of the default browser.
 
 **Submit review** defaults to checked. The workflow uploads the package, waits for
 processing, and submits for App Review with `--platform MAC_OS --release-type
