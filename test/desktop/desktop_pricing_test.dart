@@ -16,24 +16,172 @@ void main() {
 
     test('labels annual savings as a percent, matching the website', () {
       expect(DesktopPricing.priceForTier(1).annualSavingsPercent, 24);
-      expect(DesktopPricing.priceForTier(1).annualPlanLabel, 'Annual · Save 24%');
+      expect(
+        DesktopPricing.priceForTier(1).annualPlanLabel,
+        'Annual · Save 24%',
+      );
 
       expect(DesktopPricing.priceForTier(2).annualSavingsPercent, 26);
-      expect(DesktopPricing.priceForTier(2).annualPlanLabel, 'Annual · Save 26%');
+      expect(
+        DesktopPricing.priceForTier(2).annualPlanLabel,
+        'Annual · Save 26%',
+      );
 
       expect(DesktopPricing.priceForTier(3).annualSavingsPercent, 41);
-      expect(DesktopPricing.priceForTier(3).annualPlanLabel, 'Annual · Save 41%');
+      expect(
+        DesktopPricing.priceForTier(3).annualPlanLabel,
+        'Annual · Save 41%',
+      );
     });
 
     test('maps countries to the same tier examples used by web pricing', () {
       expect(DesktopPricing.priceForCountry('US').tier, 1);
-      expect(DesktopPricing.priceForCountry('TR').tier, 2);
+      expect(DesktopPricing.priceForCountry('KZ').tier, 2);
       expect(DesktopPricing.priceForCountry('IN').tier, 3);
+      for (final country in ['AR', 'BR', 'ID', 'TR', 'AZ']) {
+        expect(DesktopPricing.priceForCountry(country).tier, 3);
+        expect(DesktopPricing.priceForCountry(country).monthlyAmount, 4.49);
+        expect(DesktopPricing.priceForCountry(country).annualAmount, 31.99);
+      }
     });
 
     test('falls back to tier 1 when no country can be resolved', () {
       expect(DesktopPricing.priceForCountry(null).tier, 1);
       expect(DesktopPricing.priceForCountry('').tier, 1);
+    });
+
+    test('quotes annual savings in dollars, matching the website', () {
+      expect(
+        DesktopPricing.priceForTier(1).annualSavingsAmount,
+        closeTo(31.89, 0.001),
+      );
+      expect(
+        DesktopPricing.priceForTier(2).annualSavingsAmount,
+        closeTo(27.89, 0.001),
+      );
+      expect(
+        DesktopPricing.priceForTier(3).annualSavingsAmount,
+        closeTo(21.89, 0.001),
+      );
+    });
+
+    test('formats amounts with USD or a trailing code', () {
+      expect(DesktopPricing.formatAmount(10.99, 'USD'), r'$10.99');
+      expect(DesktopPricing.formatAmount(100, 'USD'), r'$100');
+      expect(DesktopPricing.formatAmount(10.99, 'EUR'), '10.99 EUR');
+    });
+  });
+
+  group('DesktopPricing trial copy', () {
+    test('matches Stripe checkout with no introductory trial', () {
+      expect(DesktopPricing.trialDays, 0);
+    });
+
+    test('does not promise a trial with unknown or stale eligibility', () {
+      expect(DesktopPricing.offersTrial(null), isFalse);
+      expect(DesktopPricing.offersTrial(true), isFalse);
+      expect(DesktopPricing.offersTrial(false), isFalse);
+    });
+
+    test('assurance line matches the website', () {
+      expect(
+        DesktopPricing.premiumAssuranceLabel(showsTrial: true),
+        'Secure checkout · Cancel anytime · Every device',
+      );
+      expect(
+        DesktopPricing.premiumAssuranceLabel(showsTrial: false),
+        'Secure checkout · Cancel anytime · Every device',
+      );
+    });
+
+    test('monthly detail matches the website subtext', () {
+      expect(
+        DesktopPricing.monthlyPlanDetail(showsTrial: true),
+        'Billed monthly',
+      );
+      expect(
+        DesktopPricing.monthlyPlanDetail(showsTrial: false),
+        'Billed monthly',
+      );
+    });
+
+    test('annual detail keeps the equivalent with site savings', () {
+      expect(
+        DesktopPricing.annualPlanDetail(
+          pricing: DesktopPricing.priceForTier(1),
+          showsTrial: true,
+        ),
+        r'$8.33 a month · Save $31.89/yr',
+      );
+      expect(
+        DesktopPricing.annualPlanDetail(
+          pricing: DesktopPricing.priceForTier(1),
+          showsTrial: false,
+        ),
+        r'$8.33 a month · Save $31.89/yr',
+      );
+      expect(
+        DesktopPricing.annualPlanDetail(
+          pricing: DesktopPricing.priceForTier(2),
+          showsTrial: false,
+        ),
+        r'$6.67 a month · Save $27.89/yr',
+      );
+      expect(
+        DesktopPricing.annualPlanDetail(
+          pricing: DesktopPricing.priceForTier(3),
+          showsTrial: false,
+        ),
+        r'$2.67 a month · Save $21.89/yr',
+      );
+    });
+
+    test('annual detail omits savings when there are none', () {
+      const flat = DesktopTierPricing(
+        tier: 1,
+        monthlyAmount: 10,
+        annualAmount: 120,
+      );
+      expect(
+        DesktopPricing.annualPlanDetail(pricing: flat, showsTrial: true),
+        r'$10 a month',
+      );
+    });
+
+    test('plan subtext matches the website verbatim', () {
+      final tier1 = DesktopPricing.priceForTier(1);
+      expect(
+        DesktopPricing.planSubtext(
+          pricing: tier1,
+          interval: 'year',
+          showsTrial: true,
+        ),
+        r'$99.99 billed annually · Save $31.89/yr',
+      );
+      expect(
+        DesktopPricing.planSubtext(
+          pricing: tier1,
+          interval: 'year',
+          showsTrial: false,
+        ),
+        r'$99.99 billed annually · Save $31.89/yr',
+      );
+      expect(
+        DesktopPricing.planSubtext(
+          pricing: tier1,
+          interval: 'month',
+          showsTrial: true,
+        ),
+        'Billed monthly',
+      );
+      expect(
+        DesktopPricing.planSubtext(
+          pricing: tier1,
+          interval: 'month',
+          showsTrial: false,
+        ),
+        'Billed monthly',
+      );
     });
   });
 }

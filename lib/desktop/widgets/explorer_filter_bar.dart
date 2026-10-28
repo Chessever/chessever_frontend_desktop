@@ -103,7 +103,9 @@ class ExplorerFilterBar extends ConsumerWidget {
             ],
             const _RailDivider(),
             _GroupLabel(compact ? 'TC' : 'Time'),
-            for (final tc in _timeControls) ...[
+            for (final tc in _timeControls.where(
+              (tc) => notifier.availableTimeControls.contains(tc.value),
+            )) ...[
               _FilterChip(
                 icon: tc.icon,
                 label: compact ? _shortTimeControlLabel(tc.value) : tc.label,

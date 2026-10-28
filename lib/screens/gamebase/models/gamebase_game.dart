@@ -17,6 +17,14 @@ enum TimeControl {
   ultrabullet,
 }
 
+/// Categories accepted by Gamebase explorer endpoints. Local game sources
+/// can still use the full [TimeControl] enum.
+const gamebaseExplorerApiTimeControls = <TimeControl>[
+  TimeControl.classical,
+  TimeControl.rapid,
+  TimeControl.blitz,
+];
+
 extension TimeControlExtension on TimeControl {
   String get displayName {
     switch (this) {

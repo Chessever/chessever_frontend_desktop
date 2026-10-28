@@ -627,17 +627,16 @@ void main() {
       final shell =
           File('lib/desktop/shell/desktop_shell.dart').readAsStringSync();
 
+      expect(authGate, contains('return const MandatoryUpdateGate('));
       expect(
         authGate,
-        contains('return const MandatoryUpdateGate(child: DesktopShell());'),
+        contains('child: DesktopGuestGateListener(child: DesktopShell()),'),
       );
-      expect(
-        authGate,
-        contains(
-          'return const DesktopStandaloneWindowChrome(child: DesktopWelcomeScreen());',
-        ),
-      );
-      expect(authGate, contains('child: DesktopPremiumRequiredScreen(),'));
+      expect(authGate, contains('child: DesktopWelcomeScreen('));
+      expect(authGate, contains('onContinueAsGuest: startGuestSession,'));
+      // Freemium: the entrance never walls on entitlement.
+      expect(authGate, isNot(contains('DesktopPremiumRequiredScreen')));
+      expect(authGate, isNot(contains('subscriptionProvider')));
       expect(shell, isNot(contains('MandatoryUpdateGate')));
     });
 

@@ -6,6 +6,10 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/chat/chat_api.dart';
+import 'package:chessever/desktop/state/botvinnik_dock.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_launch_button.dart';
+import 'package:chessever/desktop/widgets/desktop_team_standings_view.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -172,6 +176,21 @@ class TournamentDetailPane extends HookConsumerWidget {
                                       selectedBroadcastWriterAttributionProvider,
                                     )
                                     : 'Powered by Lichess',
+                            botvinnikContext: botvinnikTournamentScreenContext(
+                              eventId: tournament.id,
+                              eventName: tournament.title,
+                              tournamentId: selectedTourId,
+                              // An event with no tours carries a placeholder
+                              // tour ("No Tournament") with an empty id; that
+                              // name is not a subject.
+                              tournamentName:
+                                  (selectedTourId?.isNotEmpty ?? false)
+                                      ? detailState
+                                          .valueOrNull
+                                          ?.aboutTourModel
+                                          .name
+                                      : null,
+                            ),
                           ),
                           _SegmentBar(
                             segments: visibleSegments,
@@ -282,6 +301,7 @@ class TournamentDetailPane extends HookConsumerWidget {
                         tournament.title,
                         selectedTourId,
                         gamesHeaderCollapsed,
+                        isTeamEvent: layout == TournamentDetailLayout.team,
                       ),
                     ),
                   ),
@@ -299,8 +319,9 @@ class TournamentDetailPane extends HookConsumerWidget {
     String tournamentId,
     String tournamentTitle,
     String? selectedTourId,
-    ValueNotifier<bool> gamesHeaderCollapsed,
-  ) {
+    ValueNotifier<bool> gamesHeaderCollapsed, {
+    bool isTeamEvent = false,
+  }) {
     switch (segment) {
       case TournamentDetailSegment.about:
         return TournamentAboutView(tabId: tabId, tournamentId: tournamentId);
@@ -319,10 +340,15 @@ class TournamentDetailPane extends HookConsumerWidget {
           selectedTourId: selectedTourId,
         );
       case TournamentDetailSegment.standings:
-        return TournamentStandingsView(
+        final playersView = TournamentStandingsView(
           tabId: tabId,
           tournamentId: tournamentId,
           tournamentTitle: tournamentTitle,
+        );
+        if (!isTeamEvent) return playersView;
+        return DesktopTeamStandingsSection(
+          tabId: tabId,
+          playersView: playersView,
         );
     }
   }
@@ -509,10 +535,12 @@ class _DetailHeader extends StatelessWidget {
     required this.title,
     required this.dates,
     required this.writerLabel,
+    required this.botvinnikContext,
   });
   final String title;
   final String dates;
   final String writerLabel;
+  final ChatScreenContext botvinnikContext;
 
   @override
   Widget build(BuildContext context) {
@@ -562,6 +590,11 @@ class _DetailHeader extends StatelessWidget {
                 ],
               ],
             ),
+          ),
+          BotvinnikLaunchButton(
+            screenContext: botvinnikContext,
+            leadingGap: 12,
+            tooltip: 'Ask Botvinnik about this event',
           ),
           const SizedBox(width: 12),
           // Switcher hides itself when only one tour exists, so the

@@ -2,12 +2,11 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// The player's own fullscreen control only works because two plugin copies
-/// under third_party/ are patched (see each CHESSEVER_PATCH.md). A pub
-/// upgrade or a "cleanup" that drops the overrides silently returns the panel
-/// to a hidden (YouTube) or inert (Twitch) fullscreen button on macOS and a
-/// rail-sized "fullscreen" on Windows, with no error anywhere. These pins
-/// make that loud.
+/// On macOS the player's own fullscreen control only works because the
+/// WKWebView plugin copy under third_party/ is patched (see its
+/// CHESSEVER_PATCH.md). A pub upgrade or a "cleanup" that drops the override
+/// silently returns the panel to a hidden (YouTube) or inert (Twitch)
+/// fullscreen button, with no error anywhere. These pins make that loud.
 void main() {
   String read(String path) => File(path).readAsStringSync();
 
@@ -15,7 +14,7 @@ void main() {
     const channel =
         'com.abandoft.pigeon.webview_all_wkwebview.WKPreferences.setElementFullscreenEnabled';
 
-    test('pubspec overrides both webview platform packages to third_party', () {
+    test('pubspec overrides the WKWebView package to third_party', () {
       final pubspec = read('pubspec.yaml');
       final overrides = pubspec.substring(
         pubspec.indexOf('dependency_overrides:'),
@@ -27,10 +26,8 @@ void main() {
         ),
       );
       expect(
-        overrides,
-        contains(
-          'webview_all_windows:\n    path: third_party/webview_all_windows',
-        ),
+        File('third_party/webview_all_wkwebview/CHESSEVER_PATCH.md').existsSync(),
+        isTrue,
       );
     });
 
@@ -89,30 +86,14 @@ void main() {
     });
   });
 
-  group('WebView2 fullscreen-element patch', () {
-    test('the Windows controller exposes the native signal', () {
-      final controller = read(
-        'third_party/webview_all_windows/lib/src/windows_webview_controller.dart',
-      );
-      expect(
-        controller,
-        contains('Stream<bool> get containsFullScreenElementChanged =>'),
-      );
-      expect(
-        controller,
-        contains('_webviewController.containsFullScreenElementChanged;'),
-      );
-    });
-
-    test(
-      'the broadcast panel listens and lifts the player into an overlay',
-      () {
-        final panel = read('lib/desktop/widgets/broadcast_video_panel.dart');
-        expect(panel, contains('platform.containsFullScreenElementChanged'));
-        expect(panel, contains('Overlay.maybeOf(context, rootOverlay: true)'));
-        expect(panel, contains('windowManager.setFullScreen(true)'));
-        expect(panel, contains('windowManager.setFullScreen(false)'));
-      },
-    );
+  // WebView2 already has the Fullscreen API on, but sizes a full-screen
+  // element to the WebView's own bounds, so on Windows the player fills its
+  // rail slot. Enlarging it would mean moving the player into an overlay,
+  // and moving or remounting the host restarts the stream in later Board
+  // tabs (see "Keep broadcast video mounted across Board tabs").
+  test('the player is never lifted out of its stable mount', () {
+    final panel = read('lib/desktop/widgets/broadcast_video_panel.dart');
+    expect(panel, isNot(contains('rootOverlay: true')));
+    expect(panel, isNot(contains('OverlayEntry(')));
   });
 }

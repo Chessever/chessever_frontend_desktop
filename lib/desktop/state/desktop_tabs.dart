@@ -46,10 +46,6 @@ enum TabKind {
   /// auto-pin, etc. Reached from the desktop Settings pane.
   boardSettings,
 
-  /// Mobile's `ChessBoardNotificationSettingsPage` — push prefs +
-  /// per-event notification cadence. Reached from the Settings pane.
-  notificationSettings,
-
   /// Play-vs-bot home. Setup screen (time control, engine, ELO, color) and
   /// — once a game is started — the active game view. Also hosts the local
   /// engine tournament browser. Spawned from the sidebar's Play entry and
@@ -60,11 +56,29 @@ enum TabKind {
   /// selected-game board/notation preview. Per-tab source args live in the
   /// Library pane so multiple databases can be opened side-by-side.
   databaseWorkspace,
+
+  /// A team's score card in a team event: roster, match history and
+  /// performance sharing. The team and its event live per tab in
+  /// `teamScoreCardByTabIdProvider`.
+  teamScoreCard,
+
+  /// The published collections catalog: annotated books and game sets that
+  /// readers browse. Spawned from the sidebar's Collections entry.
+  collections,
+
+  /// One opened collection: its About, games and players. The collection
+  /// lives per tab in `collectionWorkspaceArgsByTabIdProvider`.
+  collectionWorkspace,
+
+  /// Editorial messages shared with the phone Inbox.
+  inbox,
 }
 
 extension TabKindLabel on TabKind {
   String get defaultTitle {
     switch (this) {
+      case TabKind.inbox:
+        return 'Inbox';
       case TabKind.board:
         return 'Board';
       case TabKind.tournaments:
@@ -103,12 +117,16 @@ extension TabKindLabel on TabKind {
         return 'My profile';
       case TabKind.boardSettings:
         return 'Board Settings';
-      case TabKind.notificationSettings:
-        return 'Notifications';
       case TabKind.play:
         return 'Play';
       case TabKind.databaseWorkspace:
         return 'Database';
+      case TabKind.teamScoreCard:
+        return 'Team';
+      case TabKind.collections:
+        return 'Collections';
+      case TabKind.collectionWorkspace:
+        return 'Collection';
     }
   }
 }

@@ -1,3 +1,6 @@
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
+import 'package:chessever/desktop/widgets/player_standing_section_select.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -62,7 +65,8 @@ TournamentStandingsRoundTable buildTournamentStandingsRoundTable({
   for (final game in games) {
     final existing = uniqueGames[game.gameId];
     if (existing == null ||
-        (!existing.gameStatus.isFinished && game.gameStatus.isFinished)) {
+        (!(existing.gameStatus.isFinished || existing.isDoubleForfeit) &&
+            (game.gameStatus.isFinished || game.isDoubleForfeit))) {
       uniqueGames[game.gameId] = game;
     }
   }
@@ -96,14 +100,18 @@ TournamentStandingsRoundTable buildTournamentStandingsRoundTable({
       final candidate = TournamentStandingsRoundCell(
         game: game,
         round: stage.round,
-        resultText: _resultForPlayer(game.gameStatus, playedWhite),
+        resultText:
+            game.isDoubleForfeit
+                ? '0'
+                : _resultForPlayer(game.gameStatus, playedWhite),
         playedWhite: playedWhite,
         opponentName: opponentStanding?.name ?? opponentCard.name,
         opponentRank: opponentRank,
         opponentRating: opponentRating,
         isOngoing:
-            game.gameStatus == GameStatus.ongoing ||
-            game.gameStatus == GameStatus.unknown,
+            !game.isDoubleForfeit &&
+            (game.gameStatus == GameStatus.ongoing ||
+                game.gameStatus == GameStatus.unknown),
       );
       playerStages.putIfAbsent(stage.key, () => []).add(candidate);
     }
@@ -453,6 +461,14 @@ class TournamentStandingsView extends HookConsumerWidget {
           for (final tourId in standingsScope?.tourIds ?? const <String>{})
             tourId: ref.watch(tournamentRosterStandingsProvider(tourId)),
         };
+    final detail = ref.watch(tourDetailScreenProvider).valueOrNull;
+    final selectedTourId = detail?.aboutTourModel.id ?? '';
+    final selectedTour =
+        detail?.tours
+            .where((item) => item.tour.id == selectedTourId)
+            .firstOrNull
+            ?.tour;
+    final sections = selectedTour?.info.playerStandingSections ?? const [];
     // Source of truth lives in the provider so the search text restores
     // after the tab.kind flip to Board and back. The controller is local
     // because TextEditingController itself can't survive widget disposal,
@@ -475,6 +491,11 @@ class TournamentStandingsView extends HookConsumerWidget {
 
     return Column(
       children: [
+        if (sections.isNotEmpty)
+          PlayerStandingSectionSelect(
+            tourId: selectedTourId,
+            sections: sections,
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 4),
           child: DesktopSearchField(
@@ -505,8 +526,11 @@ class TournamentStandingsView extends HookConsumerWidget {
             skipLoadingOnRefresh: true,
             skipLoadingOnReload: true,
             data: (snapshot) {
+              // Pagination categories ("Boards 1-66" + "Boards 67-126") carry
+              // independent 1..n tables; concatenating them interleaves
+              // duplicate ranks, so they use the combined snapshot instead.
               final hasCompleteOfficialRoster =
-                  officialRosterByTourId.isNotEmpty &&
+                  officialRosterByTourId.length == 1 &&
                   officialRosterByTourId.values.every(
                     (value) => value.hasValue,
                   );
@@ -563,10 +587,72 @@ class TournamentStandingsView extends HookConsumerWidget {
                   ),
                 );
               }
+              final tiebreakColumns = <String, PublishedTiebreak>{};
+              for (final player in players) {
+                for (final tiebreak in player.tiebreaks) {
+                  tiebreakColumns.putIfAbsent(
+                    tiebreak.identity,
+                    () => tiebreak,
+                  );
+                }
+              }
+              final publishedTiebreaks = tiebreakColumns.values.toList(
+                growable: false,
+              );
+              // Chess-Results SNo and Club/City columns appear only when the
+              // table publishes them, so other tables keep their layout.
+              final identity = _StandingsIdentityColumns(
+                startNumber: players.any((p) => p.startNumber != null),
+                club: players.any((p) => _clubName(p) != null),
+              );
+              // Built once outside the LayoutBuilder: the rows never depend on
+              // the width, so a resize frame only re-lays them out.
+              final list = ListView.separated(
+                key: PageStorageKey<String>(
+                  'tournament-detail-standings:$tabId',
+                ),
+                physics: const DesktopScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                itemCount: filtered.length + 1,
+                separatorBuilder:
+                    (_, i) => Divider(
+                      color: i == 0 ? Colors.transparent : kDividerColor,
+                      height: 1,
+                    ),
+                itemBuilder: (context, i) {
+                  if (i == 0) {
+                    return _StandingsHeaderRow(
+                      columns: roundTable.columns,
+                      tiebreaks: publishedTiebreaks,
+                      identity: identity,
+                    );
+                  }
+
+                  final p = filtered[i - 1];
+                  return _StandingsPlayerRow(
+                    player: p,
+                    rank: p.overallRank ?? players.indexOf(p) + 1,
+                    flagFederation: _flagFederation(ref, p.countryCode),
+                    rounds: roundTable,
+                    tiebreaks: publishedTiebreaks,
+                    identity: identity,
+                    photoResolver:
+                        photoResolver ??
+                        (fideId) => FidePhotoService.getPhotoUrlOrNull(fideId),
+                    onOpenScoreCard: () => _openScoreCard(ref, p),
+                    onOpenGame:
+                        (game) =>
+                            _openGame(ref, game, scopedGames, openGeneration),
+                  );
+                },
+              );
               return LayoutBuilder(
                 builder: (context, constraints) {
                   final requiredWidth =
                       _StandingsLayout.tableWidth(roundTable.columns) +
+                      identity.width +
+                      publishedTiebreaks.length *
+                          _StandingsLayout.tiebreakWidth +
                       _StandingsLayout.horizontalPadding;
                   final contentWidth = math.max(
                     constraints.maxWidth,
@@ -582,52 +668,7 @@ class TournamentStandingsView extends HookConsumerWidget {
                       child: SizedBox(
                         width: contentWidth,
                         height: constraints.maxHeight,
-                        child: ListView.separated(
-                          key: PageStorageKey<String>(
-                            'tournament-detail-standings:$tabId',
-                          ),
-                          physics: const DesktopScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-                          itemCount: filtered.length + 1,
-                          separatorBuilder:
-                              (_, i) => Divider(
-                                color:
-                                    i == 0 ? Colors.transparent : kDividerColor,
-                                height: 1,
-                              ),
-                          itemBuilder: (context, i) {
-                            if (i == 0) {
-                              return _StandingsHeaderRow(
-                                columns: roundTable.columns,
-                              );
-                            }
-
-                            final p = filtered[i - 1];
-                            return _StandingsPlayerRow(
-                              player: p,
-                              rank: p.overallRank ?? players.indexOf(p) + 1,
-                              flagFederation: _flagFederation(
-                                ref,
-                                p.countryCode,
-                              ),
-                              rounds: roundTable,
-                              photoResolver:
-                                  photoResolver ??
-                                  (fideId) =>
-                                      FidePhotoService.getPhotoUrlOrNull(
-                                        fideId,
-                                      ),
-                              onOpenScoreCard: () => _openScoreCard(ref, p),
-                              onOpenGame:
-                                  (game) => _openGame(
-                                    ref,
-                                    game,
-                                    scopedGames,
-                                    openGeneration,
-                                  ),
-                            );
-                          },
-                        ),
+                        child: list,
                       ),
                     ),
                   );
@@ -763,6 +804,13 @@ class _CompactTournamentStandings extends StatelessWidget {
           itemBuilder: (context, index) {
             final player = players[index];
             return _CompactStandingRow(
+              // Stable per-player identity, mirroring the web rail's
+              // `key={row.playerId}` (CompactStandingsList.tsx:130), so a
+              // standings refresh reuses each row's element and hover state
+              // instead of rebuilding from the first changed row down.
+              key: ValueKey<String>(
+                'event-standing-${player.fideId ?? player.name}',
+              ),
               player: player,
               rank: player.overallRank ?? index + 1,
               photoResolver: photoResolver,
@@ -798,6 +846,7 @@ class _CompactTournamentStandings extends StatelessWidget {
 
 class _CompactStandingRow extends StatefulWidget {
   const _CompactStandingRow({
+    super.key,
     required this.player,
     required this.rank,
     required this.photoResolver,
@@ -966,13 +1015,37 @@ class _Empty extends StatelessWidget {
   }
 }
 
+String? _clubName(PlayerStandingModel player) {
+  final club = player.club?.trim();
+  return club == null || club.isEmpty ? null : club;
+}
+
+/// Which optional Chess-Results identity columns (SNo, Club/City) this table
+/// shows. Decided over the whole table, not per row.
+class _StandingsIdentityColumns {
+  const _StandingsIdentityColumns({
+    required this.startNumber,
+    required this.club,
+  });
+
+  final bool startNumber;
+  final bool club;
+
+  double get width =>
+      (startNumber ? _StandingsLayout.startNumberWidth : 0) +
+      (club ? _StandingsLayout.clubWidth : 0);
+}
+
 abstract final class _StandingsLayout {
   static const horizontalPadding = 48.0;
   static const rankWidth = 32.0;
+  static const startNumberWidth = 44.0;
+  static const clubWidth = 180.0;
   static const avatarSlotWidth = 50.0;
   static const playerWidth = 300.0;
   static const ratingWidth = 72.0;
   static const pointsWidth = 62.0;
+  static const tiebreakWidth = 96.0;
 
   static double tableWidth(List<TournamentStandingsColumn> columns) {
     return rankWidth +
@@ -985,9 +1058,15 @@ abstract final class _StandingsLayout {
 }
 
 class _StandingsHeaderRow extends StatelessWidget {
-  const _StandingsHeaderRow({required this.columns});
+  const _StandingsHeaderRow({
+    required this.columns,
+    required this.tiebreaks,
+    required this.identity,
+  });
 
   final List<TournamentStandingsColumn> columns;
+  final List<PublishedTiebreak> tiebreaks;
+  final _StandingsIdentityColumns identity;
 
   @override
   Widget build(BuildContext context) {
@@ -1006,6 +1085,12 @@ class _StandingsHeaderRow extends StatelessWidget {
             width: _StandingsLayout.rankWidth,
             child: Text('#', style: style),
           ),
+          if (identity.startNumber)
+            const SizedBox(
+              key: Key('standings-header-start-number'),
+              width: _StandingsLayout.startNumberWidth,
+              child: Text('SNo', style: style),
+            ),
           const SizedBox(width: _StandingsLayout.avatarSlotWidth),
           const SizedBox(
             width: _StandingsLayout.playerWidth,
@@ -1015,7 +1100,28 @@ class _StandingsHeaderRow extends StatelessWidget {
             label: 'Rating',
             width: _StandingsLayout.ratingWidth,
           ),
+          if (identity.club)
+            const SizedBox(
+              key: Key('standings-header-club'),
+              width: _StandingsLayout.clubWidth,
+              child: Padding(
+                padding: EdgeInsets.only(left: 8),
+                child: Text('Club/City', style: style),
+              ),
+            ),
           const _HeaderCell(label: 'Pts.', width: _StandingsLayout.pointsWidth),
+          for (final tiebreak in tiebreaks)
+            DesktopTooltip(
+              message: tiebreak.description,
+              child: SizedBox(
+                width: _StandingsLayout.tiebreakWidth,
+                child: Text(
+                  tiebreak.label,
+                  textAlign: TextAlign.center,
+                  style: style.copyWith(color: kWhiteColor70),
+                ),
+              ),
+            ),
           for (final column in columns)
             SizedBox(
               key: Key('standings-round-header-${column.id}'),
@@ -1062,6 +1168,8 @@ class _StandingsPlayerRow extends StatelessWidget {
     required this.rank,
     required this.flagFederation,
     required this.rounds,
+    required this.tiebreaks,
+    required this.identity,
     required this.photoResolver,
     required this.onOpenScoreCard,
     required this.onOpenGame,
@@ -1071,6 +1179,8 @@ class _StandingsPlayerRow extends StatelessWidget {
   final int rank;
   final String flagFederation;
   final TournamentStandingsRoundTable rounds;
+  final List<PublishedTiebreak> tiebreaks;
+  final _StandingsIdentityColumns identity;
   final StandingsPhotoResolver photoResolver;
   final VoidCallback onOpenScoreCard;
   final ValueChanged<GamesTourModel> onOpenGame;
@@ -1080,6 +1190,10 @@ class _StandingsPlayerRow extends StatelessWidget {
     final points = _standingsPoints(player.matchScore);
     final rating = player.score > 0 ? player.score.toString() : '';
     final playerKey = _standingWidgetKey(player);
+    final publishedValues = {
+      for (final value in player.tiebreaks)
+        value.identity: value.formattedPoints,
+    };
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1096,6 +1210,19 @@ class _StandingsPlayerRow extends StatelessWidget {
               ),
             ),
           ),
+          if (identity.startNumber)
+            SizedBox(
+              width: _StandingsLayout.startNumberWidth,
+              child: Text(
+                player.startNumber?.toString() ?? '',
+                key: Key('standings-start-number-$playerKey'),
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 13,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
           SizedBox(
             width: _StandingsLayout.avatarSlotWidth,
             child: Align(
@@ -1161,6 +1288,24 @@ class _StandingsPlayerRow extends StatelessWidget {
               ),
             ),
           ),
+          if (identity.club)
+            SizedBox(
+              width: _StandingsLayout.clubWidth,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8, right: 8),
+                child: DesktopTooltip(
+                  message: _clubName(player) ?? '',
+                  child: Text(
+                    _clubName(player) ?? '',
+                    key: Key('standings-club-$playerKey'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    style: const TextStyle(color: kWhiteColor70, fontSize: 13),
+                  ),
+                ),
+              ),
+            ),
           SizedBox(
             width: _StandingsLayout.pointsWidth,
             child: Text(
@@ -1175,6 +1320,22 @@ class _StandingsPlayerRow extends StatelessWidget {
               ),
             ),
           ),
+          for (final tiebreak in tiebreaks)
+            SizedBox(
+              width: _StandingsLayout.tiebreakWidth,
+              child: Text(
+                publishedValues[tiebreak.identity] ?? '',
+                key: Key('standings-tiebreak-$playerKey-${tiebreak.label}'),
+                textAlign: TextAlign.center,
+                semanticsLabel:
+                    '${tiebreak.description}: ${publishedValues[tiebreak.identity] ?? "unpublished"}',
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 13,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
           for (final column in rounds.columns)
             SizedBox(
               key: Key('standings-round-$playerKey-${column.id}'),

@@ -101,6 +101,11 @@ ChessGame rebaseBoardAfterSavedSnapshot({
         clockTime: pick(old.clockTime, committed.clockTime, now.clockTime),
         eval: pick(old.eval, committed.eval, now.eval),
         comments: pick(old.comments, committed.comments, now.comments),
+        startingComments: pick(
+          old.startingComments,
+          committed.startingComments,
+          now.startingComments,
+        ),
         nags: _rebaseNags(old.nags, committed.nags, now.nags),
         variations: now.variations,
       ),
@@ -116,5 +121,13 @@ ChessGame rebaseBoardAfterSavedSnapshot({
       metadata[entry.key] = entry.value;
     }
   }
-  return current.copyWith(mainline: moves, metadata: metadata);
+  return current.copyWith(
+    mainline: moves,
+    metadata: metadata,
+    rootComments: pick(
+      before.rootComments,
+      saved.rootComments,
+      current.rootComments,
+    ),
+  );
 }

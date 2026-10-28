@@ -81,6 +81,7 @@ class DesktopExplorerFilters extends ConsumerWidget {
                     const _SectionLabel('Time control'),
                     const SizedBox(height: 5),
                     _TimeControlChips(
+                      available: notifier.availableTimeControls,
                       selected: filters.timeControls,
                       onToggle: notifier.toggleTimeControl,
                     ),
@@ -335,7 +336,13 @@ class _ChipState extends State<_Chip> {
 }
 
 class _TimeControlChips extends StatelessWidget {
-  const _TimeControlChips({required this.selected, required this.onToggle});
+  const _TimeControlChips({
+    required this.available,
+    required this.selected,
+    required this.onToggle,
+  });
+
+  final List<TimeControl> available;
 
   final List<TimeControl> selected;
   final void Function(TimeControl) onToggle;
@@ -346,7 +353,7 @@ class _TimeControlChips extends StatelessWidget {
       spacing: 6,
       runSpacing: 6,
       children: [
-        for (final tc in TimeControl.values)
+        for (final tc in available)
           _Chip(
             label: _label(tc),
             selected: selected.contains(tc),

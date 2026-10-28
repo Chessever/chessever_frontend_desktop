@@ -1,5 +1,10 @@
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'dart:convert';
 import 'dart:io' as io;
 
@@ -12,13 +17,17 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
+import 'package:chessever/desktop/services/local_chess_database_open_guard.dart';
+import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
+import 'package:chessever/desktop/services/position_game_notation.dart';
 
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
+import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/table_display_value.dart';
@@ -26,6 +35,7 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/gamebase/providers/explorer_games_cache.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
@@ -211,6 +221,7 @@ class DesktopPositionGamesTable extends ConsumerStatefulWidget {
     this.playerOpeningTreePlayerId,
     this.localOpeningTreeIndex,
     this.localOpeningTreeTitle = '',
+    this.positionAutoplaying = false,
   });
 
   /// Optional bridge for host-driven keyboard navigation. The host calls
@@ -235,6 +246,14 @@ class DesktopPositionGamesTable extends ConsumerStatefulWidget {
 
   /// Whether the active continuation marker is being driven by autoplay.
   final bool activeContinuationAutoplay;
+
+  /// The board is stepping through its line on a timer (auto-replay), so
+  /// positions pass faster than anyone reads their games. The table then
+  /// waits [kDesktopPositionGamesAutoplayDwell] before asking the server for
+  /// a position it holds nothing for, so a replay sends no request per
+  /// passing position. Held pages still paint at once, and when the replay
+  /// stops the position it stopped on is asked for after the usual dwell.
+  final bool positionAutoplaying;
 
   /// Whether this table is currently visible/interactive. Hidden right-rail
   /// pages keep their table mounted so keyboard selection state is preserved,
@@ -286,27 +305,44 @@ class DesktopPositionGamesTable extends ConsumerStatefulWidget {
       _DesktopPositionGamesTableState();
 }
 
+/// How long a new position must stay on the board before a games table that
+/// holds nothing for it asks the server. Stepping through a line a few moves
+/// a second never waits this long, so it sends no request per passing
+/// position; stopping to read asks at once. A page the explorer already holds
+/// (a warm-up, a revisit, a saved copy) paints the moment the position lands,
+/// whatever this is, and a request already on the wire is attached to at once.
+const Duration kDesktopPositionGamesNetworkDwell = Duration(milliseconds: 450);
+
+/// [kDesktopPositionGamesNetworkDwell] while the board auto-replays its line
+/// ([DesktopPositionGamesTable.positionAutoplaying]): longer than a replay
+/// step, so no passing position is asked for.
+const Duration kDesktopPositionGamesAutoplayDwell = Duration(seconds: 2);
+
 class _DesktopPositionGamesTableState
     extends ConsumerState<DesktopPositionGamesTable> {
-  static const int _pageSize = 25;
   static const double _scrollPrefetchExtent = 360;
 
-  /// Plies of UCI continuation requested per row for first paint. Full PGN
-  /// continuation is still lazy-loaded when a row is previewed.
-  static const int _notationPlies = 16;
-
   final ScrollController _scroll = ScrollController();
+  final ScrollController _horizontalScroll = ScrollController();
   final Map<String, GlobalKey> _rowKeys = <String, GlobalKey>{};
   final List<Map<String, dynamic>> _rows = <Map<String, dynamic>>[];
+  final Map<Map<String, dynamic>, PositionGameNotation> _preparedNotations =
+      Map.identity();
   final Map<String, List<String>> _fullContinuationCache =
       <String, List<String>>{};
   final Set<String> _loadingFullContinuations = <String>{};
   Timer? _localTreeRefreshDebounce;
   Timer? _resetFetchDebounce;
+  Timer? _errorRetryTimer;
+  int _errorRetryAttempts = 0;
   String? _lastPreviewedRowId;
   bool _lastPreviewAutoplay = true;
   int? _lastPreviewStep;
   bool _isInitialLoading = true;
+
+  /// The last fetch was refused by access. The table renders a locked
+  /// surface instead of an empty result or an error.
+  bool _queryLocked = false;
   bool _isLoadingMore = false;
   bool _hasMore = true;
   int _nextPageNumber = 0;
@@ -319,8 +355,51 @@ class _DesktopPositionGamesTableState
   GamebasePositionGamesQuery? _lastSuccessfulQuery;
   String? _lastSuccessfulSourceKey;
   String? _error;
+  bool _errorRetryable = false;
+
+  /// The last failure came from the global database (not a local file), so
+  /// the error surface offers a Retry.
+  bool _errorFromNetwork = false;
+
+  /// Whether the rows on screen were listed in exact-position mode.
+  bool _rowsExactFenSearch = false;
   String? _waitingForTreeMessage;
   bool _needsRefresh = false;
+
+  /// Page 0 on screen is a saved copy (read back from disk, or held longer
+  /// than [kExplorerGamesFreshFor]) being checked against the server: the
+  /// moment it was asked for. Null while page 0 is a current answer. A saved
+  /// copy is never final: paging waits for the check, and a failed check
+  /// says so above the rows.
+  DateTime? _savedAt;
+
+  /// The check of the saved copy on screen failed.
+  bool _refreshFailed = false;
+
+  /// When the page 0 on screen was asked for. A later page asked for before
+  /// it is asked for again rather than appended, so its offsets match.
+  DateTime? _firstPageFetchedAt;
+
+  /// The reader reached the end of the rows while paging waited for a saved
+  /// copy's check; paging picks up as soon as page 0 is current.
+  bool _pagingDeferred = false;
+
+  /// Bumped whenever page 0 of the table's inputs settles from something
+  /// newer than the disk: an answer (fetched or held, empty or not), a
+  /// failure, a lock, a wait. A disk read started before then lands too late
+  /// to be shown as the page being checked: nothing is checking it any more.
+  int _firstPageSettles = 0;
+
+  /// Page 0 of this query failed from the global database with nothing of it
+  /// on screen. A saved copy the disk finds for it afterwards is shown as it
+  /// would have been had the disk answered first: marked as not refreshed,
+  /// with its Retry.
+  GamebasePositionGamesQuery? _failedFirstPage;
+
+  /// Time from a position landing to its rows painting, for the paint
+  /// breadcrumb ([recordExplorerGamesPaint]).
+  final Stopwatch _paintWatch = Stopwatch();
+  bool _paintRecorded = true;
 
   /// Local sort override. Click on a sortable column header sets this and
   /// triggers a reset+refetch. Cleared (back to filter default) when the
@@ -330,6 +409,41 @@ class _DesktopPositionGamesTableState
 
   ScrollController get _activeScrollController =>
       widget.externalScrollController ?? _scroll;
+
+  bool get _usesLazyRows =>
+      widget.referenceLayout &&
+      !widget.useFixedRowAlignment &&
+      widget.externalScrollController == null;
+
+  double get _lazyRowExtent => 12 + MediaQuery.textScalerOf(context).scale(22);
+
+  // Shared by the header and every visible row. Long metadata uses the
+  // existing ellipsis treatment; the user can still resize every column.
+  static const _lazyColumnWidths = <String, double>{
+    'white': 90,
+    'whiteElo': 60,
+    'black': 90,
+    'blackElo': 60,
+    'result': 54,
+    'year': 92,
+    'event': 164,
+    'notation': 520,
+    'eco': 52,
+    'site': 144,
+    'opening': 174,
+    'variation': 134,
+    'timeControl': 64,
+    'mode': 70,
+  };
+
+  Map<String, double> get _scaledLazyColumnWidths {
+    final scale = MediaQuery.textScalerOf(context).scale(12) / 12;
+    if (scale == 1) return _lazyColumnWidths;
+    return {
+      for (final entry in _lazyColumnWidths.entries)
+        entry.key: entry.value * scale,
+    };
+  }
 
   @override
   void initState() {
@@ -382,6 +496,14 @@ class _DesktopPositionGamesTableState
         uciChanged ||
         modeChanged ||
         localTreeChanged) {
+      // A move filter picked on this position (the list icon), or a switch
+      // between the move-line and exact-position search, is a deliberate
+      // pick: asked at once. Navigation waits out the dwell below.
+      final deliberate =
+          !fenChanged &&
+          !movesChanged &&
+          !localTreeChanged &&
+          !(_resetFetchDebounce?.isActive ?? false);
       _cancelPendingResetFetch(invalidate: true);
       if (!widget.active) {
         _needsRefresh = true;
@@ -392,15 +514,27 @@ class _DesktopPositionGamesTableState
       }
       if (localTreeChanged) {
         _clearRowsForPendingReset();
+        _scheduleResetFetch(delay: Duration.zero);
+        return;
       }
-      _scheduleResetFetch(delay: localTreeChanged ? Duration.zero : null);
+      _showPositionChange(deliberate: deliberate);
       return;
     }
     if (activeChanged && widget.active) {
       if (_needsRefresh || !_hasLoadedCurrentQuery()) {
         _needsRefresh = false;
-        _scheduleResetFetch();
+        // Brought on screen: whatever is held paints now, anything else is
+        // asked for at once.
+        _showPositionChange(deliberate: true);
+        return;
       }
+    }
+    if (old.positionAutoplaying &&
+        !widget.positionAutoplaying &&
+        (_resetFetchDebounce?.isActive ?? false)) {
+      // The replay stopped on a position still waiting out the replay's
+      // longer dwell: it is now read like any other.
+      _scheduleResetFetch();
     }
   }
 
@@ -408,10 +542,12 @@ class _DesktopPositionGamesTableState
   void dispose() {
     _localTreeRefreshDebounce?.cancel();
     _resetFetchDebounce?.cancel();
+    _errorRetryTimer?.cancel();
     widget.controller?._detach(this);
     widget.externalScrollController?.removeListener(_onScroll);
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
+    _horizontalScroll.dispose();
     super.dispose();
   }
 
@@ -424,14 +560,229 @@ class _DesktopPositionGamesTableState
 
   void _onScroll() {
     if (!widget.active) return;
-    if (_resetFetchDebounce?.isActive ?? false) return;
-    if (_isLoadingMore || !_hasMore) return;
+    if (_isLoadingMore || !_hasMore || _rows.isEmpty) return;
     final controller = _activeScrollController;
     if (!controller.hasClients) return;
     final pos = controller.position;
-    if (pos.pixels >= pos.maxScrollExtent - _scrollPrefetchExtent) {
-      _fetchPage(reset: false);
+    if (pos.pixels < pos.maxScrollExtent - _scrollPrefetchExtent) return;
+    // A later page is only ever stacked on a current page 0: never on the
+    // previous position's rows, a page 0 still loading, or a saved copy
+    // being checked (its offsets may have moved). Resumed by
+    // [_resumeDeferredPaging] once page 0 is current.
+    if ((_resetFetchDebounce?.isActive ?? false) ||
+        _isInitialLoading ||
+        _savedAt != null) {
+      _pagingDeferred = true;
+      return;
     }
+    _fetchPage(reset: false);
+  }
+
+  /// Page 0 just became current. If the reader got to the end of the rows
+  /// while it was loading or being checked, load the next page now rather
+  /// than waiting for another scroll that may never come.
+  void _resumeDeferredPaging() {
+    if (!_pagingDeferred) return;
+    _pagingDeferred = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _onScroll();
+    });
+  }
+
+  /// Whether the rows on screen came from the global database (the path the
+  /// explorer games cache and its warm-ups cover) for the table's inputs.
+  bool get _usesGlobalDatabase =>
+      widget.active &&
+      !widget.waitForPlayerOpeningTree &&
+      _positionQueryAllowed &&
+      desktopPositionGamesUseNetwork(
+        ref,
+        _buildQuery(pageNumber: 0),
+        localOpeningTreeIndex: widget.localOpeningTreeIndex,
+      );
+
+  /// Whether the rows on screen answer [query] (page 0) from the current
+  /// source, whether as a current answer or a saved copy being checked.
+  bool _rowsAnswer(GamebasePositionGamesQuery query) {
+    final last = _lastSuccessfulQuery;
+    if (last == null || _rows.isEmpty) return false;
+    return _lastSuccessfulSourceKey == _sourceKey &&
+        _rowsExactFenSearch == widget.exactFenSearch &&
+        last.withPage(0) == query;
+  }
+
+  void _startPaintWatch() {
+    _paintWatch
+      ..reset()
+      ..start();
+    _paintRecorded = false;
+  }
+
+  void _recordPaint(ExplorerGamesSource source) {
+    if (_paintRecorded) return;
+    _paintRecorded = true;
+    _paintWatch.stop();
+    recordExplorerGamesPaint(
+      surface: 'desktop games table',
+      source: source,
+      elapsed: _paintWatch.elapsed,
+    );
+  }
+
+  /// The table's inputs moved to a new position (or move filter). What the
+  /// explorer already holds for it paints in this frame: a current answer as
+  /// final, a saved copy marked as being checked. With nothing held the rows
+  /// on screen are marked as not current (they answer the previous inputs)
+  /// and the disk is read while the server is asked: at once when
+  /// [deliberate] or when that request is already on the wire, otherwise
+  /// once the reader stops for [kDesktopPositionGamesNetworkDwell].
+  void _showPositionChange({required bool deliberate}) {
+    _startPaintWatch();
+    _pagingDeferred = false;
+    final painted = _paintHeldFirstPage();
+    if (painted == _HeldPaint.current) return;
+    final global = _usesGlobalDatabase;
+    final query = _buildQuery(pageNumber: 0);
+    if (painted == _HeldPaint.none) {
+      _markRowsNotCurrent();
+      if (global) _readSavedFirstPage(query);
+    }
+    final attachNow =
+        deliberate ||
+        (global &&
+            isDesktopPositionGamesFirstPageInFlight(
+              ref,
+              query,
+              exactFenSearch: widget.exactFenSearch,
+            ));
+    _scheduleResetFetch(delay: attachNow ? Duration.zero : null);
+  }
+
+  /// Paints the first page the explorer holds for the table's inputs, if any.
+  _HeldPaint _paintHeldFirstPage() {
+    if (!mounted || !_usesGlobalDatabase) return _HeldPaint.none;
+    final query = _buildQuery(pageNumber: 0);
+    final held = peekDesktopPositionGamesFirstPage(
+      ref,
+      query,
+      exactFenSearch: widget.exactFenSearch,
+    );
+    if (held == null) return _HeldPaint.none;
+    // An empty saved copy would flash "No Games Found" before the answer.
+    if (!held.current && held.response.data.isEmpty) return _HeldPaint.none;
+    _installFirstPage(query, held);
+    return held.current ? _HeldPaint.current : _HeldPaint.saved;
+  }
+
+  /// Reads the disk's saved page 0 for [query] and paints it, unless the
+  /// table has moved on or page 0 has settled by then.
+  ///
+  /// The disk usually answers well before the server, but not always (a
+  /// fast failure, a disk queue busy saving pages). A copy that lands after
+  /// the server answered is dropped, even when that answer is empty, and one
+  /// that lands after the server failed is shown as not refreshed with its
+  /// Retry, never as a copy still being checked.
+  void _readSavedFirstPage(GamebasePositionGamesQuery query) {
+    final exactFenSearch = widget.exactFenSearch;
+    final settles = _firstPageSettles;
+    unawaited(
+      readDesktopPositionGamesSavedFirstPage(
+        ref,
+        query,
+        exactFenSearch: exactFenSearch,
+      ).then((held) {
+        if (held == null || !mounted || !widget.active) return;
+        if (!held.current && held.response.data.isEmpty) return;
+        if (widget.exactFenSearch != exactFenSearch) return;
+        if (_buildQuery(pageNumber: 0) != query || _rowsAnswer(query)) return;
+        if (_queryLocked || _waitingForTreeMessage != null) return;
+        if (_firstPageSettles != settles) {
+          if (_failedFirstPage == query && _error != null && _rows.isEmpty) {
+            _installFirstPage(query, held, refreshFailed: !held.current);
+          }
+          return;
+        }
+        _installFirstPage(query, held);
+      }, onError: (Object _) {}),
+    );
+  }
+
+  /// Page 0 of the table's inputs settled (see [_firstPageSettles]).
+  void _firstPageSettled({GamebasePositionGamesQuery? failed}) {
+    _firstPageSettles += 1;
+    _failedFirstPage = failed;
+  }
+
+  /// Rows on screen answer earlier inputs: shown under the progress line
+  /// (or as a spinner when there are none) until the answer lands.
+  void _markRowsNotCurrent() {
+    if (_isInitialLoading && !_refreshFailed) return;
+    setState(() {
+      _isInitialLoading = true;
+      _refreshFailed = false;
+    });
+  }
+
+  /// Installs a held page 0 for [query] exactly as a fetched one would be.
+  ///
+  /// [refreshFailed]: the server already failed to answer [query], so the
+  /// copy goes up marked as not refreshed and the failure (and its Retry)
+  /// stays.
+  void _installFirstPage(
+    GamebasePositionGamesQuery query,
+    DesktopHeldPositionGamesPage held, {
+    bool refreshFailed = false,
+  }) {
+    if (held.current) {
+      _firstPageSettled();
+    } else {
+      _failedFirstPage = null;
+    }
+    final rows = <Map<String, dynamic>>[];
+    final ids = <String>{};
+    for (final row in held.response.data) {
+      final id = row['id']?.toString().trim() ?? '';
+      if (id.isNotEmpty && !ids.add(id)) continue;
+      rows.add(row);
+    }
+    if (!_rowsAnswer(query)) {
+      _fullContinuationCache.clear();
+      _loadingFullContinuations.clear();
+    }
+    setState(() {
+      _rows
+        ..clear()
+        ..addAll(rows);
+      _hasMore = held.response.metadata.hasMore && rows.isNotEmpty;
+      _nextPageNumber = 1;
+      _totalCount = held.response.metadata.totalCount;
+      _resolvedApi = held.resolvedApi;
+      _lastSuccessfulQuery = query;
+      _lastSuccessfulSourceKey = _sourceKey;
+      _rowsExactFenSearch = widget.exactFenSearch;
+      _isInitialLoading = false;
+      _isLoadingMore = false;
+      if (!refreshFailed) {
+        _error = null;
+        _errorRetryable = false;
+        _errorFromNetwork = false;
+      }
+      _waitingForTreeMessage = null;
+      _queryLocked = false;
+      _savedAt = held.current ? null : held.fetchedAt;
+      _refreshFailed = refreshFailed && !held.current;
+      _firstPageFetchedAt = held.fetchedAt;
+    });
+    _errorRetryAttempts = 0;
+    final rowIds = _rowIdsSnapshot();
+    _pruneRowKeys(rowIds);
+    widget.controller?._setRows(
+      rowIds,
+      _rowContinuationsSnapshot(),
+      _rowSourceLabelsSnapshot(),
+    );
+    _recordPaint(held.current ? ExplorerGamesSource.memory : held.source);
+    if (held.current) _resumeDeferredPaging();
   }
 
   void _cancelPendingResetFetch({bool invalidate = false}) {
@@ -441,6 +792,7 @@ class _DesktopPositionGamesTableState
   }
 
   void _clearRowsForPendingReset() {
+    _firstPageSettled();
     _fullContinuationCache.clear();
     _loadingFullContinuations.clear();
     _lastSuccessfulSourceKey = null;
@@ -455,7 +807,12 @@ class _DesktopPositionGamesTableState
       _resolvedApi = null;
       _lastSuccessfulQuery = null;
       _error = null;
+      _errorRetryable = false;
+      _errorFromNetwork = false;
       _waitingForTreeMessage = null;
+      _savedAt = null;
+      _refreshFailed = false;
+      _firstPageFetchedAt = null;
     });
     _pruneRowKeys(const <String>[]);
     widget.controller?._setRows(
@@ -477,15 +834,88 @@ class _DesktopPositionGamesTableState
     });
   }
 
-  Duration get _resetFetchDebounceDuration =>
-      widget.localOpeningTreeIndex == null
-          ? const Duration(seconds: 2)
-          : const Duration(milliseconds: 120);
+  Duration get _resetFetchDebounceDuration {
+    if (widget.localOpeningTreeIndex != null) {
+      return const Duration(milliseconds: 120);
+    }
+    return widget.positionAutoplaying
+        ? kDesktopPositionGamesAutoplayDwell
+        : kDesktopPositionGamesNetworkDwell;
+  }
+
+  /// The request listing games at this position makes. A local file's tree
+  /// is opening-tree exploration; the ChessEver database is explorer depth,
+  /// player scope and exact-position search.
+  DesktopAccessContext get _positionQueryContext {
+    final localTree = widget.localOpeningTreeIndex;
+    if (localTree != null && widget.playerOpeningTreePlayerId == null) {
+      return const DesktopAccessContext(
+        feature: DesktopFeature.openingTree,
+        action: DesktopAction.previewNavigate,
+        origin: DesktopDiscoveryOrigin.localFile,
+      );
+    }
+    return DesktopAccessContext(
+      feature: DesktopFeature.openingExplorer,
+      action:
+          widget.exactFenSearch
+              ? DesktopAction.acquireSource
+              : DesktopAction.previewNavigate,
+      origin: DesktopDiscoveryOrigin.gamebase,
+      playedPlies: widget.moves.length,
+      playerScoped:
+          widget.playerOpeningTreePlayerId != null ||
+          ref.read(gamebaseExplorerProvider).filters.playerIds.isNotEmpty,
+    );
+  }
+
+  bool get _positionQueryAllowed =>
+      readDesktopAccess(ref.read, _positionQueryContext).isAllowed;
+
+  /// Rows from a ChessEver database position carry gamebase provenance.
+  DesktopAccessContext get _rowAccessContext =>
+      widget.localOpeningTreeIndex != null &&
+              widget.playerOpeningTreePlayerId == null
+          ? const DesktopAccessContext(
+            feature: DesktopFeature.localFiles,
+            action: DesktopAction.openContent,
+            origin: DesktopDiscoveryOrigin.localFile,
+          )
+          : const DesktopAccessContext(
+            feature: DesktopFeature.gamebase,
+            action: DesktopAction.openContent,
+            origin: DesktopDiscoveryOrigin.gamebase,
+          );
 
   Future<void> _fetchPage({
     required bool reset,
     bool preserveRows = false,
+    bool fromAutoRetry = false,
   }) async {
+    if (!fromAutoRetry) {
+      // A user-driven or event-driven fetch replaces any recovery in flight.
+      _cancelErrorAutoRetry();
+    }
+    if (!mounted) return;
+    // Denied => no request, no rows from a previous (free) position.
+    if (!_positionQueryAllowed) {
+      _requestToken += 1;
+      _cancelPendingResetFetch();
+      _firstPageSettled();
+      setState(() {
+        _rows.clear();
+        _isInitialLoading = false;
+        _isLoadingMore = false;
+        _hasMore = false;
+        _totalCount = null;
+        _error = null;
+        _queryLocked = true;
+        _savedAt = null;
+        _refreshFailed = false;
+      });
+      return;
+    }
+    if (_queryLocked) setState(() => _queryLocked = false);
     if (!widget.active) {
       _needsRefresh = true;
       return;
@@ -495,6 +925,7 @@ class _DesktopPositionGamesTableState
     final treeWaitMessage = _playerTreeWaitMessage();
     if (treeWaitMessage != null) {
       _requestToken += 1;
+      _firstPageSettled();
       _fullContinuationCache.clear();
       _loadingFullContinuations.clear();
       setState(() {
@@ -508,6 +939,9 @@ class _DesktopPositionGamesTableState
         _lastSuccessfulQuery = null;
         _error = null;
         _waitingForTreeMessage = treeWaitMessage;
+        _savedAt = null;
+        _refreshFailed = false;
+        _firstPageFetchedAt = null;
       });
       _pruneRowKeys(const <String>[]);
       widget.controller?._setRows(
@@ -518,21 +952,29 @@ class _DesktopPositionGamesTableState
       return;
     }
     final pageNumber = reset ? 0 : _nextPageNumber;
+    final global = _usesGlobalDatabase;
     if (reset) {
       _requestToken += 1;
-      _fullContinuationCache.clear();
-      _loadingFullContinuations.clear();
+      _pagingDeferred = false;
+      if (_paintRecorded) _startPaintWatch();
+      // A page the explorer holds paints first: a current answer is final
+      // (no request), a saved copy stays up, marked, while it is checked.
+      final painted = preserveRows ? _HeldPaint.none : _paintHeldFirstPage();
+      if (painted == _HeldPaint.current) return;
+      if (painted == _HeldPaint.none) {
+        _fullContinuationCache.clear();
+        _loadingFullContinuations.clear();
+      }
       final hadRows = _rows.isNotEmpty;
       final keepRows = preserveRows && hadRows;
+      // The pagination fields keep describing the rows on screen until the
+      // new page 0 replaces them.
       setState(() {
         _isInitialLoading = !keepRows;
         _isLoadingMore = false;
-        _hasMore = true;
-        _nextPageNumber = 0;
-        _totalCount = null;
-        _resolvedApi = null;
-        _lastSuccessfulQuery = null;
         _error = null;
+        _errorFromNetwork = false;
+        _refreshFailed = false;
         _waitingForTreeMessage = null;
       });
       if (!hadRows) {
@@ -542,6 +984,10 @@ class _DesktopPositionGamesTableState
           const <List<String>>[],
           const <String?>[],
         );
+      }
+      if (painted == _HeldPaint.none && global && !preserveRows) {
+        // The disk usually answers well before the server.
+        _readSavedFirstPage(_buildQuery(pageNumber: 0));
       }
     } else {
       setState(() => _isLoadingMore = true);
@@ -564,11 +1010,13 @@ class _DesktopPositionGamesTableState
         ref,
         query,
         exactFenSearch: widget.exactFenSearch,
-        resolvedApi: _resolvedApi,
+        resolvedApi: reset ? null : _resolvedApi,
         localOpeningTreeIndex: widget.localOpeningTreeIndex,
+        notOlderThan: reset ? null : _firstPageFetchedAt,
       );
       final response = page.response;
       if (!mounted || requestToken != _requestToken) return;
+      if (reset) _firstPageSettled();
 
       final merged =
           reset
@@ -586,20 +1034,43 @@ class _DesktopPositionGamesTableState
         merged.add(row);
         added += 1;
       }
+      if (reset && !_rowsAnswer(query.withPage(0))) {
+        _fullContinuationCache.clear();
+        _loadingFullContinuations.clear();
+      }
 
       setState(() {
+        if (reset) _preparedNotations.clear();
         _rows
           ..clear()
           ..addAll(merged);
+        final retainedRows = _rows.toSet();
+        _preparedNotations.removeWhere((row, _) => !retainedRows.contains(row));
         _hasMore = response.metadata.hasMore && added > 0;
         _nextPageNumber = pageNumber + 1;
-        _totalCount = response.metadata.totalCount ?? _totalCount;
-        _resolvedApi = page.resolvedApi ?? _resolvedApi;
+        if (reset) {
+          _totalCount = response.metadata.totalCount;
+          _resolvedApi = page.resolvedApi;
+          _rowsExactFenSearch = widget.exactFenSearch;
+          _savedAt = null;
+          _refreshFailed = false;
+          _firstPageFetchedAt =
+              global
+                  ? ref.read(explorerGamesCacheProvider).fetchedAtOf(response)
+                  : null;
+        } else {
+          _totalCount = response.metadata.totalCount ?? _totalCount;
+          _resolvedApi = page.resolvedApi ?? _resolvedApi;
+        }
         _lastSuccessfulQuery = query;
         _lastSuccessfulSourceKey = _sourceKey;
         _isInitialLoading = false;
         _isLoadingMore = false;
+        _error = null;
+        _errorRetryable = false;
+        _errorFromNetwork = false;
       });
+      _errorRetryAttempts = 0;
       if (kDebugMode) {
         debugPrint(
           '[DesktopPositionGamesTable] fetch done '
@@ -615,20 +1086,116 @@ class _DesktopPositionGamesTableState
         _rowContinuationsSnapshot(),
         _rowSourceLabelsSnapshot(),
       );
+      // Local tree pages carry each game's whole remaining line instead of
+      // the server's short preview. Rows paint at once (visible cells replay
+      // their own prefix); a worker replays the rest of the page so rows
+      // scrolled into view later do not replay during a frame.
+      if (!global) {
+        unawaited(_prewarmNotations(requestToken, query.fen, response.data));
+      }
+      if (reset) {
+        _recordPaint(ExplorerGamesSource.network);
+        _resumeDeferredPaging();
+      }
     } catch (e) {
       if (!mounted || requestToken != _requestToken) return;
+      // A localized database open failure is transient by nature (a tree store
+      // being published, another writer holding the file): show actionable
+      // wording, keep the last good rows on screen, and retry on a bounded
+      // backoff so the panel recovers in place instead of dead-ending and
+      // making the user leave and re-enter the tab.
+      final retryable = isRetryableLocalChessDatabaseFailure(e);
+      final query0 = _buildQuery(pageNumber: 0);
+      // A saved copy of this very page stays up, marked as not refreshed. Rows
+      // listed for an earlier position never stand in for this one's answer.
+      final showingSaved = reset && _savedAt != null && _rowsAnswer(query0);
+      final staleRows =
+          reset && global && _rows.isNotEmpty && !_rowsAnswer(query0);
+      if (staleRows) {
+        _fullContinuationCache.clear();
+        _loadingFullContinuations.clear();
+        _lastPreviewedRowId = null;
+      }
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = localChessDatabaseUserMessage(e);
+        _errorRetryable = retryable;
+        _errorFromNetwork = global;
         _isInitialLoading = false;
         _isLoadingMore = false;
+        if (showingSaved) _refreshFailed = true;
+        if (staleRows) {
+          _rows.clear();
+          _hasMore = false;
+          _nextPageNumber = 0;
+          _totalCount = null;
+          _resolvedApi = null;
+          _lastSuccessfulQuery = null;
+          _lastSuccessfulSourceKey = null;
+          _savedAt = null;
+          _refreshFailed = false;
+          _firstPageFetchedAt = null;
+        }
       });
+      if (staleRows) {
+        _pruneRowKeys(const <String>[]);
+        widget.controller?._setRows(
+          const <String>[],
+          const <List<String>>[],
+          const <String?>[],
+        );
+      }
+      if (reset) {
+        _firstPageSettled(failed: global && _rows.isEmpty ? query0 : null);
+      }
+      if (retryable) _scheduleErrorAutoRetry();
       if (kDebugMode) {
         debugPrint(
           '[DesktopPositionGamesTable] fetch failed '
-          '${stopwatch.elapsedMilliseconds}ms reset=$reset error=$_error',
+          '${stopwatch.elapsedMilliseconds}ms reset=$reset '
+          'retryable=$retryable error=$_error cause=$e',
         );
       }
     }
+  }
+
+  /// Two bounded retries cover a tree-store publish that is still finishing;
+  /// after that the panel keeps the last good rows (or the error surface) and
+  /// waits for the user's Retry so a genuinely broken database cannot spin.
+  static const int _maxErrorAutoRetries = 2;
+  static const List<Duration> _errorAutoRetryDelays = <Duration>[
+    Duration(milliseconds: 400),
+    Duration(milliseconds: 1200),
+  ];
+
+  void _scheduleErrorAutoRetry() {
+    if (!widget.active) return;
+    if (_errorRetryAttempts >= _maxErrorAutoRetries) return;
+    final delay = _errorAutoRetryDelays[_errorRetryAttempts];
+    _errorRetryAttempts += 1;
+    _errorRetryTimer?.cancel();
+    _errorRetryTimer = Timer(delay, () {
+      _errorRetryTimer = null;
+      if (!mounted || !widget.active) {
+        _needsRefresh = true;
+        return;
+      }
+      _fetchPage(reset: true, fromAutoRetry: true);
+    });
+  }
+
+  void _cancelErrorAutoRetry() {
+    _errorRetryTimer?.cancel();
+    _errorRetryTimer = null;
+    _errorRetryAttempts = 0;
+  }
+
+  void _retryAfterError() {
+    _cancelErrorAutoRetry();
+    if (!mounted || !widget.active) {
+      _needsRefresh = true;
+      return;
+    }
+    _fetchPage(reset: true);
   }
 
   String? _playerTreeWaitMessage() {
@@ -702,47 +1269,75 @@ class _DesktopPositionGamesTableState
   }
 
   GamebasePositionGamesQuery _buildQuery({required int pageNumber}) {
-    final filters = ref.read(gamebaseExplorerProvider).filters;
-    final timeControl =
-        filters.timeControls.isNotEmpty ? filters.timeControls.first : null;
-    final playerId =
-        filters.playerIds.isNotEmpty ? filters.playerIds.first : null;
-    final color = switch (filters.playerColor) {
-      GamebasePlayerColor.white => 'white',
-      GamebasePlayerColor.black => 'black',
-      null => null,
-    };
-    final result = filters.gameResult?.apiValue;
-    final effectiveSortBy = _sortOverride?.field ?? filters.sortBy;
-    final effectiveSortDirection =
-        _sortOverride?.direction ?? filters.sortDirection;
-    return GamebasePositionGamesQuery(
+    // Built through the shared factory so every warm-up of this table
+    // addresses the exact page (and saved copy) the table reads.
+    return GamebasePositionGamesQuery.desktopTablePage(
       fen: widget.fen,
       moves: widget.moves,
       uci: widget.uci,
+      filters: ref.read(gamebaseExplorerProvider).filters,
+      sortBy: _sortOverride?.field,
+      sortDirection: _sortOverride?.direction,
       pageNumber: pageNumber,
-      pageSize: _pageSize,
-      timeControl: timeControl,
-      playerId: playerId,
-      color: color,
-      result: result,
-      minRating: filters.minRating,
-      maxRating: filters.maxRating,
-      yearFrom: filters.yearFrom,
-      yearTo: filters.yearTo,
-      isOnline: filters.isOnline,
-      sortBy: effectiveSortBy,
-      sortDirection: effectiveSortDirection,
-      notationPlies: _notationPlies,
     );
   }
 
+  /// The position, move line and move filter the rows on screen were listed
+  /// for. They trail the widget while a newer position is on its way (or
+  /// failed), and a row opened in that window must open against its own.
+  String get _rowsFen => _lastSuccessfulQuery?.fen ?? widget.fen;
+
+  /// The row's displayed notation, replayed at most once per line. Cells of
+  /// a lazy list unmount when scrolled away; this cache outlives them.
+  PositionGameNotation _notationFor(
+    Map<String, dynamic> row,
+    List<String> continuation,
+  ) {
+    final fen = _rowsFen;
+    final cached = _preparedNotations[row];
+    if (cached != null && cached.matches(fen, continuation)) return cached;
+    return _preparedNotations[row] = PositionGameNotation.fromLine(
+      fen,
+      continuation,
+    );
+  }
+
+  Future<void> _prewarmNotations(
+    int requestToken,
+    String fen,
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final pending = <Map<String, dynamic>>[
+      for (final row in rows)
+        if (!_preparedNotations.containsKey(row)) row,
+    ];
+    if (pending.isEmpty) return;
+    final List<PositionGameNotation> notations;
+    try {
+      notations = await preparePositionGameNotations(fen, [
+        for (final row in pending) _readContinuation(row['continuation']),
+      ]);
+    } catch (_) {
+      return; // Best effort: cells replay their own line on demand.
+    }
+    if (!mounted || requestToken != _requestToken) return;
+    final retained = _rows.toSet();
+    for (var i = 0; i < pending.length && i < notations.length; i++) {
+      final row = pending[i];
+      // No rebuild: only rows mounted from now on read the cache.
+      if (retained.contains(row)) {
+        _preparedNotations.putIfAbsent(row, () => notations[i]);
+      }
+    }
+  }
+
+  List<String> get _rowsMoves => _lastSuccessfulQuery?.moves ?? widget.moves;
+  String? get _rowsUci =>
+      _lastSuccessfulQuery == null ? widget.uci : _lastSuccessfulQuery!.uci;
+
   bool _hasLoadedCurrentQuery() {
-    final last = _lastSuccessfulQuery;
-    if (last == null || _rows.isEmpty || _error != null) return false;
-    if (_lastSuccessfulSourceKey != _sourceKey) return false;
-    return gamebasePositionGamesQueryWithPage(last, 0) ==
-        _buildQuery(pageNumber: 0);
+    if (_error != null || _savedAt != null) return false;
+    return _rowsAnswer(_buildQuery(pageNumber: 0));
   }
 
   String get _sourceKey {
@@ -826,6 +1421,10 @@ class _DesktopPositionGamesTableState
   }) {
     final preview = widget.onPreviewContinuation;
     if (preview == null) return;
+    // The host plays the line from its own board position. Rows still
+    // listed for the previous position (the next one is on its way) would
+    // play a continuation that does not start there.
+    if (_positionKey(_rowsFen) != _positionKey(widget.fen)) return;
     final id = (row['id']?.toString().trim() ?? '');
     final fallback = _readContinuation(row['continuation']);
     final cached = id.isEmpty ? null : _fullContinuationCache[id];
@@ -914,6 +1513,14 @@ class _DesktopPositionGamesTableState
   Future<void> _insertGame(Map<String, dynamic> row) async {
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
+    // Inserting moves from a database game reaches back to its source.
+    if (!admitDesktopAction(
+      ProviderScope.containerOf(context, listen: false),
+      _rowAccessContext.copyWith(action: DesktopAction.insertMove),
+      surface: 'position_games_insert',
+    )) {
+      return;
+    }
     try {
       final openedRow =
           widget.localOpeningTreeIndex == null
@@ -1030,6 +1637,14 @@ class _DesktopPositionGamesTableState
   }
 
   Future<void> _loadFullContinuation(String id, List<String> fallback) async {
+    final fen = _rowsFen;
+    // A hover/preview continuation is a PGN fetch: never started when denied.
+    if (!readDesktopAccess(
+      ref.read,
+      _rowAccessContext.copyWith(action: DesktopAction.fetchPgn),
+    ).isAllowed) {
+      return;
+    }
     try {
       final gameWithPgn = await ref
           .read(gamebaseRepositoryProvider)
@@ -1040,9 +1655,11 @@ class _DesktopPositionGamesTableState
       }
       final full =
           pgnHasMoves(pgn)
-              ? _continuationFromPgnAfterFen(id, pgn!, widget.fen)
+              ? _continuationFromPgnAfterFen(id, pgn!, fen)
               : const <String>[];
-      if (!mounted) return;
+      // The same game can be listed at the next position too; a line read
+      // after the previous position never stands in for this one's.
+      if (!mounted || _rowsFen != fen) return;
       final best = full.length > fallback.length ? full : fallback;
       setState(() {
         _fullContinuationCache[id] = List<String>.unmodifiable(best);
@@ -1072,6 +1689,33 @@ class _DesktopPositionGamesTableState
     if (id == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      if (_usesLazyRows && _activeScrollController.hasClients) {
+        // Off-screen rows have no RenderBox in a lazy list. Resolve their
+        // position from the same extent used by the sliver, so keyboard
+        // navigation can still reveal any loaded game.
+        final index = _rows.indexWhere(
+          (row) => row['id']?.toString().trim() == id,
+        );
+        if (index < 0) return;
+        final position = _activeScrollController.position;
+        final top = 24 + index * _lazyRowExtent;
+        final bottom = top + _lazyRowExtent;
+        if (top >= position.pixels &&
+            bottom <= position.pixels + position.viewportDimension) {
+          return;
+        }
+        final target = (top -
+                (position.viewportDimension - _lazyRowExtent) * 0.16)
+            .clamp(position.minScrollExtent, position.maxScrollExtent);
+        unawaited(
+          _activeScrollController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+          ),
+        );
+        return;
+      }
       final context = _rowKeys[id]?.currentContext;
       if (context == null) return;
       final renderObject = context.findRenderObject();
@@ -1106,6 +1750,15 @@ class _DesktopPositionGamesTableState
   }) async {
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
+    // Denied => no local hydrate and no board. The central board admission
+    // re-checks with the same provenance.
+    if (!admitBoardSourceOpen(
+      ProviderScope.containerOf(context, listen: false),
+      _rowAccessContext,
+      surface: 'position_games_open',
+    )) {
+      return;
+    }
     final sourceRows = <Map<String, dynamic>>[
       for (final current in _rows) Map<String, dynamic>.from(current),
     ];
@@ -1161,14 +1814,20 @@ class _DesktopPositionGamesTableState
         query: gamebasePositionGamesQueryWithPage(query, 0),
         nextPageNumber: _nextPageNumber,
         hasMore: _hasMore,
-        exactFenSearch: widget.exactFenSearch,
+        exactFenSearch:
+            _lastSuccessfulQuery == null
+                ? widget.exactFenSearch
+                : _rowsExactFenSearch,
         resolvedApi: _resolvedApi,
         totalCount: _totalCount,
+        firstPageAskedAt: _firstPageFetchedAt,
+        firstPageIsSavedCopy: _savedAt != null,
       ),
       localOpeningTreeIndex: widget.localOpeningTreeIndex,
       localOpeningTreeTitle: widget.localOpeningTreeTitle,
       gameListSelectedId: id,
       librarySaveOrigin: _localLibrarySaveOriginForRow(openedRow),
+      accessContext: _rowAccessContext,
     );
     if (inNewWindow) {
       unawaited(openBoardGameWindow(ref, args));
@@ -1213,23 +1872,24 @@ class _DesktopPositionGamesTableState
         _readContinuation(row['continuation']),
       );
       final initialFen = _fenAfterContinuationStep(
-        widget.fen,
+        _rowsFen,
         continuation,
         continuationStep,
       );
       if (initialFen != null) return initialFen;
     }
 
-    final uci = widget.uci?.trim();
-    if (uci == null || uci.isEmpty) return widget.fen;
+    final fen = _rowsFen;
+    final uci = _rowsUci?.trim();
+    if (uci == null || uci.isEmpty) return fen;
 
     try {
-      final position = Chess.fromSetup(Setup.parseFen(widget.fen));
+      final position = Chess.fromSetup(Setup.parseFen(fen));
       final move = Move.parse(uci);
-      if (move == null || !position.isLegal(move)) return widget.fen;
+      if (move == null || !position.isLegal(move)) return fen;
       return position.play(move).fen;
     } catch (_) {
-      return widget.fen;
+      return fen;
     }
   }
 
@@ -1291,18 +1951,19 @@ class _DesktopPositionGamesTableState
 
   String _databaseTitleForOpenedGame() {
     final localTitle = widget.localOpeningTreeTitle.trim();
-    final tokens = <String>[..._toSanTokens(Chess.initial.fen, widget.moves)];
-    final pinnedUci = widget.uci?.trim();
+    final fen = _rowsFen;
+    final tokens = <String>[..._toSanTokens(Chess.initial.fen, _rowsMoves)];
+    final pinnedUci = _rowsUci?.trim();
     if (pinnedUci != null && pinnedUci.isNotEmpty) {
-      tokens.addAll(_toSanTokens(widget.fen, [pinnedUci]));
+      tokens.addAll(_toSanTokens(fen, [pinnedUci]));
     }
 
     if (tokens.isEmpty) {
       if (localTitle.isNotEmpty) return localTitle;
-      if (_positionKey(widget.fen) == _positionKey(Chess.initial.fen)) {
+      if (_positionKey(fen) == _positionKey(Chess.initial.fen)) {
         return 'Start position games';
       }
-      return 'Position games: ${_compactFen(widget.fen)}';
+      return 'Position games: ${_compactFen(fen)}';
     }
 
     if (localTitle.isNotEmpty) {
@@ -1313,6 +1974,13 @@ class _DesktopPositionGamesTableState
 
   @override
   Widget build(BuildContext context) {
+    // A purchase, a restore or an offline-grace change can unlock the
+    // position: re-run the query once membership moves.
+    ref.listen(subscriptionProvider, (_, _) {
+      if (_queryLocked && _positionQueryAllowed) {
+        unawaited(_fetchPage(reset: true));
+      }
+    });
     // Re-run the query whenever the explorer's filter slice changes
     // (toggle a chip, set a rating range, pick a player, etc).
     ref.listen<GamebaseFilters>(
@@ -1356,7 +2024,7 @@ class _DesktopPositionGamesTableState
         (s) => s.valueOrNull ?? const BoardSettingsNew(),
       ),
     );
-    final body = _buildBody(boardSettings);
+    final body = RepaintBoundary(child: _buildBody(boardSettings));
     // Host-driven scroll (combined moves+games explorer) supplies its own
     // outer scroll view; the table must size to its content so the outer
     // sliver knows how tall to render it. Otherwise the table fills the
@@ -1397,11 +2065,22 @@ class _DesktopPositionGamesTableState
         ),
       );
     }
+    if (_queryLocked && _rows.isEmpty) {
+      final lockedContext = _positionQueryContext;
+      return DesktopAccessLockedSurface(
+        decision: readDesktopAccess(ref.read, lockedContext),
+        accessContext: lockedContext,
+        surface: 'position_games_locked',
+      );
+    }
     if (_error != null && _rows.isEmpty) {
       return _Empty(
         icon: Icons.cloud_off_outlined,
         title: "Couldn't load games",
         message: _error!,
+        actionLabel: _errorRetryable || _errorFromNetwork ? 'Retry' : null,
+        onAction:
+            _errorRetryable || _errorFromNetwork ? _retryAfterError : null,
       );
     }
     if (_rows.isEmpty) {
@@ -1426,7 +2105,10 @@ class _DesktopPositionGamesTableState
       columns: _buildColumns(boardSettings, selectedRowId),
       rows: _rows,
       enableColumnResizing: widget.referenceLayout,
+      lazyRowExtent: _usesLazyRows ? _lazyRowExtent : null,
+      lazyColumnWidths: _usesLazyRows ? _scaledLazyColumnWidths : null,
       scrollController: _scroll,
+      horizontalScrollController: _horizontalScroll,
       useFixedRowAlignment: widget.useFixedRowAlignment,
       rowMinHeight: widget.referenceLayout ? 30 : 32,
       headerHeight: 24,
@@ -1456,10 +2138,11 @@ class _DesktopPositionGamesTableState
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(8, 1, 8, 5),
                   child: _NotationCell(
-                    fen: widget.fen,
+                    fen: _rowsFen,
                     rowId: rowId,
                     indicatorNamespace: 'games',
                     continuation: continuation,
+                    preparedNotation: _notationFor(row, continuation),
                     activePlyIndex:
                         isSelected ? widget.activeContinuationStep : null,
                     activeAutoplay:
@@ -1514,23 +2197,50 @@ class _DesktopPositionGamesTableState
       onRowSecondaryTap:
           (row, position) => unawaited(_showRowContextMenu(row, position)),
       footer:
-          _hasMore
-              ? const Padding(
-                padding: EdgeInsets.symmetric(vertical: 14),
-                child: Center(
-                  child: SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.6,
-                      valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+          // Having another page is not loading. An off-screen indeterminate
+          // spinner still ticks, keeping the entire board screen rendering
+          // while idle. Only animate during an actual pagination request.
+          _hasMore && _isLoadingMore
+              ? const RepaintBoundary(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 14),
+                  child: Center(
+                    child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.6,
+                        valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                      ),
                     ),
                   ),
                 ),
               )
               : null,
     );
-    if (!_isInitialLoading) return table;
+    final savedAt = _savedAt;
+    if (savedAt != null && _refreshFailed && !_isInitialLoading) {
+      // A saved copy the server could not confirm stays readable, but never
+      // passes for the current answer.
+      final notice = _SavedCopyNotice(
+        savedAt: savedAt,
+        onRetry: _retryAfterError,
+      );
+      if (widget.useFixedRowAlignment) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [notice, table],
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [notice, Expanded(child: table)],
+      );
+    }
+    // The line marks rows that are not the current answer yet: a page 0 on
+    // its way, the previous position's rows, or a saved copy being checked.
+    if (!_isInitialLoading && savedAt == null) return table;
     return Stack(
       children: [
         table,
@@ -1608,14 +2318,16 @@ class _DesktopPositionGamesTableState
                 selectedRowId != null &&
                 selectedRowId.isNotEmpty &&
                 rowId == selectedRowId;
+            final continuation = _bestContinuationForRow(
+              row,
+              _readContinuation(row['continuation']),
+            );
             return _NotationCell(
-              fen: widget.fen,
+              fen: _rowsFen,
               rowId: rowId,
               indicatorNamespace: indicatorNamespace,
-              continuation: _bestContinuationForRow(
-                row,
-                _readContinuation(row['continuation']),
-              ),
+              continuation: continuation,
+              preparedNotation: _notationFor(row, continuation),
               activePlyIndex: isSelected ? widget.activeContinuationStep : null,
               activeAutoplay: isSelected && widget.activeContinuationAutoplay,
               useFigurine: boardSettings.useFigurine,
@@ -1982,12 +2694,13 @@ class _Numeric extends StatelessWidget {
   }
 }
 
-class _NotationCell extends StatelessWidget {
+class _NotationCell extends StatefulWidget {
   const _NotationCell({
     required this.fen,
     required this.rowId,
     required this.indicatorNamespace,
     required this.continuation,
+    this.preparedNotation,
     required this.activePlyIndex,
     required this.activeAutoplay,
     required this.useFigurine,
@@ -1999,6 +2712,7 @@ class _NotationCell extends StatelessWidget {
   final String rowId;
   final String indicatorNamespace;
   final List<String> continuation;
+  final PositionGameNotation? preparedNotation;
   final int? activePlyIndex;
   final bool activeAutoplay;
   final bool useFigurine;
@@ -2006,16 +2720,71 @@ class _NotationCell extends StatelessWidget {
   final ValueChanged<int> onTapStep;
 
   @override
+  State<_NotationCell> createState() => _NotationCellState();
+}
+
+class _NotationCellState extends State<_NotationCell> {
+  late List<String> _cappedContinuation;
+  late List<String> _sanTokens;
+  late List<List<String>> _hoverLines;
+  late PositionGameNotation _notation;
+  Widget? _content;
+
+  @override
+  void initState() {
+    super.initState();
+    _prepareNotation();
+  }
+
+  @override
+  void didUpdateWidget(covariant _NotationCell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_notation.matches(widget.fen, widget.continuation)) {
+      _prepareNotation();
+    }
+    if (oldWidget.rowId != widget.rowId ||
+        oldWidget.indicatorNamespace != widget.indicatorNamespace ||
+        oldWidget.activePlyIndex != widget.activePlyIndex ||
+        oldWidget.activeAutoplay != widget.activeAutoplay ||
+        oldWidget.useFigurine != widget.useFigurine ||
+        oldWidget.pieceAssets != widget.pieceAssets) {
+      _content = null;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _content = null;
+  }
+
+  void _prepareNotation() {
+    // Imported games carry the entire remaining line. Replay it once per
+    // position/line, never again for selection, hover, or parent rebuilds.
+    final prepared = widget.preparedNotation;
+    _notation =
+        prepared != null && prepared.matches(widget.fen, widget.continuation)
+            ? prepared
+            : PositionGameNotation.fromLine(widget.fen, widget.continuation);
+    _cappedContinuation = _notation.continuation;
+    _sanTokens = _notation.tokens;
+    _hoverLines = <List<String>>[
+      for (var i = 0; i < _sanTokens.length; i++)
+        List<String>.unmodifiable(_cappedContinuation.take(i + 1)),
+    ];
+    _content = null;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Cap at 20 full moves (40 plies) — the oneliner is a preview, not the
-    // whole game. Anything beyond that just gets clipped/faded anyway, so
-    // skip the work of rendering it.
-    const maxPlies = 40;
-    final cappedContinuation =
-        continuation.length > maxPlies
-            ? continuation.sublist(0, maxPlies)
-            : continuation;
-    final sanTokens = _toSanTokens(fen, cappedContinuation);
+    // Most parent updates change another row's selection. Reuse this exact
+    // subtree so its dozens of hover targets do not rebuild in that case.
+    return _content ??= _buildNotation();
+  }
+
+  Widget _buildNotation() {
+    final sanTokens = _sanTokens;
+    final height = MediaQuery.textScalerOf(context).scale(22);
     const style = TextStyle(
       color: kWhiteColor,
       fontSize: 11.5,
@@ -2027,9 +2796,10 @@ class _NotationCell extends StatelessWidget {
     if (sanTokens.isEmpty) {
       return const SizedBox.shrink();
     }
-    final activeIndex = activePlyIndex?.clamp(0, sanTokens.length - 1).toInt();
+    final activeIndex =
+        widget.activePlyIndex?.clamp(0, sanTokens.length - 1).toInt();
     return SizedBox(
-      height: 22,
+      height: height,
       child: ShaderMask(
         // Soft right-edge fade telegraphs that the row continues past the
         // visible width without the visual jolt of a hard mid-letter clip.
@@ -2046,8 +2816,8 @@ class _NotationCell extends StatelessWidget {
             alignment: Alignment.centerLeft,
             minWidth: 0,
             maxWidth: double.infinity,
-            minHeight: 22,
-            maxHeight: 22,
+            minHeight: height,
+            maxHeight: height,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 1),
               child: Row(
@@ -2056,25 +2826,28 @@ class _NotationCell extends StatelessWidget {
                   for (var i = 0; i < sanTokens.length; i++) ...[
                     _NotationHoverToken(
                       tokenKey: ValueKey<String>(
-                        'position-game-notation-token-$indicatorNamespace-$rowId-$i',
+                        'position-game-notation-token-${widget.indicatorNamespace}-${widget.rowId}-$i',
                       ),
-                      startingFen: fen,
-                      movesUpToHover: cappedContinuation
-                          .take(i + 1)
-                          .toList(growable: false),
+                      startingFen: widget.fen,
+                      movesUpToHover: _hoverLines[i],
+                      replay: (
+                        fen: _notation.positions[i + 1],
+                        preFen: _notation.positions[i],
+                        lastMove: Move.parse(_cappedContinuation[i]),
+                      ),
                       token: sanTokens[i],
-                      useFigurine: useFigurine,
-                      pieceAssets: pieceAssets,
+                      useFigurine: widget.useFigurine,
+                      pieceAssets: widget.pieceAssets,
                       style: style,
                       active: activeIndex == i,
-                      autoplaying: activeIndex == i && activeAutoplay,
+                      autoplaying: activeIndex == i && widget.activeAutoplay,
                       activeKey:
                           activeIndex == i
                               ? ValueKey<String>(
-                                'position-game-notation-active-$indicatorNamespace-$rowId-$i',
+                                'position-game-notation-active-${widget.indicatorNamespace}-${widget.rowId}-$i',
                               )
                               : null,
-                      onTap: () => onTapStep(i),
+                      onTap: () => widget.onTapStep(i),
                     ),
                     // Larger whitespace between full moves (after a black
                     // ply, i.e. odd index) than between the two plies of
@@ -2098,6 +2871,7 @@ class _NotationHoverToken extends StatefulWidget {
     required this.tokenKey,
     required this.startingFen,
     required this.movesUpToHover,
+    required this.replay,
     required this.token,
     required this.useFigurine,
     required this.pieceAssets,
@@ -2111,6 +2885,7 @@ class _NotationHoverToken extends StatefulWidget {
   final Key tokenKey;
   final String startingFen;
   final List<String> movesUpToHover;
+  final MovePreviewReplay replay;
   final String token;
   final bool useFigurine;
   final PieceAssets pieceAssets;
@@ -2219,6 +2994,7 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
       child: MoveHoverPreview(
         startingFen: widget.startingFen,
         movesUpToHover: widget.movesUpToHover,
+        replay: widget.replay,
         size: 180,
         child: MouseRegion(
           cursor: SystemMouseCursors.click,
@@ -2237,54 +3013,8 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
 
 enum _PositionGameRowAction { openInNewTab, openInNewWindow, insertGame }
 
-/// Walk the UCI continuation through dartchess, emitting SAN with the
-/// move-number labels a chess reader expects:
-///   white-to-move + first ply  → "8.dxc3"
-///   black-to-move + first ply  → "8…Bc5"
-///   white-to-move on a later ply → "9.Qe2+"
-///   black-to-move on a later ply → just "Qe7"
-List<String> _toSanTokens(String fen, List<String> ucis) {
-  if (ucis.isEmpty) return const <String>[];
-  final parts = fen.trim().split(RegExp(r'\s+'));
-  final initialFullMove = parts.length >= 6 ? int.tryParse(parts[5]) ?? 1 : 1;
-  final whiteFirst = parts.length >= 2 ? parts[1] == 'w' : true;
-
-  Position position;
-  try {
-    position = Chess.fromSetup(
-      Setup.parseFen(fen),
-      ignoreImpossibleCheck: true,
-    );
-  } catch (_) {
-    return const <String>[];
-  }
-
-  final tokens = <String>[];
-  var fullMove = initialFullMove;
-  var whiteToMove = whiteFirst;
-  for (final uci in ucis) {
-    final move = Move.parse(uci);
-    if (move == null) break;
-    late final (Position, String) made;
-    try {
-      made = position.makeSan(move);
-    } catch (_) {
-      break;
-    }
-    final (next, san) = made;
-    if (whiteToMove) {
-      tokens.add('$fullMove.$san');
-    } else if (tokens.isEmpty) {
-      tokens.add('$fullMove…$san');
-    } else {
-      tokens.add(san);
-    }
-    position = next;
-    if (!whiteToMove) fullMove += 1;
-    whiteToMove = !whiteToMove;
-  }
-  return tokens;
-}
+List<String> _toSanTokens(String fen, List<String> ucis) =>
+    positionGameSanTokens(fen, ucis);
 
 String _shortNotation(List<String> tokens) {
   const maxTokens = 8;
@@ -2401,19 +3131,115 @@ class _ResultCell extends StatelessWidget {
 
 enum _ResultOutcome { white, black, draw, none }
 
+enum _HeldPaint { none, saved, current }
+
+/// One quiet line above a saved copy whose check failed: how old the rows
+/// are, and a way to ask again.
+class _SavedCopyNotice extends StatelessWidget {
+  const _SavedCopyNotice({required this.savedAt, required this.onRetry});
+
+  final DateTime savedAt;
+  final VoidCallback onRetry;
+
+  static String _age(DateTime savedAt) {
+    final elapsed = DateTime.now().difference(savedAt);
+    if (elapsed.inMinutes < 1) return 'just now';
+    if (elapsed.inHours < 1) {
+      return '${elapsed.inMinutes} min ago';
+    }
+    if (elapsed.inDays < 1) {
+      final hours = elapsed.inHours;
+      return hours == 1 ? '1 hour ago' : '$hours hours ago';
+    }
+    final days = elapsed.inDays;
+    return days == 1 ? 'yesterday' : '$days days ago';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: kBlack2Color,
+      padding: const EdgeInsets.fromLTRB(10, 5, 6, 5),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Saved ${_age(savedAt)}. Couldn’t refresh.',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: kLightGreyColor, fontSize: 11),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _NoticeAction(label: 'Retry', onTap: onRetry),
+        ],
+      ),
+    );
+  }
+}
+
+class _NoticeAction extends StatefulWidget {
+  const _NoticeAction({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  State<_NoticeAction> createState() => _NoticeActionState();
+}
+
+class _NoticeActionState extends State<_NoticeAction> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClickCursor(
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                color: _hovered ? kWhiteColor : kWhiteColor70,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Empty extends StatelessWidget {
   const _Empty({
     required this.icon,
     required this.title,
     required this.message,
+    this.actionLabel,
+    this.onAction,
   });
 
   final IconData icon;
   final String title;
   final String message;
 
+  /// Optional recovery action. A failure the user can retry (`Retry`) must
+  /// never be a dead end.
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
   @override
   Widget build(BuildContext context) {
+    final label = actionLabel?.trim() ?? '';
+    final action = onAction;
+    final hasAction = label.isNotEmpty && action != null;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -2437,6 +3263,15 @@ class _Empty extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(color: kLightGreyColor, fontSize: 11),
             ),
+            if (hasAction) ...[
+              const SizedBox(height: 12),
+              DesktopHeaderActionButton(
+                label: label,
+                icon: Icons.refresh_rounded,
+                onPress: action,
+                accented: true,
+              ),
+            ],
           ],
         ),
       ),

@@ -20,6 +20,7 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -45,6 +46,7 @@ class BoardShareDialog extends ConsumerStatefulWidget {
     this.showEvalBar = _defaultBoardShareShowEvalBar,
     this.liveBoardPngBytes,
     this.shareUrl,
+    this.allowPgnCopy = true,
     this.whiteFideId,
     this.blackFideId,
     this.whitePhotoUrl,
@@ -67,6 +69,10 @@ class BoardShareDialog extends ConsumerStatefulWidget {
   /// simplified share card.
   final Uint8List? liveBoardPngBytes;
   final String? shareUrl;
+
+  /// Whether the dialog offers "Copy PGN". False for a game read from a
+  /// published collection, which is shared as an image and never as text.
+  final bool allowPgnCopy;
   final int? whiteFideId;
   final int? blackFideId;
   final String? whitePhotoUrl;
@@ -517,7 +523,9 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
 
   Future<void> _copyPgn() async {
     try {
-      await BoardShareService.copyToClipboard(_pgn);
+      // The clipboard leaves the app; the GIF job above keeps the native
+      // `$240`–`$247` block it renders badges from.
+      await BoardShareService.copyToClipboard(toExternalCompatiblePgn(_pgn));
       _showToast('PGN copied to clipboard', isError: false);
     } catch (e) {
       _showToast('Failed to copy PGN', isError: true);
@@ -786,7 +794,8 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                                   copyImage: _copyImage,
                                   generateGif: _generateGif,
                                   downloadImage: _downloadImage,
-                                  copyPgn: _copyPgn,
+                                  copyPgn:
+                                      widget.allowPgnCopy ? _copyPgn : null,
                                 )
                                 : boardShareGeneratedGifActionDescriptors(
                                   downloadGif: _saveGeneratedGif,
@@ -855,7 +864,7 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
   required VoidCallback copyImage,
   required VoidCallback generateGif,
   required VoidCallback downloadImage,
-  required VoidCallback copyPgn,
+  required VoidCallback? copyPgn,
 }) {
   return [
     BoardShareActionDescriptor(
@@ -873,11 +882,12 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
       label: 'Download PNG',
       onTap: downloadImage,
     ),
-    BoardShareActionDescriptor(
-      icon: Icons.copy_rounded,
-      label: 'Copy PGN',
-      onTap: copyPgn,
-    ),
+    if (copyPgn != null)
+      BoardShareActionDescriptor(
+        icon: Icons.copy_rounded,
+        label: 'Copy PGN',
+        onTap: copyPgn,
+      ),
   ];
 }
 
@@ -1009,6 +1019,7 @@ Future<void> showBoardShareDialog(
   int? blackFideId,
   String? whitePhotoUrl,
   String? blackPhotoUrl,
+  bool allowPgnCopy = true,
 }) {
   return showDesktopDialog<void>(
     context,
@@ -1026,6 +1037,7 @@ Future<void> showBoardShareDialog(
           showEvalBar: showEvalBar,
           liveBoardPngBytes: liveBoardPngBytes,
           shareUrl: shareUrl,
+          allowPgnCopy: allowPgnCopy,
           whiteFideId: whiteFideId,
           blackFideId: blackFideId,
           whitePhotoUrl: whitePhotoUrl,

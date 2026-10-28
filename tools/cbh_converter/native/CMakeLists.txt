@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.15)
+project(chessever_cbh_decode LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# Build all consumers together, avoiding the evaluation DLL's stale-ABI hazard.
+file(GLOB CBH_SOURCES CONFIGURE_DEPENDS src/*.cpp)
+add_executable(cbh_decode decode_probe.cpp ${CBH_SOURCES})
+target_include_directories(cbh_decode PRIVATE include .)
+if(MSVC)
+  target_compile_options(cbh_decode PRIVATE /EHsc /utf-8)
+endif()

@@ -1,4 +1,8 @@
+import 'package:chessever/desktop/panes/inbox_pane.dart';
 import 'dart:async';
+
+import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
+import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,8 +17,9 @@ import 'package:chessever/desktop/panes/opening_explorer_pane.dart';
 import 'package:chessever/desktop/panes/countrymen_pane.dart';
 import 'package:chessever/desktop/panes/favorites_pane.dart';
 import 'package:chessever/desktop/panes/board_settings_pane.dart';
+import 'package:chessever/desktop/panes/collections_pane.dart';
 import 'package:chessever/desktop/panes/library_pane.dart';
-import 'package:chessever/desktop/panes/notification_settings_pane.dart';
+import 'package:chessever/desktop/widgets/collections/collection_actions.dart';
 import 'package:chessever/desktop/panes/placeholder_pane.dart';
 import 'package:chessever/desktop/panes/player_profile_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
@@ -23,7 +28,8 @@ import 'package:chessever/desktop/panes/play_pane.dart';
 import 'package:chessever/desktop/panes/play_profile_pane.dart';
 import 'package:chessever/desktop/panes/players_pane.dart';
 import 'package:chessever/desktop/panes/settings_pane.dart';
-import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart';
+import 'package:chessever/desktop/panes/desktop_smart_event_pane.dart';
+import 'package:chessever/desktop/panes/team_score_card_pane.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
@@ -40,9 +46,12 @@ import 'package:chessever/desktop/shell/desktop_pane.dart';
 import 'package:chessever/desktop/shell/desktop_pane_navigation.dart';
 import 'package:chessever/desktop/shell/desktop_shell_intents.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
+import 'package:chessever/desktop/shell/desktop_sidebar_layout.dart';
 import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_dock.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/desktop_width_breakpoint.dart';
 import 'package:chessever/desktop/widgets/editable_aware_shortcut_activator.dart';
 import 'package:chessever/desktop/widgets/pane_keyboard_scroll.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -240,6 +249,10 @@ class DesktopShell extends HookConsumerWidget {
             final next = <String, dynamic>{...m}..remove(t.id);
             return Map<String, BoardTabGameArgs>.from(next);
           });
+          ref.read(boardTabAdmissionByTabIdProvider.notifier).update((m) {
+            if (!m.containsKey(t.id)) return m;
+            return <String, String>{...m}..remove(t.id);
+          });
           ref.read(boardExplorerScopeByTabIdProvider.notifier).update((m) {
             if (!m.containsKey(t.id)) return m;
             final next = <String, dynamic>{...m}..remove(t.id);
@@ -249,6 +262,10 @@ class DesktopShell extends HookConsumerWidget {
             if (!m.containsKey(t.id)) return m;
             final next = <String, dynamic>{...m}..remove(t.id);
             return Map<String, DatabaseWorkspaceArgs>.from(next);
+          });
+          ref.read(collectionWorkspaceArgsByTabIdProvider.notifier).update((m) {
+            if (!m.containsKey(t.id)) return m;
+            return <String, CollectionWorkspaceArgs>{...m}..remove(t.id);
           });
           final treePlayerByTab = ref.read(
             playerOpeningTreePlayerByTabIdProvider,
@@ -334,471 +351,493 @@ class DesktopShell extends HookConsumerWidget {
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final autoCollapsed =
-            constraints.maxWidth < _sidebarAutoCollapseBreakpoint;
-        final sidebarExpanded =
-            autoCollapsed
-                ? compactSidebarExpanded.value
-                : sidebarExpandedPreference.value;
+    // The shell only needs to know which side of the auto-collapse breakpoint
+    // it is on. A LayoutBuilder here rebuilt the whole shell, and through it
+    // the root of every open tab, on every window-resize frame. The breakpoint
+    // scope re-runs this builder only when the side actually flips.
+    return DesktopWidthBreakpoint(
+      breakpoint: _sidebarAutoCollapseBreakpoint,
+      child: Builder(
+        builder: (context) {
+          final autoCollapsed = DesktopWidthBreakpoint.isBelow(context);
+          final sidebarExpanded =
+              autoCollapsed
+                  ? compactSidebarExpanded.value
+                  : sidebarExpandedPreference.value;
 
-        void setSidebarExpanded(bool expanded) {
-          if (autoCollapsed) {
-            compactSidebarExpanded.value = expanded;
-            return;
+          void setSidebarExpanded(bool expanded) {
+            if (autoCollapsed) {
+              compactSidebarExpanded.value = expanded;
+              return;
+            }
+            setSidebarExpandedPreference(expanded);
           }
-          setSidebarExpandedPreference(expanded);
-        }
 
-        void toggleSidebar() {
-          setSidebarExpanded(!sidebarExpanded);
-        }
-
-        // Sidebar tap from the rail. Clicking the icon for the current pane
-        // toggles expansion. Other pane selections should not undo the user's
-        // manual desktop-width preference; compact widths still collapse after
-        // navigation because the rail behaves like a temporary drawer.
-        void handleSidebarSelect(DesktopPane pane, {required bool inNewTab}) {
-          if (!inNewTab && pane == activeSidebarPane) {
-            toggleSidebar();
-            return;
+          void toggleSidebar() {
+            setSidebarExpanded(!sidebarExpanded);
           }
-          openPane(pane, inNewTab: inNewTab);
-          if (shouldCollapseDesktopSidebarAfterPaneSelection(
-            autoCollapsed: autoCollapsed,
-            sidebarExpanded: sidebarExpanded,
-            selectedCurrentPane: pane == activeSidebarPane,
-            inNewTab: inNewTab,
-          )) {
-            setSidebarExpanded(false);
+
+          // Sidebar tap from the rail. Clicking the icon for the current pane
+          // toggles expansion. Other pane selections should not undo the user's
+          // manual desktop-width preference; compact widths still collapse after
+          // navigation because the rail behaves like a temporary drawer.
+          void handleSidebarSelect(DesktopPane pane, {required bool inNewTab}) {
+            if (!inNewTab && pane == activeSidebarPane) {
+              toggleSidebar();
+              return;
+            }
+            openPane(pane, inNewTab: inNewTab);
+            if (shouldCollapseDesktopSidebarAfterPaneSelection(
+              autoCollapsed: autoCollapsed,
+              sidebarExpanded: sidebarExpanded,
+              selectedCurrentPane: pane == activeSidebarPane,
+              inNewTab: inNewTab,
+            )) {
+              setSidebarExpanded(false);
+            }
           }
-        }
 
-        void showPgnOpenError(String message) {
-          showDesktopToast(
-            context,
-            message,
-            error: true,
-            duration: const Duration(seconds: 7),
-          );
-        }
-
-        Future<void> openCommandPalette() {
-          return CommandPalette.show(
-            context,
-            onSelectPane: openPane,
-            onAction: (action) async {
-              switch (action) {
-                case CommandAction.toggleSidebar:
-                  toggleSidebar();
-                case CommandAction.openPreferences:
-                  openPane(DesktopPane.settings);
-                case CommandAction.importPgn:
-                  await PgnFilePicker(
-                    ref,
-                    onError: showPgnOpenError,
-                  ).pickAndLoad();
-                case CommandAction.openLocalChessFiles:
-                  final path = await pickAndOpenLibraryPgnDatabase(ref);
-                  if (path != null) openPane(DesktopPane.library);
-                case CommandAction.flipBoard:
-                  // Owned by the Board pane via the F shortcut.
-                  break;
-              }
-            },
-          );
-        }
-
-        Future<void> closeActiveTabWithUnsavedAnalysisGuard() async {
-          final id = ref.read(desktopTabsProvider).activeId;
-          if (id == null) return;
-          final session = ref.read(boardPaneSessionByTabIdProvider)[id];
-          if (boardSessionHasUnsavedAnalysis(session)) {
-            if (closeConfirmationOpen.value) return;
-            closeConfirmationOpen.value = true;
-            final confirmed = await confirmDiscardBoardAnalysis(
+          void showPgnOpenError(String message) {
+            showDesktopToast(
               context,
-            ).whenComplete(() => closeConfirmationOpen.value = false);
-            if (!context.mounted || !confirmed) return;
-          }
-          ref.read(desktopTabsProvider.notifier).close(id);
-        }
-
-        Future<void> pastePgnFromClipboard() async {
-          final databasePaste = dispatchActiveDatabaseWorkspacePaste(
-            activeTabKind: tabsState.active?.kind,
-            activeTabId: tabsState.activeId,
-            dispatcher: activeDatabaseWorkspacePasteDispatcher,
-          );
-          if (databasePaste !=
-              DatabaseWorkspacePasteDispatch.notDatabaseWorkspace) {
-            return;
-          }
-          if (tabsState.active?.kind == TabKind.board) {
-            foregroundBoardShortcutDispatcher?.invoke(BoardActionKey.pastePgn);
-            return;
-          }
-          final data = await Clipboard.getData(Clipboard.kTextPlain);
-          final text = data?.text?.trim();
-          if (text == null || text.isEmpty) return;
-          try {
-            ChessGame.fromPgn('', text);
-          } catch (_) {
-            return;
-          }
-          openDetachedPgnTab(ref, label: 'Clipboard PGN', pgn: text);
-        }
-
-        final shellShortcuts = <ShortcutActivator, Intent>{
-          // Backspace route navigation is handled by the outer Focus below,
-          // not by Shortcuts. Registering Backspace here consumes the key
-          // before focused search/text fields can delete their text.
-          const SingleActivator(LogicalKeyboardKey.keyK, meta: true):
-              const _OpenCommandPaletteIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyK, control: true):
-              const _OpenCommandPaletteIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyO, meta: true):
-              const _ImportPgnIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyO, control: true):
-              const _ImportPgnIntent(),
-          const SingleActivator(LogicalKeyboardKey.f1): const SwitchPaneIntent(
-            DesktopPane.settings,
-          ),
-          const SingleActivator(
-            LogicalKeyboardKey.f12,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.library),
-          const SingleActivator(
-            LogicalKeyboardKey.f2,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.players),
-          const SingleActivator(LogicalKeyboardKey.keyF, meta: true):
-              const _OpenCommandPaletteIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyF, control: true):
-              const _OpenCommandPaletteIntent(),
-          const SingleActivator(
-            LogicalKeyboardKey.keyL,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.library),
-          const SingleActivator(
-            LogicalKeyboardKey.keyP,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.players),
-          const SingleActivator(
-            LogicalKeyboardKey.keyT,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.tournaments),
-          const SingleActivator(LogicalKeyboardKey.keyN, control: true):
-              const _NewTabIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
-              const _PastePgnIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyV, control: true):
-              const _PastePgnIntent(),
-          const SingleActivator(
-                LogicalKeyboardKey.digit9,
-                meta: true,
-                alt: true,
-              ):
-              const _SwitchLastTabIntent(),
-          const SingleActivator(
-                LogicalKeyboardKey.digit9,
-                control: true,
-                alt: true,
-              ):
-              const _SwitchLastTabIntent(),
-          const SingleActivator(LogicalKeyboardKey.tab, control: true):
-              const _NextTabIntent(),
-          const SingleActivator(
-                LogicalKeyboardKey.tab,
-                control: true,
-                shift: true,
-              ):
-              const _PreviousTabIntent(),
-          const SingleActivator(
-                LogicalKeyboardKey.bracketRight,
-                meta: true,
-                shift: true,
-              ):
-              const _NextTabIntent(),
-          const SingleActivator(
-                LogicalKeyboardKey.bracketLeft,
-                meta: true,
-                shift: true,
-              ):
-              const _PreviousTabIntent(),
-          const SingleActivator(
-                LogicalKeyboardKey.arrowRight,
-                meta: true,
-                alt: true,
-              ):
-              const _NextTabIntent(),
-          const SingleActivator(
-                LogicalKeyboardKey.arrowLeft,
-                meta: true,
-                alt: true,
-              ):
-              const _PreviousTabIntent(),
-          const SingleActivator(
-            LogicalKeyboardKey.comma,
-            meta: true,
-          ): const SwitchPaneIntent(DesktopPane.settings),
-          const SingleActivator(LogicalKeyboardKey.keyW, meta: true):
-              const _CloseTabIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyW, control: true):
-              const _CloseTabIntent(),
-          // Esc closes the active tab from any pane. The Board pane also
-          // maps `closeWindow` (BoardActionKey) to Esc — that mapping is
-          // applied later in this builder so the board's path takes
-          // precedence when a board tab is active. Both paths route to
-          // the same `desktopTabsProvider.close(activeTabId)` call.
-          const SingleActivator(LogicalKeyboardKey.escape):
-              const _CloseTabIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyT, meta: true):
-              const _NewTabIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyB, meta: true):
-              const _ToggleSidebarIntent(),
-        };
-        for (final binding in desktopMainRouteShortcutBindings()) {
-          shellShortcuts[SingleActivator(
-            binding.key,
-            meta: true,
-          )] = SwitchPaneIntent(binding.pane);
-          shellShortcuts[SingleActivator(
-            binding.key,
-            control: true,
-          )] = SwitchPaneIntent(binding.pane);
-        }
-        final dispatcher = foregroundBoardShortcutDispatcher;
-        final boardBindings = boardShortcutMap;
-        if (dispatcher != null && boardBindings != null) {
-          for (final action in BoardActionKey.values) {
-            for (final chord in boardBindings.chordsFor(action)) {
-              // Match the shell's dual meta/control registration for pane
-              // shortcuts: cross-platform board chords (prev/next game, …)
-              // must fire for both Cmd and Ctrl on every desktop host.
-              for (final activator in chord.toAllPlatformActivators()) {
-                if (isReservedDesktopGlobalSearchShortcut(activator)) {
-                  continue;
-                }
-                // Board bindings intentionally override matching shell
-                // bindings outside editors. Remove the raw activator so the
-                // guarded replacement is also the only candidate while a
-                // text field owns focus.
-                shellShortcuts.remove(activator);
-                shellShortcuts[EditableAwareShortcutActivator(
-                  activator,
-                )] = _BoardShortcutIntent(action);
-              }
-            }
-          }
-        }
-        // Global search must win everywhere, including Board tabs with custom
-        // keymaps. Re-apply after board bindings so Ctrl/Cmd+F always opens
-        // the compact shell search instead of being swallowed by a pane.
-        shellShortcuts[const SingleActivator(
-              LogicalKeyboardKey.keyF,
-              meta: true,
-            )] =
-            const _OpenCommandPaletteIntent();
-        shellShortcuts[const SingleActivator(
-              LogicalKeyboardKey.keyF,
-              control: true,
-            )] =
-            const _OpenCommandPaletteIntent();
-
-        return Focus(
-          onKeyEvent: (node, event) {
-            final searchResult = handleDesktopShellSearchKeyEvent(
-              event: event,
-              onSearch: () => unawaited(openCommandPalette()),
+              message,
+              error: true,
+              duration: const Duration(seconds: 7),
             );
-            if (searchResult == KeyEventResult.handled) {
-              return KeyEventResult.handled;
-            }
-            return handleDesktopShellBackspaceKeyEvent(
-              event: event,
-              canGoBack: tabsState.canGoBack,
-              primaryFocus: FocusManager.instance.primaryFocus,
-              onBack: tabsNotifier.goBack,
-            );
-          },
-          child: FocusableActionDetector(
-            autofocus: true,
-            shortcuts: editableAwareShortcuts(
-              shellShortcuts,
-              allowedWhileEditing: isReservedDesktopGlobalSearchShortcut,
-            ),
-            actions: <Type, Action<Intent>>{
-              SwitchPaneIntent: CallbackAction<SwitchPaneIntent>(
-                onInvoke: (intent) {
-                  openPane(intent.pane);
-                  return null;
-                },
-              ),
-              _ToggleSidebarIntent: CallbackAction<_ToggleSidebarIntent>(
-                onInvoke: (_) {
-                  toggleSidebar();
-                  return null;
-                },
-              ),
-              _OpenCommandPaletteIntent:
-                  CallbackAction<_OpenCommandPaletteIntent>(
-                    onInvoke: (_) {
-                      openCommandPalette();
-                      return null;
-                    },
-                  ),
-              _ImportPgnIntent: CallbackAction<_ImportPgnIntent>(
-                onInvoke: (_) {
-                  () async {
+          }
+
+          Future<void> openCommandPalette() {
+            return CommandPalette.show(
+              context,
+              onSelectPane: openPane,
+              onAction: (action) async {
+                switch (action) {
+                  case CommandAction.toggleSidebar:
+                    toggleSidebar();
+                  case CommandAction.openPreferences:
+                    openPane(DesktopPane.settings);
+                  case CommandAction.importPgn:
                     await PgnFilePicker(
                       ref,
                       onError: showPgnOpenError,
                     ).pickAndLoad();
-                  }();
-                  return null;
-                },
-              ),
-              _PastePgnIntent: CallbackAction<_PastePgnIntent>(
-                onInvoke: (_) {
-                  unawaited(pastePgnFromClipboard());
-                  return null;
-                },
-              ),
-              _CloseTabIntent: CallbackAction<_CloseTabIntent>(
-                onInvoke: (_) {
-                  unawaited(closeActiveTabWithUnsavedAnalysisGuard());
-                  return null;
-                },
-              ),
-              _NewTabIntent: CallbackAction<_NewTabIntent>(
-                onInvoke: (_) {
-                  tabsNotifier.open(
-                    TabKind.board,
-                    reuseExisting: false,
-                    focus: true,
-                  );
-                  return null;
-                },
-              ),
-              _SwitchLastTabIntent: CallbackAction<_SwitchLastTabIntent>(
-                onInvoke: (_) {
-                  tabsNotifier.activateLast();
-                  return null;
-                },
-              ),
-              _NextTabIntent: CallbackAction<_NextTabIntent>(
-                onInvoke: (_) {
-                  tabsNotifier.activateNext();
-                  return null;
-                },
-              ),
-              _PreviousTabIntent: CallbackAction<_PreviousTabIntent>(
-                onInvoke: (_) {
-                  tabsNotifier.activatePrevious();
-                  return null;
-                },
-              ),
-              _BoardShortcutIntent: CallbackAction<_BoardShortcutIntent>(
-                onInvoke: (intent) {
-                  if (tabsState.active?.kind != TabKind.board) return null;
-                  foregroundBoardShortcutDispatcher?.invoke(intent.action);
-                  return null;
-                },
-              ),
+                  case CommandAction.openLocalChessFiles:
+                    final path = await pickAndOpenLibraryPgnDatabase(ref);
+                    if (path != null) openPane(DesktopPane.library);
+                  case CommandAction.flipBoard:
+                    // Owned by the Board pane via the F shortcut.
+                    break;
+                }
+              },
+            );
+          }
+
+          Future<void> closeActiveTabWithUnsavedAnalysisGuard() async {
+            final id = ref.read(desktopTabsProvider).activeId;
+            if (id == null) return;
+            final session = ref.read(boardPaneSessionByTabIdProvider)[id];
+            if (boardSessionHasUnsavedAnalysis(session)) {
+              if (closeConfirmationOpen.value) return;
+              closeConfirmationOpen.value = true;
+              final confirmed = await confirmDiscardBoardAnalysis(
+                context,
+              ).whenComplete(() => closeConfirmationOpen.value = false);
+              if (!context.mounted || !confirmed) return;
+            }
+            ref.read(desktopTabsProvider.notifier).close(id);
+          }
+
+          Future<void> pastePgnFromClipboard() async {
+            final databasePaste = dispatchActiveDatabaseWorkspacePaste(
+              activeTabKind: tabsState.active?.kind,
+              activeTabId: tabsState.activeId,
+              dispatcher: activeDatabaseWorkspacePasteDispatcher,
+            );
+            if (databasePaste !=
+                DatabaseWorkspacePasteDispatch.notDatabaseWorkspace) {
+              return;
+            }
+            if (tabsState.active?.kind == TabKind.board) {
+              foregroundBoardShortcutDispatcher?.invoke(
+                BoardActionKey.pastePgn,
+              );
+              return;
+            }
+            final data = await Clipboard.getData(Clipboard.kTextPlain);
+            final text = data?.text?.trim();
+            if (text == null || text.isEmpty) return;
+            try {
+              ChessGame.fromPgn('', text);
+            } catch (_) {
+              return;
+            }
+            openDetachedPgnTab(ref, label: 'Clipboard PGN', pgn: text);
+          }
+
+          final shellShortcuts = <ShortcutActivator, Intent>{
+            // Backspace route navigation is handled by the outer Focus below,
+            // not by Shortcuts. Registering Backspace here consumes the key
+            // before focused search/text fields can delete their text.
+            const SingleActivator(LogicalKeyboardKey.keyK, meta: true):
+                const DesktopGlobalSearchIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyK, control: true):
+                const DesktopGlobalSearchIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyO, meta: true):
+                const _ImportPgnIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyO, control: true):
+                const _ImportPgnIntent(),
+            const SingleActivator(
+              LogicalKeyboardKey.f1,
+            ): const SwitchPaneIntent(DesktopPane.settings),
+            const SingleActivator(
+              LogicalKeyboardKey.f12,
+              control: true,
+            ): const SwitchPaneIntent(DesktopPane.library),
+            const SingleActivator(
+              LogicalKeyboardKey.f2,
+              control: true,
+            ): const SwitchPaneIntent(DesktopPane.players),
+            const SingleActivator(LogicalKeyboardKey.keyF, meta: true):
+                const DesktopGlobalSearchIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+                const DesktopGlobalSearchIntent(),
+            const SingleActivator(
+              LogicalKeyboardKey.keyL,
+              control: true,
+            ): const SwitchPaneIntent(DesktopPane.library),
+            const SingleActivator(
+              LogicalKeyboardKey.keyP,
+              control: true,
+            ): const SwitchPaneIntent(DesktopPane.players),
+            const SingleActivator(
+              LogicalKeyboardKey.keyT,
+              control: true,
+            ): const SwitchPaneIntent(DesktopPane.tournaments),
+            const SingleActivator(LogicalKeyboardKey.keyN, control: true):
+                const _NewTabIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
+                const _PastePgnIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyV, control: true):
+                const _PastePgnIntent(),
+            const SingleActivator(
+                  LogicalKeyboardKey.digit9,
+                  meta: true,
+                  alt: true,
+                ):
+                const _SwitchLastTabIntent(),
+            const SingleActivator(
+                  LogicalKeyboardKey.digit9,
+                  control: true,
+                  alt: true,
+                ):
+                const _SwitchLastTabIntent(),
+            const SingleActivator(LogicalKeyboardKey.tab, control: true):
+                const _NextTabIntent(),
+            const SingleActivator(
+                  LogicalKeyboardKey.tab,
+                  control: true,
+                  shift: true,
+                ):
+                const _PreviousTabIntent(),
+            const SingleActivator(
+                  LogicalKeyboardKey.bracketRight,
+                  meta: true,
+                  shift: true,
+                ):
+                const _NextTabIntent(),
+            const SingleActivator(
+                  LogicalKeyboardKey.bracketLeft,
+                  meta: true,
+                  shift: true,
+                ):
+                const _PreviousTabIntent(),
+            const SingleActivator(
+                  LogicalKeyboardKey.arrowRight,
+                  meta: true,
+                  alt: true,
+                ):
+                const _NextTabIntent(),
+            const SingleActivator(
+                  LogicalKeyboardKey.arrowLeft,
+                  meta: true,
+                  alt: true,
+                ):
+                const _PreviousTabIntent(),
+            const SingleActivator(
+              LogicalKeyboardKey.comma,
+              meta: true,
+            ): const SwitchPaneIntent(DesktopPane.settings),
+            const SingleActivator(LogicalKeyboardKey.keyW, meta: true):
+                const _CloseTabIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyW, control: true):
+                const _CloseTabIntent(),
+            // Esc closes the active tab from any pane. The Board pane also
+            // maps `closeWindow` (BoardActionKey) to Esc — that mapping is
+            // applied later in this builder so the board's path takes
+            // precedence when a board tab is active. Both paths route to
+            // the same `desktopTabsProvider.close(activeTabId)` call.
+            const SingleActivator(LogicalKeyboardKey.escape):
+                const _CloseTabIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyT, meta: true):
+                const _NewTabIntent(),
+            const SingleActivator(LogicalKeyboardKey.keyB, meta: true):
+                const _ToggleSidebarIntent(),
+          };
+          for (final binding in desktopMainRouteShortcutBindings()) {
+            shellShortcuts[SingleActivator(
+              binding.key,
+              meta: true,
+            )] = SwitchPaneIntent(binding.pane);
+            shellShortcuts[SingleActivator(
+              binding.key,
+              control: true,
+            )] = SwitchPaneIntent(binding.pane);
+          }
+          final dispatcher = foregroundBoardShortcutDispatcher;
+          final boardBindings = boardShortcutMap;
+          if (dispatcher != null && boardBindings != null) {
+            for (final action in BoardActionKey.values) {
+              for (final chord in boardBindings.chordsFor(action)) {
+                // Match the shell's dual meta/control registration for pane
+                // shortcuts: cross-platform board chords (prev/next game, …)
+                // must fire for both Cmd and Ctrl on every desktop host.
+                for (final activator in chord.toAllPlatformActivators()) {
+                  if (isReservedDesktopGlobalSearchShortcut(activator)) {
+                    continue;
+                  }
+                  // Board bindings intentionally override matching shell
+                  // bindings outside editors. Remove the raw activator so the
+                  // guarded replacement is also the only candidate while a
+                  // text field owns focus.
+                  shellShortcuts.remove(activator);
+                  shellShortcuts[EditableAwareShortcutActivator(
+                    activator,
+                  )] = _BoardShortcutIntent(action);
+                }
+              }
+            }
+          }
+          // Global search must win everywhere, including Board tabs with custom
+          // keymaps. Re-apply after board bindings so Ctrl/Cmd+F always opens
+          // the compact shell search instead of being swallowed by a pane.
+          shellShortcuts[const SingleActivator(
+                LogicalKeyboardKey.keyF,
+                meta: true,
+              )] =
+              const DesktopGlobalSearchIntent();
+          shellShortcuts[const SingleActivator(
+                LogicalKeyboardKey.keyF,
+                control: true,
+              )] =
+              const DesktopGlobalSearchIntent();
+
+          return Focus(
+            onKeyEvent: (node, event) {
+              final searchResult = handleDesktopShellSearchKeyEvent(
+                event: event,
+                onSearch: () => unawaited(openCommandPalette()),
+              );
+              if (searchResult == KeyEventResult.handled) {
+                return KeyEventResult.handled;
+              }
+              return handleDesktopShellBackspaceKeyEvent(
+                event: event,
+                canGoBack: tabsState.canGoBack,
+                primaryFocus: FocusManager.instance.primaryFocus,
+                onBack: tabsNotifier.goBack,
+              );
             },
-            child: Scaffold(
-              backgroundColor: kBackgroundColor,
-              body: DesktopBillingIssueGate(
-                child: Stack(
-                  children: [
-                    RepaintBoundary(
-                      key: feedbackScreenshotKey,
-                      child: LocalChessDropZone(
-                        enabled: shellDropZoneEnabled,
-                        onChessPathsDropped: (paths) async {
-                          // The Library and Board Editor panes wrap their own drop
-                          // zones with pane-specific local-file handling.
-                          // desktop_drop's nested targets *both* fire, so when
-                          // either is foreground we leave handling to the pane.
-                          final activePane = ref.read(desktopPaneProvider);
-                          if (activePane == DesktopPane.library ||
-                              activePane == DesktopPane.boardEditor) {
-                            return;
-                          }
-                          final opened = await ref
-                              .read(localChessLibraryProvider.notifier)
-                              .openPaths(
-                                paths,
-                                sourceLabel:
-                                    localChessDatabaseDisplayNameForPaths(
-                                      paths,
-                                    ),
-                              );
-                          if (!opened) return;
-                          ref
-                              .read(desktopTabsProvider.notifier)
-                              .open(TabKind.library);
-                        },
-                        // The "Update" chip used to float here as a Positioned overlay
-                        // at top:8, left:8 — that landed on top of the sidebar's brand
-                        // header and looked misaligned. It now lives inside DesktopTopBar
-                        // (right after the sidebar-toggle button) so it aligns to the
-                        // top bar's baseline like a real toolbar chip.
-                        child: Row(
-                          children: [
-                            if (!boardFocusActive)
-                              DesktopSidebar(
-                                current: activeSidebarPane,
-                                expanded: sidebarExpanded,
-                                autoCollapsed: autoCollapsed,
-                                onToggleExpanded: toggleSidebar,
-                                onSearch: () => unawaited(openCommandPalette()),
-                                onHowToUse:
-                                    () => tabsNotifier.open(TabKind.howToUse),
-                                onSelect: handleSidebarSelect,
-                                feedbackScreenshotKey: feedbackScreenshotKey,
-                              ),
-                            Expanded(
-                              child: Column(
-                                children: [
-                                  if (!boardFocusActive)
-                                    DesktopTabBar(
-                                      onOpenUserProfile:
-                                          () => openCurrentUserProfileTab(ref),
-                                      showSidebarToggle:
-                                          Platform.isMacOS && !sidebarExpanded,
-                                      sidebarAutoCollapsed: autoCollapsed,
-                                      onToggleSidebar: toggleSidebar,
-                                    ),
-                                  Expanded(
-                                    child: PageStorage(
-                                      bucket: tabPageStorageBucket,
-                                      child: _DesktopTabStack(
-                                        tabs: tabsState.tabs,
-                                        activeId: tabsState.activeId,
-                                        feedbackScreenshotKey:
-                                            feedbackScreenshotKey,
+            child: FocusableActionDetector(
+              autofocus: true,
+              shortcuts: editableAwareShortcuts(
+                shellShortcuts,
+                allowedWhileEditing: isReservedDesktopGlobalSearchShortcut,
+              ),
+              actions: <Type, Action<Intent>>{
+                SwitchPaneIntent: CallbackAction<SwitchPaneIntent>(
+                  onInvoke: (intent) {
+                    openPane(intent.pane);
+                    return null;
+                  },
+                ),
+                _ToggleSidebarIntent: CallbackAction<_ToggleSidebarIntent>(
+                  onInvoke: (_) {
+                    toggleSidebar();
+                    return null;
+                  },
+                ),
+                DesktopGlobalSearchIntent:
+                    CallbackAction<DesktopGlobalSearchIntent>(
+                      onInvoke: (_) {
+                        openCommandPalette();
+                        return null;
+                      },
+                    ),
+                _ImportPgnIntent: CallbackAction<_ImportPgnIntent>(
+                  onInvoke: (_) {
+                    () async {
+                      await PgnFilePicker(
+                        ref,
+                        onError: showPgnOpenError,
+                      ).pickAndLoad();
+                    }();
+                    return null;
+                  },
+                ),
+                _PastePgnIntent: CallbackAction<_PastePgnIntent>(
+                  onInvoke: (_) {
+                    unawaited(pastePgnFromClipboard());
+                    return null;
+                  },
+                ),
+                _CloseTabIntent: CallbackAction<_CloseTabIntent>(
+                  onInvoke: (_) {
+                    unawaited(closeActiveTabWithUnsavedAnalysisGuard());
+                    return null;
+                  },
+                ),
+                _NewTabIntent: CallbackAction<_NewTabIntent>(
+                  onInvoke: (_) {
+                    tabsNotifier.open(
+                      TabKind.board,
+                      reuseExisting: false,
+                      focus: true,
+                    );
+                    return null;
+                  },
+                ),
+                _SwitchLastTabIntent: CallbackAction<_SwitchLastTabIntent>(
+                  onInvoke: (_) {
+                    tabsNotifier.activateLast();
+                    return null;
+                  },
+                ),
+                _NextTabIntent: CallbackAction<_NextTabIntent>(
+                  onInvoke: (_) {
+                    tabsNotifier.activateNext();
+                    return null;
+                  },
+                ),
+                _PreviousTabIntent: CallbackAction<_PreviousTabIntent>(
+                  onInvoke: (_) {
+                    tabsNotifier.activatePrevious();
+                    return null;
+                  },
+                ),
+                _BoardShortcutIntent: CallbackAction<_BoardShortcutIntent>(
+                  onInvoke: (intent) {
+                    if (tabsState.active?.kind != TabKind.board) return null;
+                    foregroundBoardShortcutDispatcher?.invoke(intent.action);
+                    return null;
+                  },
+                ),
+              },
+              child: Scaffold(
+                backgroundColor: kBackgroundColor,
+                body: DesktopBillingIssueGate(
+                  child: Stack(
+                    children: [
+                      RepaintBoundary(
+                        key: feedbackScreenshotKey,
+                        child: LocalChessDropZone(
+                          enabled: shellDropZoneEnabled,
+                          onChessPathsDropped: (paths) async {
+                            // The Library and Board Editor panes wrap their own drop
+                            // zones with pane-specific local-file handling.
+                            // desktop_drop's nested targets *both* fire, so when
+                            // either is foreground we leave handling to the pane.
+                            final activePane = ref.read(desktopPaneProvider);
+                            if (activePane == DesktopPane.library ||
+                                activePane == DesktopPane.boardEditor) {
+                              return;
+                            }
+                            final opened = await ref
+                                .read(localChessLibraryProvider.notifier)
+                                .openPaths(
+                                  paths,
+                                  sourceLabel:
+                                      localChessDatabaseDisplayNameForPaths(
+                                        paths,
                                       ),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                );
+                            if (!opened) return;
+                            ref
+                                .read(desktopTabsProvider.notifier)
+                                .open(TabKind.library);
+                          },
+                          // The "Update" chip used to float here as a Positioned overlay
+                          // at top:8, left:8 — that landed on top of the sidebar's brand
+                          // header and looked misaligned. It now lives inside DesktopTopBar
+                          // (right after the sidebar-toggle button) so it aligns to the
+                          // top bar's baseline like a real toolbar chip.
+                          // The sidebar animates over the content, which
+                          // is re-laid out once per toggle rather than on
+                          // every frame of the width animation.
+                          child: DesktopSidebarLayout(
+                            showSidebar: !boardFocusActive,
+                            expanded: sidebarExpanded,
+                            sidebar: DesktopSidebar(
+                              current: activeSidebarPane,
+                              expanded: sidebarExpanded,
+                              autoCollapsed: autoCollapsed,
+                              onToggleExpanded: toggleSidebar,
+                              onSearch: () => unawaited(openCommandPalette()),
+                              onHowToUse:
+                                  () => tabsNotifier.open(TabKind.howToUse),
+                              onSelect: handleSidebarSelect,
+                              feedbackScreenshotKey: feedbackScreenshotKey,
                             ),
-                          ],
+                            content: Column(
+                              children: [
+                                if (!boardFocusActive)
+                                  DesktopTabBar(
+                                    onOpenUserProfile:
+                                        () => openCurrentUserProfileTab(ref),
+                                    showSidebarToggle:
+                                        Platform.isMacOS && !sidebarExpanded,
+                                    sidebarAutoCollapsed: autoCollapsed,
+                                    onToggleSidebar: toggleSidebar,
+                                  ),
+                                Expanded(
+                                  // The Botvinnik dock sits beside the tab
+                                  // stack, outside it, so tab switches never
+                                  // rebuild the conversation.
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Expanded(
+                                        child: PageStorage(
+                                          bucket: tabPageStorageBucket,
+                                          child: _DesktopTabStack(
+                                            tabs: tabsState.tabs,
+                                            activeId: tabsState.activeId,
+                                            feedbackScreenshotKey:
+                                                feedbackScreenshotKey,
+                                          ),
+                                        ),
+                                      ),
+                                      BotvinnikDockHost(
+                                        visible: !boardFocusActive,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                    if (isLocalPgnLoading)
-                      _DesktopPgnLoadingOverlay(progress: localPgnProgress),
-                  ],
+                      if (isLocalPgnLoading)
+                        _DesktopPgnLoadingOverlay(progress: localPgnProgress),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
@@ -981,6 +1020,8 @@ Widget resolveDesktopTabContent(
     );
   }
   switch (tab.kind) {
+    case TabKind.inbox:
+      return InboxPane(tabId: tab.id);
     case TabKind.board:
       return BoardPane(tabId: tab.id);
     case TabKind.tournaments:
@@ -988,11 +1029,13 @@ Widget resolveDesktopTabContent(
     case TabKind.tournamentDetail:
       return TournamentDetailPane(tabId: tab.id);
     case TabKind.smartGames:
-      return DesktopSmartGamesPane(tabId: tab.id);
+      return DesktopSmartGamesTabContent(tabId: tab.id);
     case TabKind.library:
       return const LibraryPane();
     case TabKind.databaseWorkspace:
       return DatabaseWorkspacePane(tabId: tab.id);
+    case TabKind.teamScoreCard:
+      return TeamScoreCardPane(tabId: tab.id);
     case TabKind.favorites:
       return const FavoritesPane();
     case TabKind.players:
@@ -1018,7 +1061,12 @@ Widget resolveDesktopTabContent(
         key: ValueKey('opening-explorer-scope-${tab.id}'),
         overrides: [
           gamebaseExplorerProvider.overrideWith(
-            (ref) => GamebaseExplorerNotifier(ref),
+            (ref) => GamebaseExplorerNotifier(
+              ref,
+              accessCheck:
+                  (state, advance) =>
+                      desktopExplorerFetchAllowed(ref.read, state, advance),
+            ),
           ),
         ],
         child: OpeningExplorerPane(tabId: tab.id),
@@ -1038,10 +1086,12 @@ Widget resolveDesktopTabContent(
       return const PlayProfilePane();
     case TabKind.boardSettings:
       return const BoardSettingsPane();
-    case TabKind.notificationSettings:
-      return const NotificationSettingsPane();
     case TabKind.play:
       return PlayPane(tabId: tab.id);
+    case TabKind.collections:
+      return const CollectionsPane();
+    case TabKind.collectionWorkspace:
+      return CollectionWorkspacePane(tabId: tab.id);
   }
 }
 
@@ -1143,10 +1193,6 @@ bool isReservedDesktopGlobalSearchShortcut(ShortcutActivator activator) {
 
 class _ToggleSidebarIntent extends Intent {
   const _ToggleSidebarIntent();
-}
-
-class _OpenCommandPaletteIntent extends Intent {
-  const _OpenCommandPaletteIntent();
 }
 
 class _ImportPgnIntent extends Intent {

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:flutter/foundation.dart' show debugPrint, immutable, kDebugMode;
 import 'package:http/http.dart' as http;
@@ -10,9 +11,12 @@ import 'package:url_launcher/url_launcher.dart';
 /// Desktop billing entry point.
 ///
 /// Talks to the Supabase Edge Functions:
-///   - `/functions/v1/stripe-checkout`  — creates a Stripe Checkout Session
-///                                        for a (tier, interval) pair and
-///                                        returns the redirect URL.
+///   - `/functions/v1/stripe-checkout`  — POST creates a Stripe Checkout
+///                                        Session for a (tier, interval) pair
+///                                        and returns the redirect URL plus
+///                                        the trial days granted; GET reports
+///                                        whether the user may still be
+///                                        offered the free trial.
 ///   - `/functions/v1/entitlement`      — returns the user's premium status,
 ///                                        backed by public.subscriptions.
 ///
@@ -86,17 +90,45 @@ class DesktopBillingService {
     required int tier,
     required String interval,
   }) async {
+    final checkout = await createCheckoutSession(
+      tier: tier,
+      interval: interval,
+    );
+    await launchCheckoutUrl(checkout.url);
+    return checkout.authToken;
+  }
+
+  /// Creates a Stripe Checkout Session WITHOUT opening the browser, so the
+  /// caller can compare the granted [DesktopCheckoutSession.trialDays]
+  /// against the trial it advertised and confirm with the user first — the
+  /// same honesty check chessever.com/premium runs before following its
+  /// redirect. Pair with [launchCheckoutUrl] and [pollAfterCheckout].
+  Future<DesktopCheckoutSession> createCheckoutSession({
+    required int tier,
+    required String interval,
+  }) async {
+    if (isMacAppStore) {
+      throw StateError('Use Apple in-app purchases in this edition.');
+    }
     final session = await _activeSession(forceRefresh: true);
     if (session == null) {
       throw StateError('Sign in before purchasing.');
     }
 
-    final url = await _createCheckoutUrl(
+    final created = await _createCheckoutSession(
       authToken: session.accessToken,
       tier: tier,
       interval: interval,
     );
+    return DesktopCheckoutSession(
+      url: created.url,
+      trialDays: created.trialDays,
+      authToken: session.accessToken,
+    );
+  }
 
+  /// Opens a session created by [createCheckoutSession] in the browser.
+  Future<void> launchCheckoutUrl(String url) async {
     final opened = await launchUrl(
       Uri.parse(url),
       mode: LaunchMode.externalApplication,
@@ -104,7 +136,34 @@ class DesktopBillingService {
     if (!opened) {
       throw StateError('Could not open browser for Stripe Checkout.');
     }
-    return session.accessToken;
+  }
+
+  /// Whether the signed-in user may still be offered the free trial.
+  ///
+  /// Null when the answer is not known: signed out, or any probe failure.
+  /// Unknown reads as eligible for copy purposes (see
+  /// `DesktopPricing.offersTrial`), exactly as on chessever.com — checkout
+  /// re-checks before anyone is charged, so the optimistic guess can never
+  /// become a surprise charge.
+  Future<bool?> fetchTrialEligibility() async {
+    final session = await _activeSession(forceRefresh: false);
+    if (session == null) return null;
+    try {
+      final resp = await http.get(
+        Uri.parse('$_baseUrl/stripe-checkout'),
+        headers: <String, String>{
+          'authorization': 'Bearer ${session.accessToken}',
+          'accept': 'application/json',
+        },
+      );
+      if (resp.statusCode != 200) return null;
+      final body = jsonDecode(resp.body) as Map<String, dynamic>?;
+      final eligible = body?['trial_eligible'];
+      return eligible is bool ? eligible : null;
+    } on Object {
+      // Display concern only — leave the optimistic copy in place.
+      return null;
+    }
   }
 
   /// Bounded entitlement poll using a known auth token, for callers that
@@ -155,7 +214,7 @@ class DesktopBillingService {
     return session;
   }
 
-  Future<String> _createCheckoutUrl({
+  Future<DesktopCheckoutSession> _createCheckoutSession({
     required String authToken,
     required int tier,
     required String interval,
@@ -173,14 +232,36 @@ class DesktopBillingService {
       }),
     );
     if (resp.statusCode != 200) {
+      Object? failure;
+      try {
+        failure = jsonDecode(resp.body);
+      } on FormatException {
+        // Gateways can return an HTML error instead of the function's JSON.
+      }
+      if (failure is Map && failure['message'] is String) {
+        throw DesktopCheckoutException(failure['message'] as String);
+      }
       throw StateError(
         'stripe-checkout returned ${resp.statusCode}: ${resp.body}',
       );
     }
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
     final url = body['url'] as String?;
-    if (url == null) throw StateError('checkout response missing url');
-    return url;
+    if (url == null) throw StateError('checkout response missing a Stripe url');
+    // Same guard as the website's checkout proxy: the browser must only
+    // ever be handed a real Stripe Checkout URL.
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host != 'checkout.stripe.com') {
+      throw StateError('checkout response missing a Stripe url');
+    }
+    final trialDays = body['trial_days'];
+    return DesktopCheckoutSession(
+      url: url,
+      trialDays: trialDays is num ? trialDays.toInt() : 0,
+      authToken: authToken,
+    );
   }
 
   Stream<EntitlementSnapshot> _pollEntitlement({
@@ -206,10 +287,12 @@ class DesktopBillingService {
   Future<EntitlementSnapshot?> _fetchEntitlement({
     required String authToken,
   }) async {
-    final resp = await http.get(
-      Uri.parse('$_baseUrl/entitlement'),
-      headers: <String, String>{'authorization': 'Bearer $authToken'},
-    );
+    final resp = await http
+        .get(
+          Uri.parse('$_baseUrl/entitlement'),
+          headers: <String, String>{'authorization': 'Bearer $authToken'},
+        )
+        .timeout(const Duration(seconds: 12));
     if (resp.statusCode == 401 || resp.statusCode == 403) {
       throw DesktopBillingAuthException(
         'entitlement returned ${resp.statusCode}: ${resp.body}',
@@ -224,11 +307,36 @@ class DesktopBillingService {
   }
 }
 
+/// A Stripe Checkout Session the desktop created but has not opened yet.
+///
+/// `trialDays` is what THIS purchase was granted (0 when the account already
+/// used its trial). Callers that advertised a trial compare first and let
+/// the user confirm the changed terms — an unused session simply expires.
+@immutable
+class DesktopCheckoutSession {
+  const DesktopCheckoutSession({
+    required this.url,
+    required this.trialDays,
+    required this.authToken,
+  });
+
+  final String url;
+  final int trialDays;
+  final String authToken;
+}
+
 class DesktopBillingAuthException implements Exception {
   const DesktopBillingAuthException(this.message);
 
   final String message;
 
+  @override
+  String toString() => message;
+}
+
+class DesktopCheckoutException implements Exception {
+  const DesktopCheckoutException(this.message);
+  final String message;
   @override
   String toString() => message;
 }
@@ -282,18 +390,25 @@ class EntitlementSnapshot {
       _ => null,
     };
     final status = json['status'] as String?;
+    final isActive = json['is_premium'] as bool? ?? false;
+    final expiresAt = switch (json['expires_at']) {
+      String s => DateTime.tryParse(s),
+      _ => null,
+    };
     return EntitlementSnapshot(
-      isActive: json['is_premium'] as bool? ?? false,
+      isActive: isActive,
       tier: json['tier'] as int?,
       provider: json['provider'] as String?,
-      expiresAt: switch (json['expires_at']) {
-        String s => DateTime.tryParse(s),
-        _ => null,
-      },
-      willRenew: cancelAt == null,
+      expiresAt: expiresAt,
+      willRenew:
+          (json['will_renew'] as bool?) ??
+          (isActive &&
+              expiresAt != null &&
+              cancelAt == null &&
+              !(json['product_id'] as String? ?? '').startsWith('rc_promo_')),
       productId: json['product_id'] as String? ?? '',
       status: status,
-      inBillingGracePeriod: status == 'past_due',
+      inBillingGracePeriod: isActive && status == 'past_due',
     );
   }
 
@@ -311,13 +426,13 @@ class EntitlementSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        isActive,
-        tier,
-        provider,
-        expiresAt,
-        willRenew,
-        productId,
-        status,
-        inBillingGracePeriod,
-      );
+    isActive,
+    tier,
+    provider,
+    expiresAt,
+    willRenew,
+    productId,
+    status,
+    inBillingGracePeriod,
+  );
 }

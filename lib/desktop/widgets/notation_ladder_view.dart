@@ -5,6 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
 import 'package:chessever/desktop/widgets/commentary_symbol_shortcuts.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -19,6 +20,7 @@ import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -157,6 +159,32 @@ NotationHeaderMetadata notationHeaderMetadataFromPgn(
     date: header('Date'),
     eco: header('ECO'),
   );
+}
+
+/// Whether the notation under this scope may hand out the game's PGN.
+///
+/// A game read from a published collection is the author's work: it is
+/// replayed and never copied out, so its notation (in the Collections
+/// preview and on the board) offers "Copy FEN" but not "Copy PGN". Without a
+/// scope the notation behaves as it always has.
+class NotationExportScope extends InheritedWidget {
+  const NotationExportScope({
+    super.key,
+    required this.allowPgnCopy,
+    required super.child,
+  });
+
+  final bool allowPgnCopy;
+
+  static bool allowsPgnCopy(BuildContext context) =>
+      context
+          .getInheritedWidgetOfExactType<NotationExportScope>()
+          ?.allowPgnCopy ??
+      true;
+
+  @override
+  bool updateShouldNotify(NotationExportScope oldWidget) =>
+      oldWidget.allowPgnCopy != allowPgnCopy;
 }
 
 /// Vertical ladder rendering of a [ChessGame] tree with arbitrary-depth
@@ -329,6 +357,10 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   String? _lastTreeSignature;
   NotationLayoutMode _layoutMode = NotationLayoutMode.ladder;
   bool _annotationsHidden = false;
+  ChessLine? _indexedMainline;
+  String? _indexedStartingFen;
+  String? _indexedSignature;
+  _TranspositionIndex _cachedTranspositions = const {};
 
   @override
   void initState() {
@@ -439,7 +471,11 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   }
 
   Future<void> _copyPgnToClipboard() async {
-    await Clipboard.setData(ClipboardData(text: exportGameToPgn(widget.game)));
+    await Clipboard.setData(
+      ClipboardData(
+        text: toExternalCompatiblePgn(exportGameToPgn(widget.game)),
+      ),
+    );
   }
 
   void _toggleAllVariationsFromMenu() {
@@ -546,6 +582,9 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   @override
   Widget build(BuildContext context) {
     final mainline = widget.game.mainline;
+    // Variations open expanded by default. Only a caller that passes
+    // finite auto-collapse thresholds opts into folding on open.
+    final autoCollapseDepth = widget.autoCollapseDepth;
     final startingPly = _startingPlyFromFen(widget.game.startingFen);
     final gameResult = _formatGameResult(
       widget.game.metadata['Result'] as String?,
@@ -558,6 +597,22 @@ class _NotationLadderViewState extends State<NotationLadderView> {
       _collapsed.clear();
       _expanded.clear();
     }
+    if (!identical(_indexedMainline, mainline) ||
+        _indexedStartingFen != widget.game.startingFen ||
+        signature != _indexedSignature) {
+      _indexedMainline = mainline;
+      _indexedStartingFen = widget.game.startingFen;
+      _indexedSignature = signature;
+      final indexClock = Stopwatch()..start();
+      _cachedTranspositions = _buildTranspositionIndex(widget.game);
+      if (indexClock.elapsedMilliseconds >= 16) {
+        LocalPgnPerformanceLog.event(
+          'notation_index',
+          'elapsedMs=${indexClock.elapsedMilliseconds} '
+          'positions=${_cachedTranspositions.length}',
+        );
+      }
+    }
 
     // Variations whose head-pointer-id is on the active pointer's path
     // are always force-expanded so the user's cursor cannot hide inside
@@ -569,7 +624,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
       forcedOpenIds: forcedOpenIds,
       collapsedIds: _collapsed,
       expandedIds: _expanded,
-      autoCollapseDepth: widget.autoCollapseDepth,
+      autoCollapseDepth: autoCollapseDepth,
       autoCollapseMoveThreshold: widget.autoCollapseMoveThreshold,
     );
     if (_layoutMode == NotationLayoutMode.inline) {
@@ -579,7 +634,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
     }
     final displayActivePointer =
         widget.showActiveHighlight ? widget.activePointer : const <int>[];
-    final transpositions = _buildTranspositionIndex(widget.game);
+    final transpositions = _cachedTranspositions;
 
     return _NotationPositionMarkers(
       positionArrowKeys: widget.positionArrowKeys,
@@ -609,7 +664,19 @@ class _NotationLadderViewState extends State<NotationLadderView> {
               Expanded(
                 child:
                     mainline.isEmpty
-                        ? const _EmptyLadderHint()
+                        ? widget.game.rootComments.isEmpty
+                            ? const _EmptyLadderHint()
+                            : SingleChildScrollView(
+                              child: _MoveComments(
+                                depth: 0,
+                                comments:
+                                    _annotationsHidden
+                                        ? const []
+                                        : _cleanPgnComments(
+                                          widget.game.rootComments,
+                                        ),
+                              ),
+                            )
                         : _layoutMode == NotationLayoutMode.inline
                         ? SingleChildScrollView(
                           controller: _scroll,
@@ -619,6 +686,14 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (!_annotationsHidden &&
+                                  widget.game.rootComments.isNotEmpty)
+                                _MoveComments(
+                                  depth: 0,
+                                  comments: _cleanPgnComments(
+                                    widget.game.rootComments,
+                                  ),
+                                ),
                               KeyedSubtree(
                                 key: _inlineNotationKey,
                                 child: _InlineNotationBlock(
@@ -646,7 +721,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                                   collapsedIds: _collapsed,
                                   expandedIds: _expanded,
                                   onToggleCollapsed: _toggleCollapsed,
-                                  autoCollapseDepth: widget.autoCollapseDepth,
+                                  autoCollapseDepth: autoCollapseDepth,
                                   autoCollapseMoveThreshold:
                                       widget.autoCollapseMoveThreshold,
                                   useFigurine: widget.useFigurine,
@@ -689,7 +764,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                             collapsedIds: _collapsed,
                             expandedIds: _expanded,
                             onToggleCollapsed: _toggleCollapsed,
-                            autoCollapseDepth: widget.autoCollapseDepth,
+                            autoCollapseDepth: autoCollapseDepth,
                             autoCollapseMoveThreshold:
                                 widget.autoCollapseMoveThreshold,
                             useFigurine: widget.useFigurine,
@@ -1059,12 +1134,26 @@ class _LadderNagPalette extends StatelessWidget {
       _PaletteNag(17, _LadderNagKind.evaluation, '∓'),
       _PaletteNag(19, _LadderNagKind.evaluation, '-+'),
       _PaletteNag(44, _LadderNagKind.evaluation, '=/∞'),
-      _PaletteNag(40, _LadderNagKind.idea, '↑'),
+      _PaletteNag(32, _LadderNagKind.idea, '↑'),
       _PaletteNag(36, _LadderNagKind.idea, '→'),
       _PaletteNag(132, _LadderNagKind.idea, '⇆'),
     ],
     [
-      _PaletteNag(32, _LadderNagKind.idea, '⟳'),
+      _PaletteNag.classification(
+        242,
+        LichessMoveAnnotationType.bestMove,
+        'Best move',
+      ),
+      _PaletteNag.classification(
+        247,
+        LichessMoveAnnotationType.bookMove,
+        'Book move',
+      ),
+      _PaletteNag.classification(
+        243,
+        LichessMoveAnnotationType.missedWin,
+        'Missed move',
+      ),
       _PaletteNag(7, _LadderNagKind.quality, '□'),
       _PaletteNag(146, _LadderNagKind.idea, 'N'),
       _PaletteNag(140, _LadderNagKind.idea, '∆'),
@@ -1104,6 +1193,7 @@ class _LadderNagPalette extends StatelessWidget {
                   for (final item in row)
                     _LadderNagPaletteCell(
                       item: item,
+                      compact: row.length > 6,
                       active: activeNags.contains(item.nag),
                       enabled: _enabled(item),
                       onSelect: onSelect,
@@ -1119,16 +1209,28 @@ class _LadderNagPalette extends StatelessWidget {
 }
 
 class _PaletteNag {
-  const _PaletteNag(this.nag, this.kind, this.symbol);
+  const _PaletteNag(this.nag, this.kind, this.symbol)
+    : classificationType = null,
+      tooltip = null;
+
+  const _PaletteNag.classification(
+    this.nag,
+    this.classificationType,
+    this.tooltip,
+  ) : kind = _LadderNagKind.quality,
+      symbol = '';
 
   final int nag;
   final _LadderNagKind kind;
   final String symbol;
+  final LichessMoveAnnotationType? classificationType;
+  final String? tooltip;
 }
 
 class _LadderNagPaletteCell extends StatefulWidget {
   const _LadderNagPaletteCell({
     required this.item,
+    required this.compact,
     required this.active,
     required this.enabled,
     required this.onSelect,
@@ -1136,6 +1238,7 @@ class _LadderNagPaletteCell extends StatefulWidget {
   });
 
   final _PaletteNag item;
+  final bool compact;
   final bool active;
   final bool enabled;
   final ValueChanged<Object> onSelect;
@@ -1161,7 +1264,9 @@ class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell>
   @override
   Widget build(BuildContext context) {
     final display = getNagDisplay(widget.item.nag);
-    final enabled = widget.enabled && display != null;
+    final classificationType = widget.item.classificationType;
+    final enabled =
+        widget.enabled && (display != null || classificationType != null);
     final active = widget.active;
     final foreground =
         !enabled
@@ -1170,7 +1275,7 @@ class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell>
             ? kWhiteColor
             : _hovered
             ? kWhiteColor
-            : display.color;
+            : (display?.color ?? kWhiteColor);
     final background =
         active
             ? kWhiteColor.withValues(alpha: 0.14)
@@ -1180,35 +1285,49 @@ class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell>
     final border =
         active ? kWhiteColor.withValues(alpha: 0.22) : Colors.transparent;
     final cell = AnimatedContainer(
+      key: ValueKey('notation-nag-${widget.item.nag}'),
       duration: const Duration(milliseconds: 110),
       curve: Curves.easeOutCubic,
-      width: 34,
+      width: widget.compact ? 24 : 34,
       height: 26,
-      margin: const EdgeInsets.symmetric(horizontal: 1),
+      margin: EdgeInsets.symmetric(horizontal: widget.compact ? 0 : 1),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: border),
       ),
-      child: Text(
-        widget.item.symbol,
-        maxLines: 1,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: foreground,
-          fontSize: widget.item.symbol.length > 1 ? 13 : 15,
-          fontWeight: FontWeight.w800,
-          height: 1,
-          letterSpacing: -0.2,
-        ),
-      ),
+      child:
+          classificationType == null
+              ? Text(
+                widget.item.symbol,
+                maxLines: 1,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: foreground,
+                  fontSize:
+                      widget.compact
+                          ? (widget.item.symbol.length > 1 ? 11.5 : 13)
+                          : (widget.item.symbol.length > 1 ? 13 : 15),
+                  fontWeight: FontWeight.w800,
+                  height: 1,
+                  letterSpacing: -0.2,
+                ),
+              )
+              : Padding(
+                padding: const EdgeInsets.all(2),
+                child: SvgPicture.asset(
+                  moveAnnotationIconAsset(classificationType),
+                  fit: BoxFit.contain,
+                ),
+              ),
     );
 
     final tooltip =
-        display == null
+        widget.item.tooltip ??
+        (display == null
             ? widget.item.symbol
-            : _nagMenuLabel(widget.item.nag, display);
+            : _nagMenuLabel(widget.item.nag, display));
     final wrapped = DesktopTooltip(message: tooltip, child: cell);
     if (!enabled) return wrapped;
 
@@ -1303,6 +1422,13 @@ class _LineBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final children = <Widget>[];
+    final owner = context.findAncestorStateOfType<_NotationLadderViewState>();
+    if (isMainlineRoot && depth == 0 && !(owner?._annotationsHidden ?? false)) {
+      final roots = _cleanPgnComments(owner?.widget.game.rootComments);
+      if (roots.isNotEmpty) {
+        children.add(_MoveComments(depth: 0, comments: roots));
+      }
+    }
     var i = 0;
     var ply = startPly;
     while (i < line.length) {
@@ -2015,6 +2141,11 @@ class _InlineNotationBlock extends StatelessWidget {
     for (var i = 0; i < line.length; i++) {
       final move = line[i];
       final pointer = <int>[...pointerPrefix, i];
+      if (!annotationsHidden) {
+        for (final comment in _cleanPgnComments(move.startingComments)) {
+          spans.add(TextSpan(text: '$comment ', style: commentStyle));
+        }
+      }
       final selected = _pointersEqual(pointer, activePointer);
       final isMainlineMove = depth == 0 && isMainlineRoot;
       final variationHeadPointer =
@@ -2654,9 +2785,12 @@ class _InlineMove extends StatelessWidget {
             ? kPrimaryColor
             : (depth == 0 ? kLightGreyColor : kWhiteColor70);
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
         if (prefix.isNotEmpty) ...[
           Text(
             prefix,
@@ -2683,7 +2817,7 @@ class _InlineMove extends StatelessWidget {
           commentText: _firstPgnComment(move.comments),
           userHasQualityNag: userHasQualityNag,
           hasStoredQualityNag: (move.nags ?? const <int>[]).any(
-            (nag) => nag >= 1 && nag <= 7,
+            _isMoveQualityNag,
           ),
           clockText: _formatClockChip(move.clockTime),
           clockSeconds: _clockSeconds(move.clockTime),
@@ -2725,7 +2859,8 @@ class _InlineMove extends StatelessWidget {
           variationHead: isVariationHead,
           mainlineDominant: depth == 0,
         ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -3195,7 +3330,7 @@ class _PairRow extends StatelessWidget {
                         commentText: _firstPgnComment(whiteMove!.comments),
                         userHasQualityNag: whiteUserHasQuality,
                         hasStoredQualityNag: (whiteMove!.nags ?? const <int>[])
-                            .any((nag) => nag >= 1 && nag <= 7),
+                            .any(_isMoveQualityNag),
                         clockText: _formatClockChip(whiteMove!.clockTime),
                         clockSeconds: _clockSeconds(whiteMove!.clockTime),
                         onSetUserQualityNag:
@@ -3259,7 +3394,7 @@ class _PairRow extends StatelessWidget {
                         commentText: _firstPgnComment(blackMove!.comments),
                         userHasQualityNag: blackUserHasQuality,
                         hasStoredQualityNag: (blackMove!.nags ?? const <int>[])
-                            .any((nag) => nag >= 1 && nag <= 7),
+                            .any(_isMoveQualityNag),
                         clockText: _formatClockChip(blackMove!.clockTime),
                         clockSeconds: _clockSeconds(blackMove!.clockTime),
                         onSetUserQualityNag:
@@ -3429,11 +3564,12 @@ class _LadderChipState extends State<_LadderChip>
                     ? 'Unfold all'
                     : 'Fold all',
           ),
-        const DesktopContextMenuItem<Object>(
-          value: _LadderAction.copyPgn,
-          icon: Icons.copy_all_rounded,
-          label: 'Copy PGN',
-        ),
+        if (NotationExportScope.allowsPgnCopy(context))
+          const DesktopContextMenuItem<Object>(
+            value: _LadderAction.copyPgn,
+            icon: Icons.copy_all_rounded,
+            label: 'Copy PGN',
+          ),
         const DesktopContextMenuItem<Object>(
           value: _LadderAction.copyFen,
           icon: Icons.format_quote_rounded,
@@ -3577,6 +3713,9 @@ class _LadderChipState extends State<_LadderChip>
       case _LadderAction.toggleAllVariations:
         notationState?._toggleAllVariationsFromMenu();
       case _LadderAction.copyPgn:
+        if (!context.mounted || !NotationExportScope.allowsPgnCopy(context)) {
+          return;
+        }
         await notationState?._copyPgnToClipboard();
       case _LadderAction.copyFen:
         if (widget.fen.isNotEmpty) {
@@ -3628,6 +3767,7 @@ class _LadderChipState extends State<_LadderChip>
     final seen = <int>{};
     for (final code in widget.nags) {
       if (!seen.add(code)) continue;
+      if (isChesseverClassificationNag(code)) continue;
       final d = getNagDisplay(code);
       if (d != null) out.add(d);
     }
@@ -3651,6 +3791,10 @@ class _LadderChipState extends State<_LadderChip>
             ?._annotationsHidden ??
         false;
     final nags = annotationsHidden ? const <NagDisplay>[] : _resolvedNags();
+    final classificationType =
+        annotationsHidden
+            ? null
+            : annotationTypeFromClassificationNags(widget.nags);
     final firstQualityNag = nags.cast<NagDisplay?>().firstWhere(
       (d) => d?.isQuality == true,
       orElse: () => null,
@@ -3735,7 +3879,16 @@ class _LadderChipState extends State<_LadderChip>
     final clockText = widget.clockText;
     final children = <Widget>[
       if (widget.compact) sanText else Flexible(child: sanText),
-      if (!annotationsHidden &&
+      if (classificationType != null) ...[
+        const SizedBox(width: 4),
+        _NotationClassificationIcon(
+          annotation: LichessMoveAnnotation(
+            type: classificationType,
+            comment: '',
+            useClassificationIcon: true,
+          ),
+        ),
+      ] else if (!annotationsHidden &&
           !widget.userHasQualityNag &&
           widget.annotation?.useClassificationIcon == true) ...[
         const SizedBox(width: 4),
@@ -3755,14 +3908,17 @@ class _LadderChipState extends State<_LadderChip>
       ],
       for (final d in nags) ...[
         const SizedBox(width: 3),
-        Text(
-          d.symbol,
-          style: TextStyle(
-            color: widget.selected ? kBackgroundColor : d.color,
-            fontSize: d.isQuality ? 13 : 12,
-            fontWeight: d.isQuality ? FontWeight.w800 : FontWeight.w600,
-            height: 1.0,
-            letterSpacing: -0.2,
+        DesktopTooltip(
+          message: d.description ?? d.symbol,
+          child: Text(
+            d.symbol,
+            style: TextStyle(
+              color: widget.selected ? kBackgroundColor : d.color,
+              fontSize: d.isQuality ? 13 : 12,
+              fontWeight: d.isQuality ? FontWeight.w800 : FontWeight.w600,
+              height: 1.0,
+              letterSpacing: -0.2,
+            ),
           ),
         ),
       ],
@@ -4394,10 +4550,10 @@ List<int> _mergedMainlineNagsFor({
 }) {
   final lichess = lichessAnnotations[ply];
   final user = userNags[ply] ?? const <int>[];
-  final userHasQuality = user.any((n) => n >= 1 && n <= 7);
+  final userHasQuality = user.any(_isMoveQualityNag);
   final baseHasUserQualityOverride =
       baseNags.contains(kChesseverUserQualityOverrideNag) &&
-      baseNags.any((n) => n >= 1 && n <= 7);
+      baseNags.any(_isMoveQualityNag);
   final reportOwnsMoveQuality =
       !userHasQuality &&
       !baseHasUserQualityOverride &&
@@ -4420,7 +4576,8 @@ List<int> _mergedMainlineNagsFor({
     baseNags.where(
       (nag) =>
           nag != kChesseverUserQualityOverrideNag &&
-          (!(reportOwnsMoveQuality || userHasQuality) || nag < 1 || nag > 7),
+          (!(reportOwnsMoveQuality || userHasQuality) ||
+              !_isMoveQualityNag(nag)),
     ),
   );
   if (lichessNag != null && !userHasQuality) {
@@ -4434,10 +4591,13 @@ bool _hasUserQualityOverride({
   required Iterable<int> baseNags,
   required Iterable<int> userNags,
 }) {
-  if (userNags.any((n) => n >= 1 && n <= 7)) return true;
+  if (userNags.any(_isMoveQualityNag)) return true;
   return baseNags.contains(kChesseverUserQualityOverrideNag) &&
-      baseNags.any((n) => n >= 1 && n <= 7);
+      baseNags.any(_isMoveQualityNag);
 }
+
+bool _isMoveQualityNag(int nag) =>
+    (nag >= 1 && nag <= 7) || isChesseverClassificationNag(nag);
 
 int? _nagForLichessAnnotation(LichessMoveAnnotationType type) => switch (type) {
   LichessMoveAnnotationType.brilliant => 3,

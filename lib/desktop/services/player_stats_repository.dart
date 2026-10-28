@@ -12,6 +12,7 @@ import 'package:chessever/desktop/services/local_chess_file_scanner.dart'
     show LocalChessGame;
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_pgn_catalog.dart';
+import 'package:chessever/desktop/services/player_identity_name.dart';
 import 'package:chessever/desktop/state/player_stats_provider.dart'
     show PlayerStatsOutcomeFilter;
 import 'package:chessever/desktop/services/time_control_classifier.dart';
@@ -1506,17 +1507,9 @@ String defaultPlayerStatsTimeControl({required bool isOnlineSource}) =>
 
 /// Normalization must match [PlayerStatsRepository._cte]'s SQL side so aliases
 /// and stored names compare on equal footing.
-String _normalizeName(String value) {
-  return value.toLowerCase().replaceAll(RegExp(r'[\s,._-]+'), '').trim();
-}
+String _normalizeName(String value) => playerIdentityNameKey(value);
 
-String _normalizedNameSql(String expression) {
-  var sql = 'LOWER(TRIM(COALESCE($expression, \'\')))';
-  for (final token in const <String>[',', ' ', '_', '.', '-']) {
-    sql = "REPLACE($sql, '$token', '')";
-  }
-  return sql;
-}
+String _normalizedNameSql(String expression) => playerIdentityNameSql(expression);
 
 String? _normalizeFideId(String? value) {
   final clean = value?.trim().toLowerCase();

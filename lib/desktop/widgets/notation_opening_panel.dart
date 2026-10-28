@@ -1,4 +1,10 @@
 import 'dart:async';
+
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'dart:io' show Platform;
 
 import 'package:dartchess/dartchess.dart';
@@ -90,6 +96,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.onPlayUciLine,
     this.previewLineStep = 0,
     this.previewLineAutoplay = false,
+    this.positionAutoplaying = false,
     this.onPreviewUciMove,
     this.onPreviewUciLine,
     this.onClearPreviewUciMove,
@@ -105,6 +112,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.onNotationJumpToTip,
     this.canGoBack = false,
     this.canGoForward = false,
+    this.canStepForward,
     this.onFirstMove,
     this.onPreviousMove,
     this.onNextMove,
@@ -166,6 +174,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// the Explorer is open.
   final bool canGoBack;
   final bool canGoForward;
+  final bool? canStepForward;
   final VoidCallback? onFirstMove;
   final VoidCallback? onPreviousMove;
   final VoidCallback? onNextMove;
@@ -224,6 +233,12 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
 
   /// True while the board is advancing a game-continuation preview by timer.
   final bool previewLineAutoplay;
+
+  /// True while the board auto-replays its line, moving the position itself
+  /// on a timer. The Explorer then warms no games ahead of a click and its
+  /// games table waits out the replay before asking the server (see
+  /// [DesktopPositionGamesTable.positionAutoplaying]).
+  final bool positionAutoplaying;
 
   /// Called when the user activates a move row in the Explorer move table.
   /// The string is raw UCI ("e2e4", "e7e8q"); the caller applies it to the
@@ -598,6 +613,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 lineUcis: widget.lineUcis,
                 previewLineStep: widget.previewLineStep,
                 previewLineAutoplay: widget.previewLineAutoplay,
+                positionAutoplaying: widget.positionAutoplaying,
                 onPlayUciMove: _playUciMoveAndKeepActivePage,
                 onPlayUciLine:
                     widget.onPlayUciLine == null
@@ -646,7 +662,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                   initialWeight: 0.58,
                   label: 'Explorer',
                   collapsedIcon: Icons.menu_book_outlined,
-                  child: explorerPane,
+                  child: RepaintBoundary(child: explorerPane),
                 ),
               ],
             )
@@ -673,7 +689,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                           // while analysis/report content is off. The previous
                           // collapsed split reserved a blank strip and painted
                           // an engine chip in its center.
-                          widget.enginePanel!,
+                          RepaintBoundary(child: widget.enginePanel!),
                           Expanded(child: notationContent),
                         ],
                       )
@@ -692,7 +708,9 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                             label: 'Engine',
                             collapsedIcon: Icons.memory_rounded,
                             onRestore: _resumeEngineFromRail,
-                            child: widget.enginePanel!,
+                            // Stockfish repaints up to 12.5 Hz. Keep it from
+                            // repainting the explorer and games tables below.
+                            child: RepaintBoundary(child: widget.enginePanel!),
                           ),
                           SplitChild(
                             // Compact floor so the report and notation can
@@ -718,6 +736,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               explorerScope: widget.explorerScope,
               canGoBack: widget.canGoBack,
               canGoForward: widget.canGoForward,
+              canStepForward: widget.canStepForward,
               onFirstMove: widget.onFirstMove,
               onPreviousMove: widget.onPreviousMove,
               onNextMove: widget.onNextMove,
@@ -1002,6 +1021,7 @@ class _SegmentBar extends ConsumerWidget {
     required this.explorerScope,
     required this.canGoBack,
     required this.canGoForward,
+    this.canStepForward,
     this.onFirstMove,
     this.onPreviousMove,
     this.onNextMove,
@@ -1028,6 +1048,7 @@ class _SegmentBar extends ConsumerWidget {
   final BoardExplorerScope? explorerScope;
   final bool canGoBack;
   final bool canGoForward;
+  final bool? canStepForward;
   final VoidCallback? onFirstMove;
   final VoidCallback? onPreviousMove;
   final VoidCallback? onNextMove;
@@ -1055,7 +1076,7 @@ class _SegmentBar extends ConsumerWidget {
         onNextGame != null;
     return Container(
       height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         color: kBlack2Color,
         border: Border(top: BorderSide(color: kDividerColor)),
@@ -1100,6 +1121,7 @@ class _SegmentBar extends ConsumerWidget {
                   child: _ExplorerNavigationCluster(
                     canGoBack: canGoBack,
                     canGoForward: canGoForward,
+                    canStepForward: canStepForward,
                     onFirstMove: onFirstMove,
                     onPreviousMove: onPreviousMove,
                     onNextMove: onNextMove,
@@ -1128,10 +1150,26 @@ class _SegmentBar extends ConsumerWidget {
   }
 }
 
+/// Exposes the actual Explorer navigation controls without remote providers.
+@visibleForTesting
+Widget explorerNavigationClusterForTesting({
+  required bool canGoForward,
+  bool? canStepForward,
+  required VoidCallback onNext,
+  required VoidCallback onLast,
+}) => _ExplorerNavigationCluster(
+  canGoBack: false,
+  canGoForward: canGoForward,
+  canStepForward: canStepForward,
+  onNextMove: onNext,
+  onLastMove: onLast,
+);
+
 class _ExplorerNavigationCluster extends StatelessWidget {
   const _ExplorerNavigationCluster({
     required this.canGoBack,
     required this.canGoForward,
+    this.canStepForward,
     this.onFirstMove,
     this.onPreviousMove,
     this.onNextMove,
@@ -1148,6 +1186,7 @@ class _ExplorerNavigationCluster extends StatelessWidget {
 
   final bool canGoBack;
   final bool canGoForward;
+  final bool? canStepForward;
   final VoidCallback? onFirstMove;
   final VoidCallback? onPreviousMove;
   final VoidCallback? onNextMove;
@@ -1202,7 +1241,7 @@ class _ExplorerNavigationCluster extends StatelessWidget {
           _RailIconButton(
             icon: Icons.chevron_right_rounded,
             tooltip: _tooltipWithShortcut('Next move', nextMoveShortcutLabel),
-            enabled: canGoForward,
+            enabled: canStepForward ?? canGoForward,
             onTap: onNextMove!,
           ),
           const SizedBox(width: 4),
@@ -1324,6 +1363,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
     required this.lineUcis,
     required this.previewLineStep,
     required this.previewLineAutoplay,
+    required this.positionAutoplaying,
     required this.onPlayUciMove,
     required this.onPlayUciLine,
     required this.onPreviewUciMove,
@@ -1351,6 +1391,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
   final int activeSection;
   final int previewLineStep;
   final bool previewLineAutoplay;
+  final bool positionAutoplaying;
   final void Function(String uci) onPlayUciMove;
   final ValueChanged<ExplorerContinuationInsertion>? onPlayUciLine;
   final void Function(String uci)? onPreviewUciMove;
@@ -1468,12 +1509,17 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       notifier.setLocalDatabaseTreeMode(effectiveLocalTree != null);
       final scope = widget.explorerScope;
       final appliedScopeKey = ref.read(appliedBoardExplorerScopeKeyProvider);
+      final currentFilters = ref.read(gamebaseExplorerProvider).filters;
       final scopedFilters = boardExplorerFiltersForScope(
         scope: scope,
-        currentFilters: ref.read(gamebaseExplorerProvider).filters,
+        currentFilters: currentFilters,
         appliedScopeKey: appliedScopeKey,
       );
-      if (scopedFilters != null) {
+      // A scoped (Prep / Build Tree) board re-enforces its scope on every
+      // move, which nearly always yields the filters already applied.
+      // `updateFilters` emits and clears the moves unconditionally, so only
+      // call it for a real change; the position update below still emits.
+      if (scopedFilters != null && scopedFilters != currentFilters) {
         notifier.updateFilters(scopedFilters);
       }
       ref.read(appliedBoardExplorerScopeKeyProvider.notifier).state =
@@ -1882,6 +1928,26 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       targetContext: context,
     );
     if (!mounted || picked == null) return;
+    // Inserting a database game's moves reaches back to its source; a local
+    // file's tree row is the user's own data.
+    if (picked == GameContinuationAction.insertMoves &&
+        !admitDesktopAction(
+          ProviderScope.containerOf(context, listen: false),
+          widget.localOpeningTreeIndex != null && widget.explorerScope == null
+              ? const DesktopAccessContext(
+                feature: DesktopFeature.localFiles,
+                action: DesktopAction.insertMove,
+                origin: DesktopDiscoveryOrigin.localFile,
+              )
+              : const DesktopAccessContext(
+                feature: DesktopFeature.gamebase,
+                action: DesktopAction.insertMove,
+                origin: DesktopDiscoveryOrigin.gamebase,
+              ),
+          surface: 'explorer_insert_moves',
+        )) {
+      return;
+    }
     switch (picked) {
       case GameContinuationAction.insertMoves:
         widget.onPlayUciLine?.call(
@@ -2149,6 +2215,28 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     super.build(context);
     if (!widget.active) return const SizedBox.expand();
     final effectiveLocalTree = _effectiveLocalOpeningTreeIndex;
+    // Statistics for this position: a local tree is opening-tree
+    // exploration; the ChessEver database is explorer depth / player scope.
+    // Rendering the lock opens nothing; the notifier already refused the
+    // fetch. Moving pieces on the board stays free either way.
+    final explorerAccessContext =
+        effectiveLocalTree != null && widget.explorerScope == null
+            ? const DesktopAccessContext(
+              feature: DesktopFeature.openingTree,
+              action: DesktopAction.previewNavigate,
+              origin: DesktopDiscoveryOrigin.localFile,
+            )
+            : desktopExplorerAccessContext(
+              ref.watch(gamebaseExplorerProvider),
+              exactPosition: widget.exactFenSearch,
+            );
+    final explorerFree = desktopAccessWithoutMembership(explorerAccessContext);
+    final explorerDecision =
+        explorerFree.isAllowed
+            ? explorerFree
+            : ref.watch(desktopAccessDecisionProvider(explorerAccessContext));
+    // Publish the source chip before any lock, so a locked local tree
+    // still offers the free Global explorer instead of a dead end.
     final localTreeCatalog =
         widget.enableLocalOpeningTreePicker
             ? ref.watch(localOpeningTreeCatalogProvider)
@@ -2171,6 +2259,13 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
         if (!mounted) return;
         widget.sourceController.clear();
       });
+    }
+    if (!explorerDecision.isAllowed) {
+      return DesktopAccessLockedSurface(
+        decision: explorerDecision,
+        accessContext: explorerAccessContext,
+        surface: 'board_explorer_locked',
+      );
     }
     final activeContinuationStep = _activeGameContinuationStep();
     final gamesPanelActive = debugShouldActivateExplorerGamesPanel(
@@ -2199,6 +2294,16 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       usePlayerOpeningTree:
           widget.explorerScope != null && effectiveLocalTree == null,
       localOpeningTreeIndex: effectiveLocalTree,
+      // Clicking a move plays it and the games table below lists the next
+      // position's games; warm those while the reader looks at the moves.
+      // Not while the board replays the line: it, not a click, picks the
+      // next position.
+      warmPositionGames:
+          gamesPanelActive &&
+          !widget.positionAutoplaying &&
+          !widget.exactFenSearch &&
+          widget.explorerScope == null &&
+          effectiveLocalTree == null,
     );
     final gamesPanel = DesktopPositionGamesTable(
       fen: widget.currentFen,
@@ -2210,6 +2315,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       playerOpeningTreePlayerId: widget.explorerScope?.player.id,
       localOpeningTreeIndex: effectiveLocalTree,
       localOpeningTreeTitle: widget.localOpeningTreeTitle,
+      positionAutoplaying: widget.positionAutoplaying,
       controller: _gamesController,
       referenceLayout: true,
       activeContinuationStep: activeContinuationStep,
@@ -2698,6 +2804,26 @@ class _PositionGamesPageState extends ConsumerState<_PositionGamesPage>
       targetContext: context,
     );
     if (!mounted || picked == null) return;
+    // Inserting a database game's moves reaches back to its source; a local
+    // file's tree row is the user's own data.
+    if (picked == GameContinuationAction.insertMoves &&
+        !admitDesktopAction(
+          ProviderScope.containerOf(context, listen: false),
+          widget.localOpeningTreeIndex != null && widget.explorerScope == null
+              ? const DesktopAccessContext(
+                feature: DesktopFeature.localFiles,
+                action: DesktopAction.insertMove,
+                origin: DesktopDiscoveryOrigin.localFile,
+              )
+              : const DesktopAccessContext(
+                feature: DesktopFeature.gamebase,
+                action: DesktopAction.insertMove,
+                origin: DesktopDiscoveryOrigin.gamebase,
+              ),
+          surface: 'explorer_insert_moves',
+        )) {
+      return;
+    }
     switch (picked) {
       case GameContinuationAction.insertMoves:
         widget.onPlayUciLine?.call(

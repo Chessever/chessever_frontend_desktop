@@ -48,7 +48,7 @@ class PlayerStatsSource {
   /// the player list on the left).
   final PlayerWorkspaceSource kind;
 
-  /// Default overview time-control chip for this source:
+  /// Preferred rating ladder for this source when Overview includes All:
   /// `classical` for Combined/ChessEver, `blitz` for Lichess/Chess.com.
   final String preferredTimeControl;
 
@@ -115,9 +115,8 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
   int _sourceIndex = 0;
   PlayerStatsWindow _window = PlayerStatsWindow.all;
 
-  /// null = All; otherwise canonical category. Unset until user or source pick.
-  String? _timeControlOverride;
-  bool _userPickedTimeControl = false;
+  /// null = All (the complete source); otherwise canonical category.
+  String? _timeControl;
   PlayerStatsOutcomeFilter _outcome = PlayerStatsOutcomeFilter.all;
   String? _playerColor; // 'w' | 'b' | null
 
@@ -137,12 +136,8 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
     }
     final index = _sourceIndex.clamp(0, sources.length - 1);
     final source = sources[index];
-    // Source-aware default (classical for Combined/ChessEver, blitz for online)
-    // until the user picks a chip or we switch sources (which resets).
-    final timeControl =
-        _userPickedTimeControl
-            ? _timeControlOverride
-            : source.preferredTimeControl;
+    // The source preference selects the rating ladder, not game scope.
+    final timeControl = _timeControl;
     final request = PlayerStatsRequest(
       databasePath: source.path,
       aliases: widget.aliases,
@@ -168,19 +163,13 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
       onSource: (i) {
         setState(() {
           _sourceIndex = i;
-          // Switching source resets to that source's default ladder.
-          _userPickedTimeControl = false;
-          _timeControlOverride = null;
+          _timeControl = null;
           _outcome = PlayerStatsOutcomeFilter.all;
           _playerColor = null;
         });
       },
       onWindow: (w) => setState(() => _window = w),
-      onTimeControl:
-          (tc) => setState(() {
-            _userPickedTimeControl = true;
-            _timeControlOverride = tc;
-          }),
+      onTimeControl: (tc) => setState(() => _timeControl = tc),
     );
 
     return async.when(
@@ -229,8 +218,7 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
               onSecondaryAction:
                   timeControl != null || _window != PlayerStatsWindow.all
                       ? () => setState(() {
-                        _userPickedTimeControl = true;
-                        _timeControlOverride = null; // All TCs
+                        _timeControl = null;
                         _window = PlayerStatsWindow.all;
                         _outcome = PlayerStatsOutcomeFilter.all;
                         _playerColor = null;
@@ -242,6 +230,7 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
         return _StatsBody(
           toolbar: toolbar,
           snapshot: snapshot,
+          sourceGameCount: source.gameCount,
           sourcePath: source.path,
           outcome: _outcome,
           playerColor: _playerColor,
@@ -555,6 +544,7 @@ class _StatsBody extends StatelessWidget {
   const _StatsBody({
     required this.toolbar,
     required this.snapshot,
+    required this.sourceGameCount,
     required this.sourcePath,
     required this.outcome,
     required this.playerColor,
@@ -567,6 +557,7 @@ class _StatsBody extends StatelessWidget {
   /// as the metrics so it scrolls away instead of sticking.
   final Widget toolbar;
   final PlayerStatsSnapshot snapshot;
+  final int sourceGameCount;
   final String sourcePath;
   final PlayerStatsOutcomeFilter outcome;
   final String? playerColor;
@@ -616,7 +607,7 @@ class _StatsBody extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _HeroStripe(snapshot: snapshot),
+              _HeroStripe(snapshot: snapshot, sourceGameCount: sourceGameCount),
               const SizedBox(height: 14),
               _ScorePanel(
                 snapshot: snapshot,
@@ -694,9 +685,10 @@ class _StatsBody extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _HeroStripe extends StatelessWidget {
-  const _HeroStripe({required this.snapshot});
+  const _HeroStripe({required this.snapshot, required this.sourceGameCount});
 
   final PlayerStatsSnapshot snapshot;
+  final int sourceGameCount;
 
   @override
   Widget build(BuildContext context) {
@@ -710,7 +702,8 @@ class _HeroStripe extends StatelessWidget {
         accent: kPrimaryColor,
         value: _formatInt(snapshot.games),
         label: 'Games analyzed',
-        sub: '${_formatInt(snapshot.decisiveGames)} decisive',
+        sub:
+            '${_formatInt(snapshot.games)} of ${_formatInt(sourceGameCount)} games',
       ),
       _StatCard(
         icon: Icons.emoji_events_outlined,

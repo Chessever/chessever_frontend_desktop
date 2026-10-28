@@ -14,9 +14,11 @@ enum LibraryGameAction {
   openInNewWindow,
   share,
   copyShareLink,
+  gameInfo,
   copyPgn,
   selectAll,
   pasteGames,
+  saveToCloud,
   copyFen,
   exportPgn,
   delete,
@@ -145,6 +147,115 @@ class LibraryGameContextMenu extends StatelessWidget {
           useLongPress
               ? (details) => _open(context, details.globalPosition)
               : null,
+      child: child,
+    );
+  }
+}
+
+/// Right-click menu for a game row inside a **cloud** database — the desktop
+/// database-workspace table and its Library-Home preview.
+///
+/// The subset is what is semantically valid for a saved game that already lives
+/// in the cloud:
+///
+/// * **Game info** — the stored PGN header set.
+/// * **Copy PGN** — clipboard export (selection aware at the call site).
+/// * **Paste games** — clipboard import into this database [writable] only; a
+///   followed/subscribed book is read-only.
+/// * **Save To Cloud** — writes *another* copy into a chosen cloud database the
+///   account owns, so it stays available even for a followed book: the copy
+///   never touches the source and the save dialog only lists writable
+///   destinations.
+/// * **Delete game** — destructive, [writable] only.
+///
+/// Board-only and local-file actions (open in board/new tab/window, share,
+/// copy FEN, export to disk) stay out of this table menu: those rows are already
+/// library records and the surrounding pane previews them in place.
+@visibleForTesting
+List<DesktopContextMenuEntry<LibraryGameAction>> cloudDatabaseGameMenuEntries({
+  required bool writable,
+}) => [
+  const DesktopContextMenuItem(
+    value: LibraryGameAction.gameInfo,
+    icon: Icons.info_outline_rounded,
+    label: 'Game info',
+  ),
+  const DesktopContextMenuItem(
+    value: LibraryGameAction.copyPgn,
+    icon: Icons.content_copy_rounded,
+    label: 'Copy PGN',
+  ),
+  DesktopContextMenuItem(
+    value: LibraryGameAction.pasteGames,
+    icon: Icons.content_paste_rounded,
+    label: 'Paste games',
+    enabled: writable,
+  ),
+  const DesktopContextMenuItem(
+    value: LibraryGameAction.saveToCloud,
+    icon: Icons.library_add_outlined,
+    label: 'Save To Cloud',
+  ),
+  const DesktopContextMenuDivider(),
+  DesktopContextMenuItem(
+    value: LibraryGameAction.delete,
+    icon: Icons.delete_outline_rounded,
+    label: 'Delete game',
+    destructive: true,
+    enabled: writable,
+  ),
+];
+
+/// Shows [cloudDatabaseGameMenuEntries] at [position]. Returns the chosen
+/// action, or `null` when the user dismissed the menu.
+Future<LibraryGameAction?> showCloudDatabaseGameContextMenu({
+  required BuildContext context,
+  required Offset position,
+  required bool writable,
+}) => showDesktopContextMenu<LibraryGameAction>(
+  context: context,
+  position: position,
+  width: 248,
+  entries: cloudDatabaseGameMenuEntries(writable: writable),
+);
+
+/// Wraps a cloud database game row in the right-click region for
+/// [cloudDatabaseGameMenuEntries]. The row's own tap/double-tap gestures keep
+/// primary-button ownership; this only claims secondary taps.
+class LibraryCloudGameRowMenu extends StatelessWidget {
+  const LibraryCloudGameRowMenu({
+    super.key,
+    required this.writable,
+    required this.onAction,
+    required this.child,
+    this.onContextMenuOpening,
+  });
+
+  final bool writable;
+  final ValueChanged<LibraryGameAction> onAction;
+
+  /// Invoked just before the menu opens so the surface can select this row
+  /// without discarding an existing multi-selection.
+  final VoidCallback? onContextMenuOpening;
+
+  final Widget child;
+
+  Future<void> _open(BuildContext context, Offset globalPosition) async {
+    onContextMenuOpening?.call();
+    final action = await showCloudDatabaseGameContextMenu(
+      context: context,
+      position: globalPosition,
+      writable: writable,
+    );
+    if (action == null || !context.mounted) return;
+    onAction(action);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapUp: (details) => _open(context, details.globalPosition),
       child: child,
     );
   }

@@ -1,17 +1,23 @@
 import 'dart:convert';
+import 'dart:io' show HttpClient;
 
+import 'package:chessever/repository/gamebase/miniatures/miniature_players.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:dart_mappable/dart_mappable.dart';
-import 'package:dartchess/dartchess.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models_extra.dart';
 import 'package:chessever/repository/gamebase/memorial_player.dart';
+import 'package:chessever/repository/gamebase/collections/collection_search_query.dart';
+import 'package:chessever/repository/gamebase/collections/collections_models.dart';
+
+import 'explorer_query.dart';
 
 part 'gamebase_repository.mapper.dart';
 
@@ -40,12 +46,14 @@ class GamebasePlayerPgnExport {
     required this.gameCount,
     this.cacheStatus,
     this.snapshotStatus,
+    this.filterVersion,
   });
 
   final String pgn;
   final int gameCount;
   final String? cacheStatus;
   final String? snapshotStatus;
+  final String? filterVersion;
 }
 
 ({int? preparedGameCount, int? expectedGameCount})
@@ -207,6 +215,7 @@ class MiniatureGamesFilter {
     this.dateFrom,
     this.dateTo,
     this.player,
+    this.playerId,
   });
 
   final MiniatureGamesWindow window;
@@ -227,6 +236,10 @@ class MiniatureGamesFilter {
   final String? dateFrom;
   final String? dateTo;
   final String? player;
+
+  /// Gamebase player uuid scoping the list to one player's miniatures (the
+  /// Players scorecard). A scope, not a user filter: not counted as active.
+  final String? playerId;
 
   static const defaultFilter = MiniatureGamesFilter();
 
@@ -277,6 +290,8 @@ class MiniatureGamesFilter {
     bool clearDates = false,
     String? player,
     bool clearPlayer = false,
+    String? playerId,
+    bool clearPlayerId = false,
   }) {
     return MiniatureGamesFilter(
       window: window ?? this.window,
@@ -297,6 +312,7 @@ class MiniatureGamesFilter {
       dateFrom: clearDates ? null : (dateFrom ?? this.dateFrom),
       dateTo: clearDates ? null : (dateTo ?? this.dateTo),
       player: clearPlayer ? null : (player ?? this.player),
+      playerId: clearPlayerId ? null : (playerId ?? this.playerId),
     );
   }
 
@@ -343,6 +359,8 @@ class MiniatureGamesFilter {
     if (to != null) query['dateTo'] = to;
     final normalizedPlayer = _cleanText(player);
     if (normalizedPlayer != null) query['player'] = normalizedPlayer;
+    final normalizedPlayerId = _cleanText(playerId);
+    if (normalizedPlayerId != null) query['playerId'] = normalizedPlayerId;
 
     return query;
   }
@@ -534,22 +552,20 @@ Map<String, dynamic> buildGamebaseExplorerFilterFields({
   bool? isOnline,
   bool trimPlayerId = false,
 }) {
-  final resolvedPlayerId = trimPlayerId ? playerId?.trim() : playerId;
-  return <String, dynamic>{
-    if (resolvedPlayerId != null && resolvedPlayerId.isNotEmpty)
-      'playerId': resolvedPlayerId,
-    if (timeControl != null) 'timeControl': timeControl.name.toUpperCase(),
-    if (minRating != null) 'minRating': minRating,
-    if (maxRating != null) 'maxRating': maxRating,
-    if (color != null) 'color': color,
-    if (result != null) 'result': result,
-    if (yearFrom != null) 'yearFrom': yearFrom,
-    if (yearTo != null) 'yearTo': yearTo,
-    if (isOnline != null) 'isOnline': isOnline,
-  };
+  return gamebaseExplorerFilterFields(
+    timeControl: timeControl?.name,
+    playerId: playerId,
+    minRating: minRating,
+    maxRating: maxRating,
+    color: color,
+    result: result,
+    yearFrom: yearFrom,
+    yearTo: yearTo,
+    isOnline: isOnline,
+  );
 }
 
-/// POST `/api/game-position/aggregates/query` body after FEN/move normalize.
+/// POST `/api/game-position/aggregates/query` body with verified FEN/move context.
 @visibleForTesting
 Map<String, dynamic> buildMoveAggregatesQueryBody({
   required String fen,
@@ -564,9 +580,10 @@ Map<String, dynamic> buildMoveAggregatesQueryBody({
   int? yearTo,
   bool? isOnline,
 }) {
+  final position = GamebaseExplorerPosition.resolve(fen, moves);
   return <String, dynamic>{
-    'fen': fen,
-    'moves': moves,
+    'fen': position.fen,
+    'moves': position.moves,
     ...buildGamebaseExplorerFilterFields(
       timeControl: timeControl,
       playerId: playerId,
@@ -594,7 +611,7 @@ List<Map<String, String>>? _positionGamesOrderBy(
   ];
 }
 
-/// POST `/api/game-position/games/query` body after FEN/move normalize.
+/// POST `/api/game-position/games/query` body with verified FEN/move context.
 @visibleForTesting
 Map<String, dynamic> buildPositionGamesQueryBody({
   required String fen,
@@ -615,13 +632,18 @@ Map<String, dynamic> buildPositionGamesQueryBody({
   int pageSize = 20,
   int notationPlies = 0,
 }) {
+  final position = GamebaseExplorerPosition.resolve(fen, moves);
   final orderBy = _positionGamesOrderBy(sortBy, sortDirection);
+  final continuation = position.continuationUci(uci);
   return <String, dynamic>{
-    'fen': fen,
-    'moves': moves,
-    'pageNumber': pageNumber,
-    'pageSize': pageSize,
-    if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
+    'fen': position.fen,
+    'moves': position.moves,
+    ...gamebaseExplorerPageFields(
+      pageNumber: pageNumber,
+      pageSize: pageSize,
+      notationPlies: notationPlies,
+    ),
+    if (continuation != null) 'uci': continuation,
     ...buildGamebaseExplorerFilterFields(
       timeControl: timeControl,
       playerId: playerId,
@@ -637,11 +659,10 @@ Map<String, dynamic> buildPositionGamesQueryBody({
     if (orderBy != null) 'orderBy': orderBy,
     if (sortBy != null) 'sortBy': sortBy.name,
     if (sortDirection != null) 'sortDirection': sortDirection.name,
-    if (notationPlies > 0) 'notationPlies': notationPlies,
   };
 }
 
-/// GET `/api/game-position/games` query parameters after FEN normalize.
+/// GET `/api/game-position/games` query parameters with verified FEN.
 @visibleForTesting
 Map<String, dynamic> buildPositionGamesQueryParameters({
   required String fen,
@@ -661,11 +682,16 @@ Map<String, dynamic> buildPositionGamesQueryParameters({
   int pageSize = 20,
   int notationPlies = 0,
 }) {
+  final position = GamebaseExplorerPosition.resolve(fen, const []);
+  final continuation = position.continuationUci(uci);
   return <String, dynamic>{
-    'fen': fen,
-    'pageNumber': pageNumber,
-    'pageSize': pageSize,
-    if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
+    'fen': position.fen,
+    ...gamebaseExplorerPageFields(
+      pageNumber: pageNumber,
+      pageSize: pageSize,
+      notationPlies: notationPlies,
+    ),
+    if (continuation != null) 'uci': continuation,
     ...buildGamebaseExplorerFilterFields(
       timeControl: timeControl,
       playerId: playerId,
@@ -680,8 +706,100 @@ Map<String, dynamic> buildPositionGamesQueryParameters({
     ),
     if (sortBy != null) 'sortBy': sortBy.name,
     if (sortDirection != null) 'sortDirection': sortDirection.name,
-    if (notationPlies > 0) 'notationPlies': notationPlies,
   };
+}
+
+/// GET `/api/game-position/fen/games` query parameters with verified FEN.
+@visibleForTesting
+Map<String, dynamic> buildFenPositionGamesQueryParameters({
+  required String fen,
+  String? uci,
+  TimeControl? timeControl,
+  String? playerId,
+  String? color,
+  String? result,
+  int? minRating,
+  int? maxRating,
+  int? yearFrom,
+  int? yearTo,
+  GamebaseSortField? sortBy,
+  GamebaseSortDirection? sortDirection,
+  bool? isOnline,
+  int pageNumber = 0,
+  int pageSize = 20,
+  int notationPlies = 0,
+}) {
+  final position = GamebaseExplorerPosition.resolve(fen, const []);
+  final continuation = position.continuationUci(uci);
+  return <String, dynamic>{
+    'fen': position.fen,
+    ...gamebaseExplorerPageFields(
+      pageNumber: pageNumber,
+      pageSize: pageSize,
+      notationPlies: notationPlies,
+    ),
+    if (continuation != null) 'uci': continuation,
+    ...buildGamebaseExplorerFilterFields(
+      timeControl: timeControl,
+      playerId: playerId,
+      minRating: minRating,
+      maxRating: maxRating,
+      color: color,
+      result: result,
+      yearFrom: yearFrom,
+      yearTo: yearTo,
+      isOnline: isOnline,
+      trimPlayerId: true,
+    ),
+    if (sortBy != null) 'sortBy': sortBy.name,
+    if (sortDirection != null) 'sortDirection': sortDirection.name,
+  };
+}
+
+/// One HTTP request exactly as a [GamebaseRepository] method sends it: the
+/// method, the full URL (base URL included) and the body or query map.
+///
+/// Headers are deliberately not part of it: they carry the signed-in user's
+/// bearer token, which must never become part of a cache key.
+@immutable
+class GamebaseWireRequest {
+  const GamebaseWireRequest({
+    required this.method,
+    required this.url,
+    required this.payload,
+  });
+
+  /// `GET` or `POST`.
+  final String method;
+  final String url;
+
+  /// The POST body, or the GET query parameters.
+  final Map<String, dynamic> payload;
+
+  /// A stable text form of the whole request, with map keys sorted at every
+  /// level, so two requests that would put the same bytes on the wire always
+  /// produce the same identity whatever order their fields were built in.
+  String get identity => jsonEncode(<String, Object?>{
+    'method': method,
+    'url': url,
+    'payload': _canonicalJson(payload),
+  });
+
+  static Object? _canonicalJson(Object? value) {
+    if (value is Map) {
+      final keys = value.keys.map((key) => key.toString()).toList()..sort();
+      return <String, Object?>{
+        for (final key in keys) key: _canonicalJson(value[key]),
+      };
+    }
+    if (value is Iterable) {
+      return value.map(_canonicalJson).toList(growable: false);
+    }
+    return value;
+  }
+
+  @override
+  String toString() => 'GamebaseWireRequest($method $url $payload)';
 }
 
 class GamebaseRepository {
@@ -857,20 +975,9 @@ class GamebaseRepository {
     bool? isOnline,
   }) async {
     try {
-      final normalizedFen = _normalizeFenForLookup(fen);
-      final normalizedMoves = _sanitizeMovesForFen(normalizedFen, moves);
-
-      if (kDebugMode &&
-          moves.isNotEmpty &&
-          normalizedMoves.length != moves.length) {
-        debugPrint(
-          '[GamebaseRepository] Dropping mismatched move path for aggregates query',
-        );
-      }
-
       final body = buildMoveAggregatesQueryBody(
-        fen: normalizedFen,
-        moves: normalizedMoves,
+        fen: fen,
+        moves: moves,
         playerId: playerId,
         timeControl: timeControl,
         minRating: minRating,
@@ -950,115 +1057,6 @@ class GamebaseRepository {
     } catch (e) {
       throw Exception('Failed to load gamebase stats: $e');
     }
-  }
-
-  /// Canonicalize FEN for Gamebase lookups.
-  ///
-  /// The API expects a standard 6-field FEN. Some callers may provide only the
-  /// first 4 fields (piece placement, side to move, castling rights, en
-  /// passant). In that case, append halfmove/fullmove counters.
-  ///
-  /// When counters are present, preserve them. Some backends index/look up
-  /// positions using the full FEN string; clamping counters can cause misses
-  /// for progressed positions.
-  static String _normalizeFenForLookup(String fen) {
-    final parts = fen.trim().split(RegExp(r'\s+'));
-    if (parts.length < 4) return fen.trim();
-
-    if (parts.length == 4) return '${parts.join(' ')} 0 1';
-    return parts.take(6).join(' ');
-  }
-
-  static String _positionKey(String fen) =>
-      fen.trim().split(RegExp(r'\s+')).take(4).join(' ');
-
-  static NormalMove? _normalMoveFromUci(String uci) {
-    if (uci.length < 4) return null;
-
-    final from = Square.fromName(uci.substring(0, 2));
-    final to = Square.fromName(uci.substring(2, 4));
-
-    Role? promotion;
-    if (uci.length > 4) {
-      promotion = Role.fromChar(uci[4]);
-      if (promotion == null) return null;
-    }
-
-    return NormalMove(from: from, to: to, promotion: promotion);
-  }
-
-  static List<String> _sanitizeMovesForFen(String fen, List<String> moves) {
-    if (moves.isEmpty) return const [];
-
-    final normalizedMoves = moves
-        .map((m) => m.trim().toLowerCase())
-        .where((m) => RegExp(r'^[a-h][1-8][a-h][1-8][qrbn]?$').hasMatch(m))
-        .toList(growable: false);
-
-    if (normalizedMoves.isEmpty) return const [];
-
-    try {
-      Position position = Chess.initial;
-      final replayed = <String>[];
-      for (final uci in normalizedMoves) {
-        final move = _normalMoveFromUci(uci);
-        if (move == null || !position.isLegal(move)) {
-          return const [];
-        }
-        // dartchess encodes castling king-to-rook (e1h1), but the backend
-        // (chess.js) only accepts the standard king-to-g/c UCI. Emit the
-        // standard form so deep-path queries (ply > indexed boundary) can
-        // replay the move line server-side.
-        replayed.add(_toStandardCastlingUci(position, move));
-        position = position.play(move);
-      }
-
-      // Only require the replayed position to match the target FEN (first 4
-      // fields — piece placement / turn / castling / en passant). Do NOT
-      // compare move count against _pliesFromFen: variation paths that
-      // replace a mainline move result in a move list shorter than the FEN's
-      // fullmove-derived ply count, and the old strict equality silently
-      // dropped the whole line at depth ≥ 21, collapsing the backend to the
-      // position-only path which returns empty past the indexed boundary.
-      return _positionKey(position.fen) == _positionKey(fen)
-          ? List<String>.unmodifiable(replayed)
-          : const [];
-    } catch (_) {
-      return const [];
-    }
-  }
-
-  /// Returns the standard king-to-target UCI for a castling move, or the
-  /// original [move]'s UCI for any non-castling move.
-  ///
-  /// dartchess normalizes castling to the Chess960 king-to-rook form (e.g.
-  /// `e1h1`), but the Gamebase backend uses chess.js which only recognizes the
-  /// classical king-to-g/c form (`e1g1`, `e1c1`, `e8g8`, `e8c8`). Without this
-  /// rewrite, any move line containing a castle fails server-side replay and
-  /// deep-path queries return empty aggregates.
-  static String _toStandardCastlingUci(Position position, NormalMove move) {
-    final piece = position.board.pieceAt(move.from);
-    if (piece == null || piece.role != Role.king) return move.uci;
-
-    final fromFile = move.from.file;
-    final toFile = move.to.file;
-    final fileDelta = (fromFile - toFile).abs();
-
-    final targetPiece = position.board.pieceAt(move.to);
-    final capturesOwnRook =
-        targetPiece != null &&
-        targetPiece.role == Role.rook &&
-        targetPiece.color == piece.color;
-
-    // File delta of 2+ (standard e1→g1/c1) or capturing own rook (Chess960
-    // form e1→h1/a1) both indicate castling. For everything else (e1→f1,
-    // e1→e2, etc.) fall through to the original UCI.
-    if (fileDelta < 2 && !capturesOwnRook) return move.uci;
-
-    final isKingSide = toFile > fromFile;
-    final targetFile = isKingSide ? File.g : File.c;
-    final targetSquare = Square.fromCoords(targetFile, move.from.rank);
-    return move.from.name + targetSquare.name;
   }
 
   /// Search players by name.
@@ -1252,6 +1250,247 @@ class GamebaseRepository {
       );
     } catch (e) {
       throw Exception('Failed to load miniatures: $e');
+    }
+  }
+
+  /// Gamebase miniatures leaderboard rows: a player's W-L record across
+  /// miniatures and their gamebase player id. The desktop Players view ranks
+  /// by rating from `chess_players`; this only decorates a row and scopes a
+  /// scorecard, so no sort is sent.
+  Future<MiniaturePlayersPage> getMiniaturePlayers({
+    String? search,
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    try {
+      final searchClean = (search ?? '').trim();
+      final response = await _dio.get(
+        '$_miniaturesBaseUrl/api/miniatures/players',
+        queryParameters: {
+          'window': MiniatureGamesWindow.all.apiValue,
+          'limit': limit,
+          'offset': offset,
+          if (searchClean.isNotEmpty) 'q': searchClean,
+        },
+        options: _miniaturesRequestOptions(),
+      );
+      final data = response.data;
+      if (data is! Map) {
+        throw Exception('Unexpected response format');
+      }
+      return MiniaturePlayersPage.fromJson(Map<String, dynamic>.from(data));
+    } on DioException catch (e) {
+      throw Exception(
+        'Failed to load miniature players: '
+        '${e.response?.statusCode ?? 'network error'}',
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Published collections, as readers browse them (`/api/collections...`).
+  // Same calls as the phone app; here they go through the proxy, which adds
+  // the server key and forwards this account's token on the gated reads.
+  // ---------------------------------------------------------------------
+
+  /// One page of the published books a search matches
+  /// (`GET /api/collections/catalog/books`), in the team's order.
+  Future<CollectionsPage> searchCollectionBooks({
+    CollectionSearchQuery search = const CollectionSearchQuery(),
+    int limit = 40,
+    int offset = 0,
+  }) async => CollectionsPage.fromJson(
+    await _getCollectionsData(
+      '/api/collections/catalog/books',
+      what: 'collection search',
+      queryParameters: {...search.parameters, 'limit': limit, 'offset': offset},
+    ),
+  );
+
+  /// One page of the authors a search matches
+  /// (`GET /api/collections/catalog/authors`).
+  Future<({List<CollectionAuthor> items, int total})> searchCollectionAuthors({
+    CollectionSearchQuery search = const CollectionSearchQuery(),
+    int offset = 0,
+    int limit = 40,
+  }) async {
+    final data = await _getCollectionsData(
+      '/api/collections/catalog/authors',
+      what: 'collection authors',
+      queryParameters: {...search.parameters, 'offset': offset, 'limit': limit},
+    );
+    if (data is! Map || data['items'] is! List || data['total'] is! num) {
+      throw const FormatException('Invalid collection authors response');
+    }
+    return (
+      items: [
+        for (final item in data['items'] as List)
+          if (item is Map)
+            CollectionAuthor.fromJson(Map<String, dynamic>.from(item)),
+      ],
+      total: (data['total'] as num).toInt(),
+    );
+  }
+
+  /// A published collection with its About text, section tree and bound
+  /// events (`GET /api/collections/:slug`; an id works too). For a Premium
+  /// collection the answer carries the server's verdict for this account.
+  /// [fresh] asks it to judge anew (right after a purchase).
+  Future<Collection> getCollection(String slug, {bool fresh = false}) async {
+    final data = await _getCollectionsData(
+      '/api/collections/${Uri.encodeComponent(slug)}',
+      what: 'collection',
+      fresh: fresh,
+    );
+    if (data is! Map) {
+      throw const FormatException('Unexpected collection response format');
+    }
+    return Collection.fromJson(Map<String, dynamic>.from(data));
+  }
+
+  /// One page of a collection's games in section-tree order
+  /// (`GET /api/collections/:slug/games`). [includePgn] adds each game's
+  /// whole PGN. A Premium collection answers only an entitled account;
+  /// anyone else gets a [CollectionsRequestException] whose
+  /// [CollectionsRequestException.isPremiumGate] is true.
+  Future<CollectionGamesPage> getCollectionGames(
+    String slug, {
+    String? section,
+    String? playerKey,
+    String? eco,
+    CollectionSearchQuery search = const CollectionSearchQuery(),
+    bool includePgn = false,
+    int limit = 100,
+    int offset = 0,
+    bool fresh = false,
+  }) async {
+    final data = await _getCollectionsData(
+      '/api/collections/${Uri.encodeComponent(slug)}/games',
+      what: 'collection games',
+      fresh: fresh,
+      queryParameters: {
+        ...search.parameters,
+        if (section != null && section.isNotEmpty) 'section': section,
+        if (playerKey != null && playerKey.isNotEmpty) 'player': playerKey,
+        if (eco != null && eco.isNotEmpty) 'eco': eco,
+        if (includePgn) 'include': 'pgn',
+        'limit': limit,
+        'offset': offset,
+      },
+    );
+    return CollectionGamesPage.fromJson(data);
+  }
+
+  /// Everyone who played in a collection, most games first
+  /// (`GET /api/collections/:slug/players`). Gated like the games.
+  Future<List<CollectionPlayer>> getCollectionPlayers(
+    String slug, {
+    bool fresh = false,
+  }) async {
+    final data = await _getCollectionsData(
+      '/api/collections/${Uri.encodeComponent(slug)}/players',
+      what: 'collection players',
+      fresh: fresh,
+    );
+    return CollectionPlayer.listFromJson(data);
+  }
+
+  /// The published collections (books unless [kind] says otherwise) bound
+  /// to the event [anchors] name (`GET /api/collections/for-event`).
+  Future<List<Collection>> getCollectionsForEvent(
+    CollectionEventAnchors anchors, {
+    CollectionKind kind = CollectionKind.book,
+  }) async {
+    if (anchors.isEmpty) return const [];
+    final data = await _getCollectionsData(
+      '/api/collections/for-event',
+      what: 'event collections',
+      queryParameters: anchors.toQuery(kind: kind),
+    );
+    return collectionsForEventFromJson(data);
+  }
+
+  /// Counts a read (`POST .../view` with `{viewerId}`) or sets this
+  /// account's star (`PUT .../star` with `{starred}`). Answers the
+  /// collection's current counts.
+  Future<Map<String, dynamic>> recordCollectionEngagement(
+    String slug,
+    Map<String, dynamic> body, {
+    bool star = false,
+  }) async {
+    try {
+      final response = await _dio.request(
+        '$_baseUrl/api/collections/${Uri.encodeComponent(slug)}/${star ? 'star' : 'view'}',
+        data: body,
+        options: Options(method: star ? 'PUT' : 'POST', headers: _headers),
+      );
+      return Map<String, dynamic>.from(
+        unwrapCollectionsEnvelope(
+              response.data,
+              statusCode: response.statusCode,
+            )
+            as Map,
+      );
+    } on DioException catch (e) {
+      _throwCollectionsRefusal(e);
+      rethrow;
+    }
+  }
+
+  /// GETs a collections endpoint and returns its envelope's `data`. List
+  /// values in [queryParameters] repeat their key (`?tour=a&tour=b`).
+  /// [fresh] sends `Cache-Control: no-cache`, which Gamebase takes as
+  /// "check my Premium again".
+  Future<Object?> _getCollectionsData(
+    String path, {
+    required String what,
+    Map<String, dynamic>? queryParameters,
+    bool fresh = false,
+  }) async {
+    try {
+      final response = await _dio.get(
+        '$_baseUrl$path',
+        queryParameters: queryParameters,
+        options: Options(
+          headers: {
+            ..._headers,
+            if (fresh) ...{'Cache-Control': 'no-cache', 'Pragma': 'no-cache'},
+          },
+          listFormat: ListFormat.multi,
+        ),
+      );
+      return unwrapCollectionsEnvelope(
+        response.data,
+        statusCode: response.statusCode,
+      );
+    } on DioException catch (e) {
+      _throwCollectionsRefusal(e);
+      throw CollectionsRequestException(
+        'Failed to load $what',
+        statusCode: e.response?.statusCode,
+      );
+    }
+  }
+
+  /// Throws what a refused collections request means, when its body says:
+  /// Gamebase's own `{status: "error"}` envelope (a 404 slug, a 400 search,
+  /// the Premium gate), or the proxy's "this route is not allowed here",
+  /// which is a function deployed before collections were readable.
+  void _throwCollectionsRefusal(DioException e) {
+    final body = e.response?.data;
+    if (body is! Map) return;
+    final status = e.response?.statusCode;
+    if (body['status'] == 'error') {
+      unwrapCollectionsEnvelope(body, statusCode: status);
+    }
+    final proxyError = body['error'];
+    if (proxyError == 'route_not_allowed' ||
+        proxyError == 'method_not_allowed') {
+      throw CollectionsRequestException(
+        'Collections are not available here yet',
+        statusCode: status,
+        code: kCollectionsNotAvailable,
+      );
     }
   }
 
@@ -1679,6 +1918,9 @@ class GamebaseRepository {
     bool refresh = false,
     bool prepare = true,
     int? sinceMs,
+    int? dateFromMs,
+    int? untilMs,
+    Set<String> timeControls = const {},
     Duration? receiveTimeout,
     CancelToken? cancelToken,
   }) async {
@@ -1695,6 +1937,10 @@ class GamebaseRepository {
           if (refresh) 'refresh': 'true',
           if (prepare) 'prepare': 'true',
           if (sinceMs != null && sinceMs >= 0) 'since': sinceMs,
+          if (dateFromMs != null) 'dateFrom': dateFromMs,
+          if (untilMs != null) 'until': untilMs,
+          if (timeControls.isNotEmpty)
+            'timeControls': (timeControls.toList()..sort()).join(','),
         },
         options: Options(
           headers: <String, String>{
@@ -1724,12 +1970,14 @@ class GamebaseRepository {
       );
       final cacheStatus = response.headers.value('x-pgn-cache');
       final snapshotStatus = response.headers.value('x-pgn-snapshot');
+      final filterVersion = response.headers.value('x-pgn-filter-version');
 
       return GamebasePlayerPgnExport(
         pgn: pgn,
         gameCount: gameCount ?? 0,
         cacheStatus: cacheStatus,
         snapshotStatus: snapshotStatus,
+        filterVersion: filterVersion,
       );
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode;
@@ -2027,6 +2275,125 @@ class GamebaseRepository {
     }
   }
 
+  /// The request [getPositionGames] puts on the wire for these arguments:
+  /// a POST of the body to `/games/query` when the move line survives
+  /// sanitization, otherwise a GET of the query parameters to `/games`.
+  ///
+  /// Anything that caches position-games pages keys them by this, so a page
+  /// is only ever reused for a request that is byte-for-byte the same.
+  GamebaseWireRequest positionGamesRequest({
+    required String fen,
+    List<String> moves = const [],
+    String? uci,
+    TimeControl? timeControl,
+    String? playerId,
+    String? color,
+    String? result,
+    int? minRating,
+    int? maxRating,
+    int? yearFrom,
+    int? yearTo,
+    GamebaseSortField? sortBy,
+    GamebaseSortDirection? sortDirection,
+    bool? isOnline,
+    int pageNumber = 0,
+    int pageSize = 20,
+    int notationPlies = 0,
+  }) {
+    final position = GamebaseExplorerPosition.resolve(fen, moves);
+    final normalizedMoves = position.moves;
+    if (normalizedMoves.isNotEmpty) {
+      return GamebaseWireRequest(
+        method: 'POST',
+        url: '$_baseUrl/api/game-position/games/query',
+        payload: buildPositionGamesQueryBody(
+          fen: position.fen,
+          moves: normalizedMoves,
+          uci: uci,
+          timeControl: timeControl,
+          playerId: playerId,
+          color: color,
+          result: result,
+          minRating: minRating,
+          maxRating: maxRating,
+          yearFrom: yearFrom,
+          yearTo: yearTo,
+          sortBy: sortBy,
+          sortDirection: sortDirection,
+          isOnline: isOnline,
+          pageNumber: pageNumber,
+          pageSize: pageSize,
+          notationPlies: notationPlies,
+        ),
+      );
+    }
+    return GamebaseWireRequest(
+      method: 'GET',
+      url: '$_baseUrl/api/game-position/games',
+      payload: buildPositionGamesQueryParameters(
+        fen: position.fen,
+        uci: uci,
+        timeControl: timeControl,
+        playerId: playerId,
+        color: color,
+        result: result,
+        minRating: minRating,
+        maxRating: maxRating,
+        yearFrom: yearFrom,
+        yearTo: yearTo,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        isOnline: isOnline,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+        notationPlies: notationPlies,
+      ),
+    );
+  }
+
+  /// The request [getFenPositionGames] puts on the wire for these arguments.
+  GamebaseWireRequest fenPositionGamesRequest({
+    required String fen,
+    String? uci,
+    TimeControl? timeControl,
+    String? playerId,
+    String? color,
+    String? result,
+    int? minRating,
+    int? maxRating,
+    int? yearFrom,
+    int? yearTo,
+    GamebaseSortField? sortBy,
+    GamebaseSortDirection? sortDirection,
+    bool? isOnline,
+    int pageNumber = 0,
+    int pageSize = 20,
+    int notationPlies = 0,
+  }) {
+    return GamebaseWireRequest(
+      method: 'GET',
+      url: '$_baseUrl/api/game-position/fen/games',
+      payload: buildFenPositionGamesQueryParameters(
+        fen: fen,
+        uci: uci,
+        timeControl: timeControl,
+        playerId: playerId,
+        color: color,
+        result: result,
+        minRating: minRating,
+        maxRating: maxRating,
+        yearFrom: yearFrom,
+        yearTo: yearTo,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        isOnline: isOnline,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+        notationPlies: notationPlies,
+      ),
+    );
+  }
+
   /// List example games for a given position (and optionally a specific move from that position).
   ///
   /// Pagination is 0-indexed per the API spec for this endpoint.
@@ -2050,62 +2417,45 @@ class GamebaseRepository {
     int notationPlies = 0,
   }) async {
     try {
-      final normalizedFen = _normalizeFenForLookup(fen);
-      final normalizedMoves = _sanitizeMovesForFen(normalizedFen, moves);
+      final request = positionGamesRequest(
+        fen: fen,
+        moves: moves,
+        uci: uci,
+        timeControl: timeControl,
+        playerId: playerId,
+        color: color,
+        result: result,
+        minRating: minRating,
+        maxRating: maxRating,
+        yearFrom: yearFrom,
+        yearTo: yearTo,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        isOnline: isOnline,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+        notationPlies: notationPlies,
+      );
 
-      if (kDebugMode &&
-          moves.isNotEmpty &&
-          normalizedMoves.length != moves.length) {
-        debugPrint(
-          '[GamebaseRepository] Dropping mismatched move path for games query',
-        );
+      if (kDebugMode && moves.isNotEmpty) {
+        final sentMoves = (request.payload['moves'] as List?) ?? const [];
+        if (sentMoves.length != moves.length) {
+          debugPrint(
+            '[GamebaseRepository] Dropping mismatched move path for games query',
+          );
+        }
       }
 
       final response =
-          normalizedMoves.isNotEmpty
+          request.method == 'POST'
               ? await _dio.post(
-                '$_baseUrl/api/game-position/games/query',
-                data: buildPositionGamesQueryBody(
-                  fen: normalizedFen,
-                  moves: normalizedMoves,
-                  uci: uci,
-                  timeControl: timeControl,
-                  playerId: playerId,
-                  color: color,
-                  result: result,
-                  minRating: minRating,
-                  maxRating: maxRating,
-                  yearFrom: yearFrom,
-                  yearTo: yearTo,
-                  sortBy: sortBy,
-                  sortDirection: sortDirection,
-                  isOnline: isOnline,
-                  pageNumber: pageNumber,
-                  pageSize: pageSize,
-                  notationPlies: notationPlies,
-                ),
+                request.url,
+                data: request.payload,
                 options: _requestOptions(),
               )
               : await _dio.get(
-                '$_baseUrl/api/game-position/games',
-                queryParameters: buildPositionGamesQueryParameters(
-                  fen: normalizedFen,
-                  uci: uci,
-                  timeControl: timeControl,
-                  playerId: playerId,
-                  color: color,
-                  result: result,
-                  minRating: minRating,
-                  maxRating: maxRating,
-                  yearFrom: yearFrom,
-                  yearTo: yearTo,
-                  sortBy: sortBy,
-                  sortDirection: sortDirection,
-                  isOnline: isOnline,
-                  pageNumber: pageNumber,
-                  pageSize: pageSize,
-                  notationPlies: notationPlies,
-                ),
+                request.url,
+                queryParameters: request.payload,
                 options: _requestOptions(),
               );
 
@@ -2147,29 +2497,27 @@ class GamebaseRepository {
     int notationPlies = 0,
   }) async {
     try {
-      final normalizedFen = _normalizeFenForLookup(fen);
+      final request = fenPositionGamesRequest(
+        fen: fen,
+        uci: uci,
+        timeControl: timeControl,
+        playerId: playerId,
+        color: color,
+        result: result,
+        minRating: minRating,
+        maxRating: maxRating,
+        yearFrom: yearFrom,
+        yearTo: yearTo,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        isOnline: isOnline,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+        notationPlies: notationPlies,
+      );
       final response = await _dio.get(
-        '$_baseUrl/api/game-position/fen/games',
-        queryParameters: {
-          'fen': normalizedFen,
-          'pageNumber': pageNumber,
-          'pageSize': pageSize,
-          if (uci != null && uci.trim().isNotEmpty) 'uci': uci.trim(),
-          if (playerId != null && playerId.trim().isNotEmpty)
-            'playerId': playerId.trim(),
-          if (timeControl != null)
-            'timeControl': timeControl.name.toUpperCase(),
-          if (minRating != null) 'minRating': minRating,
-          if (maxRating != null) 'maxRating': maxRating,
-          if (color != null) 'color': color,
-          if (result != null) 'result': result,
-          if (yearFrom != null) 'yearFrom': yearFrom,
-          if (yearTo != null) 'yearTo': yearTo,
-          if (isOnline != null) 'isOnline': isOnline,
-          if (sortBy != null) 'sortBy': sortBy.name,
-          if (sortDirection != null) 'sortDirection': sortDirection.name,
-          if (notationPlies > 0) 'notationPlies': notationPlies,
-        },
+        request.url,
+        queryParameters: request.payload,
         options: _requestOptions(),
       );
 
@@ -2211,6 +2559,15 @@ final gamebaseRepositoryProvider = Provider<GamebaseRepository>((ref) {
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 30),
     ),
+  );
+  // Dio's own adapter drops an idle connection after 3 s, so a reader who
+  // pauses between positions pays a fresh TCP + TLS handshake (plus the
+  // proxy hop) on the next explorer request. A minute of idle keep-alive
+  // covers ordinary reading pauses; the socket still closes the moment the
+  // server closes its end.
+  dio.httpClientAdapter = IOHttpClientAdapter(
+    createHttpClient:
+        () => HttpClient()..idleTimeout = const Duration(seconds: 60),
   );
   return GamebaseRepository(dio);
 });

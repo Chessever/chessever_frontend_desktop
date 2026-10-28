@@ -1,4 +1,5 @@
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/repository/library/cloud_pgn_date.dart';
 import 'package:dart_mappable/dart_mappable.dart';
 
 part 'saved_analysis.mapper.dart';
@@ -94,7 +95,9 @@ class SavedAnalysis with SavedAnalysisMappable {
       'title': title,
       'source_game_id': sourceGameId,
       'source_tournament_id': sourceTournamentId,
-      'chess_game': chessGame.toJson(),
+      // A date that cannot be a calendar date (`2005.06.31`) is sent as the
+      // PGN unknown-date sentinel instead of aborting the write server-side.
+      'chess_game': cloudSafeChessGameJson(chessGame),
       'analysis_state': analysisState,
       'variation_comments': variationComments,
       'move_nags': moveNags,
@@ -117,7 +120,10 @@ class SavedAnalysis with SavedAnalysisMappable {
       'title': title,
       'source_game_id': sourceGameId,
       'source_tournament_id': sourceTournamentId,
-      'chess_game': chessGame.toJson(),
+      // Every destination copy (and the single-game save) goes through this
+      // payload: the cloud-safety rule for the PGN date lives here so no
+      // insert path can bypass it.
+      'chess_game': cloudSafeChessGameJson(chessGame),
       'analysis_state': analysisState,
       'variation_comments': variationComments,
       'move_nags': moveNags,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
+import 'package:chessever/desktop/models/player_download_preferences.dart';
 import 'package:chessever/desktop/panes/player_workspace_pane.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -513,6 +514,7 @@ class _ConcurrentChessComWorkspaceRepository extends PlayerWorkspaceRepository {
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
     required String username,
     int? sinceMs,
+    PlayerDownloadPreferences preferences = const PlayerDownloadPreferences(),
     bool forceRefresh = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,

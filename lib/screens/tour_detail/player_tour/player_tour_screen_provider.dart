@@ -1,3 +1,4 @@
+import 'package:chessever/screens/standings/player_standing_sections_provider.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -81,6 +82,11 @@ class _RetainedMergedTournamentGamesNotifier
       return _lastSnapshot;
     }
 
+    final primaryCatalog = ref.watch(
+      completeGamesTourProvider(aboutTourModel.id),
+    );
+    if (!primaryCatalog.hasValue) return _lastSnapshot;
+
     bool isPaginationCategory(String name) {
       return RegExp(
         r'Boards?\s+\d+[\-\+]?\d*\+?$',
@@ -113,26 +119,57 @@ class _RetainedMergedTournamentGamesNotifier
       if (relatedTours.length > 1) {
         for (final tourModel in relatedTours) {
           final tourGamesAsync = ref.watch(
-            gamesTourProvider(tourModel.tour.id),
+            completeGamesTourProvider(tourModel.tour.id),
           );
-          if (tourGamesAsync.hasValue) {
-            for (final g in tourGamesAsync.value!) {
-              try {
-                allGames.add(GamesTourModel.fromGame(g));
-              } catch (_) {}
-            }
+          if (!tourGamesAsync.hasValue) return _lastSnapshot;
+          for (final g in tourGamesAsync.requireValue) {
+            try {
+              allGames.add(GamesTourModel.fromGame(g));
+            } catch (_) {}
           }
         }
       } else {
-        allGames.addAll(gamesTourAsync.value?.gamesTourModels ?? []);
+        allGames.addAll(
+          _completeTournamentModels(
+            screen: gamesTourAsync.requireValue,
+            complete: primaryCatalog.requireValue,
+          ),
+        );
       }
     } else {
-      allGames.addAll(gamesTourAsync.value?.gamesTourModels ?? []);
+      allGames.addAll(
+        _completeTournamentModels(
+          screen: gamesTourAsync.requireValue,
+          complete: primaryCatalog.requireValue,
+        ),
+      );
     }
 
     _lastSnapshot = List<GamesTourModel>.unmodifiable(allGames);
     return _lastSnapshot;
   }
+}
+
+List<GamesTourModel> _completeTournamentModels({
+  required GamesScreenModel screen,
+  required List<Games> complete,
+}) {
+  final screenIsComplete =
+      !screen.isSearchMode &&
+      screen.gameDisplayMode == GameDisplayMode.all &&
+      screen.sourceGameCount == complete.length &&
+      screen.gamesTourModels.length == complete.length;
+  if (screenIsComplete) return screen.gamesTourModels;
+
+  final models = <GamesTourModel>[];
+  for (final game in complete) {
+    try {
+      models.add(GamesTourModel.fromGame(game));
+    } catch (_) {
+      // One malformed row must not make all tournament standings disappear.
+    }
+  }
+  return models;
 }
 
 /// Search query for the standings tab
@@ -330,6 +367,26 @@ final tournamentRosterStandingsProvider = StreamProvider.autoDispose
         return Stream.value(const <PlayerStandingModel>[]);
       }
 
+      final officialTour = ref.watch(
+        tourDetailScreenProvider.select((value) {
+          return value.valueOrNull?.tours
+              .where((item) => item.tour.id == tourId)
+              .firstOrNull
+              ?.tour;
+        }),
+      );
+      final officialInfo = officialTour?.info;
+      final selectedSectionId = ref.watch(
+        selectedPlayerStandingSectionProvider(tourId),
+      );
+      final section = selectedOfficialPlayerSection(
+        officialInfo?.playerStandingSections ?? const [],
+        selectedSectionId,
+      );
+      final authoritative =
+          section != null ||
+          officialTour?.usesExternalStandings == true ||
+          officialInfo?.standingsSource == 'chess-results';
       final repository = ref.read(tourRepositoryProvider);
       final refreshInterval = ref.read(tournamentRosterRefreshIntervalProvider);
       final retryDelay = ref.read(tournamentRosterRetryDelayProvider);
@@ -352,6 +409,13 @@ final tournamentRosterStandingsProvider = StreamProvider.autoDispose
       }) {
         if (disposed) return;
         final rows = standings.toList(growable: false);
+        if (authoritative) {
+          if (source == _StandingSnapshotSource.roster) {
+            controller.add(rows);
+          }
+          return;
+        }
+
         if (source == _StandingSnapshotSource.roster) {
           rosterAuthoritativelyEmpty = rows.isEmpty;
           if (rosterAuthoritativelyEmpty) {
@@ -375,12 +439,19 @@ final tournamentRosterStandingsProvider = StreamProvider.autoDispose
       Future<void> performRefresh() async {
         final generation = listenerGeneration;
         try {
-          final players = await repository.getTourPlayers(tourId);
+          final players =
+              section?.players ?? await repository.getTourPlayers(tourId);
           if (disposed || !hasListeners || generation != listenerGeneration) {
             return;
           }
           emit(
-            players.map(PlayerStandingModel.fromPlayer),
+            authoritative
+                ? publishedStandingRows(players)
+                : players.map(
+                  (player) => PlayerStandingModel.fromPlayer(
+                    player,
+                  ).copyWith(overallRank: player.rank),
+                ),
             source: _StandingSnapshotSource.roster,
           );
           schedule(refreshInterval);
@@ -496,12 +567,40 @@ String _standingCategoryBaseName(String name) {
       .trim();
 }
 
+/// Rows of a published (official) table in published order. Roster players
+/// the source does not rank — byes, withdrawals, feed-only names — are not
+/// official rows; ranking them by list position would invent places.
+@visibleForTesting
+List<PlayerStandingModel> publishedStandingRows(
+  Iterable<TournamentPlayer> players,
+) {
+  final ranked =
+      players
+          .where(
+            (p) =>
+                p.rank != null &&
+                p.rank! > 0 &&
+                p.score != null &&
+                p.score!.isFinite,
+          )
+          .indexed
+          .toList()
+        ..sort((a, b) {
+          final byRank = a.$2.rank!.compareTo(b.$2.rank!);
+          return byRank == 0 ? a.$1.compareTo(b.$1) : byRank;
+        });
+  return [
+    for (final (_, player) in ranked)
+      PlayerStandingModel.fromPlayer(player).copyWith(overallRank: player.rank),
+  ];
+}
+
 List<PlayerStandingModel> assignOverallRanks(
   List<PlayerStandingModel> standings,
 ) {
   return [
     for (var i = 0; i < standings.length; i++)
-      standings[i].copyWith(overallRank: i + 1),
+      standings[i].copyWith(overallRank: standings[i].overallRank ?? i + 1),
   ];
 }
 
@@ -551,16 +650,25 @@ bool _matchesStandingSearch(String value, String normalizedQuery) {
 ///   whenever the source value is present and not demonstrably stale, surface
 ///   it verbatim. "Stale" = the loaded game feed proves more finished games
 ///   than the source row claims; in that case we trust the live calculation.
+///
+///   A row the organizer's published table ranks ([officialRow]) is never
+///   stale by that measure: chess-results leaves forfeits out of a team
+///   event's player list, and name matching can hand one player a namesake's
+///   games, so "more finished games" does not mean a newer score there.
 @visibleForTesting
 ({double? score, int played}) resolveStandingScore({
   required double? sourceScore,
   required int sourcePlayed,
   required double calculatedScore,
   required int calculatedPlayed,
+  bool officialRow = false,
 }) {
   // No source score: trust the live calculation.
   if (sourceScore == null) {
     return (score: calculatedScore, played: calculatedPlayed);
+  }
+  if (officialRow) {
+    return (score: sourceScore, played: sourcePlayed);
   }
   // Stale-source guard (preserved from main): when the loaded game feed proves
   // more finished games than the source row claims, the source score is lagging
@@ -580,6 +688,35 @@ bool _matchesStandingSearch(String value, String normalizedQuery) {
   );
 }
 
+/// Whether a roster row carries the organizer's own rank and score, i.e. the
+/// tour's standings come from the published table and the table lists this
+/// player.
+@visibleForTesting
+bool isOfficialStandingRow({
+  required bool useExternalOrder,
+  required int? rank,
+  required double? score,
+}) => useExternalOrder && rank != null && score != null;
+
+/// A published table owns its membership, as on chess-results.com and mobile.
+/// Feed players it does not list are dropped, so they get no invented rank
+/// and add no game-derived tiebreak columns. A table with no ranked row yet
+/// is not published, and keeps every player.
+@visibleForTesting
+List<TournamentPlayer> publishedTableMembers(
+  List<TournamentPlayer> players, {
+  required bool useExternalOrder,
+  required bool singleTourScope,
+}) {
+  bool official(TournamentPlayer p) => isOfficialStandingRow(
+    useExternalOrder: useExternalOrder && singleTourScope,
+    rank: p.rank,
+    score: p.score,
+  );
+  if (!players.any(official)) return players;
+  return players.where(official).toList(growable: false);
+}
+
 /// Whether to skip the client-side resort and trust the server-supplied order.
 ///
 /// Two sources qualify: chess-results tours (`useExternalOrder`) and Lichess
@@ -596,6 +733,12 @@ bool shouldPreserveExternalStandingOrder({
   if (hasStaleExternalScores) return false;
   return useExternalOrder || hasUniversalRank;
 }
+
+/// Result-affecting signature of a tour's games. Watching
+/// `gamesTourProvider(tourId).select(standingsGamesSignature)` rebuilds on new
+/// games, result changes and team labels, not on clock or move ticks.
+String standingsGamesSignature(AsyncValue<List<Games>> gamesAsync) =>
+    _standingsGamesSignature(gamesAsync);
 
 String _standingsGamesSignature(AsyncValue<List<Games>> gamesAsync) {
   final games = gamesAsync.valueOrNull;
@@ -694,15 +837,43 @@ class PlayerTourScreenNotifier
               .toList();
     }
 
-    // Watch only the part of live games that can change standings. Move/clock
-    // ticks should not rebuild this provider, but new games or result changes
-    // should update scores gracefully while the list keeps its scroll offset.
-    final allGames = _watchStandingsGamesForTours(relatedTours);
+    final catalogs = [
+      for (final tour in relatedTours)
+        ref.watch(completeGamesTourFutureProvider(tour.tour.id).future),
+    ];
+    final allGames = <GamesTourModel>[];
+    for (final games in await Future.wait(catalogs)) {
+      for (final game in games) {
+        try {
+          allGames.add(GamesTourModel.fromGame(game));
+        } catch (_) {
+          // Skip malformed rows to keep standings resilient during live ingest.
+        }
+      }
+    }
 
     final allPlayers = <TournamentPlayer>[];
     for (final tourModel in relatedTours) {
       allPlayers.addAll(tourModel.tour.players);
     }
+
+    final sections =
+        relatedTours.length == 1
+            ? relatedTours.first.tour.info.playerStandingSections
+            : const <OfficialPlayerSection>[];
+    final section = selectedOfficialPlayerSection(
+      sections,
+      ref.watch(selectedPlayerStandingSectionProvider(aboutTourModel.id)),
+    );
+    if (section != null) {
+      allPlayers
+        ..clear()
+        ..addAll(section.players);
+    }
+    final scopedGames =
+        section == null
+            ? allGames
+            : scopeOfficialSectionGames(section, allGames);
 
     // Trust the server-side standings order only when scope is a single tour
     // that the data hub has flagged as canonically sorted (currently from
@@ -711,11 +882,11 @@ class PlayerTourScreenNotifier
     // that case, fall back to client-side sort.
     final useExternalOrder =
         relatedTours.length == 1 &&
-        relatedTours.first.tour.usesExternalStandings;
+        (section != null || relatedTours.first.tour.usesExternalStandings);
 
     final builtStandings = await _buildStandingsFromData(
       tournamentPlayers: allPlayers,
-      gamesTourModels: allGames,
+      gamesTourModels: scopedGames,
       useExternalOrder: useExternalOrder,
       singleTourScope: relatedTours.length == 1,
     );
@@ -758,29 +929,6 @@ class PlayerTourScreenNotifier
       return null;
     }
     return previous;
-  }
-
-  List<GamesTourModel> _watchStandingsGamesForTours(
-    List<TourModel> relatedTours,
-  ) {
-    final allGames = <GamesTourModel>[];
-
-    for (final tourModel in relatedTours) {
-      final tourId = tourModel.tour.id;
-      ref.watch(gamesTourProvider(tourId).select(_standingsGamesSignature));
-      final games = ref.read(gamesTourProvider(tourId)).valueOrNull;
-      if (games == null || games.isEmpty) continue;
-
-      for (final game in games) {
-        try {
-          allGames.add(GamesTourModel.fromGame(game));
-        } catch (_) {
-          // Skip malformed rows to keep standings resilient during live ingest.
-        }
-      }
-    }
-
-    return allGames;
   }
 
   /// Identifies categories like "Boards 1-66", "Boards 67-126", "Boards 252+"
@@ -863,9 +1011,35 @@ class PlayerTourScreenNotifier
               fideId: card.fideId,
               rating: card.rating > 0 ? card.rating : null,
               played: 0,
+              team: _nonEmptyTeam(card.team),
             ),
           );
         }
+      }
+    }
+
+    // Team standings group roster rows by team. Fill a missing roster team
+    // label from the player's game card; never override a roster label.
+    if (players.any((player) => _nonEmptyTeam(player.team) == null)) {
+      final cardTeamByName = <String, String>{};
+      for (final game in gamesTourModels) {
+        for (final card in [game.whitePlayer, game.blackPlayer]) {
+          final team = _nonEmptyTeam(card.team);
+          final key = _canonicalName(card.name);
+          if (team == null || key.isEmpty) continue;
+          cardTeamByName.putIfAbsent(key, () => team);
+        }
+      }
+      if (cardTeamByName.isNotEmpty) {
+        players = [
+          for (final player in players)
+            _nonEmptyTeam(player.team) == null &&
+                    cardTeamByName.containsKey(_canonicalName(player.name))
+                ? player.copyWith(
+                  team: cardTeamByName[_canonicalName(player.name)],
+                )
+                : player,
+        ];
       }
     }
 
@@ -1014,10 +1188,22 @@ class PlayerTourScreenNotifier
       //   - (custom-scoring) an external-order tour ships no source score for a
       //     player yet the feed has finished games, so the source order can't
       //     reflect them.
-      if ((player.score != null && gamesPlayed > player.played) ||
-          (useExternalOrder &&
-              player.score == null &&
-              gamesPlayed > player.played)) {
+      //
+      // Neither applies to a published table (`useExternalOrder`) row by row:
+      // a ranked row is the organizer's number, and a row the table does not
+      // list sorts after it whatever its games say.
+      final officialRow = isOfficialStandingRow(
+        useExternalOrder: useExternalOrder,
+        rank: player.rank,
+        score: player.score,
+      );
+      final outsideOfficialTable = useExternalOrder && player.rank == null;
+      if (!officialRow &&
+          !outsideOfficialTable &&
+          ((player.score != null && gamesPlayed > player.played) ||
+              (useExternalOrder &&
+                  player.score == null &&
+                  gamesPlayed > player.played))) {
         hasStaleExternalScores = true;
       }
 
@@ -1026,6 +1212,7 @@ class PlayerTourScreenNotifier
         sourcePlayed: player.played,
         calculatedScore: calculatedScore,
         calculatedPlayed: gamesPlayed,
+        officialRow: officialRow,
       );
 
       enrichedPlayers.add(
@@ -1096,7 +1283,7 @@ class PlayerTourScreenNotifier
       hasUniversalRank: hasUniversalRank,
       hasStaleExternalScores: hasStaleExternalScores,
     );
-    if (preserveExternalOrder) {
+    if (preserveExternalOrder && !useExternalOrder) {
       enrichedPlayers.sort((a, b) {
         final aRank = a.rank ?? 1 << 30;
         final bRank = b.rank ?? 1 << 30;
@@ -1107,7 +1294,7 @@ class PlayerTourScreenNotifier
         if (bScore != aScore) return bScore.compareTo(aScore);
         return (b.rating ?? 0).compareTo(a.rating ?? 0);
       });
-    } else {
+    } else if (!preserveExternalOrder) {
       enrichedPlayers.sort((a, b) {
         final aScore = a.score ?? 0.0;
         final bScore = b.score ?? 0.0;
@@ -1121,8 +1308,17 @@ class PlayerTourScreenNotifier
       });
     }
 
-    return enrichedPlayers
-        .map((player) => PlayerStandingModel.fromPlayer(player))
+    return publishedTableMembers(
+          enrichedPlayers,
+          useExternalOrder: useExternalOrder,
+          singleTourScope: singleTourScope,
+        )
+        .map(
+          (player) => PlayerStandingModel.fromPlayer(player).copyWith(
+            overallRank:
+                useExternalOrder && singleTourScope ? player.rank : null,
+          ),
+        )
         .toList();
   }
 
@@ -1364,3 +1560,8 @@ final tournamentFavoritePlayersProvider =
       final favoritesService = ref.read(favoriteStandingsPlayerService);
       return favoritesService.getFavoritePlayers();
     });
+
+String? _nonEmptyTeam(String? team) {
+  final trimmed = team?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}

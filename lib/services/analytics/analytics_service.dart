@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../repository/authentication/model/app_user.dart';
+import 'package:chessever/desktop/services/windows_analytics_transport.dart';
 import 'package:chessever/services/appsflyer_service.dart';
 
 /// Centralized analytics facade to keep event names/metadata consistent.
@@ -27,6 +28,7 @@ class AnalyticsService {
   Map<String, dynamic> _userProperties = {};
   String? _userId;
   FirebaseAnalytics? _firebaseAnalytics;
+  WindowsAnalyticsTransport? _windowsAnalytics;
 
   final AnalyticsRouteObserver routeObserver = AnalyticsRouteObserver();
 
@@ -40,6 +42,10 @@ class AnalyticsService {
   Future<void> _initialize() async {
     _baseEventProperties = await _buildBaseEventProperties();
     _firebaseAnalytics = _createFirebaseAnalytics();
+    if (Platform.isWindows) {
+      _windowsAnalytics = WindowsAnalyticsTransport();
+      await _windowsAnalytics!.initialize();
+    }
     _isReady = true;
 
     trackEventDetached(
@@ -148,6 +154,10 @@ class AnalyticsService {
       await _setFirebaseUserProperties(normalizedUserProps);
     }
 
+    _windowsAnalytics?.addEvent(
+      _toFirebaseName(eventName),
+      _toFirebaseParameters(eventProps),
+    );
     await _logFirebaseEvent(eventName, eventProps);
 
     try {

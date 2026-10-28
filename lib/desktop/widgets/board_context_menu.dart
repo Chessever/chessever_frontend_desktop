@@ -103,7 +103,7 @@ Future<void> showBoardContextMenu(
       DesktopContextMenuItem(
         value: _BoardContextAction.saveGameToLibrary,
         icon: Icons.library_add_outlined,
-        label: 'Save game to library…',
+        label: 'Save to library…',
         shortcut: hintFor(BoardActionKey.saveGameToLibrary),
         enabled: canCopyOrSavePgn,
       ),

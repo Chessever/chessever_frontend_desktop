@@ -12,7 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 ///
 /// Defaults (`timeControls=[]`, rating/year null, isOnline/result/color null)
 /// are omitted. Listed UI values:
-/// timeControl: classical, rapid, blitz, bullet, ultrabullet
+/// timeControl: classical, rapid, blitz
 /// rating: default vs 2400-2800
 /// year: default vs 2018-2024
 /// isOnline: all, online, otb
@@ -124,16 +124,6 @@ const _timeControlValues = <_AxisValue>[
     label: 'timeControl=BLITZ',
     timeControl: TimeControl.blitz,
   ),
-  _AxisValue(
-    axis: 'timeControl',
-    label: 'timeControl=BULLET',
-    timeControl: TimeControl.bullet,
-  ),
-  _AxisValue(
-    axis: 'timeControl',
-    label: 'timeControl=ULTRABULLET',
-    timeControl: TimeControl.ultrabullet,
-  ),
 ];
 
 const _ratingValues = <_AxisValue>[
@@ -194,7 +184,7 @@ const _playerValues = <_AxisValue>[
   _AxisValue(
     axis: 'playerId',
     label: 'playerId=bluebaum',
-    playerId: 'bluebaum',
+    playerId: '00000000-0000-4000-8000-000000000001',
   ),
 ];
 
@@ -267,7 +257,7 @@ Map<String, dynamic> _aggregatesBody(GamebaseFilters filters) {
 
 Map<String, dynamic> _gamesBody(GamebaseFilters filters) {
   return buildPositionGamesQueryBody(
-    fen: _startFen,
+    fen: Chess.initial.play(NormalMove.fromUci('e2e4')).fen,
     moves: _deepMoves,
     timeControl: filters.requestTimeControl,
     playerId: filters.requestPlayerId,
@@ -352,9 +342,9 @@ void main() {
   final cases = _generateExplorerFilterMatrix();
 
   test('explorer matrix enumerates every axis and every pair', () {
-    expect(cases.where((c) => c.kind == 'single').length, 15);
-    expect(cases.where((c) => c.kind == 'pair').length, 90);
-    expect(cases.length, 105);
+    expect(cases.where((c) => c.kind == 'single').length, 13);
+    expect(cases.where((c) => c.kind == 'pair').length, 70);
+    expect(cases.length, 83);
     expect(_allAxes.map((axis) => axis.first.axis).toList(), [
       'timeControl',
       'rating',
@@ -381,7 +371,7 @@ void main() {
 
   test('all seven axes AND-combine on aggregates and position games', () {
     const filters = GamebaseFilters(
-      playerIds: <String>['bluebaum'],
+      playerIds: <String>['00000000-0000-4000-8000-000000000001'],
       timeControls: [TimeControl.classical],
       minRating: 2400,
       maxRating: 2800,
@@ -392,7 +382,7 @@ void main() {
       playerColor: GamebasePlayerColor.white,
     );
     final expected = <String, dynamic>{
-      'playerId': 'bluebaum',
+      'playerId': '00000000-0000-4000-8000-000000000001',
       'timeControl': 'CLASSICAL',
       'minRating': 2400,
       'maxRating': 2800,

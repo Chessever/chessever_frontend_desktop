@@ -32,6 +32,7 @@ import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart';
 import 'package:chessever/screens/chessboard/widgets/evaluation_bar_widget.dart';
+import 'package:chessever/desktop/widgets/desktop_eval_midpoint.dart';
 import 'package:chessever/screens/chessboard/widgets/player_first_row_detail_widget.dart'
     show PlayerView;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart'
@@ -76,6 +77,14 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
   GameTabDragPayload? _hoverPayload;
   bool _closeConfirmationOpen = false;
 
+  // Last built tab strip and the inputs it was built from.
+  Widget? _tabStrip;
+  Object? _tabStripTabs;
+  Object? _tabStripActiveId;
+  double? _tabStripListWidth;
+  bool? _tabStripFillsRest;
+  Map<String, double>? _tabStripWidths;
+
   Future<void> _closeTabWithUnsavedAnalysisGuard(String tabId) async {
     final session = ref.read(boardPaneSessionByTabIdProvider)[tabId];
     if (boardSessionHasUnsavedAnalysis(session)) {
@@ -105,7 +114,12 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
         setState(() => _hoverPayload = null);
         // Drag-drop intent is "open this game and look at it now" — pass
         // focus: true so the new tab foregrounds itself.
-        details.data.spawn(ref, focus: true);
+        // Admitted before the spawn: a gated payload opens nothing.
+        details.data.spawnAdmitted(
+          ref,
+          focus: true,
+          surface: 'tab_strip_drop',
+        );
       },
       builder: (context, candidate, rejected) {
         final dragging = candidate.isNotEmpty;
@@ -153,7 +167,29 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                         constraints.maxWidth,
                         desiredListWidth,
                       );
-                      return Row(
+                      final fillsRest = listWidth < constraints.maxWidth;
+                      // Window-resize frames re-run this builder even when
+                      // every chip keeps its width. Returning the identical
+                      // strip lets Flutter skip rebuilding the list and every
+                      // chip; any real input change builds a fresh one.
+                      final cachedStrip = _tabStrip;
+                      if (cachedStrip != null &&
+                          identical(_tabStripTabs, state.tabs) &&
+                          _tabStripActiveId == state.activeId &&
+                          _tabStripListWidth == listWidth &&
+                          _tabStripFillsRest == fillsRest &&
+                          const MapEquality<String, double>().equals(
+                            _tabStripWidths,
+                            widths,
+                          )) {
+                        return cachedStrip;
+                      }
+                      _tabStripTabs = state.tabs;
+                      _tabStripActiveId = state.activeId;
+                      _tabStripListWidth = listWidth;
+                      _tabStripFillsRest = fillsRest;
+                      _tabStripWidths = widths;
+                      return _tabStrip = Row(
                         children: [
                           SizedBox(
                             width: listWidth,
@@ -223,7 +259,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                               },
                             ),
                           ),
-                          if (listWidth < constraints.maxWidth)
+                          if (fillsRest)
                             const Expanded(
                               child: DragToMoveArea(child: SizedBox.expand()),
                             ),
@@ -905,7 +941,7 @@ class _GameTabChipContent extends StatelessWidget {
         final rightInset =
             reserveClose ? (muted ? 40.0 : 22.0) : (muted ? 18.0 : 0.0);
 
-        if (!hasNamedSides) {
+        if (!hasNamedSides || args.eventPlayerScope != null) {
           final label = args.label.trim().isEmpty ? 'Board' : args.label.trim();
           final content = Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1223,13 +1259,15 @@ class _RegularTabChipContent extends StatelessWidget {
                 child: SizedBox(
                   width: 5,
                   height: 22,
-                  child: EvaluationBarWidgetForGames(
-                    width: 5,
-                    height: 22,
-                    fen: boardFen!,
-                    playerView: PlayerView.gridView,
-                    allowStockfishFallback: false,
-                    showText: false,
+                  child: DesktopEvalMidpoint(
+                    child: EvaluationBarWidgetForGames(
+                      width: 5,
+                      height: 22,
+                      fen: boardFen!,
+                      playerView: PlayerView.gridView,
+                      allowStockfishFallback: false,
+                      showText: false,
+                    ),
                   ),
                 ),
               ),
@@ -1337,17 +1375,20 @@ class _HorizontalSplit extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final w = whiteRatio.clamp(0.04, 0.96);
-    return Row(
-      children: [
-        Expanded(
-          flex: (w * 1000).round(),
-          child: const ColoredBox(color: kWhiteColor),
-        ),
-        Expanded(
-          flex: ((1.0 - w) * 1000).round(),
-          child: const ColoredBox(color: _trackColor),
-        ),
-      ],
+    return DesktopEvalMidpoint(
+      axis: Axis.horizontal,
+      child: Row(
+        children: [
+          Expanded(
+            flex: (w * 1000).round(),
+            child: const ColoredBox(color: kWhiteColor),
+          ),
+          Expanded(
+            flex: ((1.0 - w) * 1000).round(),
+            child: const ColoredBox(color: _trackColor),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1461,6 +1502,8 @@ class _CloseButtonState extends State<_CloseButton>
 // + filled glyphs.
 IconData _iconFor(TabKind kind) {
   switch (kind) {
+    case TabKind.inbox:
+      return Icons.inbox_outlined;
     case TabKind.board:
       return Icons.grid_4x4_outlined;
     case TabKind.tournaments:
@@ -1473,6 +1516,8 @@ IconData _iconFor(TabKind kind) {
       return Icons.collections_bookmark_outlined;
     case TabKind.databaseWorkspace:
       return Icons.table_chart_outlined;
+    case TabKind.teamScoreCard:
+      return Icons.groups_2_outlined;
     case TabKind.favorites:
       return Icons.star_outline_outlined;
     case TabKind.players:
@@ -1501,9 +1546,10 @@ IconData _iconFor(TabKind kind) {
       return Icons.account_circle_outlined;
     case TabKind.boardSettings:
       return Icons.tune_outlined;
-    case TabKind.notificationSettings:
-      return Icons.notifications_outlined;
     case TabKind.play:
       return Icons.sports_esports_outlined;
+    case TabKind.collections:
+    case TabKind.collectionWorkspace:
+      return Icons.auto_stories_outlined;
   }
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 
 /// Logical actions a cloud folder/database can dispatch from its right-click
@@ -15,6 +16,15 @@ enum LibraryFolderAction {
   newDatabase,
   exportPgn,
   delete,
+
+  /// Publish, copy or revoke the public link of a root database.
+  share,
+
+  /// Publish the folder as a catalog book or edit its publication details.
+  publishBook,
+
+  /// Remove a subscribed shared book from the user's library.
+  unsubscribe,
 }
 
 enum _LibraryFolderPinAction { pin, unpin }
@@ -33,6 +43,7 @@ void showLibraryFolderActionsMenu({
   bool isShownOnLibraryHome = false,
   bool isPinned = false,
   ValueChanged<bool>? onPinnedChanged,
+  bool canShare = false,
 }) {
   unawaited(
     _showFolderMenu(
@@ -45,6 +56,7 @@ void showLibraryFolderActionsMenu({
       isShownOnLibraryHome: isShownOnLibraryHome,
       isPinned: isPinned,
       onPinnedChanged: onPinnedChanged,
+      canShare: canShare,
       onAction: onAction,
     ),
   );
@@ -65,6 +77,7 @@ class LibraryFolderContextMenu extends StatelessWidget {
     this.isShownOnLibraryHome = false,
     this.isPinned = false,
     this.onPinnedChanged,
+    this.canShare = false,
   });
 
   final LibraryFolder folder;
@@ -89,6 +102,9 @@ class LibraryFolderContextMenu extends StatelessWidget {
   /// Adds a Pin/Unpin action when supplied for a Home-managed item.
   final ValueChanged<bool>? onPinnedChanged;
 
+  /// Shows "Share database..." for an owned root database.
+  final bool canShare;
+
   Future<void> _open(BuildContext context, Offset globalPos) {
     return _showFolderMenu(
       context: context,
@@ -100,6 +116,7 @@ class LibraryFolderContextMenu extends StatelessWidget {
       isShownOnLibraryHome: isShownOnLibraryHome,
       isPinned: isPinned,
       onPinnedChanged: onPinnedChanged,
+      canShare: canShare,
       onAction: onAction,
     );
   }
@@ -126,6 +143,7 @@ Future<void> _showFolderMenu({
   required bool isShownOnLibraryHome,
   required bool isPinned,
   required ValueChanged<bool>? onPinnedChanged,
+  required bool canShare,
 }) async {
   final isSubscribed = folder.isSubscribed;
   final canRenameOrDelete = !isSubscribed && !folder.isPermanentLibraryFolder;
@@ -164,12 +182,34 @@ Future<void> _showFolderMenu({
         ),
         const DesktopContextMenuDivider(),
       ],
+      if (libraryFolderCanPublish(folder))
+        const DesktopContextMenuItem(
+          value: LibraryFolderAction.publishBook,
+          icon: Icons.publish_rounded,
+          label: 'Publish / edit collection...',
+        ),
+      if (canShare && !isSubscribed) ...[
+        const DesktopContextMenuItem(
+          value: LibraryFolderAction.share,
+          icon: Icons.link_rounded,
+          label: 'Share database...',
+        ),
+      ],
       DesktopContextMenuItem(
         value: LibraryFolderAction.exportPgn,
         icon: Icons.save_alt_rounded,
         label: 'Export as PGN...',
         enabled: hasGames,
       ),
+      if (isSubscribed) ...[
+        const DesktopContextMenuDivider(),
+        const DesktopContextMenuItem(
+          value: LibraryFolderAction.unsubscribe,
+          icon: Icons.remove_circle_outline_rounded,
+          label: 'Remove from my library',
+          destructive: true,
+        ),
+      ],
       if (!isSubscribed) ...[
         const DesktopContextMenuDivider(),
         if (canCreateDatabase)

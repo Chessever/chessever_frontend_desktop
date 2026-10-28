@@ -4,20 +4,92 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:chessever/desktop/auth/desktop_auth_gate.dart';
 import 'package:chessever/desktop/services/desktop_offline_access_cache.dart';
-import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 
 void main() {
-  group('desktop subscription gate loading policy', () {
-    test('blocks while entitlement has no subscribed snapshot yet', () {
-      final state = SubscriptionState(isLoading: true);
-
-      expect(shouldShowDesktopSubscriptionGateLoading(state), isTrue);
+  group('desktop auth gate routing', () {
+    test('guests and free users reach the shell with no entitlement check', () {
+      for (final bootstrap in DesktopGuestBootstrap.values) {
+        expect(
+          resolveDesktopAuthGateView(
+            restoring: false,
+            hasSession: true,
+            bootstrap: bootstrap,
+          ),
+          DesktopAuthGateView.shell,
+        );
+      }
     });
 
-    test('keeps shell mounted during subscribed entitlement refresh', () {
-      final state = SubscriptionState(isSubscribed: true, isLoading: true);
+    test('restoring and an in-flight guest bootstrap show loading', () {
+      expect(
+        resolveDesktopAuthGateView(
+          restoring: true,
+          hasSession: true,
+          bootstrap: DesktopGuestBootstrap.idle,
+        ),
+        DesktopAuthGateView.loading,
+      );
+      expect(
+        resolveDesktopAuthGateView(
+          restoring: false,
+          hasSession: false,
+          bootstrap: DesktopGuestBootstrap.inFlight,
+        ),
+        DesktopAuthGateView.loading,
+      );
+    });
 
-      expect(shouldShowDesktopSubscriptionGateLoading(state), isFalse);
+    test('no session without a pending guest shows the welcome screen', () {
+      expect(
+        resolveDesktopAuthGateView(
+          restoring: false,
+          hasSession: false,
+          bootstrap: DesktopGuestBootstrap.failed,
+        ),
+        DesktopAuthGateView.welcome,
+      );
+    });
+
+    test('creates a guest on launch but never a second one', () {
+      expect(
+        shouldBootstrapDesktopGuest(
+          hasSession: false,
+          hasCurrentUser: false,
+          signedOutThisRun: false,
+          bootstrap: DesktopGuestBootstrap.idle,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldBootstrapDesktopGuest(
+          hasSession: false,
+          hasCurrentUser: true,
+          signedOutThisRun: false,
+          bootstrap: DesktopGuestBootstrap.idle,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldBootstrapDesktopGuest(
+          hasSession: false,
+          hasCurrentUser: false,
+          signedOutThisRun: false,
+          bootstrap: DesktopGuestBootstrap.inFlight,
+        ),
+        isFalse,
+      );
+    });
+
+    test('an explicit sign-out does not silently mint a guest', () {
+      expect(
+        shouldBootstrapDesktopGuest(
+          hasSession: false,
+          hasCurrentUser: false,
+          signedOutThisRun: true,
+          bootstrap: DesktopGuestBootstrap.idle,
+        ),
+        isFalse,
+      );
     });
   });
   group('desktop offline access grace', () {

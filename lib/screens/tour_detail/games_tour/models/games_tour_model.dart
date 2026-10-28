@@ -17,7 +17,9 @@ int tournamentGamesSourceFingerprint(Iterable<Games> games) {
         game.roundSlug,
         game.boardNr,
         GameStatus.fromString(game.status),
-        game.players?.isNotEmpty == true ? game.players!.first.customPoints : null,
+        game.players?.isNotEmpty == true
+            ? game.players!.first.customPoints
+            : null,
         (game.players?.length ?? 0) >= 2 ? game.players![1].customPoints : null,
       ),
     ),
@@ -124,6 +126,9 @@ class GamesTourModel {
   final int? whiteClockSeconds; // New: time in seconds from last_clock_white
   final int? blackClockSeconds; // New: time in seconds from last_clock_black
   final GameStatus gameStatus;
+
+  /// Published 0-0 adjudication, separate from played win/draw/loss results.
+  final bool isDoubleForfeit;
   final String? fen;
   final String? pgn;
   final String? lastMove;
@@ -157,6 +162,10 @@ class GamesTourModel {
   final int? avgElo; // New: average ELO of the tournament
   final bool isOnline;
 
+  /// The original game a saved-analysis row was made from. Null for live
+  /// sources, whose [gameId] already is the original.
+  final String? sourceGameId;
+
   GamesTourModel({
     required this.gameId,
     this.source = GameSource.supabase,
@@ -169,6 +178,7 @@ class GamesTourModel {
     this.whiteClockSeconds,
     this.blackClockSeconds,
     required this.gameStatus,
+    this.isDoubleForfeit = false,
     required this.roundId, // Make required
     this.roundSlug,
     required this.tourId, // Make required
@@ -190,7 +200,16 @@ class GamesTourModel {
     this.timeControlText,
     this.avgElo,
     this.isOnline = false,
+    this.sourceGameId,
   });
+
+  /// Identity used by the like system. Prefers [sourceGameId] (the original
+  /// game) and falls back to [gameId] for live sources, so a game liked in one
+  /// place matches the same game opened anywhere else.
+  String get likeId {
+    final s = sourceGameId;
+    return (s != null && s.isNotEmpty) ? s : gameId;
+  }
 
   /// Calendar day the game belongs to, for UI bucketing.
   ///
@@ -216,6 +235,7 @@ class GamesTourModel {
     bool clearWhiteClockSeconds = false,
     bool clearBlackClockSeconds = false,
     GameStatus? gameStatus,
+    bool? isDoubleForfeit,
     String? lastMove,
     bool clearLastMove = false,
     String? fen,
@@ -241,6 +261,7 @@ class GamesTourModel {
     String? timeControlText,
     int? avgElo,
     bool? isOnline,
+    String? sourceGameId,
   }) {
     return GamesTourModel(
       gameId: gameId ?? this.gameId,
@@ -262,6 +283,11 @@ class GamesTourModel {
               ? null
               : blackClockSeconds ?? this.blackClockSeconds,
       gameStatus: gameStatus ?? this.gameStatus,
+      isDoubleForfeit:
+          isDoubleForfeit ??
+          (gameStatus != null && gameStatus != this.gameStatus
+              ? false
+              : this.isDoubleForfeit),
       lastMove: clearLastMove ? null : lastMove ?? this.lastMove,
       fen: clearFen ? null : fen ?? this.fen,
       pgn: clearPgn ? null : pgn ?? this.pgn,
@@ -284,6 +310,7 @@ class GamesTourModel {
       timeControlText: timeControlText ?? this.timeControlText,
       avgElo: avgElo ?? this.avgElo,
       isOnline: isOnline ?? this.isOnline,
+      sourceGameId: sourceGameId ?? this.sourceGameId,
     );
   }
 
@@ -401,6 +428,7 @@ class GamesTourModel {
         whiteClockSeconds: whiteClockSecondsToUse,
         blackClockSeconds: blackClockSecondsToUse,
         gameStatus: GameStatus.fromString(game.status),
+        isDoubleForfeit: game.status?.trim() == '0-0',
         roundId: game.roundId, // Include roundId in model
         roundSlug: game.roundSlug, // Include roundSlug for display
         tourId: game.tourId, // Include tourId in model
@@ -623,6 +651,7 @@ class GamesTourModel {
         other.dateStart == dateStart &&
         other.gameDay == gameDay &&
         other.gameStatus == gameStatus &&
+        other.isDoubleForfeit == isDoubleForfeit &&
         other.lastMove == lastMove &&
         other.fen == fen &&
         other.pgn == pgn &&
@@ -637,7 +666,8 @@ class GamesTourModel {
         other.openingName == openingName &&
         other.timeControl == timeControl &&
         other.avgElo == avgElo &&
-        other.isOnline == isOnline;
+        other.isOnline == isOnline &&
+        other.sourceGameId == sourceGameId;
   }
 
   @override
@@ -657,6 +687,7 @@ class GamesTourModel {
       dateStart,
       gameDay,
       gameStatus,
+      isDoubleForfeit,
       lastMove,
       fen,
       pgn,
@@ -672,6 +703,7 @@ class GamesTourModel {
       timeControl,
       avgElo,
       isOnline,
+      sourceGameId,
     ]);
   }
 }
@@ -739,7 +771,8 @@ class PlayerCard {
       fideId: fideId ?? this.fideId,
       team: team ?? this.team,
       gamebasePlayerId: gamebasePlayerId ?? this.gamebasePlayerId,
-      customPoints: clearCustomPoints ? null : customPoints ?? this.customPoints,
+      customPoints:
+          clearCustomPoints ? null : customPoints ?? this.customPoints,
     );
   }
 

@@ -1,3 +1,5 @@
+import 'package:chessever/repository/supabase/tour/info64_source.dart';
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:intl/intl.dart';
 
@@ -12,12 +14,19 @@ class TournamentPlayer {
   final double? score;
   final int? performance;
   final String? team;
+
   /// Lichess-supplied 1-based standings position. Present whenever the
   /// broadcast feed has computed an official ranking (including custom
   /// scoring + official tiebreaks like DE/SB/KS that we cannot reproduce
   /// client-side). When every player in a tour has this, downstream code
   /// MUST trust the input order — see [PlayerTourScreenNotifier].
   final int? rank;
+  final List<PublishedTiebreak> tiebreaks;
+
+  /// Chess-Results starting-list number (SNo) and Club/City, published
+  /// beside the official ranking.
+  final int? startNumber;
+  final String? club;
 
   TournamentPlayer({
     this.federation,
@@ -31,6 +40,9 @@ class TournamentPlayer {
     this.performance,
     this.team,
     this.rank,
+    this.tiebreaks = const [],
+    this.startNumber,
+    this.club,
   });
 
   /// Creates a TournamentPlayer from JSON map.
@@ -58,7 +70,16 @@ class TournamentPlayer {
           _parseInt(json['performance']) ?? _firstNumber(json['performances']),
       team: json['team'] as String?,
       rank: _parseInt(json['rank']),
+      tiebreaks: PublishedTiebreak.parse(json['tiebreaks']),
+      startNumber: _parseInt(json['startNumber']),
+      club: _text(json['club']),
     );
+  }
+
+  static String? _text(dynamic value) {
+    if (value is! String) return null;
+    final text = value.trim();
+    return text.isEmpty ? null : text;
   }
 
   /// Picks the first non-null numeric value out of a Lichess nested map keyed
@@ -101,6 +122,11 @@ class TournamentPlayer {
     if (performance != null) data['performance'] = performance;
     if (team != null) data['team'] = team;
     if (rank != null) data['rank'] = rank;
+    if (tiebreaks.isNotEmpty) {
+      data['tiebreaks'] = tiebreaks.map((t) => t.toJson()).toList();
+    }
+    if (startNumber != null) data['startNumber'] = startNumber;
+    if (club != null) data['club'] = club;
 
     return data;
   }
@@ -196,7 +222,11 @@ class TournamentPlayer {
         other.ratingDiff == ratingDiff &&
         other.score == score &&
         other.performance == performance &&
-        other.rank == rank;
+        other.rank == rank &&
+        other.team == team &&
+        other.startNumber == startNumber &&
+        other.club == club &&
+        PublishedTiebreak.same(other.tiebreaks, tiebreaks);
   }
 
   @override
@@ -211,7 +241,10 @@ class TournamentPlayer {
         score.hashCode ^
         performance.hashCode ^
         team.hashCode ^
-        rank.hashCode;
+        rank.hashCode ^
+        startNumber.hashCode ^
+        club.hashCode ^
+        Object.hashAll(tiebreaks);
   }
 
   /// Creates a copy of this player with updated fields
@@ -227,6 +260,9 @@ class TournamentPlayer {
     int? performance,
     String? team,
     int? rank,
+    List<PublishedTiebreak>? tiebreaks,
+    int? startNumber,
+    String? club,
   }) {
     return TournamentPlayer(
       federation: federation ?? this.federation,
@@ -240,6 +276,9 @@ class TournamentPlayer {
       performance: performance ?? this.performance,
       team: team ?? this.team,
       rank: rank ?? this.rank,
+      tiebreaks: tiebreaks ?? this.tiebreaks,
+      startNumber: startNumber ?? this.startNumber,
+      club: club ?? this.club,
     );
   }
 }
@@ -334,6 +373,112 @@ List<TournamentPlayer> sortByPerformance(List<TournamentPlayer> players) {
   return sorted;
 }
 
+/// Independently ranked organizer section. Its rank is local to this table.
+class OfficialPlayerSection {
+  const OfficialPlayerSection({
+    required this.id,
+    required this.name,
+    required this.sourceUrl,
+    required this.players,
+  });
+  final String id;
+  final String name;
+  final String sourceUrl;
+  final List<TournamentPlayer> players;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'sourceUrl': sourceUrl,
+    'players': players.map((p) => p.toJson()).toList(),
+  };
+
+  static List<OfficialPlayerSection> parse(dynamic raw, String? standingsUrl) {
+    if (raw is! Map ||
+        raw['source'] != 'chess-results' ||
+        raw['sourceUrl'] != standingsUrl ||
+        DateTime.tryParse('${raw['fetchedAt']}') == null) {
+      return const [];
+    }
+    final sections = raw['sections'];
+    if (sections is! List || sections.length < 2 || sections.length > 32) {
+      return const [];
+    }
+    final ids = <String>{};
+    final result = <OfficialPlayerSection>[];
+    for (final section in sections) {
+      if (section is! Map ||
+          section['id'] is! String ||
+          section['name'] is! String ||
+          section['sourceUrl'] is! String ||
+          section['players'] is! List) {
+        return const [];
+      }
+      final id = section['id'] as String;
+      final name = section['name'] as String;
+      final url = section['sourceUrl'] as String;
+      final uri = Uri.tryParse(url);
+      if (name.trim().isEmpty ||
+          !ids.add(id) ||
+          uri == null ||
+          uri.scheme != 'https' ||
+          !(uri.host == 'chess-results.com' ||
+              RegExp(r'^s\d+\.chess-results\.com$').hasMatch(uri.host)) ||
+          uri.path != '/tnr$id.aspx') {
+        return const [];
+      }
+      final players = <TournamentPlayer>[];
+      // An official section owns its ranks, including skipped knockout places.
+      var previousRank = 0;
+      final identities = <String>{};
+      for (final row in section['players'] as List) {
+        if (row is! Map ||
+            row['name'] is! String ||
+            (row['name'] as String).trim().isEmpty ||
+            row['rank'] is! int ||
+            row['score'] is! num ||
+            row['played'] is! int) {
+          return const [];
+        }
+        final rank = row['rank'] as int;
+        if (rank < 1 ||
+            rank < previousRank ||
+            (players.isEmpty && rank != 1) ||
+            rank > (section['players'] as List).length ||
+            !(row['score'] as num).isFinite ||
+            (row['score'] as num) < 0 ||
+            (row['played'] as int) < 0) {
+          return const [];
+        }
+        final player = TournamentPlayer.fromJson(
+          Map<String, dynamic>.from(row),
+        );
+        final identity =
+            player.fideId == null
+                ? player.name.toLowerCase().trim()
+                : '${player.fideId}';
+        if (!identities.add(identity)) {
+          return const [];
+        }
+        previousRank = rank;
+        players.add(player);
+      }
+      if (players.isEmpty) {
+        return const [];
+      }
+      result.add(
+        OfficialPlayerSection(
+          id: id,
+          name: name,
+          sourceUrl: url,
+          players: List.unmodifiable(players),
+        ),
+      );
+    }
+    return List.unmodifiable(result);
+  }
+}
+
 class TourInfo {
   final String? tc; // Time control (e.g., "90 min + 30 sec / move")
   final String? fideTc; // FIDE time control category (standard, rapid, blitz)
@@ -349,6 +494,39 @@ class TourInfo {
   final String? standingsSource;
   final DateTime? standingsUpdatedAt;
 
+  /// Lichess `BroadcastTour.customScoring` — `{ white: {win, draw}, black: … }`.
+  final Map<String, dynamic>? customScoring;
+
+  /// ChessEver `tours.info.teamScoring` — board points plus match points.
+  final Map<String, dynamic>? teamScoring;
+
+  /// Complete organizer table with source, round and fetch timestamp.
+  final Map<String, dynamic>? officialTeamStandings;
+  final Map<String, dynamic>? officialPlayerStandingsSections;
+
+  /// A finished event's complete organizer table, pinned by the data hub
+  /// (`{url, source, pinnedAt}`): every roster row then carries the
+  /// organizer's own rank, score and games count.
+  final Map<String, dynamic>? standingsPin;
+
+  /// Whether the roster is a pinned organizer table for this event's own
+  /// standings link. Organizer tables do not count forfeits as played, so the
+  /// broadcast games can never prove such a table stale.
+  bool get hasPinnedStandings {
+    final pin = standingsPin;
+    if (pin == null) return false;
+    final url = pin['url'];
+    final source = pin['source'];
+    return url is String &&
+        url.isNotEmpty &&
+        url == standings &&
+        source is String &&
+        source.isNotEmpty;
+  }
+
+  List<OfficialPlayerSection> get playerStandingSections =>
+      OfficialPlayerSection.parse(officialPlayerStandingsSections, standings);
+
   const TourInfo({
     this.tc,
     this.fideTc,
@@ -361,6 +539,11 @@ class TourInfo {
     this.teamTable,
     this.standingsSource,
     this.standingsUpdatedAt,
+    this.officialTeamStandings,
+    this.officialPlayerStandingsSections,
+    this.standingsPin,
+    this.customScoring,
+    this.teamScoring,
   });
 
   factory TourInfo.fromJson(Map<String, dynamic> json) {
@@ -376,7 +559,20 @@ class TourInfo {
       teamTable: json['teamTable'] as bool?,
       standingsSource: json['standingsSource'] as String?,
       standingsUpdatedAt: _parseTimestamp(json['standingsUpdatedAt']),
+      officialTeamStandings: _asStringKeyMap(json['officialTeamStandings']),
+      officialPlayerStandingsSections: _asStringKeyMap(
+        json['officialPlayerStandingsSections'],
+      ),
+      standingsPin: _asStringKeyMap(json['standingsPin']),
+      customScoring: _asStringKeyMap(json['customScoring']),
+      teamScoring: _asStringKeyMap(json['teamScoring']),
     );
+  }
+
+  static Map<String, dynamic>? _asStringKeyMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return null;
   }
 
   static DateTime? _parseTimestamp(dynamic v) {
@@ -398,6 +594,13 @@ class TourInfo {
       if (standingsSource != null) 'standingsSource': standingsSource,
       if (standingsUpdatedAt != null)
         'standingsUpdatedAt': standingsUpdatedAt!.toIso8601String(),
+      if (officialTeamStandings != null)
+        'officialTeamStandings': officialTeamStandings,
+      if (officialPlayerStandingsSections != null)
+        'officialPlayerStandingsSections': officialPlayerStandingsSections,
+      if (standingsPin != null) 'standingsPin': standingsPin,
+      if (customScoring != null) 'customScoring': customScoring,
+      if (teamScoring != null) 'teamScoring': teamScoring,
     };
   }
 
@@ -494,8 +697,11 @@ class Tour {
   }
 
   bool get usesExternalStandings =>
-      info.standingsSource == 'chess-results' &&
-      info.standingsUpdatedAt != null;
+      ((info.standingsSource == 'chess-results' ||
+              (info.standingsSource == 'info64' &&
+                  info64EventUrl(info.standings) != null)) &&
+          info.standingsUpdatedAt != null) ||
+      info.hasPinnedStandings;
 
   // Format time until start
   static String timeUntilStart(List<DateTime> dates) {

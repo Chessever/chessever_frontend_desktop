@@ -1,4 +1,145 @@
-# AGENTS.md — Working agreements for any agent in this repo
+# AGENTS.md — chessever_frontend_desktop
+
+> **Single source of truth for every coding agent.** `CLAUDE.md` is just
+> `@AGENTS.md` (Claude Code import); Codex, Cursor, Kiro and opencode read this
+> file directly. It merges the former `CLAUDE.md` (**Part I — project
+> contract**, the *what* and *why*) and the former `AGENTS.md` (**Part II —
+> working agreements**, the *how*). Both keep their original section numbers,
+> so a citation `CLAUDE.md §N` in code comments, scripts or tests means
+> **Part I §N**, and `AGENTS.md §N` means **Part II §N**. Long reference
+> sections live in `docs/agents/`, stubbed below under their original headings
+> with the path — read the file before you work in that area; it is just as
+> binding.
+
+## Fast checks — run these first
+
+| What | Fast (while iterating) | Reference / gate |
+|---|---|---|
+| Analyze | `dartr analyze <paths>` when `dartr` is on PATH | `flutter analyze` — once before you finish; it is the validation signal (Part II §8) |
+| Format | `dartr format <paths>` | `dart format <paths>` |
+| Fix preview | `dartr fix --dry-run` | `dart fix --dry-run` |
+| Tests | `flutter test test/desktop/<file>_test.dart` (narrowest file that covers the change) | `flutter test` once at the end |
+
+- dartr (`brew install orestesgaolin/tap/dartr`) is a preview Rust port of the
+  Dart 3.13.3 analyzer and we run Dart 3.14 beta, so it is a fast first pass
+  only. Run `flutter analyze` once before finishing; if they disagree,
+  `flutter analyze` wins. `analysis_options.yaml` has no analyzer `plugins:`
+  (plain `flutter_lints`), so there are no plugin-only lints dartr would miss.
+- Run the narrowest tests first; the full suite once at the end.
+- None of this relaxes the build rule: never `flutter build` / `flutter run`
+  to self-verify (Part I §2.7, Part II §9).
+
+---
+
+# Part I — Project contract (formerly `CLAUDE.md`; cited as `CLAUDE.md §N`)
+
+This repo is the **desktop port** of the Chessever Flutter app, targeting **macOS and Windows**. The mission is to ship a desktop client that offers professional chess database capability in capability and UX while reusing the existing mobile codebase as the source of truth for domain logic, repositories, and providers.
+
+This file is the orientation Claude reads on every Ralph-loop iteration. It is the contract for what "done" looks like and the rules of engagement while iterating.
+
+---
+
+## 1. Mission
+
+- Turn the existing iOS/Android Chessever app into a **first-class native desktop application** for macOS and Windows.
+- Match or exceed professional desktop-database ergonomics on the parts we already do well: live broadcast viewing, engine analysis, opening prep, game library, FEN/PGN import, study tools.
+- Preserve the *visual identity* and *domain logic* of mobile. Replace only the things that are demonstrably wrong for keyboard+mouse on a 1440p display.
+
+## 2. Non-negotiables
+
+1. **Two platforms ship together.** A change that builds on macOS but breaks Windows (or vice versa) is not done. Use `Platform.isMacOS` / `Platform.isWindows` only when behavior must diverge; prefer cross-platform packages.
+2. **No mobile-only package may remain in `pubspec.yaml`.** See §6 for the matrix. Replacements must run on both desktop platforms.
+3. **No `dart:io` socket, FFI, or path call may assume mobile-only directories.** Use `path_provider` and check `Platform.isWindows` for path separators.
+4. **Domain logic stays.** Repositories under `lib/repository/`, providers under `lib/providers/`, and feature view-models keep their public contracts. UI is what changes.
+5. **Mobile shell stays buildable** during the transition (we do not delete mobile codepaths until the desktop shell is fully wired). Use platform branching in `main.dart` to pick the shell.
+6. **Never claim completion that hasn't been verified.** A successful `flutter analyze` is not a successful build. A successful build is not a working app. Use the runners.
+7. **Never run `flutter build` (macos/windows/ipa/apk/any target) to validate work.** Builds are slow, churn artifacts, and are reserved for the user / release flow. `flutter analyze` is the validation signal — if analyze is clean, the chunk is verified. Do not invoke `flutter build`, `flutter run`, or any compile-to-artifact command as a self-check. The user runs the app; you confirm with analyze.
+8. **Updater pipeline is stable. Do not touch it unless explicitly requested.** The desktop updater already works end-to-end; do not modify its archive format, diff/staging/install flow, recovery markers, state machine, `DesktopUpdaterService`, or `third_party/desktop_updater` unless the user clearly asks for updater-pipeline work. Additive entry points such as native menu items may only call the existing public updater API and must not change updater behavior.
+9. **Local chess cache writes must be single-writer.** `resqlite` serializes writes inside one `Database.open(...)` pool only; it does not coordinate multiple `Database.open(...)` handles or dedicated writer connections pointed at the same physical SQLite file. Library/Players code must not introduce ad hoc same-file resqlite opens for imports, deletes, purges, stat refreshes, source sync, or tree/cache rebuilds. Prefer the already-open app cache connection and route every mutation through the shared local chess write queue (`LocalChessDatabaseRepository._runLocalCacheWriteQueued` or the public helper that wraps it). If a dedicated connection is unavoidable, it must be documented, serialized by the same queue for its full write lifetime, and covered by a regression test that would fail on `ResqliteTransactionException: database is locked`.
+10. **Apple Silicon macOS release naming is frozen. Intel is additive only.** Silicon has shipped under the same identifiers since the first desktop release and they must never change:
+    - updater platform key / archive dir slug / `ingest` arg: **`macos`** (bare — never `macos-arm64`, never `macos-silicon`)
+    - stable website DMG: **`Chessever.dmg`**
+    - versioned DMG: **`Chessever-<version>.dmg`** (no arch label)
+
+    Intel, added later, is a **parallel additive** set that must not perturb any of the above: platform key `macos-x64`, DMG label `intel`, stable `Chessever-intel.dmg`, versioned `Chessever-<version>-intel.dmg`. The branch that decides this lives in `scripts/codemagic_publish_macos.sh` (`UPDATE_PLATFORM` / `DMG_ARCH_LABEL` / `STABLE_DMG_NAME`) and is correct today — do not "normalize", "symmetrize", or arch-suffix the Silicon side to make the two branches look alike. Renaming Silicon strands every existing installed client (they poll `platform: macos`) and breaks the website download link.
+
+    Corollary for consumers: anything linking a macOS build (chessever.com `#download`, docs, release notes) must point at `Chessever.dmg` for Silicon. **`Chessever-arm64.dmg` is not a download to link to**: the release flow writes it only as a copy of `Chessever.dmg` for the stranded builds described below. When adding a new macOS variant, add new names beside the frozen ones; never repoint or rename the existing ones.
+
+    **Builds 264/265 were stranded by a Silicon rename (Jul 29–30) and two compensations keep them alive** — the release service's additive `macos-arm64` mirror and `downloads/Chessever-arm64.dmg`. They **must not be "cleaned up"** until those installs have drained; read `docs/agents/macos-arm64-stranded-builds.md` before touching either, or the release service / R2 publish script.
+
+    `test/desktop/macos_release_arch_test.dart` pins the frozen Silicon strings so this cannot recur silently.
+11. **Exactly one release per platform lives in release storage.** `KEEP_LAST_N=1` in `scripts/codemagic_publish_wrapper.sh` applies this policy to the legacy release server, and `KEEP_RELEASES_PER_PLATFORM=1` in `scripts/r2_publish_release.py` applies it to R2 after a new release and both updater manifests have been uploaded successfully. One release per platform means one `archive/<version+build-platform>/` directory, one `app-archive.json` item, and one versioned download per platform — plus the stable aliases (`Chessever.dmg`, `Chessever-intel.dmg`, `Chessever-Setup.exe`, `Chessever.deb`), which are overwritten in place and never counted as history.
+
+    This is safe because `desktop_updater` always targets the highest `shortVersion` and rollback is defined as a new forward build (`docs/AUTO_UPDATER_SETUP.md`), so a superseded archive is never fetched again. Do not raise the value to "keep a spare" — four platforms × ~1.3 GB of archives per retained release is what fills the droplet. The one real cost: a client mid-download of the previous archive when the next release is ingested loses its staged diff and re-checks against the new build on the next cycle, which is correct behavior, not a regression to defend against with extra retention.
+
+12. **This repo is PUBLIC open source, and so is the phone repo. No secret may enter the source tree — or the shipped binary.** `github.com/Chessever/chessever_frontend_desktop` and `github.com/Chessever/chessever-frontend` are both public. Write every line as if a stranger reads it the minute it is pushed, because automated scrapers do exactly that. There are **two** exposure channels, and the second is the one that keeps getting missed:
+
+    - **Channel 1 — git.** Anything committed to any branch of either repo is public the moment it is pushed. Deleting it later does not help: it was already scraped, and it stays in forks, PR refs, and the GitHub events API. A leaked credential is burned permanently; the only remedy is rotation at the issuer.
+    - **Channel 2 — the app binary.** A Flutter client cannot keep a secret from its own user. A Dart `const`, a `--dart-define`, a value read from a bundled `.env` asset — all of them are compiled into the AOT snapshot as plaintext and come back out with `strings App | grep`. Every DMG, `.exe`, AppImage, APK and IPA we publish is a public artifact. **Making the repo private would not have prevented this.** "Move it to `.env`" is not a fix, it is the same leak with an extra step.
+
+    Therefore: **any credential that grants write, admin, send, or impersonation rights lives server-side only.** The client calls an endpoint we control (Supabase edge function, Cloudflare worker, release droplet); that endpoint holds the key and enforces rate limits and abuse rules. The client never sees it.
+
+    Values that *are* safe to ship in the client are the ones designed to be public and defended on the server: the Supabase **anon** key (RLS is the actual boundary), Firebase `apiKey` (a project identifier, not a credential), public API base URLs. If leaking a value lets someone act *as us*, it is not in this category. Never put a real credential in `.env.example`, and never uncomment the `.env` entry in `pubspec.yaml`'s asset list (it is commented out on purpose — bundling `.env` puts every key in it straight into channel 2).
+
+    **Precedent, 2026-08-03:** `TelegramNotificationService` carried the feedback bot token as a hardcoded `const` next to the private group's chat ID. It went public with the OSS release on 2026-06-01, shipped in every release binary, and was harvested; the attacker used the Bot API to rename `@chesseverfeedbackbot` into a casino advert and gained send access to the internal feedback group. The token had to be revoked at BotFather — no code change could undo the leak. Assume the same fate for anything you hardcode.
+
+## 3. UI direction
+
+- **Primary UI library for desktop chrome: [forui](https://pub.dev/packages/forui).** Declared in `pubspec.yaml`; this is the chrome library — not optional. Use forui (NOT Material) for: sidebar items, dialogs, dropdowns, popovers, **tooltips**, command palette host, menus, sheets, command items, switches, sliders. If forui has a component for it, use forui.
+  - **Never reach for `material.Tooltip` / `material.Dialog` / `material.PopupMenuButton` etc. in `lib/desktop/`.** Material's `Tooltip` was rewritten on top of `RawTooltip` in Flutter 3.41.9 and asserts on tab switches (`SingleTickerProviderStateMixin` ticker leak); forui sidesteps that and gives us native-feeling desktop chrome.
+  - Reusable wrappers live under `lib/desktop/widgets/` (e.g. `desktop_tooltip.dart` wraps `FTooltip` with our defaults). Add new wrappers there rather than scattering raw `FTooltip`/`FDialog`/etc. across panes.
+  - forui requires an `FTheme` ancestor. Either wrap the shell once or scope `FTheme` per-component when forui content sits inside a Material screen — both patterns are fine; don't mix `MaterialApp.theme` with forui defaults at the same level.
+- **Existing widgets are the design vocabulary — for board / eval bar / PV list / score card / tournament list.** Those scale to desktop with layout changes, not a rewrite. *Only the chrome is forui — don't replace those widgets with forui equivalents.*
+- **Game cards (Compact / List / Grid in `desktop_game_card.dart`) are exempt from the "reuse mobile" rule.** Redesign them freely for desktop — multi-column tile flows, denser footers, custom hover states, whatever reads best on a 1440 px pane. There is no "match mobile" contract on these.
+- **Bespoke desktop buttons match the sidebar button vocabulary.** When a clickable control needs to feel native to the shell (toolbar pills, action buttons above the board, etc.) and a stock forui `FButton` reads as generic, copy the sidebar's look from `lib/desktop/shell/desktop_sidebar.dart` (`_SidebarItem` / `_SidebarHeaderButton`): rounded-8 pill, transparent→`kBlack3Color` hover fill, `kWhiteColor70`→`kWhiteColor` fg, `kPrimaryColor`-tinted "primary/selected" state (fill `0.10`/hover `0.16`, border `0.35`, accent fg), thin `kDividerColor` resting border, ~16–18px icon + 13px `w600` label, and the `SingleMotionBuilder`+`DesktopMotion` hover/press nudge with `CursorAware`. Reference impl: `lib/desktop/widgets/library/local_tree_action_button.dart`. (forui still owns dialogs/tooltips/menus/popovers per the first bullet — this is only for custom buttons.)
+- Use the `frontend-design` skill when creating new desktop layouts — but constrain it to existing tokens (colors, fonts, radii) declared in `lib/theme/`.
+
+## 4. Desktop UX rules (the part that actually changes from mobile)
+
+On demand — read `docs/agents/desktop-ux-rules.md` before working on this area. Gist: The mobile app navigates through pushed routes.
+
+## 5. Architecture (target)
+
+On demand — read `docs/agents/architecture.md` before working on this area. Gist: Desktop screens reuse the existing `screens/<feature>/` widgets.
+
+## 6. Package replacement matrix
+
+On demand — read `docs/agents/package-replacement-matrix.md` before working on this area. Gist: Add: `forui`, `desktop_drop`, `window_manager` (or `bitsdojo_window`), `hotkey_manager`, `local_notifier`, `tray_manager` (optional), `sqflite_common_ffi`.
+It is the desktop status of every mobile-only package — read it before adding, removing or gating any dependency.
+
+## 7. Phases (the roadmap)
+
+On demand — read `docs/agents/phases-roadmap.md` before working on this area. Gist: Foundation — write CLAUDE.md + AGENTS.md (this), bootstrap desktop runners, replace pubspec packages, wire `sqflite_common_ffi`, get `flutter run -d macos` past `main()`.
+
+## 8. How to work on this repo
+
+- Every iteration should leave the tree buildable on at least the current platform you're working on. If a package replacement breaks compilation for now, do it on a feature branch or land it together with its replacement.
+- Read this file *and* `AGENTS.md` before you start. Read `lib/main.dart` for the current entry sequence.
+- Never delete a mobile-only feature without first writing the desktop equivalent or putting it behind a `Platform` guard. Hot paths (auth, engine, persistence) get equivalents; cosmetic ones (in-app review prompts, ATT) get dropped.
+- When introducing a new desktop file, place it under `lib/desktop/`. Don't pollute `lib/screens/` with desktop-only widgets.
+- Tests live under `test/`. Add desktop-relevant tests next to the unit they cover.
+- **Every commit that changes shipped code bumps `version:` in `pubspec.yaml`**, patch segment and build number together (`20.27.6+276` → `20.27.7+277`), with the new version at the end of the commit subject. The bump rides with the change, never as a follow-up `chore: bump`. Docs/test/CI-only commits are exempt. See `AGENTS.md` §2 — and note the phone repo now carries the same rule, so shared logic ported to both bumps both.
+- `flutter analyze` clean is table stakes. `flutter run -d macos` and `flutter run -d windows` succeeding is the actual signal.
+
+## 9. Definition of done (release-ready)
+
+On demand — read `docs/agents/definition-of-done.md` before working on this area. Gist: The Ralph loop's completion promise will only be true when all of these hold:…
+
+## 10. Anti-patterns (don't do these)
+
+- ❌ Reimplementing the chess board, eval bar, or PV list because it "looks mobile-y." Resize and reuse. (Game cards in `desktop_game_card.dart` are NOT covered by this rule — redesign them however reads best on desktop.)
+- ❌ Adding `if (kIsWeb)` branches. We are not shipping web.
+- ❌ Stuffing desktop-only logic into existing screen files. Add a desktop wrapper instead.
+- ❌ Deleting a feature because the desktop equivalent is hard. File a tracked TODO and move on.
+- ❌ Output the loop's completion promise when it isn't true. The promise text is in the loop config; only emit it when §9 is fully satisfied.
+- ❌ Run `flutter build <target>` (macos/windows/ios/android/web) as your own validation step. Builds belong to the user and the release flow. `flutter analyze` is the signal; stop there.
+- ❌ Hardcode a token, API key, bot token, webhook URL, private chat/channel ID, admin endpoint, or internal hostname anywhere under `lib/`. The repo is public and the binary is shippable — see §2.12. Route it through a server endpoint instead.
+- ❌ "Fix" a leaked secret by moving it to `--dart-define`, a bundled `.env`, base64, or string-splitting. All of those still ship the value to the user; obfuscation is not secrecy. The only fix is that the client never holds it.
+- ❌ Write a code comment, TODO, log line, error message, or test fixture that names internal infrastructure (droplet IPs, admin paths, private group IDs, staff usernames). It is published with everything else.
+
+---
+
+# Part II — Working agreements (formerly `AGENTS.md`; cited as `AGENTS.md §N`)
 
 This file is the **operational** companion to `CLAUDE.md`. Read CLAUDE.md first for the *what* and *why*; read this for the *how*.
 
@@ -26,6 +167,12 @@ The Ralph loop will keep waking you. Make every iteration land a verifiable, con
 ## 2. Branching and commits
 
 - Stay on `main` unless the user gave you a branch.
+- Desktop CI/CD uses GitHub Actions, not the Codemagic hosted service.
+  Keep the five recipes in `codemagic.yaml` as the behavior reference and run
+  `ruby scripts/ci/check_codemagic_parity.rb` when changing either workflow.
+  Release workflows stay manually dispatched, with signing and R2 credentials
+  behind the `main`-only `release` environment. Publishing to R2 is a manual
+  release choice, not an automatic consequence of a push or store approval.
 - Push commits and open a pull request only when the user explicitly asks.
 - One commit per coherent chunk. Imperative subject, focused body.
 - **Every commit that changes shipped code bumps `version:` in `pubspec.yaml`** — patch segment and build number together, both by one (`20.27.6+276` → `20.27.7+277`). The bump rides with the change that earned it; never leave it for a separate `chore: bump` commit. Put the resulting version at the end of the subject: `Suppress Game Report errors in retained decisive wins (20.27.7).` Docs-only, test-only, CI-only and tooling-only commits are exempt. The phone repo (`chessever-frontend`) follows the same rule, so shared logic ported to both — the Game Report classifier above all — bumps both.
@@ -43,46 +190,22 @@ The Ralph loop will keep waking you. Make every iteration land a verifiable, con
 - **Don't touch the updater pipeline unless the user explicitly asks for updater-pipeline changes.** The existing updater works and should be treated as stable. Avoid changes to `lib/desktop/services/desktop_updater.dart`, `desktop_updater_state.dart`, recovery/staged-marker services, release archive/diff/staging/install behavior, and `third_party/desktop_updater`. Additive native controls are allowed only when requested and should call the existing public API (`checkForUpdates`, `applyUpdate`, `openDownloadPage`) without changing updater internals.
 - **Don't** rename existing public types unless you also update every callsite in the same commit.
 - **Never bypass local chess cache write serialization.** `resqlite`'s writer mutex is scoped to one `Database.open(...)` instance. It does not protect us when Library/Players/import code opens another handle to the same `chessever_local_chess.db`. Do not add path-only import writers, purge writers, tree/cache rebuild writers, stat refresh writes, or source-sync writes that touch the same file outside `LocalChessDatabaseRepository._runLocalCacheWriteQueued` (or a public repository method that already uses it). Prefer reusing the open app cache connection. If a separate connection is truly required, serialize the entire write lifetime through the shared queue, keep it short-lived, close it deterministically, and add a regression test for the same-file concurrent writer case.
-- **Never rename or arch-suffix the Apple Silicon macOS release artifacts.** Silicon is the original macOS release and its identifiers are frozen: updater platform key / archive slug / `ingest` arg `macos` (bare), stable DMG `Chessever.dmg`, versioned DMG `Chessever-<version>.dmg`. Intel was added later and is strictly additive: `macos-x64`, `Chessever-intel.dmg`, `Chessever-<version>-intel.dmg`. `scripts/codemagic_publish_macos.sh` already encodes this in `UPDATE_PLATFORM` / `DMG_ARCH_LABEL` / `STABLE_DMG_NAME`; leave the Silicon branch alone. Do not make the two branches "symmetric" — every installed macOS client polls `platform: macos`, and the website Mac link resolves `Chessever.dmg`. `Chessever-arm64.dmg` is **not** a published artifact; nothing in the release flow writes it, so any link pointing there serves a stale orphan. New macOS variants get new names added beside the frozen ones. See CLAUDE.md §2.10.
+- **Never rename or arch-suffix the Apple Silicon macOS release artifacts.** Silicon is the original macOS release and its identifiers are frozen: updater platform key / archive slug / `ingest` arg `macos` (bare), stable DMG `Chessever.dmg`, versioned DMG `Chessever-<version>.dmg`. Intel was added later and is strictly additive: `macos-x64`, `Chessever-intel.dmg`, `Chessever-<version>-intel.dmg`. `scripts/codemagic_publish_macos.sh` already encodes this in `UPDATE_PLATFORM` / `DMG_ARCH_LABEL` / `STABLE_DMG_NAME`; leave the Silicon branch alone. Do not make the two branches "symmetric" — every installed macOS client polls `platform: macos`, and the website Mac link resolves `Chessever.dmg`. `Chessever-arm64.dmg` is **not** a download to link to — the release flow writes it only as a copy of `Chessever.dmg` for the stranded 264/265 builds. New macOS variants get new names added beside the frozen ones. See CLAUDE.md §2.10.
 - **Never put a secret in `lib/` — the repo is public and the binary ships to users.** No bot tokens, API keys, webhook URLs, private chat/channel IDs, admin endpoints, or internal hostnames as Dart constants, `--dart-define` values, or bundled `.env` assets. All of those are recoverable from a published DMG/exe/AppImage/APK with `strings`, so making the repo private would not save you. Any credential granting write/send/admin/impersonation rights belongs behind a server endpoint we control (Supabase edge function, Cloudflare worker, release droplet) that holds the key and rate-limits the caller; the client posts to our endpoint and nothing else. Client-safe values are only the ones designed to be public and defended server-side: Supabase **anon** key (RLS is the boundary), Firebase `apiKey`, public base URLs. Keep the `# - .env` line in `pubspec.yaml`'s asset list commented out. When you need a new third-party integration, the first design question is "where does the key live", and the answer is never "in the app". See CLAUDE.md §2.12 for the 2026-08-03 Telegram bot-token incident that produced this rule.
 - **Never raise `KEEP_LAST_N` above 1.** `scripts/codemagic_publish_wrapper.sh` keeps exactly one release per platform on the release server (one archive dir, one `app-archive.json` item, one versioned download; stable aliases are overwritten in place and don't count). The updater only ever targets the highest `shortVersion` and rollback is a new forward build, so older archives are unreachable dead weight — and at ~1.3 GB per release across four platforms they are what fills the droplet disk. See CLAUDE.md §2.11.
 
 ## 4. Package changes
 
-When removing a mobile-only package:
-
-1. Find every import: `grep -rn "package:<name>" lib/`.
-2. For each callsite, either:
-   - Replace with the desktop equivalent (preferred), **or**
-   - Wrap in `if (!Platform.isMacOS && !Platform.isWindows) { ... }` if the call is mobile-only behavior we keep on mobile.
-3. Remove the dependency from `pubspec.yaml`.
-4. `flutter pub get` and confirm `flutter analyze` is clean.
-
-When adding a desktop package:
-
-1. Verify on pub.dev that it lists `macos` and `windows` (or both, if relevant).
-2. Add to `pubspec.yaml` with a pinned `^x.y.z`.
-3. Wire it minimally and verify it builds before broader use.
+On demand — read `docs/agents/package-changes.md` before working on this area. Gist: When removing a mobile-only package:…
 
 ## 5. Stockfish replacement (the hard one)
 
-- Pub package `stockfish` is mobile-only because it bundles native libs for Android/iOS.
-- Replacement: ship a Stockfish binary per OS and drive it via UCI over stdio.
-  - Place binaries under `assets/engine/macos/stockfish` and `assets/engine/windows/stockfish.exe`.
-  - At runtime, copy the asset to the app support dir (`getApplicationSupportDirectory()`), `chmod +x` on macOS, then `Process.start` it.
-  - Use a `StreamController<String>` over stdout to parse UCI; reuse the existing `StockfishSingleton` API surface so callers don't change.
-- Reference: official Stockfish builds at https://stockfishchess.org/download/.
-- This is a multi-iteration task. First iteration: get the interface and binary copy in place; second iteration: parse UCI and surface evals; third: tune hash/threads to desktop defaults.
-- **⚠️ Linux engine is bundled DIFFERENTLY.** `pubspec.yaml`'s `flutter: assets:` list is shared across platforms, so anything listed there ships in *every* desktop app. macOS/Windows engines are listed in pubspec normally. The Linux engine (`assets/engine/linux/stockfish`, ~78 MB) is **committed but deliberately NOT in pubspec** — listing it would add 78 MB to the mac/Windows downloads. The Linux CI build (`scripts/codemagic_build_linux_release.sh`) **injects** the `- assets/engine/linux/stockfish` line into pubspec at build time (idempotent awk insert after the Windows entry); only the Linux bundle carries it. `uci_engine.dart` keeps the `Platform.isLinux` branch (no-op on mac/Win). **Never add the Linux line back to pubspec** — it reintroduces the bloat for mac/Win.
+On demand — read `docs/agents/stockfish-replacement.md` before working on this area. Gist: Pub package `stockfish` is mobile-only because it bundles native libs for Android/iOS.
+Never add `assets/engine/linux/stockfish` to `pubspec.yaml` — the Linux build script injects it so mac/Windows downloads stay 78 MB lighter.
 
 ## 6. Auth (the second-hardest)
 
-- Google: ditch `google_sign_in`. Use OAuth 2.0 desktop flow:
-  1. Start `HttpServer.bind('127.0.0.1', 0)` to get a free port.
-  2. Open browser to `https://accounts.google.com/o/oauth2/v2/auth?...&redirect_uri=http://127.0.0.1:<port>`.
-  3. Capture the auth code from the loopback request, exchange via Supabase or directly with Google's token endpoint, then sign into Supabase with the resulting ID token.
-- Apple: keep `sign_in_with_apple` only on macOS. On Windows, hide the button.
-- Test signed-in state survives a restart on both OSes.
+On demand — read `docs/agents/desktop-auth.md` before working on this area. Gist: Google: ditch `google_sign_in`. Use OAuth 2.0 desktop flow: 1.
 
 ## 7. Window, shell, and shortcuts
 
@@ -129,131 +252,24 @@ When adding a desktop package:
 
 End of AGENTS.md.
 
+## Desktop distribution editions
+
+Maintain the four website downloads (macOS Apple Silicon, macOS Intel, Windows,
+Linux) and the separate Mac App Store edition from `main`. Website editions keep
+Stripe and the existing updater. Only `scripts/build_mac_app_store.sh` enables
+`MAC_APP_STORE=true` together with native `CHESSEVER_APP_STORE=YES`; that edition
+uses Apple billing and App Store updates. Never apply store sandbox or billing
+flags to the direct-download lanes.
+
+Release instructions: `docs/ci/github-actions-release.md`. The Mac App Store
+workflow must upload and submit for review with `releaseType=MANUAL`; never add
+automatic release after approval. Do not cancel a pending review unless the
+operator explicitly selects replacement. Keep App Store signing assets separate
+from Developer ID signing assets, and out of source, Dart defines and artifacts.
+
 ---
 
 ## Forui
 
-> Beautiful, minimalistic, and platform-agnostic UI library for Flutter.
-
-**This repo pins `forui: ^0.16.0`** (`pubspec.yaml`). forui.dev serves the latest
-release, so check an API against the pinned version before using it — 0.24
-deleted every theme preset except Neutral (`FThemes.zinc.dark`, which the whole
-desktop shell uses, is gone there), 0.25 changed the missing-`FTheme` fallback
-from zinc-light to `FTheme.neutral.light.touch`, and several
-`FButtonStyle.ghost((s) => s.copyWith(...))` customizations no longer exist. Do
-not blind-bump; a correct upgrade means generating a custom dark theme
-(`dart run forui theme create`) that matches zinc-dark and wrapping the app once.
-
-- [About Forui](https://forui.dev/docs.md): Beautiful, minimalistic, and platform-agnostic UI library for Flutter.
-- [Getting Started](https://forui.dev/docs/getting-started.md): Get started with Forui in your Flutter project.
-
-### Concepts
-
-- [Themes](https://forui.dev/docs/concepts/themes.md): Define consistent visual styles across your Flutter application with Forui's theming system.
-- [Controls](https://forui.dev/docs/concepts/controls.md): Abstractions over controllers that define where widget state lives.
-- [Localization](https://forui.dev/docs/concepts/localization.md): Enable localization for Forui widgets across 115 languages.
-- [Responsive](https://forui.dev/docs/concepts/responsive.md): Platform variants and responsive breakpoints for adaptive layouts.
-
-### Guides
-
-- [Adding Theme Properties](https://forui.dev/docs/guides/adding-theme-properties.md): Extend Forui themes with application-specific properties using Flutter's ThemeExtension system.
-- [Customizing Themes](https://forui.dev/docs/guides/customizing-themes.md): Generate and customize themes and widget styles using the CLI.
-- [Customizing Widget Styles](https://forui.dev/docs/guides/customizing-widget-styles.md): Customize individual widget styles using deltas and the CLI.
-- [Customizing Icons](https://forui.dev/docs/guides/customizing-icons.md): Swap the icons used by Forui widgets with your own icons.
-- [Creating Custom Deltas](https://forui.dev/docs/guides/creating-custom-deltas.md): Create custom delta classes for transformations not provided out of the box.
-- [Creating Custom Controllers](https://forui.dev/docs/guides/creating-custom-controllers.md): Extend Forui controllers with custom logic and pass them to widgets.
-- [Using Forui À La Shadcn/ui](https://forui.dev/docs/guides/using-forui-a-la-shadcn-ui.md): Take full ownership of Forui's behavior and layout by editing widget source directly.
-
-### Reference
-
-- [CLI](https://forui.dev/docs/reference/cli.md): Generate themes and styles in your project with Forui's CLI.
-- [Icons](https://forui.dev/docs/reference/icon-library.md): High-quality Lucide icons bundled with Forui.
-- [Hooks](https://forui.dev/docs/reference/hooks.md): First-class Flutter Hooks integration with Forui controllers.
-- [LLMs](https://forui.dev/docs/reference/llms.md): Machine-readable documentation for LLMs and AI-powered tools.
-
-### Widgets
-
-#### Layout
-
-- [Divider](https://forui.dev/docs/widgets/layout/divider.md): Visually or semantically separates content.
-- [Resizable](https://forui.dev/docs/widgets/layout/resizable.md): A box which children can be resized along either the horizontal or vertical axis.
-- [Scaffold](https://forui.dev/docs/widgets/layout/scaffold.md): Creates a visual scaffold for Forui widgets.
-
-#### Form
-
-- [Autocomplete](https://forui.dev/docs/widgets/form/autocomplete.md): An autocomplete provides a list of suggestions based on the user's input and shows typeahead text for the first match. It is a form-field and can therefore be used in a form.
-- [Button](https://forui.dev/docs/widgets/form/button.md): A button.
-- [Checkbox](https://forui.dev/docs/widgets/form/checkbox.md): A control that allows the user to toggle between checked and not checked.
-- [Date Field](https://forui.dev/docs/widgets/form/date-field.md): A date field allows a date to be selected from a calendar or input field.
-- [Date Time Picker](https://forui.dev/docs/widgets/form/date-time-picker.md): A date and time picker that allows a date and time to be selected. The picker supports arrow key navigation. Recommended for touch devices.
-- [Label](https://forui.dev/docs/widgets/form/label.md): Describes a form field with a label, description, and error message (if any). This widget is usually used for custom form fields. All form fields in Forui come with this widget wrapped.
-- [Multi Select](https://forui.dev/docs/widgets/form/multi-select.md): A multi select displays a list of drop-down options for the user to pick from. It is a form-field and can therefore be used in a form.
-- [OTP Field](https://forui.dev/docs/widgets/form/otp-field.md): A one-time password input field for verification codes.
-- [Picker](https://forui.dev/docs/widgets/form/picker.md): A generic picker that allows an item to be selected. It is composed of one or more wheels, optionally with separators between those wheels. The picker supports arrow key navigation. Recommended for touch devices.
-- [Radio](https://forui.dev/docs/widgets/form/radio.md): A radio button that typically allows the user to choose only one of a predefined set of options.
-- [Select Group](https://forui.dev/docs/widgets/form/select-group.md): A group of items that allow users to make a selection from a set of options.
-- [Select](https://forui.dev/docs/widgets/form/select.md): A select displays a list of drop-down options for the user to pick from. It is a form-field and can therefore be used in a form.
-- [Slider](https://forui.dev/docs/widgets/form/slider.md): A sliding input component that allows users to select a value within a specified range by dragging a handle or tapping on the track.
-- [Switch](https://forui.dev/docs/widgets/form/switch.md): A toggle switch component that allows users to enable or disable a setting with a sliding motion.
-- [Text Field](https://forui.dev/docs/widgets/form/text-field.md): A text field lets the user enter text, either with a hardware keyboard or with an onscreen keyboard.
-- [Text Form Field](https://forui.dev/docs/widgets/form/text-form-field.md): A text field that can be used in forms, allowing the user to enter text, either with a hardware keyboard or with an onscreen keyboard.
-- [Time Field](https://forui.dev/docs/widgets/form/time-field.md): A time field allows a time to be selected from a picker or input field.
-- [Time Picker](https://forui.dev/docs/widgets/form/time-picker.md): A time picker that allows a time to be selected. The picker supports arrow key navigation. Recommended for touch devices.
-
-#### Data Presentation
-
-- [Accordion](https://forui.dev/docs/widgets/data/accordion.md): A vertically stacked set of interactive headings that reveal associated content sections when clicked. Each section can be expanded or collapsed independently.
-- [Avatar](https://forui.dev/docs/widgets/data/avatar.md): A circular image component that displays user profile pictures with a fallback option. The Avatar component provides a consistent way to represent users in your application, displaying profile images with fallbacks to initials or icons when images are unavailable.
-- [Badge](https://forui.dev/docs/widgets/data/badge.md): A badge draws attention to specific information, such as labels and counts. Use badges to display status, notifications, or small pieces of information that need to stand out.
-- [Calendar](https://forui.dev/docs/widgets/data/calendar.md): A calendar component for selecting and editing dates.
-- [Card](https://forui.dev/docs/widgets/data/card.md): A flexible container component that displays content with an optional title, subtitle, and child widget. Cards are commonly used to group related information and actions.
-- [Item Group](https://forui.dev/docs/widgets/data/item-group.md): An item group that typically groups related information together.
-- [Item](https://forui.dev/docs/widgets/data/item.md): An item is typically used to group related information together.
-- [Line Calendar](https://forui.dev/docs/widgets/data/line-calendar.md): A compact calendar component that displays dates in a horizontally scrollable line, ideal for date selection in limited space.
-
-#### Tile
-
-- [Select Menu Tile](https://forui.dev/docs/widgets/tile/select-menu-tile.md): A tile that, when triggered, displays a list of options for the user to pick from.
-- [Select Tile Group](https://forui.dev/docs/widgets/tile/select-tile-group.md): A group of tiles that allow users to make a selection from a set of options.
-- [Tile Group](https://forui.dev/docs/widgets/tile/tile-group.md): A tile group that typically groups related information together.
-- [Tile](https://forui.dev/docs/widgets/tile/tile.md): A specialized Item for touch devices, typically used to group related information together.
-
-#### Navigation
-
-- [Bottom Navigation Bar](https://forui.dev/docs/widgets/navigation/bottom-navigation-bar.md): A bottom navigation bar is usually present at the bottom of root pages. It is used to navigate between a small number of views, typically between three and five.
-- [Breadcrumb](https://forui.dev/docs/widgets/navigation/breadcrumb.md): Displays a list of links that help visualize a page's location within a site's hierarchical structure. It allows navigation up to any of the ancestors.
-- [Header](https://forui.dev/docs/widgets/navigation/header.md): A header contains the page's title and navigation actions. It is typically used on pages at the root of the navigation stack.
-- [Pagination](https://forui.dev/docs/widgets/navigation/pagination.md): Display the current active page and enable navigation between multiple pages.
-- [Sidebar](https://forui.dev/docs/widgets/navigation/sidebar.md): A sidebar widget that provides an opinionated layout for navigation on the side of the screen.
-- [Tabs](https://forui.dev/docs/widgets/navigation/tabs.md): A set of layered sections of content—known as tab entries—that are displayed one at a time.
-
-#### Feedback
-
-- [Alert](https://forui.dev/docs/widgets/feedback/alert.md): Displays a callout for user attention.
-- [Circular Progress](https://forui.dev/docs/widgets/feedback/circular-progress.md): Displays an indeterminate circular indicator showing the completion progress of a task.
-- [Determinate Progress](https://forui.dev/docs/widgets/feedback/determinate-progress.md): Displays a determinate linear indicator showing the completion progress of a task.
-- [Progress](https://forui.dev/docs/widgets/feedback/progress.md): Displays an indeterminate linear indicator showing the completion progress of a task.
-
-#### Overlay
-
-- [Context Menu](https://forui.dev/docs/widgets/overlay/context-menu.md): A context menu displays a menu at the user's pointer.
-- [Dialog](https://forui.dev/docs/widgets/overlay/dialog.md): A modal dialog interrupts the user with important content and expects a response.
-- [Persistent Sheet](https://forui.dev/docs/widgets/overlay/persistent-sheet.md): A persistent sheet is displayed above another widget while still allowing users to interact with the widget below.
-- [Popover Menu](https://forui.dev/docs/widgets/overlay/popover-menu.md): A popover menu displays a menu in a portal aligned to a child.
-- [Popover](https://forui.dev/docs/widgets/overlay/popover.md): A popover displays rich content in a portal that is aligned to a child.
-- [Sheet](https://forui.dev/docs/widgets/overlay/sheet.md): A modal sheet is an alternative to a menu or a dialog and prevents the user from interacting with the rest of the app.
-- [Toast](https://forui.dev/docs/widgets/overlay/toast.md): An opinionated toast that temporarily displays a succinct message.
-- [Tooltip](https://forui.dev/docs/widgets/overlay/tooltip.md): A tooltip displays information related to a widget when focused, hovered over, or long pressed.
-
-#### Foundation
-
-- [Collapsible](https://forui.dev/docs/widgets/foundation/collapsible.md): A collapsible widget that animates between visible and hidden states.
-- [Focused Outline](https://forui.dev/docs/widgets/foundation/focused-outline.md): An outline around a focused widget that does not affect its layout.
-- [Overlay](https://forui.dev/docs/widgets/foundation/overlay.md): A low-level overlay primitive that composites content relative to a child widget.
-- [Point Portal](https://forui.dev/docs/widgets/foundation/point-portal.md): A "floating" portal anchored at a specific point within a child widget's coordinate space.
-- [Portal](https://forui.dev/docs/widgets/foundation/portal.md): A "floating" portal anchored relative to a child widget's edge.
-- [Tappable](https://forui.dev/docs/widgets/foundation/tappable.md): An area that responds to touch.
-
-### Full Documentation
-
-- [Full documentation](https://forui.dev/docs/llms-full.txt)
+On demand — read `docs/agents/forui.md` before working on this area. Gist: This repo pins `forui: ^0.16.0` (`pubspec.yaml`).
+forui.dev documents the latest release — check every API against 0.16 and never blind-bump forui (0.24+ removed `FThemes.zinc.dark`, which the whole shell uses).

@@ -1,4 +1,5 @@
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:flutter/material.dart';
 
@@ -18,8 +19,9 @@ class NagDisplay {
   final String symbol;
   final Color color;
   final NagCategory category;
+  final String? description;
 
-  const NagDisplay(this.symbol, this.color, this.category);
+  const NagDisplay(this.symbol, this.color, this.category, [this.description]);
 
   bool get isQuality => category == NagCategory.quality;
 }
@@ -30,7 +32,67 @@ const Color _kObservationDim = Color(0xFFB8C4D0);
 // Quality NAG colors resolve through [moveAnnotationColor] so text glyphs
 // match the classification badge SVG gradient tops (board, notation, recap).
 NagDisplay? getNagDisplay(int nag) {
+  // PGN NAG identities and ChessBase prefix glyphs: morphy NAG.java,
+  // e171eba41ba0f8ca661d9fb6933a42f867b6c5b2. Unknowns retain their number.
   switch (nag) {
+    case 0:
+      return null;
+    case 8:
+      return const NagDisplay(
+        '□',
+        _kObservationDim,
+        NagCategory.observation,
+        'Singular move',
+      );
+    case 11:
+      return const NagDisplay(
+        '=',
+        _kEvalSlate,
+        NagCategory.evaluation,
+        'Equal chances, quiet position',
+      );
+    case 12:
+      return const NagDisplay(
+        '=',
+        _kEvalSlate,
+        NagCategory.evaluation,
+        'Equal chances, active position',
+      );
+    case 30:
+      return const NagDisplay(
+        '⟳',
+        _kObservationDim,
+        NagCategory.observation,
+        'White has a slight development advantage',
+      );
+    case 142:
+      return const NagDisplay(
+        '⌓',
+        _kObservationDim,
+        NagCategory.observation,
+        'Better is',
+      );
+    case 143:
+      return const NagDisplay(
+        '≤',
+        _kObservationDim,
+        NagCategory.observation,
+        'Worse is',
+      );
+    case 144:
+      return const NagDisplay(
+        '=',
+        _kObservationDim,
+        NagCategory.observation,
+        'Equivalent is',
+      );
+    case 145:
+      return const NagDisplay(
+        'RR',
+        _kObservationDim,
+        NagCategory.observation,
+        'Editorial comment',
+      );
     case 1:
       // goodMove — navy !
       return NagDisplay(
@@ -113,7 +175,20 @@ NagDisplay? getNagDisplay(int nag) {
     case 146:
       return const NagDisplay('N', _kObservationDim, NagCategory.observation);
     default:
-      return null;
+      // ChessEver's private report codes (240-247) and the user-override
+      // marker (248) ride in move.nags but are not glyphs. Rendering them
+      // would put "$242" chips on every reviewed game, and it would let
+      // category toggles strip the override.
+      if (isChesseverClassificationCode(nag) ||
+          nag == kChesseverUserQualityOverrideNag) {
+        return null;
+      }
+      return NagDisplay(
+        '\$$nag',
+        _kObservationDim,
+        NagCategory.observation,
+        'NAG $nag — meaning not interpreted',
+      );
   }
 }
 

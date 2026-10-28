@@ -1,5 +1,6 @@
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:chessever/desktop/panes/board_pane.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -16,6 +17,51 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  for (final mode in NotationLayoutMode.values) {
+    testWidgets('large PGN starts fully expanded in ${mode.name}', (
+      tester,
+    ) async {
+      final cycle = List.generate(
+        80,
+        (i) => '${i * 2 + 4}. Nf3 Nc6 ${i * 2 + 5}. Ng1 Nb8',
+      ).join(' ');
+      final game = ChessGame.fromPgn(
+        'large-expanded-default',
+        '[Result "*"]\n\n1. e4 e5 (1... c5 2. Nf3 Nc6 (2... d6 3. d4 cxd4) 3. Ng1 Nb8 $cycle) 2. Nf3 *',
+      );
+      final layout = ValueNotifier(mode);
+      final collapse = NotationVariationCollapseController();
+      final jumps = <ChessMovePointer>[];
+      addTearDown(layout.dispose);
+      await tester.pumpWidget(
+        _host(
+          game: game,
+          onJump: jumps.add,
+          activePointer: const [],
+          width: 780,
+          height: 560,
+          layoutModeController: layout,
+          variationCollapseController: collapse,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('c5', findRichText: true), findsOneWidget);
+      expect(find.text('d6', findRichText: true), findsOneWidget);
+      expect(find.text('d4', findRichText: true), findsOneWidget);
+      await tester.tap(find.text('d6', findRichText: true));
+      await tester.pump();
+      expect(jumps, isNotEmpty);
+      expect(jumps.single.length, greaterThan(3));
+      collapse.collapseAll();
+      await tester.pumpAndSettle();
+      expect(find.text('d6', findRichText: true), findsNothing);
+      collapse.expandAll();
+      await tester.pumpAndSettle();
+      expect(find.text('d6', findRichText: true), findsOneWidget);
+    });
+  }
+
   testWidgets('canonical correction renders no displaced feed variation', (
     tester,
   ) async {
@@ -65,6 +111,27 @@ void main() {
 
     expect(find.byKey(const ValueKey('board-marks-badge')), findsOneWidget);
     expect(find.byIcon(Icons.trending_flat_rounded), findsNothing);
+  });
+
+  testWidgets('a notation that may not hand out its PGN offers no Copy PGN', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGame(),
+        onJump: (_) {},
+        width: 900,
+        allowPgnCopy: false,
+      ),
+    );
+
+    final move = find.text('Nf3', findRichText: true);
+    await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Copy PGN'), findsNothing);
+    // The position is not the author's text: it can still be copied.
+    expect(find.text('Copy FEN'), findsOneWidget);
   });
 
   testWidgets('Tr marker jumps to the next occurrence of the same position', (
@@ -176,6 +243,108 @@ void main() {
     },
   );
 
+  testWidgets(
+    'classification icons use the bottom row and initiative uses the up arrow',
+    (tester) async {
+      ChessMovePointer? toggledPointer;
+      int? toggledNag;
+      await tester.pumpWidget(
+        _host(
+          game: _sampleGame(),
+          activePointer: const [0, 0, 0],
+          onJump: (_) {},
+          onToggleMoveNag: (pointer, nag) {
+            toggledPointer = List<int>.from(pointer);
+            toggledNag = nag;
+          },
+          width: 760,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final sidelineMove = find.text('c5', findRichText: true);
+      await tester.tapAt(
+        tester.getCenter(sidelineMove),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+
+      final brilliant = find.text('!!');
+      final good = find.text('!');
+      final interesting = find.text('!?');
+      final dubious = find.text('?!');
+      final mistake = find.text('?');
+      final blunder = find.text('??');
+      final initiative = find.byKey(const ValueKey('notation-nag-32'));
+      final best = find.byKey(const ValueKey('notation-nag-242'));
+      final book = find.byKey(const ValueKey('notation-nag-247'));
+      final missed = find.byKey(const ValueKey('notation-nag-243'));
+
+      for (final finder in <Finder>[
+        brilliant,
+        good,
+        interesting,
+        dubious,
+        mistake,
+        blunder,
+        initiative,
+        best,
+        book,
+        missed,
+      ]) {
+        expect(finder, findsOneWidget);
+      }
+      expect(
+        find.descendant(of: initiative, matching: find.text('↑')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('notation-nag-40')), findsNothing);
+      expect(find.text('⟳'), findsNothing);
+
+      final qualityCenters = <Finder>[
+        brilliant,
+        good,
+        interesting,
+        dubious,
+        mistake,
+        blunder,
+      ].map((finder) => tester.getCenter(finder)).toList(growable: false);
+      expect(qualityCenters.map((center) => center.dy).toSet(), hasLength(1));
+      for (var index = 1; index < qualityCenters.length; index++) {
+        expect(
+          qualityCenters[index].dx,
+          greaterThan(qualityCenters[index - 1].dx),
+        );
+      }
+
+      final bottomCenters = <Finder>[
+        best,
+        book,
+        missed,
+        find.text('□'),
+        find.text('N'),
+        find.text('∆'),
+        find.text('⏱'),
+      ].map((finder) => tester.getCenter(finder)).toList(growable: false);
+      expect(bottomCenters.map((center) => center.dy).toSet(), hasLength(1));
+      for (var index = 1; index < bottomCenters.length; index++) {
+        expect(
+          bottomCenters[index].dx,
+          greaterThan(bottomCenters[index - 1].dx),
+        );
+      }
+      expect(
+        bottomCenters.first.dy,
+        greaterThan(tester.getCenter(initiative).dy),
+      );
+
+      await tester.tap(best);
+      await tester.pumpAndSettle();
+      expect(toggledPointer, const [0, 0, 0]);
+      expect(toggledNag, 242);
+    },
+  );
+
   testWidgets('main notation moves do not install hover preview boards', (
     tester,
   ) async {
@@ -190,6 +359,58 @@ void main() {
     await tester.pump();
 
     expect(find.byType(MoveHoverPreview), findsNothing);
+  });
+
+  testWidgets('saved Book move NAG renders an SVG next to notation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGameWithMainlineNags(<int>[247]),
+        activePointer: const <int>[2],
+        onJump: (_) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(SvgPicture), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is DesktopTooltip && widget.message == 'Book move',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('manual Best NAG overrides report icon but keeps evaluation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGameWithMainlineNags(<int>[16]),
+        activePointer: const <int>[2],
+        onJump: (_) {},
+        userNags: const <int, List<int>>{
+          2: <int>[242],
+        },
+        lichessAnnotations: const <int, LichessMoveAnnotation>{
+          2: LichessMoveAnnotation(
+            type: LichessMoveAnnotationType.blunder,
+            comment: '',
+            useClassificationIcon: true,
+            reportOwnsMoveQuality: true,
+          ),
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(SvgPicture), findsOneWidget);
+    expect(find.text('±'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is DesktopTooltip && widget.message == 'Best move',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('user quality assessment replaces the generated report icon', (
@@ -350,6 +571,28 @@ void main() {
       expect(find.text('c5', findRichText: true), findsOneWidget);
     },
   );
+
+  testWidgets('large game opens with variations expanded by default', (
+    tester,
+  ) async {
+    final layoutMode = ValueNotifier(NotationLayoutMode.inline);
+    addTearDown(layoutMode.dispose);
+
+    await tester.pumpWidget(
+      _host(
+        game: _largeGameWithVariation(),
+        onJump: (_) {},
+        layoutModeController: layoutMode,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The second move of the variation is only rendered when the
+    // variation is expanded; a collapsed variation shows its head
+    // move plus a `+N` remainder count instead.
+    expect(find.text('Bb5', findRichText: true), findsOneWidget);
+    expect(find.text('[+]', findRichText: true), findsNothing);
+  });
 
   testWidgets('keeps expanded variation closing bracket inline with moves', (
     tester,
@@ -662,6 +905,9 @@ void main() {
     expect(jumps, [
       const [0, 0, 0],
     ]);
+    await gesture.removePointer();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('right-click move menu folds/unfolds and copies PGN', (
@@ -1141,6 +1387,7 @@ Widget _host({
   ValueNotifier<NotationLayoutMode>? layoutModeController,
   NotationVariationCollapseController? variationCollapseController,
   Set<String> positionArrowKeys = const <String>{},
+  bool allowPgnCopy = true,
 }) {
   final notation = NotationLadderView(
     game: game,
@@ -1168,7 +1415,14 @@ Widget _host({
 
   return MaterialApp(
     home: Scaffold(
-      body: SizedBox(width: width, height: height, child: notation),
+      body: SizedBox(
+        width: width,
+        height: height,
+        child:
+            allowPgnCopy
+                ? notation
+                : NotationExportScope(allowPgnCopy: false, child: notation),
+      ),
     ),
   );
 }
@@ -1186,6 +1440,50 @@ ChessGame _longGame() {
         san: whiteToMove ? 'e4' : 'e5',
         uci: whiteToMove ? 'e2e4' : 'e7e5',
         turn: whiteToMove ? ChessColor.white : ChessColor.black,
+      );
+    }),
+  );
+}
+
+ChessGame _largeGameWithVariation() {
+  ChessMove move(int index, {List<ChessLine>? variations}) {
+    final whiteToMove = index.isEven;
+    return ChessMove(
+      num: index ~/ 2 + 1,
+      fen: Chess.initial.fen,
+      san: whiteToMove ? 'e4' : 'e5',
+      uci: whiteToMove ? 'e2e4' : 'e7e5',
+      turn: whiteToMove ? ChessColor.white : ChessColor.black,
+      variations: variations,
+    );
+  }
+
+  return ChessGame(
+    gameId: 'notation-large-expanded-test',
+    startingFen: Chess.initial.fen,
+    metadata: const <String, dynamic>{},
+    mainline: List<ChessMove>.generate(320, (index) {
+      if (index != 0) return move(index);
+      return move(
+        index,
+        variations: [
+          [
+            ChessMove(
+              num: 1,
+              fen: Chess.initial.fen,
+              san: 'c5',
+              uci: 'c7c5',
+              turn: ChessColor.black,
+            ),
+            ChessMove(
+              num: 2,
+              fen: Chess.initial.fen,
+              san: 'Bb5',
+              uci: 'f1b5',
+              turn: ChessColor.white,
+            ),
+          ],
+        ],
       );
     }),
   );

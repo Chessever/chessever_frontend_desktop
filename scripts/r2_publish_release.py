@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import boto3
 from botocore.exceptions import ClientError
@@ -340,6 +340,17 @@ def publish(args: argparse.Namespace) -> None:
         cache_control=MUTABLE_CACHE,
     )
 
+    # Builds 264 and 265 of the Silicon app open this name as their manual
+    # download. It must keep serving the current Silicon installer until those
+    # installs are gone (CLAUDE.md, section 2.10). Additive: nothing links to
+    # it and the frozen names above are untouched.
+    if args.platform == "macos":
+        publisher.put_verified(
+            installer,
+            "desktop/downloads/Chessever-arm64.dmg",
+            cache_control=MUTABLE_CACHE,
+        )
+
     item = {
         "version": release_metadata["version"],
         "shortVersion": release_metadata["shortVersion"],
@@ -438,8 +449,11 @@ def publish(args: argparse.Namespace) -> None:
     # Prune only after both manifests have been successfully committed. Keep
     # one current release for each desktop platform and never remove an archive
     # still referenced by another manifest alias (notably macos-arm64).
+    # Manifest URLs are percent-encoded ("22.0.0%2B428-macos"); R2 keys are
+    # not ("22.0.0+428-macos"). Compare them in the same spelling, or nothing
+    # the manifest points at is actually protected.
     referenced = {
-        str(entry["url"]).split("/desktop/archive/", 1)[1]
+        unquote(str(entry["url"]).split("/desktop/archive/", 1)[1])
         for entry in app_archive["items"]
         if "/desktop/archive/" in str(entry.get("url"))
     }

@@ -16,6 +16,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'dart:async';
 import 'dart:collection';
 
+import 'explorer_games_cache.dart';
 import 'gamebase_explorer_state.dart';
 
 /// Normalize a FEN string for Gamebase lookups.
@@ -40,7 +41,6 @@ String _positionKeyForComparison(String fen) =>
 /// (30 full moves). The next position after this enters the replay-backed
 /// cold path, so broad prefetch should stop before crossing that boundary.
 const int _kExactIndexedExplorerMaxPly = 60;
-const Duration _positionGamesPageCacheTtl = Duration(minutes: 2);
 
 /// Convert a 6-field FEN into number of played plies.
 int _pliesFromFen(String fen) {
@@ -57,7 +57,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
   static const String _kInitialFen =
       'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
-  GamebaseExplorerNotifier(this.ref)
+  GamebaseExplorerNotifier(this.ref, {this.accessCheck})
     : super(
         GamebaseExplorerState(
           currentFen: _kInitialFen,
@@ -80,6 +80,23 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
 
   final Ref ref;
 
+  /// Optional host admission for statistics fetches. `advance` is how many
+  /// plies ahead of [state] the fetch looks (prefetch asks about +1). Null on
+  /// mobile, which keeps its existing contract.
+  final bool Function(GamebaseExplorerState state, int advance)? accessCheck;
+
+  bool _fetchDenied(int advance) => accessCheck?.call(state, advance) == false;
+
+  /// Denied: drop statistics for the new position (never leave the previous
+  /// position's numbers on screen) and start no request.
+  void _clearDeniedStatistics() {
+    state = state.copyWith(
+      moveAggregates: const [],
+      isLoading: false,
+      error: null,
+    );
+  }
+
   /// Internal position tracking using dartchess (consistent with ChessGame)
   Position get currentPosition =>
       Position.setupPosition(Rule.chess, Setup.parseFen(state.currentFen));
@@ -98,6 +115,14 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       {};
   String? _enabledLocalPlayerTreeId;
   bool _localDatabaseTreeMode = false;
+
+  /// Local sources support extra speeds; the API accepts three categories.
+  List<TimeControl> get availableTimeControls =>
+      _localDatabaseTreeMode ||
+              (_enabledLocalPlayerTreeId != null &&
+                  _enabledLocalPlayerTreeId == _localTreePlayerId(state.filters))
+          ? TimeControl.values
+          : gamebaseExplorerApiTimeControls;
 
   /// Play SFX for a SAN move string if sound is enabled.
   void _playSfx(String san) {
@@ -213,6 +238,12 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
 
   /// Fetch move aggregates for current position
   Future<void> _fetchMoveAggregates() async {
+    if (!mounted) return;
+    if (_fetchDenied(0)) {
+      ++_fetchToken;
+      _clearDeniedStatistics();
+      return;
+    }
     final fetchId = ++_fetchToken;
     final requestedFen = state.currentFen;
     final filtersSnapshot = state.filters;
@@ -282,7 +313,16 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       );
 
       // Ignore if a newer request started or FEN changed while awaiting.
-      if (fetchId != _fetchToken || requestedFen != state.currentFen) return;
+      if (!mounted ||
+          fetchId != _fetchToken ||
+          requestedFen != state.currentFen) {
+        return;
+      }
+      // Membership moved while the request was in flight.
+      if (_fetchDenied(0)) {
+        _clearDeniedStatistics();
+        return;
+      }
 
       _putCacheEntry(cacheKey, aggregates);
       state = state.copyWith(moveAggregates: aggregates, isLoading: false);
@@ -290,8 +330,9 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       // Opportunistically prefetch a few likely next positions to make the
       // explorer feel instantaneous even when backend caches are cold.
       // Skip prefetch when filters are active because those paths can be slow.
-      if (!_hasActiveFilters(filtersSnapshot) ||
-          _isPlayerScopedOnlyFilter(filtersSnapshot)) {
+      if (!_fetchDenied(1) &&
+          (!_hasActiveFilters(filtersSnapshot) ||
+              _isPlayerScopedOnlyFilter(filtersSnapshot))) {
         _prefetchNextPositions(
           repository: repository,
           baseFen: requestedFen,
@@ -301,7 +342,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
         );
       }
     } catch (e) {
-      if (fetchId != _fetchToken) return;
+      if (!mounted || fetchId != _fetchToken) return;
       state = state.copyWith(isLoading: false, error: e.toString());
     }
   }
@@ -984,14 +1025,16 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
             if (needsInitialFetch && fetchAggregates) _scheduleFetch();
             return;
           }
-          state = state.copyWith(
-            currentFen: normalized,
-            movePointer: existingPointer,
-            isLoading: fetchAggregates,
-            error: null,
-            moveAggregates: const [],
+          _applyPositionState(
+            state.copyWith(
+              currentFen: normalized,
+              movePointer: existingPointer,
+              isLoading: fetchAggregates,
+              error: null,
+              moveAggregates: const [],
+            ),
+            fetchAggregates: fetchAggregates,
           );
-          if (fetchAggregates) _scheduleFetch();
           return;
         }
       }
@@ -1050,7 +1093,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
         );
       }
 
-      state = state.copyWith(
+      final next = state.copyWith(
         currentFen: normalized,
         game: ChessGame(
           gameId: 'explorer_sync_${DateTime.now().millisecondsSinceEpoch}',
@@ -1070,11 +1113,56 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
         error: null,
         moveAggregates: const [],
       );
-      if (fetchAggregates) _scheduleFetch();
+      _applyPositionState(next, fetchAggregates: fetchAggregates);
     } catch (e) {
       debugPrint('[GamebaseExplorer] setPosition error: $e');
       state = state.copyWith(error: 'Invalid FEN: $fen');
     }
+  }
+
+  /// Installs [next] (a position with its aggregates blanked) and gets its
+  /// aggregates.
+  ///
+  /// A position this notifier answered minutes ago is answered again from
+  /// memory in this same assignment, exactly as the debounced fetch would do
+  /// a moment later, so the moves table (and the games warm-ups behind it)
+  /// never blanks to a spinner on a revisit or a back-step.
+  void _applyPositionState(
+    GamebaseExplorerState next, {
+    required bool fetchAggregates,
+  }) {
+    final cached = fetchAggregates ? _freshCachedAggregatesFor(next) : null;
+    if (cached == null) {
+      state = next;
+      if (fetchAggregates) _scheduleFetch();
+      return;
+    }
+    state = next.copyWith(moveAggregates: cached, isLoading: false);
+    // Nothing left to fetch: drop a pending debounce and let any request
+    // still in flight for an earlier position land as stale.
+    _debounceTimer?.cancel();
+    _fetchToken++;
+  }
+
+  /// The aggregates [_fetchMoveAggregates] would install for [next] straight
+  /// from its memory cache, or null when it would have to ask the server,
+  /// read a local player tree, or refuse the fetch.
+  List<MoveAggregate>? _freshCachedAggregatesFor(GamebaseExplorerState next) {
+    if (accessCheck?.call(next, 0) == false) return null;
+    final localPlayerId = _localTreePlayerId(next.filters);
+    if (localPlayerId != null && isLocalPlayerTreeEnabledFor(localPlayerId)) {
+      return null;
+    }
+    final startsFromInitial =
+        next.game != null && _isInitialFen(next.game!.startingFen);
+    return _getFreshCacheEntry(
+      _buildCacheKey(
+        fen: next.currentFen,
+        exploredMoves:
+            startsFromInitial ? next.exploredMoves : const <String>[],
+        filters: next.filters,
+      ),
+    );
   }
 
   /// Recursively find a pointer for a UCI path in a game tree.
@@ -1157,6 +1245,8 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
     if (enabled) {
       _debounceTimer?.cancel();
       state = state.copyWith(isLoading: false, error: null);
+    } else {
+      _clearUnavailableTimeControls();
     }
   }
 
@@ -1208,7 +1298,21 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
   }
 
   void disableLocalPlayerTree() {
+    if (_enabledLocalPlayerTreeId == null) return;
     _enabledLocalPlayerTreeId = null;
+    _clearUnavailableTimeControls();
+  }
+
+  /// A speed selected on a local source cannot carry into the API explorer.
+  void _clearUnavailableTimeControls() {
+    final controls = state.filters.timeControls;
+    final available = availableTimeControls;
+    if (controls.every(available.contains)) return;
+    state = state.copyWith(
+      filters: state.filters.copyWith(
+        timeControls: controls.where(available.contains).toList(),
+      ),
+    );
   }
 
   bool isLocalPlayerTreeEnabledFor(String playerId) {
@@ -2103,6 +2207,15 @@ final gameWithPgnByIdProvider = FutureProvider.autoDispose
       return repository.getGameWithPgn(gameId.trim());
     });
 
+/// Rows per page in a desktop position-games table
+/// (`DesktopPositionGamesTable`).
+const int kDesktopPositionGamesPageSize = 25;
+
+/// Plies of UCI continuation asked for per row on first paint of a desktop
+/// position-games table. The full PGN continuation is still lazy-loaded when
+/// a row is previewed.
+const int kDesktopPositionGamesNotationPlies = 16;
+
 class GamebasePositionGamesQuery {
   final String fen;
   final List<String> moves;
@@ -2127,6 +2240,7 @@ class GamebasePositionGamesQuery {
   /// games rail passes a short first-paint slice and lazy-loads the full PGN
   /// continuation only when the user previews a row.
   final int notationPlies;
+  final bool useFenEndpoint;
 
   const GamebasePositionGamesQuery({
     required this.fen,
@@ -2146,7 +2260,71 @@ class GamebasePositionGamesQuery {
     this.pageNumber = 0,
     this.pageSize = 20,
     this.notationPlies = 0,
+    this.useFenEndpoint = false,
   });
+
+  /// The page a desktop position-games table (`DesktopPositionGamesTable`)
+  /// asks the global database for. The table and every warm-up of it build
+  /// their query here, so a warmed page is the page the table reads.
+  ///
+  /// [sortBy] / [sortDirection] default to the explorer filters' sort (a
+  /// column-header override passes its own).
+  factory GamebasePositionGamesQuery.desktopTablePage({
+    required String fen,
+    required GamebaseFilters filters,
+    List<String> moves = const <String>[],
+    String? uci,
+    GamebaseSortField? sortBy,
+    GamebaseSortDirection? sortDirection,
+    int pageNumber = 0,
+  }) {
+    return GamebasePositionGamesQuery(
+      fen: fen,
+      moves: moves,
+      uci: uci,
+      pageNumber: pageNumber,
+      pageSize: kDesktopPositionGamesPageSize,
+      timeControl:
+          filters.timeControls.isNotEmpty ? filters.timeControls.first : null,
+      playerId: filters.playerIds.isNotEmpty ? filters.playerIds.first : null,
+      color: switch (filters.playerColor) {
+        GamebasePlayerColor.white => 'white',
+        GamebasePlayerColor.black => 'black',
+        null => null,
+      },
+      result: filters.gameResult?.apiValue,
+      minRating: filters.minRating,
+      maxRating: filters.maxRating,
+      yearFrom: filters.yearFrom,
+      yearTo: filters.yearTo,
+      isOnline: filters.isOnline,
+      sortBy: sortBy ?? filters.sortBy,
+      sortDirection: sortDirection ?? filters.sortDirection,
+      notationPlies: kDesktopPositionGamesNotationPlies,
+    );
+  }
+
+  /// This query at [page] (0-indexed), every other field unchanged.
+  GamebasePositionGamesQuery withPage(int page) => GamebasePositionGamesQuery(
+    fen: fen,
+    moves: List<String>.unmodifiable(moves),
+    uci: uci,
+    timeControl: timeControl,
+    playerId: playerId,
+    color: color,
+    result: result,
+    isOnline: isOnline,
+    minRating: minRating,
+    maxRating: maxRating,
+    yearFrom: yearFrom,
+    yearTo: yearTo,
+    sortBy: sortBy,
+    sortDirection: sortDirection,
+    pageNumber: page,
+    pageSize: pageSize,
+    notationPlies: notationPlies,
+    useFenEndpoint: useFenEndpoint,
+  );
 
   @override
   bool operator ==(Object other) {
@@ -2167,7 +2345,8 @@ class GamebasePositionGamesQuery {
         other.sortDirection == sortDirection &&
         other.pageNumber == pageNumber &&
         other.pageSize == pageSize &&
-        other.notationPlies == notationPlies;
+        other.notationPlies == notationPlies &&
+        other.useFenEndpoint == useFenEndpoint;
   }
 
   @override
@@ -2189,40 +2368,31 @@ class GamebasePositionGamesQuery {
     pageNumber,
     pageSize,
     notationPlies,
+    useFenEndpoint,
   );
 }
 
+/// One page of games for a position, straight from the server.
+///
+/// Requests go through [ExplorerGamesCache.fetch], so an identical request
+/// already in flight (a warm-up, another games table) is shared, and first
+/// pages are remembered for an instant paint next time. The value here is
+/// always a server answer, never a saved copy: callers that want to paint a
+/// saved first page first ask [ExplorerGamesCache.peek] themselves.
+///
+/// A settled page stays alive for [kExplorerGamesRetainFor] with nothing
+/// watching it, as it always did, so stepping back through a line answers
+/// from memory with no request, and is released after that.
 final positionGamesProvider = FutureProvider.autoDispose
     .family<GamebaseSearchQueryResponse, GamebasePositionGamesQuery>((
       ref,
       query,
     ) async {
-      final repository = ref.read(gamebaseRepositoryProvider);
+      final cache = ref.read(explorerGamesCacheProvider);
       final keepAliveLink = ref.keepAlive();
-      Timer? cacheTimer;
-      ref.onDispose(() => cacheTimer?.cancel());
-
       try {
-        final response = await repository.getPositionGames(
-          fen: query.fen,
-          moves: query.moves,
-          uci: query.uci,
-          timeControl: query.timeControl,
-          playerId: query.playerId,
-          color: query.color,
-          result: query.result,
-          isOnline: query.isOnline,
-          minRating: query.minRating,
-          maxRating: query.maxRating,
-          yearFrom: query.yearFrom,
-          yearTo: query.yearTo,
-          sortBy: query.sortBy,
-          sortDirection: query.sortDirection,
-          pageNumber: query.pageNumber,
-          pageSize: query.pageSize,
-          notationPlies: query.notationPlies,
-        );
-        cacheTimer = Timer(_positionGamesPageCacheTtl, keepAliveLink.close);
+        final response = await cache.fetch(query);
+        cache.retain(keepAliveLink);
         return response;
       } catch (_) {
         keepAliveLink.close();

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -12,6 +13,11 @@ import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/player_score_card_board_context.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+
+
+
+
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -26,7 +32,8 @@ import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
-    show buildTournamentBoardTabArgs;
+    show buildTournamentBoardTabArgs, openTournamentGameTab;
+
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
@@ -52,11 +59,11 @@ import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/favorite_constants.dart';
-import 'package:chessever/utils/favorite_limit_guard.dart';
+
+
 import 'package:chessever/utils/location_service_provider.dart';
 import 'package:chessever/utils/png_asset.dart';
-import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
+
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 
@@ -217,12 +224,15 @@ class EventPlayerGamesNotifier
       _stopRefreshTimer();
     });
 
-    final loaded = await _loadRows();
-    if (!_disposed) {
-      _initialLoadComplete = true;
-      _startRefreshTimer();
+    try {
+      return await _loadRows();
+    } finally {
+      // A first-load error must remain retryable while the owning tab is open.
+      if (!_disposed) {
+        _initialLoadComplete = true;
+        _startRefreshTimer();
+      }
     }
-    return loaded;
   }
 
   Future<bool> refresh() async {
@@ -353,7 +363,6 @@ bool _eventPlayerGameListsEqual(
 /// 1-66" and "Open Boards 67-126". A player scorecard must query each of
 /// those siblings, but no unrelated category, to retain every round without
 /// loading every board in the event.
-@visibleForTesting
 List<String> resolveEventPlayerTourIds({
   required String selectedTourId,
   required String selectedTourName,
@@ -563,7 +572,79 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
     bool background = false,
     List<GamesTourModel> eventGames = const <GamesTourModel>[],
   }) async {
+    // Capture the card's event identity before hydration can dispose its ref.
+    // This is the expanded Tournament games card, not the Board hover card.
+    final tabContext = widget.tabContext;
+    final broadcast =
+        tabContext == null
+            ? ref.read(selectedBroadcastModelProvider)
+            : tabContext.selectedBroadcast;
+    final hasEventContext =
+        tabContext?.hasEventContext ??
+        (broadcast != null || ref.read(scoreCardHasEventContextProvider));
+    if (hasEventContext &&
+        game.source == GameSource.supabase &&
+        game.tourId.trim().isNotEmpty) {
+      final player =
+          ref
+              .read(backfilledStandingPlayerProvider(widget.player))
+              .valueOrNull ??
+          widget.player;
+      final scope = EventPlayerBoardScope(
+        tourIds: [game.tourId],
+        playerName: player.name,
+        fideId: player.fideId,
+        eventTitle: tournamentTitle,
+        eventBroadcastId: broadcast?.id,
+      );
+      try {
+        await openTournamentGameTab(
+          ref,
+          game,
+          tournamentTitle,
+          eventGames: eventGames,
+          eventPlayerScope: scope,
+          accessContext: tabContext?.accessContext,
+          eventBroadcastId: scope.eventBroadcastId,
+          viewSource: ChessboardView.tour,
+          focus: !background,
+          reuseExisting: false,
+          replaceActive: false,
+        );
+      } catch (_) {
+        if (mounted) {
+          showDesktopToast(
+            context,
+            'Could not open event games. Please retry.',
+            error: true,
+          );
+        }
+      }
+      return;
+    }
+    final container = ProviderScope.containerOf(context, listen: false);
+    final admission =
+        buildTournamentBoardTabArgs(
+          game,
+          tournamentTitle,
+          viewSource: playerScoreCardBoardViewSource(
+            tabContext: widget.tabContext,
+            hasSelectedBroadcast:
+                ref.read(selectedBroadcastModelProvider) != null,
+          ),
+          includeServerEventRail: false,
+          accessContext: widget.tabContext?.accessContext,
+        ).admissionContext;
+    // Denied => the PGN hydrate never starts.
+    if (!admitBoardSourceOpen(
+      container,
+      admission,
+      surface: 'score_card_open',
+    )) {
+      return;
+    }
     final openedGame = await _hydrateGameForBoardOpen(game);
+    if (!readDesktopAccess(container.read, admission).isAllowed) return;
     final contextGames = _replaceGameInContext(
       eventGames.isEmpty ? <GamesTourModel>[game] : eventGames,
       openedGame,
@@ -582,6 +663,7 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       eventGames: contextGames,
       viewSource: boardViewSource,
       includeServerEventRail: false,
+      accessContext: admission,
     );
     // Keep the legacy board provider in sync with the same resolved source.
     ref.read(chessboardViewFromProviderNew.notifier).state = boardViewSource;
@@ -755,58 +837,16 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
   }
 
   Future<void> _toggleFavorite(PlayerStandingModel player) async {
-    final allowed = await requireFullAuthGuard(context);
-    if (!allowed) return;
-    try {
-      final hydrated = await ref.read(
-        backfilledStandingPlayerProvider(player).future,
-      );
-      final favs = ref.read(favoritePlayersProviderNew);
-      final hydratedFideId = hydrated.fideId?.toString();
-      final hydratedName = hydrated.name.trim();
-      final already = favs.maybeWhen(
-        data:
-            (players) => players.any(
-              (p) =>
-                  (hydratedFideId != null &&
-                      hydratedFideId.isNotEmpty &&
-                      p.fideId == hydratedFideId) ||
-                  p.playerName.trim() == hydratedName,
-            ),
-        orElse: () => false,
-      );
-      if (!already) {
-        if (!mounted) return;
-        final canAdd = await canAddMoreFavorites(context, ref);
-        if (!canAdd) return;
-      }
-      await ref
-          .read(favoritePlayersProviderNew.notifier)
-          .toggleFavorite(
-            fideId: hydrated.fideId?.toString(),
-            playerName: hydrated.name,
-            countryCode: hydrated.countryCode,
-            rating: hydrated.score,
-            title: hydrated.title,
-          );
-    } on FavoriteLimitExceededException {
-      // Desktop is premium-only — this branch should never trip in
-      // production. Toast as a defensive fallback if it does.
-      if (mounted) {
-        showDesktopToast(
-          context,
-          'Could not add favorite. Please try again.',
-          error: true,
-        );
-      }
-    } catch (_) {
-      if (!mounted) return;
-      showDesktopToast(
-        context,
-        'Failed to update favorite. Please try again.',
-        error: true,
-      );
-    }
+    final favorites = ref.read(favoritePlayersProviderNew).valueOrNull ?? const [];
+    final already = favorites.any((favorite) => favoritePlayerMatchesIdentity(favorite,
+      fideId: player.fideId?.toString(), playerName: player.name.trim(),
+      memorialSourceIdentity: player.memorialSourceIdentity));
+    await setDesktopPlayerFavorite(context, ref, favorite: !already,
+      playerName: player.name, fideId: player.fideId?.toString(),
+      countryCode: player.countryCode, rating: player.score, title: player.title,
+      gamebasePlayerId: player.gamebasePlayerId,
+      memorialSourceIdentity: player.memorialSourceIdentity,
+      memorialRouteId: player.memorialRouteId);
   }
 
   // ---------------------------------------------------------------------
@@ -2002,7 +2042,10 @@ class _GamesPanel extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _GamesHeader(gameCount: games.length, isLoading: isLoading),
+        _GamesHeader(
+          gameCount: games.length,
+          isLoading: isLoading,
+        ),
         const Divider(height: 1, thickness: 1, color: kDividerColor),
         Expanded(child: _buildBody(context, ref)),
       ],
@@ -2163,7 +2206,10 @@ class _GamesPanel extends ConsumerWidget {
 }
 
 class _GamesHeader extends StatelessWidget {
-  const _GamesHeader({required this.gameCount, required this.isLoading});
+  const _GamesHeader({
+    required this.gameCount,
+    required this.isLoading,
+  });
 
   final int gameCount;
   final bool isLoading;

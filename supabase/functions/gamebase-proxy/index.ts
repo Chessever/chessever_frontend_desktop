@@ -1,13 +1,17 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { isAllowedGamebaseProxyRoute } from "./allowed_routes.ts";
+import {
+  bearerNamesAccount,
+  matchGamebaseProxyRoute,
+} from "./allowed_routes.ts";
+import { hasProjectClientKey, upstreamHeaders } from "./request_headers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, if-none-match",
-  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "authorization, x-client-info, apikey, content-type, if-none-match, cache-control, pragma, x-rewarded-session",
+  "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
   "Access-Control-Expose-Headers":
-    "X-Game-Count, X-PGN-Cache, X-PGN-Snapshot, X-PGN-Warm-Job, Retry-After, ETag, Content-Disposition",
+    "X-Game-Count, X-PGN-Cache, X-PGN-Snapshot, X-PGN-Filter-Version, X-PGN-Warm-Job, Retry-After, ETag, Content-Disposition",
 };
 
 const DEFAULT_GAMEBASE_API_BASE = "https://service.chessever.com";
@@ -45,20 +49,28 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  if (req.method !== "GET" && req.method !== "POST") {
+  if (!["GET", "POST", "PUT", "DELETE"].includes(req.method)) {
     return jsonResponse({ error: "method_not_allowed" }, 405);
   }
 
-  const hasClientAuth = req.headers.has("authorization") ||
-    req.headers.has("apikey");
-  if (!hasClientAuth) {
+  const publicKey = (Deno.env.get("GAMEBASE_CLIENT_ANON_KEY") ??
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "").trim();
+  if (!hasProjectClientKey(req.headers, publicKey)) {
     return jsonResponse({ error: "unauthorized" }, 401);
   }
 
   const requestUrl = new URL(req.url);
   const apiPath = upstreamApiPath(requestUrl);
-  if (!apiPath || !isAllowedGamebaseProxyRoute(req.method, apiPath)) {
+  const route = apiPath ? matchGamebaseProxyRoute(req.method, apiPath) : null;
+  if (!apiPath || !route) {
     return jsonResponse({ error: "route_not_allowed" }, 403);
+  }
+
+  // Gamebase verifies the account token and its permissions. Gateway JWT
+  // verification stays off because it rejects the project's legacy anon key.
+  const authorization = req.headers.get("authorization") ?? "";
+  if (route.member && !bearerNamesAccount(authorization)) {
+    return jsonResponse({ error: "unauthorized" }, 401);
   }
 
   const apiKey = Deno.env.get("GAMEBASE_API_KEY")?.trim();
@@ -75,16 +87,10 @@ Deno.serve(async (req: Request) => {
     upstreamUrl.searchParams.append(key, value);
   });
 
-  const headers = new Headers();
-  headers.set("Accept", req.headers.get("accept") ?? "application/json");
-  headers.set("X-API-Key", apiKey);
-  const ifNoneMatch = req.headers.get("if-none-match");
-  if (ifNoneMatch) headers.set("If-None-Match", ifNoneMatch);
-  const contentType = req.headers.get("content-type");
-  if (contentType) headers.set("Content-Type", contentType);
+  const headers = upstreamHeaders(req.headers, route, apiKey);
 
   let body: BodyInit | undefined;
-  if (req.method === "POST") {
+  if (req.method === "POST" || req.method === "PUT") {
     body = await req.text();
   }
 
@@ -112,6 +118,8 @@ Deno.serve(async (req: Request) => {
     if (pgnCache) responseHeaders.set("X-PGN-Cache", pgnCache);
     const pgnSnapshot = upstream.headers.get("x-pgn-snapshot");
     if (pgnSnapshot) responseHeaders.set("X-PGN-Snapshot", pgnSnapshot);
+    const pgnFilterVersion = upstream.headers.get("x-pgn-filter-version");
+    if (pgnFilterVersion) responseHeaders.set("X-PGN-Filter-Version", pgnFilterVersion);
     const pgnWarmJob = upstream.headers.get("x-pgn-warm-job");
     if (pgnWarmJob) responseHeaders.set("X-PGN-Warm-Job", pgnWarmJob);
     const retryAfter = upstream.headers.get("retry-after");
@@ -120,6 +128,12 @@ Deno.serve(async (req: Request) => {
     if (etag) responseHeaders.set("ETag", etag);
     const disposition = upstream.headers.get("content-disposition");
     if (disposition) responseHeaders.set("Content-Disposition", disposition);
+    // One member's publication, or one viewer's access, is never another's
+    // cached answer.
+    if (route.member || route.viewer) {
+      responseHeaders.set("Cache-Control", "private, no-store");
+      responseHeaders.set("Vary", "Authorization");
+    }
     return new Response(upstream.body, {
       status: upstream.status,
       headers: responseHeaders,

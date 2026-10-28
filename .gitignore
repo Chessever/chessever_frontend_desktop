@@ -217,6 +217,10 @@ fastlane/.env*
 **/fastlane/metadata
 dist/
 
+# Local release evidence can contain account details and raw app captures.
+/output/
+*.provisionprofile
+
 # auto_updater signing keys — public key is committed; private keys never are.
 dsa_priv.pem
 sparkle_priv.pem
@@ -231,3 +235,7 @@ sparkle_priv.pem
 !THIRD_PARTY_NOTICES.md
 # Stockfish provenance / bundling notes referenced by THIRD_PARTY_NOTICES.md.
 !lib/desktop/services/engine/desktop_engine_assets.md
+# Agent instructions split out of AGENTS.md (read on demand; binding like AGENTS.md itself).
+!docs/agents/*.md
+# Kiro CLI runtime lock (machine-local).
+.kiro/settings/*.lock

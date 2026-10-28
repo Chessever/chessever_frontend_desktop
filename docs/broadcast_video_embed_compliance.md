@@ -45,13 +45,13 @@ place, owner named; N/A = does not apply.
 | Must not mask or misrepresent identity (III.D.1.a) | OK | Same as above: the embedding page is genuinely chessever.com. |
 | Must not situate the player in a nested iframe lineage to circumvent policy or obfuscate the source (III.I.21) | OK | One page, one iframe. The WebView document is top-level; the player is its direct child frame. |
 | Viewport at least 200×200 (RMF) | OK | Panel: below 200 px of rail width the external link replaces the player; height is clamped to at least 200. Site: `minWidth`/`minHeight` on the adapter. |
-| Do not initiate autoplay until the player is visible and more than half visible (RMF) | OK | The panel renders (and loads) only for the foreground Board tab with the player expanded; hidden tabs unmount it. |
-| Only one autoplaying player per page or screen (RMF) | OK | One panel per Board tab; only the foreground tab mounts it. A detached board window is a separate screen. |
-| No overlays, frames or visual elements in front of any part of the player (RMF) | OK | Desktop: player first, toolbar under it; tooltips and popovers anchor downward over our notation panel. Site: hover list opens above the flag, overflow menu `side="top"`, chat launcher hidden on `/embed`. |
+| Do not initiate autoplay until the player is visible and more than half visible (RMF) | OK | A new player mounts (and loads) only for the foreground Board tab with the player expanded; hidden tabs keep the loaded player mounted in place without starting a hidden load. |
+| Only one autoplaying player per page or screen (RMF) | OK | One panel per Board tab; a new player mounts only on the foreground tab, and a background tab blanks its player after the 20s grace. A detached board window is a separate screen. |
+| No overlays, frames or visual elements in front of any part of the player (RMF) | OK | Desktop and site share the same chrome: language rail and overflow sit above the frame. Hover lists, pin menus and tooltips open above the flags (site falls back below only when there is no room). Chat launcher is hidden on `/embed`. |
 | No mouseovers or touch events on the player to initiate actions (RMF) | OK | Hover handlers exist only on the toolbar flags, not on the player. |
-| Do not modify, build upon or block player functionality; no changes not described by the API docs (III.I.6, RMF) | OK | Documented player parameters only (`autoplay`, `mute`, `playsinline`); no scripts injected into provider frames. The player's fullscreen control is the provider's own: the site's iframe carries `allow="fullscreen"`, and the desktop WebView has the HTML Fullscreen API switched on (`WKPreferences.isElementFullscreenEnabled` through our patched `webview_all_wkwebview`; on by default in WebView2), which is a WebView capability, not a change to the player. WKWebView ships with it off, which hid YouTube's control and left Twitch's inert until 20.32.14. |
-| Fullscreen presentation stays the player's, with nothing of ours in it (RMF overlays rule; III.I.6) | OK | macOS: WebKit presents the element in a full-screen window of its own; the app draws nothing there and does not intercept it. Windows: WebView2 sizes a full-screen element to the WebView's bounds only, so the panel listens to `ContainsFullScreenElementChanged` and, while it is set, mounts the same player in a window-filling overlay (bare `WebViewWidget` on black, one texture, no chrome) and takes the main window full screen; a detached board window only fills itself. The player's own exit (its button, Esc) clears the signal and restores the rail and the window. |
-| No background player: content must not play from a player not displayed in the page, tab or screen the user is viewing (III.I.9) | OK | Playback stops 20 seconds after the tab leaves the foreground or the window is hidden or minimised (`liveGameStreamingLifecycleProvider`); the grace only lets a quick switch back re-attach the same player instead of loading it again. Element fullscreen does not trip this: on macOS the lifecycle follows `NSApplication.occlusionState`, and WebKit's full-screen window is one of the app's own, so the app stays `resumed`; on Windows the overlay lives in the same window. |
+| Do not modify, build upon or block player functionality; no changes not described by the API docs (III.I.6, RMF) | OK | Documented player parameters only (`autoplay`, `mute`, `playsinline`); no scripts injected into provider frames. The player's fullscreen control is the provider's own: the site's iframe carries `allow="fullscreen"`, and on macOS the WebView has the HTML Fullscreen API switched on (`WKPreferences.isElementFullscreenEnabled` through our patched `webview_all_wkwebview`), which is a WebView capability, not a change to the player. WKWebView ships with it off, which hid YouTube's control and left Twitch's inert. |
+| Fullscreen presentation stays the player's, with nothing of ours in it (RMF overlays rule; III.I.6) | OK | macOS: WebKit presents the element in a full-screen window of its own; the app draws nothing there and does not intercept it. Windows: WebView2 has the Fullscreen API on by default but sizes a full-screen element to the WebView's own bounds, so the player fills its rail slot; the app does not move the player to make it larger (see the next row). |
+| No background player: content must not play from a player not displayed in the page, tab or screen the user is viewing (III.I.9) | OK | Playback stops 20 seconds after the tab leaves the foreground or the window is hidden or minimised (`liveGameStreamingLifecycleProvider`); during the grace the player stays mounted at its stable position (the tab stack hides it) so a quick switch back keeps the same player with no reload. Moving or disposing the host restarts later Board tabs, so the panel never does either during the grace. Element fullscreen on macOS does not trip this: the lifecycle follows `NSApplication.occlusionState`, and WebKit's full-screen window is one of the app's own, so the app stays `resumed`. |
 | Must not separate or promote audio/video components separately (III.I.7, III.I.8) | OK | Player shown whole; no audio-only mode. |
 | Must not modify, interfere with, replace or block YouTube advertisements (III.I.5) | OK | No content blocking in the WebView; provider ad and measurement frames navigate freely (only Google's passive sign-in frame is cancelled, which carries no ad). |
 | Must not charge users to watch in an embedded player or gate a video behind any action other than play (III.F.3.a, III.F.3.b) | OK, by reading | ChessEver Desktop is a paid product; the fee buys the analysis engine, databases, live boards and tools, and a stream is supplementary context inside them. YouTube's audit form lists subscription and freemium apps as valid models; the clause targets charging for the video itself. Conditions we hold: streams are never marketed, priced or gated as a paid benefit; the same streams play free on chessever.com and on YouTube; the player is unmodified with its controls, ads, branding and links intact; no background playback; "Open on YouTube" is always one click away. If YouTube ever reads it otherwise, the fallback is the link-out panel on `feat/streams-link-out-only`. |
@@ -100,9 +100,9 @@ place, owner named; N/A = does not apply.
 3. Only streams the broadcast API resolves for the scope are embeddable; the
    embed page 404s for anything else and the panel then offers the external
    link, never a broken frame.
-4. Nothing of ours in front of the player: the toolbar stays under it, and
-   tooltips, popovers and menus anchor away from it. On the site, menus open
-   above the toolbar and the chat launcher stays hidden on `/embed`.
+4. Nothing of ours in front of the player: the language rail sits above the
+   frame, and tooltips, popovers and menus open above the flags. On the site,
+   menus prefer the same side and the chat launcher stays hidden on `/embed`.
 5. Main-frame navigations away from the embed page are cancelled; only
    twitch.tv, youtube.com, youtu.be and kick.com destinations may open in
    the system browser, throttled to one launch per two seconds and no repeat
@@ -117,15 +117,17 @@ place, owner named; N/A = does not apply.
    player.
 7. Playback stops 20 seconds after the Board tab leaves the foreground or the
    window is hidden or minimised, and resumes on return. The grace exists so
-   a quick switch re-attaches the same player rather than loading it again.
+   a quick switch keeps the same mounted player rather than loading it again;
+   the player is never moved or unmounted during the grace.
 8. Never sell the panel: streams must not be marketed, priced or gated as a
    paid benefit, and no advertising may sit in or around it. The desktop app
    as a whole is paid; Twitch's agreement permits that explicitly, and the
    YouTube reading above depends on the stream staying supplementary to the
    product's own value. A "Pay to watch GM live streams" pitch, anywhere,
    breaks both.
-9. The toolbar always offers "Open on <Provider>", so the official source is
-   one click away whatever the embed does.
+9. Keep the provider player's own source links and attribution unmodified.
+   The desktop toolbar omits the redundant external-provider and watch-grid
+   icons; failed or too-narrow embeds still offer an explicit provider link.
 10. When the broadcasting API supplies `publication.madeForKids`, the site
     switches YouTube to `youtube-nocookie.com`; do not remove that path.
 11. Fullscreen belongs to the player. The WebView's Fullscreen API stays on
@@ -134,9 +136,11 @@ place, owner named; N/A = does not apply.
     the provider's own control works, and the app never adds a fullscreen
     control of its own, never intercepts the player's, and draws nothing in
     the full-screen presentation: on macOS that is WebKit's window, on
-    Windows the panel's overlay holds the bare player and nothing else. A
-    "fullscreen" of ours that stretches the player under our chrome would
-    be an overlay in front of the player and is not allowed.
+    Windows the player fills its own rail slot. Never move the player into
+    an overlay to enlarge it on Windows: moving the host restarts the
+    stream (see the background-player row). A "fullscreen" of ours that
+    stretches the player under our chrome would be an overlay in front of
+    the player and is not allowed.
 
 ## Request discipline (what the desktop sends, and how often)
 
@@ -148,7 +152,7 @@ The providers must never be hammered. Every outbound request of the panel:
 | Embed page | `chessever.com/embed/video/…` (ours) | Once per selected stream. The 30 s poll never reloads it; a metadata refresh that leaves the stream unchanged is a no-op. |
 | Provider player | Twitch / YouTube / Kick, from inside the embed page | Once per embed page load. Only the selected stream loads; nothing is prefetched. |
 | Failed-frame retry | `chessever.com` only | At most three automatic retries (45 s, 90 s, 3 min), then manual. Fires only when our page delivered no frame, so a provider outage never triggers it. |
-| Teardown and return | provider, via the page | A tab switch or hidden window blanks the player after 20 s; a return inside that window re-attaches the same player with no new request. |
+| Teardown and return | provider, via the page | A tab switch or hidden window blanks the player after 20 s; a return inside that window keeps the same mounted player with no new request. |
 
 Rules: never add a request to a provider host from the app itself; never
 reload a player on a timer; never load more than the selected stream.

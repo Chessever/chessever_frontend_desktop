@@ -8,6 +8,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/desktop_premium_test_overrides.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 void main() {
@@ -83,7 +84,12 @@ void main() {
         addTearDown(activePointer.dispose);
         var stepped = 0;
 
-        final container = ProviderContainer();
+        // The book-icon open lands on the exact-position games page, which is a
+        // Premium surface; run as a member so the real subscription notifier
+        // (and its hourly sync timer) is never built.
+        final container = ProviderContainer(
+          overrides: desktopPremiumTestOverrides,
+        );
         addTearDown(container.dispose);
 
         await tester.pumpWidget(

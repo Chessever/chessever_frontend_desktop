@@ -497,6 +497,11 @@ class OpeningExplorerPane extends HookConsumerWidget {
                         child: DesktopOpeningExplorer(
                           onMove: playUci,
                           onShowGames: (uci) => pinnedGamesUci.value = uci,
+                          // The games rail lists the board position's games:
+                          // a move row leads to the next position's, the
+                          // list icon pins the row's move.
+                          warmPositionGames: !exactFenSearch.value,
+                          warmPinnedGames: !exactFenSearch.value,
                         ),
                       ),
                     ),
@@ -580,6 +585,11 @@ class _BoardColumn extends ConsumerWidget {
                 ? cg.PlayerSide.white
                 : cg.PlayerSide.black);
 
+    // Generated once per position, not on every resize frame inside the
+    // LayoutBuilder below; a fresh object there also made the board treat
+    // its legal moves as changed each frame.
+    final validMoves = makeLegalMoves(position);
+
     return Column(
       children: [
         _PositionBreadcrumb(position: position),
@@ -635,7 +645,7 @@ class _BoardColumn extends ConsumerWidget {
                                   orientation: orientation,
                                   playerSide: playerSide,
                                   sideToMove: sideToMove,
-                                  validMoves: makeLegalMoves(position),
+                                  validMoves: validMoves,
                                   isCheck: isCheck,
                                   lastMove: lastMove,
                                   onMove: onMove,

@@ -7,6 +7,7 @@ const _archiveUrl = 'https://chessever.com/updates/desktop/app-archive.json';
 
 const _requiredArchivePaths = <String, List<String>>{
   'macos': ['Info.plist'],
+  'macos-x64': ['Info.plist'],
   'windows': [
     'Chessever.exe',
     'desktop_updater_plugin.dll',
@@ -93,9 +94,10 @@ Future<void> main() async {
           errors.add('$platform: archive is missing $requiredPath');
         }
       }
-      if (platform == 'macos' && !_hasVersionedMacResqliteBinary(paths)) {
+      if (platform.startsWith('macos') &&
+          !_hasVersionedMacResqliteBinary(paths)) {
         errors.add(
-          'macos: archive is missing a concrete versioned resqlite binary',
+          '$platform: archive is missing a concrete versioned resqlite binary',
         );
       }
       stdout.writeln(

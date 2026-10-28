@@ -15,6 +15,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'gif_export_worker.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/app_typography.dart';
 import 'package:chessever/utils/responsive_helper.dart';
@@ -834,7 +835,9 @@ class _ShareGameCardOverlayState extends State<ShareGameCardOverlay> {
 
   Future<void> _copyPgn() async {
     try {
-      await Clipboard.setData(ClipboardData(text: widget.pgn));
+      await Clipboard.setData(
+        ClipboardData(text: toExternalCompatiblePgn(widget.pgn)),
+      );
       HapticFeedback.lightImpact();
       _showMessage('PGN copied to clipboard!', isError: false);
     } catch (e) {

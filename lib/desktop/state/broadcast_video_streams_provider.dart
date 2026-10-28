@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -83,14 +84,7 @@ class BroadcastVideoStreamsNotifier
             key,
             () => (audience: stream.audience, preferred: stream.preferred),
           );
-          return BroadcastVideoStream(
-            id: stream.id,
-            label: stream.label,
-            countryCode: stream.countryCode,
-            provider: stream.provider,
-            sourceId: stream.sourceId,
-            url: stream.url,
-            publication: stream.publication,
+          return stream.copyWith(
             audience: snapshot.audience,
             preferred: snapshot.preferred,
           );
@@ -209,4 +203,48 @@ class BroadcastVideoLanguageController extends AsyncNotifier<String?> {
 final broadcastVideoLanguageProvider =
     AsyncNotifierProvider<BroadcastVideoLanguageController, String?>(
       BroadcastVideoLanguageController.new,
+    );
+
+/// Browser-local stream pins, same key the web writes (`ce-video-pins.v1:<id>`).
+class BroadcastVideoPinsController
+    extends AutoDisposeFamilyAsyncNotifier<List<String>, String> {
+  static String storageKey(String scopeId) => 'ce-video-pins.v1:$scopeId';
+
+  @override
+  Future<List<String>> build(String scopeId) async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final raw = preferences.getString(storageKey(scopeId));
+      if (raw == null || raw.isEmpty) return const <String>[];
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <String>[];
+      return decoded
+          .whereType<String>()
+          .toSet()
+          .take(200)
+          .toList(growable: false);
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
+  Future<void> toggle(String streamId) async {
+    final current = state.valueOrNull ?? const <String>[];
+    final next =
+        current.contains(streamId)
+            ? current.where((id) => id != streamId).toList(growable: false)
+            : <String>[streamId, ...current].take(200).toList(growable: false);
+    state = AsyncData<List<String>>(next);
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setString(storageKey(arg), jsonEncode(next));
+    } catch (_) {
+      // Storage is optional; the in-memory pin set still applies.
+    }
+  }
+}
+
+final broadcastVideoPinsProvider = AsyncNotifierProvider.autoDispose
+    .family<BroadcastVideoPinsController, List<String>, String>(
+      BroadcastVideoPinsController.new,
     );

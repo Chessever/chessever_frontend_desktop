@@ -153,6 +153,9 @@ class GamesLocalStorage {
   Future<List<Games>> fetchAndSaveGames(
     String tourId, {
     bool forceRefresh = false,
+    String? priorityRoundId,
+    void Function(List<Games>)? onPriorityRound,
+    Future<void> Function()? afterPriorityRound,
   }) async {
     // Coalesce only non-forced callers onto an in-flight fetch. A forceRefresh
     // caller must get its own guaranteed-fresh fetch rather than piggybacking
@@ -169,7 +172,12 @@ class GamesLocalStorage {
       }
     }
 
-    final fetch = _fetchAndSaveGames(tourId);
+    final fetch = _fetchAndSaveGames(
+      tourId,
+      priorityRoundId: priorityRoundId,
+      onPriorityRound: onPriorityRound,
+      afterPriorityRound: afterPriorityRound,
+    );
     _inFlightTourFetches[tourId] = fetch;
     try {
       return await fetch;
@@ -180,13 +188,25 @@ class GamesLocalStorage {
     }
   }
 
-  Future<List<Games>> _fetchAndSaveGames(String tourId) async {
+  Future<List<Games>> _fetchAndSaveGames(
+    String tourId, {
+    String? priorityRoundId,
+    void Function(List<Games>)? onPriorityRound,
+    Future<void> Function()? afterPriorityRound,
+  }) async {
     try {
       ref.read(loggerProvider).logInfo('Fetching games for tourId: $tourId');
 
-      final games = await ref
-          .read(gameRepositoryProvider)
-          .getGamesByTourId(tourId);
+      final repository = ref.read(gameRepositoryProvider);
+      final games =
+          priorityRoundId == null
+              ? await repository.getGamesByTourId(tourId)
+              : await repository.getTourGamePreviews(
+                tourId,
+                priorityRoundId: priorityRoundId,
+                onPriorityRound: onPriorityRound,
+                afterPriorityRound: afterPriorityRound,
+              );
 
       _rememberRecentTourFetch(tourId, games);
 

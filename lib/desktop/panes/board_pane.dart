@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import '../state/event_player_board_games.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -14,7 +16,8 @@ import 'package:chessground/chessground.dart' as cg;
 import 'package:file_picker/file_picker.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, kDebugMode, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -25,6 +28,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart' show DragToMoveArea;
 
+import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_clipboard.dart';
@@ -41,12 +45,14 @@ import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
     hide mergeGameReportAnnotationsForGif;
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_board_shortcuts.dart';
+import 'package:chessever/desktop/widgets/desktop_board_access_gate.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
@@ -64,6 +70,7 @@ import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/opening_explorer_seed.dart';
 import 'package:chessever/desktop/state/pgn_intake.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/state/player_hover_rounds.dart';
 import 'package:chessever/desktop/state/user_move_nags.dart';
 import 'package:chessever/desktop/utils/mainline_annotation_index.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
@@ -71,6 +78,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/desktop/widgets/board_actions_popover.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_panel.dart';
@@ -87,6 +95,7 @@ import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/desktop/widgets/editable_aware_shortcut_activator.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/desktop/widgets/engine_pv_arrow_palette.dart';
@@ -656,11 +665,22 @@ class BoardPane extends ConsumerWidget {
       key: ValueKey<String>('board-explorer-scope:$activeTabId'),
       overrides: [
         gamebaseExplorerProvider.overrideWith(
-          (ref) => GamebaseExplorerNotifier(ref),
+          (ref) => GamebaseExplorerNotifier(
+            ref,
+            accessCheck:
+                (state, advance) =>
+                    desktopExplorerFetchAllowed(ref.read, state, advance),
+          ),
         ),
         appliedBoardExplorerScopeKeyProvider.overrideWith((ref) => null),
       ],
-      child: _BoardPaneContent(tabId: activeTabId),
+      // Admission is per game lifetime: a locked game never builds the board
+      // content (no PGN hydrate, stream or engine), an admitted one is never
+      // unmounted by an entitlement change.
+      child: DesktopBoardAccessGate(
+        tabId: activeTabId,
+        child: _BoardPaneContent(tabId: activeTabId),
+      ),
     );
   }
 }
@@ -737,6 +757,10 @@ class _BoardPaneContent extends HookConsumerWidget {
             : ref.watch(
               boardTabGameArgsByTabIdProvider.select((m) => m[activeTabId]),
             );
+    final eventPlayerScope = boardArgs?.eventPlayerScope;
+    if (eventPlayerScope is EventPlayerBoardScope && activeTabId != null) {
+      ref.watch(eventPlayerBoardGamesProvider(eventPlayerBoardGamesKey(eventPlayerScope, activeTabId)));
+    }
     final attachedLibrarySaveOrigin =
         activeTabId == null
             ? null
@@ -783,7 +807,10 @@ class _BoardPaneContent extends HookConsumerWidget {
     final focusNode = useFocusNode();
     final explorerPreviewUci = useState<String?>(null);
     final explorerPreviewLine = useState<List<String>>(const <String>[]);
-    final explorerPreviewLineStep = useState<int>(0);
+    // A notifier, not useState: line-preview autoplay advances this every
+    // 520 ms, and only the board area and the right-rail panel read it.
+    // useState rebuilt this whole pane, notation included, on every step.
+    final explorerPreviewLineStep = useValueNotifier<int>(0);
     final explorerPreviewLineAutoplay = useState<bool>(true);
     final threatMode = useState<bool>(false);
     final explorerPreviewSoundKey = useRef<String?>(null);
@@ -936,7 +963,14 @@ class _BoardPaneContent extends HookConsumerWidget {
     }, [pictureInPictureMode, boardArgs?.gameId]);
     final requestedBoardFocusMode = ref.watch(boardFocusModeProvider);
     final boardFocusMode = pictureInPictureMode || requestedBoardFocusMode;
-    final boardSizePreference = useState<double?>(null);
+    // A notifier, not useState: the resize grip writes this on every pointer
+    // move, and only [_BoardArea] listens. useState rebuilt this whole pane
+    // (notation, explorer, games table, engine panel) per drag frame.
+    final boardSizePreference = useMemoized(
+      () => ValueNotifier<double?>(null),
+      const [],
+    );
+    useEffect(() => boardSizePreference.dispose, const []);
     final lastPersistedBoardSize = useRef<int?>(null);
     useEffect(() {
       var disposed = false;
@@ -1184,10 +1218,30 @@ class _BoardPaneContent extends HookConsumerWidget {
           canonicalLocalStateAlreadyClean) {
         return;
       }
+      final logLocalOpen =
+          kDebugMode &&
+          boardArgs?.librarySaveOrigin?.kind ==
+              BoardTabLibrarySaveOriginKind.localPgnFile;
+      final applyClock = logLocalOpen ? (Stopwatch()..start()) : null;
+      final parseClock = logLocalOpen ? (Stopwatch()..start()) : null;
       final ChessGame parsed;
       try {
         parsed = ChessGame.fromPgn('', trimmed);
+        if (logLocalOpen) {
+          LocalPgnPerformanceLog.event(
+            'board_parse',
+            'elapsedMs=${parseClock!.elapsedMilliseconds} '
+            'pgnChars=${trimmed.length} mainline=${parsed.mainline.length}',
+          );
+        }
       } catch (e) {
+        if (logLocalOpen) {
+          LocalPgnPerformanceLog.event(
+            'board_parse_failed',
+            'elapsedMs=${parseClock!.elapsedMilliseconds} '
+            'errorType=${e.runtimeType}',
+          );
+        }
         // Silent failure swallows the empty-notation bug if a malformed
         // PGN ever lands here (e.g. truncated row, corrupted stream
         // payload). Surface it in debug builds so we can spot which
@@ -1416,6 +1470,13 @@ class _BoardPaneContent extends HookConsumerWidget {
         hasUnseenMoves.value = true;
       } else if (landedOnTip) {
         hasUnseenMoves.value = false;
+      }
+      if (logLocalOpen) {
+        LocalPgnPerformanceLog.event(
+          'board_apply_complete',
+          'elapsedMs=${applyClock!.elapsedMilliseconds} '
+          'mainline=${game.mainline.length}',
+        );
       }
     }
 
@@ -2248,6 +2309,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     final position = currentPly.position;
     final canBack = pointer.value.isNotEmpty;
     final canForward = _nextPointer(chessGame.value, pointer.value) != null;
+    final canStepForward = _nextManualPointer(chessGame.value, pointer.value) != null;
     // ---- Per-side clocks at the active pointer ---------------------
     // Walk the active line *backwards* once and pick up the most
     // recent `[%clk …]` annotation we find for each colour. Clock
@@ -2370,13 +2432,23 @@ class _BoardPaneContent extends HookConsumerWidget {
       };
     }, const []);
 
+    // Events can refresh the game and pointer objects without changing the
+    // selected position or its continuations. Keep that chooser alive.
+    final variationForkScopeKey = useMemoized(
+      () => boardVariationForkScopeKey(
+        game: chessGame.value,
+        pointer: pointer.value,
+        sourceGameId: activeGameId,
+      ),
+      [activeGameId, chessGame.value, pointer.value],
+    );
     useEffect(() {
       return () {
         if (variationForkChooserOpen.value) {
           variationForkDismissSignal.value += 1;
         }
       };
-    }, [isForegroundTab, chessGame.value, pointer.value]);
+    }, [isForegroundTab, reportActivation.value, variationForkScopeKey]);
 
     void dismissVariationForkChooser() {
       if (!variationForkChooserOpen.value) return;
@@ -2395,7 +2467,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         return;
       }
       final currentPointer = pointer.value;
-      final next = _nextPointer(chessGame.value, currentPointer);
+      final next = _nextManualPointer(chessGame.value, currentPointer);
       if (next == null) return;
       final options = resolveVariationForkOptions(
         game: chessGame.value,
@@ -2423,6 +2495,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       // the tree, in which case the saved pointer is stale and we fall
       // back to a plain step so the key press still feels live.
       if (!_isPointerValid(chessGame.value, picked)) {
+        // A refreshed tree may now end at the current variation. A manual
+        // fallback must not use replay's parent-line continuation in that case.
+        if (_nextManualPointer(chessGame.value, pointer.value) == null) return;
         goNext();
         return;
       }
@@ -2713,6 +2788,16 @@ class _BoardPaneContent extends HookConsumerWidget {
       showDesktopToast(context, message, error: error);
     }
 
+    // A game read from a published collection is the author's work: it is
+    // replayed and analysed here, and never copied or saved out of the app.
+    // Same rule as the phone, and it holds for every reader.
+    final collectionGame = boardArgs?.accessContext?.isCollectionContent ?? false;
+    bool refuseCollectionExport() {
+      if (!collectionGame) return false;
+      showToast("Games in a collection can't be copied or saved.");
+      return true;
+    }
+
     // Tab id used as the key for per-tab annotation/NAG state. Declared
     // here so the undo action below can reference it (the post-build
     // `hasShapes` / `hasUserNags` watches still read it further down).
@@ -2865,6 +2950,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     Future<void> copyPgnAction() async {
+      if (refuseCollectionExport()) return;
       if (!gameHasMainline()) {
         showToast('No PGN to copy yet — load a game first.');
         return;
@@ -2884,7 +2970,13 @@ class _BoardPaneContent extends HookConsumerWidget {
             lastAppliedPgn: lastAppliedPgn.value,
           );
         }
-        await Clipboard.setData(ClipboardData(text: pgn));
+        // Copied PGN leaves the app, so it must import in stricter consumers:
+        // standard NAGs only, wrapped movetext, terminated file. The exact
+        // ChessEver class travels in the private `[ChessEverClassification …]`
+        // header tag, which our own import restores and no other app renders.
+        await Clipboard.setData(
+          ClipboardData(text: toExternalCompatiblePgn(pgn)),
+        );
         showToast('PGN copied to clipboard');
       } catch (e) {
         showToast('Failed to copy PGN: $e', error: true);
@@ -3104,9 +3196,15 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
     }
 
-    Future<void> saveGameToLibraryAction() =>
-        runBoardSave(saveGameToLibraryActionImpl);
-    Future<void> savePgnAction() => runBoardSave(savePgnActionImpl);
+    Future<void> saveGameToLibraryAction() async {
+      if (refuseCollectionExport()) return;
+      await runBoardSave(saveGameToLibraryActionImpl);
+    }
+
+    Future<void> savePgnAction() async {
+      if (refuseCollectionExport()) return;
+      await runBoardSave(savePgnActionImpl);
+    }
 
     void setMoveComment(ChessMovePointer target, String? comment) {
       if (target.isEmpty) return;
@@ -3725,6 +3823,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           showEvalBar: shouldShowDesktopBoardEvalBar(engineSettings),
           liveBoardPngBytes: liveBoardPngBytes,
           shareUrl: shareUrl,
+          allowPgnCopy: !collectionGame,
           whiteFideId:
               boardArgs?.sourceGame?.whitePlayer.fideId ??
               boardArgs?.whiteFideId,
@@ -3783,24 +3882,63 @@ class _BoardPaneContent extends HookConsumerWidget {
       position,
       explorerPreviewUci.value,
     );
-    final explorerLinePreview = _previewExplorerLine(
-      position,
-      explorerPreviewLine.value,
-      explorerPreviewLineStep.value,
+    final previewLine = explorerPreviewLine.value;
+    // The previewed line is replayed lazily once per line, not from its
+    // first move on every autoplay step.
+    final explorerLineFrames = useMemoized(
+      () => _ExplorerLineFrames(position, previewLine),
+      [position.fen, previewLine],
     );
-    final boardPosition =
-        explorerLinePreview?.position ?? explorerPreview?.position ?? position;
-    final activeEvalTarget = activeBoardEvalTarget(
-      fen: boardPosition.fen,
-      threatMode: threatMode.value,
-      isCheck: boardPosition.isCheck,
+    _ExplorerLineFrame? linePreviewAt(int step) => explorerLineFrames.at(step);
+    final showBoardMoveDecorations = shouldShowBoardMoveDecorations(
+      hasMovePreview: explorerPreview != null,
+      hasLinePreview: linePreviewAt(explorerPreviewLineStep.value) != null,
     );
-    final boardLastMove =
-        explorerLinePreview?.move ?? explorerPreview?.move ?? lastMove;
+    // Legal moves only change with the position; recomputing them on every
+    // rebuild also handed chessground a new map each time.
+    final boardValidMovesCache = useRef<(String, cg.ValidMoves)?>(null);
+    cg.ValidMoves validMovesFor(Position boardPosition) {
+      final cached = boardValidMovesCache.value;
+      if (cached != null && cached.$1 == boardPosition.fen) return cached.$2;
+      final moves = makeLegalMoves(boardPosition);
+      boardValidMovesCache.value = (boardPosition.fen, moves);
+      return moves;
+    }
+
+    // What the board shows at a line-preview step. The board area and the
+    // right rail resolve it inside their step listeners, and actions resolve
+    // it at call time, so an autoplay step never rebuilds the whole pane.
+    _BoardPreviewView boardViewAt(int step) {
+      final linePreview = linePreviewAt(step);
+      final boardPosition =
+          linePreview?.position ?? explorerPreview?.position ?? position;
+      return (
+        linePreview: linePreview,
+        position: boardPosition,
+        lastMove: linePreview?.move ?? explorerPreview?.move ?? lastMove,
+        evalTarget: activeBoardEvalTarget(
+          fen: boardPosition.fen,
+          threatMode: threatMode.value,
+          isCheck: boardPosition.isCheck,
+        ),
+      );
+    }
+
     final boardPlayerSide =
-        explorerLinePreview == null && explorerPreview == null
-            ? playerSide
-            : cg.PlayerSide.none;
+        showBoardMoveDecorations ? playerSide : cg.PlayerSide.none;
+
+    // Clears a line preview that can no longer be shown from this position.
+    // Deferred because effects reach it while the pane is building.
+    void dropLinePreviewSoon(List<String> line) {
+      Future.microtask(() {
+        if (!context.mounted) return;
+        if (!identical(explorerPreviewLine.value, line)) return;
+        explorerPreviewLine.value = const <String>[];
+        explorerPreviewLineStep.value = 0;
+        explorerPreviewLineAutoplay.value = true;
+        explorerPreviewSoundKey.value = null;
+      });
+    }
 
     useEffect(
       () {
@@ -3810,24 +3948,9 @@ class _BoardPaneContent extends HookConsumerWidget {
             explorerPreviewUci.value = null;
           });
         }
-        if (explorerPreviewLine.value.isNotEmpty &&
-            explorerLinePreview == null) {
-          Future.microtask(() {
-            if (!context.mounted) return;
-            explorerPreviewLine.value = const <String>[];
-            explorerPreviewLineStep.value = 0;
-            explorerPreviewLineAutoplay.value = true;
-            explorerPreviewSoundKey.value = null;
-          });
-        }
         return null;
       },
-      [
-        position.fen,
-        explorerPreviewUci.value,
-        explorerPreviewLine.value,
-        explorerPreviewLineStep.value,
-      ],
+      [position.fen, explorerPreviewUci.value],
     );
 
     useEffect(() {
@@ -3857,17 +3980,35 @@ class _BoardPaneContent extends HookConsumerWidget {
     }, [explorerPreviewLine.value, explorerPreviewLineAutoplay.value]);
 
     useEffect(() {
-      final line = explorerPreviewLine.value;
-      if (line.isEmpty || explorerLinePreview == null) return null;
-      final key =
-          '${position.fen}|${line.join(' ')}|${explorerPreviewLineStep.value}';
-      if (explorerPreviewSoundKey.value == key) return null;
-      explorerPreviewSoundKey.value = key;
-      if (_shouldPlaySounds(ref, activeTabId)) {
-        AudioPlayerService.instance.playSfxForSan(explorerLinePreview.san);
+      final line = previewLine;
+      if (line.isEmpty) return null;
+      // Runs for a line's first frame, then for every autoplay or manual
+      // step. A step written together with a new line fires this listener
+      // before the pane rebuilds; the identity check skips it, and the effect
+      // run for the new line handles that frame.
+      void syncStep() {
+        if (!context.mounted || !identical(explorerPreviewLine.value, line)) {
+          return;
+        }
+        final step = explorerPreviewLineStep.value;
+        final frame = linePreviewAt(step);
+        if (frame == null) {
+          dropLinePreviewSoon(line);
+          return;
+        }
+        final key = '${position.fen}|${line.join(' ')}|$step';
+        if (explorerPreviewSoundKey.value == key) return;
+        explorerPreviewSoundKey.value = key;
+        if (_shouldPlaySounds(ref, activeTabId)) {
+          AudioPlayerService.instance.playSfxForSan(frame.san);
+        }
       }
-      return null;
-    }, [position.fen, explorerPreviewLine.value, explorerPreviewLineStep.value]);
+
+      void onStep() => Future.microtask(syncStep);
+      syncStep();
+      explorerPreviewLineStep.addListener(onStep);
+      return () => explorerPreviewLineStep.removeListener(onStep);
+    }, [position.fen, previewLine]);
 
     void playUci(String uci, {bool requestPaneFocus = true}) {
       explorerPreviewUci.value = null;
@@ -4003,8 +4144,11 @@ class _BoardPaneContent extends HookConsumerWidget {
         return out;
       }
 
+      final view = boardViewAt(explorerPreviewLineStep.value);
+      final boardPosition = view.position;
+
       List<String> visiblePreviewPrefix() {
-        if (explorerLinePreview != null) {
+        if (view.linePreview != null) {
           final line = explorerPreviewLine.value;
           if (line.isEmpty) return const <String>[];
           final end =
@@ -4077,6 +4221,8 @@ class _BoardPaneContent extends HookConsumerWidget {
       // to move to be able to "pass": illegal in check, meaningless once the
       // game is decided.
       if (!threatMode.value) {
+        final boardPosition =
+            boardViewAt(explorerPreviewLineStep.value).position;
         if (boardPosition.isCheck) {
           showToast('No threats — the side to move is in check.', error: true);
           return;
@@ -4205,7 +4351,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     final showFinishedResult = shouldShowFinishedBoardResult(
       pointer.value,
       gameEndingPlyIndex: gameEndingPlyIndex,
-      isPreviewing: explorerPreview != null || explorerLinePreview != null,
+      isPreviewing: !showBoardMoveDecorations,
     );
     final isAtGameEndingPly = showFinishedResult && pointer.value.isNotEmpty;
     final gameEnding =
@@ -4729,10 +4875,8 @@ class _BoardPaneContent extends HookConsumerWidget {
       required ChessMovePointer activePointer,
       required ValueChanged<ChessMovePointer> onJump,
       required ValueNotifier<NotationLayoutMode> layoutModeController,
-      required Widget headerTrailing,
     }) {
       return NotationLadderView(
-        headerTrailing: headerTrailing,
         game: chessGame.value,
         activePointer: activePointer,
         // Notation stays mounted under Explorer; keep the cursor highlight.
@@ -4832,6 +4976,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         onCopyFen: copyFenAction,
         onSavePgn: savePgnAction,
         onSaveGameToLibrary: () => unawaited(saveGameToLibraryAction()),
+
         onOpenBoardSettings: openBoardSettingsTab,
         onOpenPositionSetup: openPositionSetup,
         onClearAnalysis:
@@ -4845,7 +4990,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                 )
                 ? () => unawaited(resetEditsAction())
                 : null,
-        canCopyOrSavePgn: chessGame.value.mainline.isNotEmpty,
+        canCopyOrSavePgn:
+            chessGame.value.mainline.isNotEmpty && !collectionGame,
         boardFocusMode: boardFocusMode,
         showBoardFocusAction: !pictureInPictureMode,
         onPlayFromHere: openPlayFromHereDialog,
@@ -4888,7 +5034,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         ? null
         : BroadcastVideoPanel(
             key: ValueKey<String>(
-              'broadcast-video:$broadcastTourId:$broadcastRoundId',
+              'broadcast-video:${activeTabId ?? ''}:$broadcastTourId:$broadcastRoundId',
             ),
             tourId: broadcastTourId,
             roundId: broadcastRoundId.isEmpty ? null : broadcastRoundId,
@@ -4904,7 +5050,17 @@ class _BoardPaneContent extends HookConsumerWidget {
     // usable board width. Default to collapsed on first mount when the
     // window is below this threshold; persisted layout (via storageKey)
     // overrides this once the user has expressed a preference.
-    final screenWidth = MediaQuery.of(context).size.width;
+    //
+    // Read without registering a MediaQuery dependency: the value is only
+    // consulted on first mount, and a dependency rebuilt this whole pane
+    // (and every hidden Board tab) on each window-resize frame.
+    final screenWidth =
+        context
+            .getInheritedWidgetOfExactType<MediaQuery>()
+            ?.data
+            .size
+            .width ??
+        double.infinity;
     const smallScreenWidthThreshold = 1400.0;
     final gameRailInitialCollapsed = screenWidth < smallScreenWidthThreshold;
 
@@ -4988,29 +5144,34 @@ class _BoardPaneContent extends HookConsumerWidget {
                           if (!contextMenuModifierHeld) return;
                           openBoardContextMenu(details.globalPosition);
                         },
-                        child: _BoardArea(
+                        child: ValueListenableBuilder<int>(
+                          valueListenable: explorerPreviewLineStep,
+                          builder: (context, previewStep, _) {
+                          final view = boardViewAt(previewStep);
+                          final boardPosition = view.position;
+                          return _BoardArea(
                           tabId: activeTabId ?? 'board-default',
                           boardRenderKey: boardRenderKey,
                           shareCaptureKey: boardShareCaptureKey,
                           fen: boardPosition.fen,
-                          analysisFen: activeEvalTarget.fen,
-                          threatMode: activeEvalTarget.isThreatProbe,
+                          analysisFen: view.evalTarget.fen,
+                          threatMode: view.evalTarget.isThreatProbe,
                           flipped: flipped.value,
                           sideToMove: boardPosition.turn,
                           playerSide: boardPlayerSide,
-                          validMoves: makeLegalMoves(boardPosition),
+                          validMoves: validMovesFor(boardPosition),
                           isCheck: boardPosition.isCheck,
-                          lastMove: boardLastMove,
+                          lastMove: view.lastMove,
                           onMove: onMove,
                           promotionMove: promotionMove.value,
                           onPromotionSelection: onPromotionSelection,
                           pgnHeaders: pgnHeaders.value,
                           pgnShapes:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? pgnShapes
                                   : const <cg.Shape>[],
                           onGraphicCommentaryChanged:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? (shapes) => setMoveGraphicCommentary(
                                     pointer.value,
                                     shapes,
@@ -5019,17 +5180,17 @@ class _BoardPaneContent extends HookConsumerWidget {
                           whiteClock: whiteClockRaw,
                           blackClock: blackClockRaw,
                           boardAnnotation:
-                              explorerPreview == null ? boardAnnotation : null,
+                              showBoardMoveDecorations ? boardAnnotation : null,
                           boardAnnotationGlyph:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? boardAnnotationGlyph
                                   : null,
                           boardAnnotationSquare:
-                              explorerPreview == null
+                              showBoardMoveDecorations
                                   ? boardAnnotationSquare
                                   : null,
                           gameEnding:
-                              explorerPreview == null ? gameEnding : null,
+                              showBoardMoveDecorations ? gameEnding : null,
                           showFinishedResult: showFinishedResult,
                           onWheelStep: stepNotationHorizontally,
                           isLiveAtTip: isLiveAtTip,
@@ -5050,7 +5211,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                               () => unawaited(dismissPictureInPictureAction()),
                           onNextGame: navigateNextGameManually,
 
-                          boardSizePreference: boardSizePreference.value,
+                          boardSizePreference: boardSizePreference,
                           onBoardSizeChanged: (size) {
                             setBoardSizePreference(size);
                             final settings =
@@ -5076,6 +5237,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                             persistBoardSizePreference();
                           },
                           suppressEngineAnalysis: !runLiveBoardAnalysis,
+                          );
+                          },
                         ),
                       ),
                     ),
@@ -5087,6 +5250,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                       MoveNavigationBar(
                         canGoBack: canBack,
                         canGoForward: canForward,
+                        canStepForward: canStepForward,
                         onFirst: goFirstManually,
                         onPrevious: goPrevManually,
                         onNext: () => unawaited(goNextManually()),
@@ -5143,7 +5307,26 @@ class _BoardPaneContent extends HookConsumerWidget {
                       children: [
                         if (broadcastVideoPanel != null) broadcastVideoPanel,
                         Expanded(
-                    child: NotationOpeningPanel(
+                    // Notation is the pass-through child: an autoplay step
+                    // rebuilds the explorer, games table and engine panel,
+                    // which follow the previewed position, but reuses the
+                    // notation ladder as-is.
+                    child: ValueListenableBuilder<int>(
+                    valueListenable: explorerPreviewLineStep,
+                    child: NotationExportScope(
+                        allowPgnCopy: !collectionGame,
+                        child: buildNotationLadder(
+                          scrollController: notationScrollController,
+                          activePointer: pointer.value,
+                          onJump: jumpToPointer,
+                          layoutModeController: notationLayoutController,
+                        ),
+                      ),
+                    builder: (context, previewStep, notationChild) {
+                    final view = boardViewAt(previewStep);
+                    final activeEvalTarget = view.evalTarget;
+                    final boardPosition = view.position;
+                    return NotationOpeningPanel(
                       tabId: activeTabId,
                       explorerScope: boardExplorerScope,
                       localOpeningTreeIndex: boardArgs?.localOpeningTreeIndex,
@@ -5153,20 +5336,13 @@ class _BoardPaneContent extends HookConsumerWidget {
                           boardArgs?.enableLocalOpeningTreePicker ?? false,
                       hideLocalOpeningTreePicker:
                           boardArgs?.hideLocalOpeningTreePicker ?? false,
-                      notationChild: buildNotationLadder(
-                        headerTrailing: _BoardMoreActionsButton(
-                          onPressed: openBoardContextMenu,
-                        ),
-                        scrollController: notationScrollController,
-                        activePointer: pointer.value,
-                        onJump: jumpToPointer,
-                        layoutModeController: notationLayoutController,
-                      ),
+                      notationChild: notationChild!,
                       currentFen: position.fen,
                       startingFen: chessGame.value.startingFen,
                       lineUcis: lineUcis,
-                      previewLineStep: explorerPreviewLineStep.value,
+                      previewLineStep: previewStep,
                       previewLineAutoplay: explorerPreviewLineAutoplay.value,
+                      positionAutoplaying: autoReplay.value,
                       onPlayUciMove:
                           (uci) => playUci(uci, requestPaneFocus: false),
                       onPlayEngineMove: playTopEngineMoveAction,
@@ -5179,18 +5355,33 @@ class _BoardPaneContent extends HookConsumerWidget {
                         explorerPreviewUci.value = uci;
                       },
                       onPreviewUciLine: (ucis, {autoplay = true, step}) {
-                        explorerPreviewUci.value = null;
-                        explorerPreviewLineStep.value =
-                            (step ?? 0)
-                                .clamp(0, ucis.isEmpty ? 0 : ucis.length - 1)
-                                .toInt();
-                        explorerPreviewLineAutoplay.value = autoplay;
-                        explorerPreviewSoundKey.value = null;
-                        explorerPreviewLine.value = List<String>.unmodifiable(
+                        final nextLine = List<String>.unmodifiable(
                           ucis
                               .map((uci) => uci.trim().toLowerCase())
                               .where((uci) => uci.isNotEmpty),
                         );
+                        final nextStep =
+                            (step ?? 0)
+                                .clamp(0, ucis.isEmpty ? 0 : ucis.length - 1)
+                                .toInt();
+                        // Arrowing across the moves of the game row already
+                        // previewed only moves the step, so it stays off the
+                        // pane-wide rebuild path like autoplay does.
+                        if (!autoplay &&
+                            !explorerPreviewLineAutoplay.value &&
+                            explorerPreviewUci.value == null &&
+                            nextLine.isNotEmpty &&
+                            nextStep != explorerPreviewLineStep.value &&
+                            listEquals(explorerPreviewLine.value, nextLine)) {
+                          explorerPreviewSoundKey.value = null;
+                          explorerPreviewLineStep.value = nextStep;
+                          return;
+                        }
+                        explorerPreviewUci.value = null;
+                        explorerPreviewLineStep.value = nextStep;
+                        explorerPreviewLineAutoplay.value = autoplay;
+                        explorerPreviewSoundKey.value = null;
+                        explorerPreviewLine.value = nextLine;
                       },
                       onClearPreviewUciMove: () {
                         explorerPreviewUci.value = null;
@@ -5205,6 +5396,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                       onNotationJumpToTip: goLast,
                       canGoBack: canBack,
                       canGoForward: canForward,
+                      canStepForward: canStepForward,
                       onFirstMove: goFirstManually,
                       onPreviousMove: goPrevManually,
                       onNextMove: () => unawaited(goNextManually()),
@@ -5264,6 +5456,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                                     ? 'w'
                                     : 'b'),
                         onPlayUci: activeEvalTarget.canPlayPv ? playUci : null,
+                        pvPlayOwner: (activeTabId, chessGame.value),
                         game: chessGame.value,
                         headers: pgnHeaders.value,
                         activePly:
@@ -5279,6 +5472,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           gameReport.value = report;
                         },
                         reportResetRevision: reportResetRevision.value,
+                        reportRevealRevision: reportRevealRevision.value,
                         onReportRunningChanged: (running) {
                           if (!context.mounted) return;
                           if (reportRunning.value != running) {
@@ -5297,7 +5491,12 @@ class _BoardPaneContent extends HookConsumerWidget {
                                 : () => unawaited(openPictureInPictureAction()),
                         pictureInPictureSelected:
                             currentGameIsInPictureInPicture,
+                        headerTrailing: _BoardMoreActionsButton(
+                          onPressed: openBoardContextMenu,
+                        ),
                       ),
+                    );
+                    },
                     ),
                   ),
                 ],
@@ -5396,7 +5595,8 @@ ChessLine _stripCommentsAndNags(ChessLine line) {
 /// `?!`, `□`). Mirrors `UserMoveNagsNotifier._isQualityNag`'s range so the
 /// board-pane merge logic doesn't accidentally suppress a PGN `±` (eval)
 /// or `⟳` (observation) NAG just because the user added a quality glyph.
-bool _isQualityNag(int nag) => nag >= 1 && nag <= 7;
+bool _isQualityNag(int nag) =>
+    (nag >= 1 && nag <= 7) || isChesseverClassificationNag(nag);
 
 /// Classic-glyph export merge (mobile-identical). Re-exported for existing
 /// call sites and tests; implementation lives in [chessever_annotation.dart].
@@ -5526,7 +5726,12 @@ resolveBoardMoveAssessment({
     ),
   ];
   if (mergedNags.isNotEmpty) {
-    final primary = primaryBoardNag(mergedNags) ?? mergedNags.first;
+    final classificationNag = mergedNags.cast<int?>().firstWhere(
+      (nag) => nag != null && isChesseverClassificationNag(nag),
+      orElse: () => null,
+    );
+    final primary =
+        classificationNag ?? primaryBoardNag(mergedNags) ?? mergedNags.first;
     final mapped = _mapNagToAnnotationType(primary);
     if (mapped != null) {
       return (
@@ -5934,6 +6139,12 @@ bool shouldShowFinishedBoardResult(
       gameEndingPlyIndex != null &&
       pointer.first == gameEndingPlyIndex;
 }
+
+@visibleForTesting
+bool shouldShowBoardMoveDecorations({
+  required bool hasMovePreview,
+  required bool hasLinePreview,
+}) => !hasMovePreview && !hasLinePreview;
 
 bool _pointersEqual(ChessMovePointer a, ChessMovePointer b) {
   if (identical(a, b)) return true;
@@ -7301,6 +7512,55 @@ ChessMovePointer? _previousPointer(ChessMovePointer pointer) {
   return const <int>[];
 }
 
+/// Exposes the production resolver used by manual forward and its button state.
+@visibleForTesting
+ChessMovePointer? manualBoardForwardPointerForTesting(
+  ChessGame game,
+  ChessMovePointer pointer,
+) => _nextManualPointer(game, pointer);
+
+@visibleForTesting
+ChessMovePointer? traversalBoardForwardPointerForTesting(
+  ChessGame game,
+  ChessMovePointer pointer,
+) => _nextPointer(game, pointer);
+
+/// Stable ownership of the selected position and offered fork choices.
+/// Metadata/NAG refreshes and equal-value pointer copies are not navigation.
+@visibleForTesting
+String boardVariationForkScopeKey({
+  required ChessGame game,
+  required ChessMovePointer pointer,
+  String? sourceGameId,
+}) {
+  final next = _nextManualPointer(game, pointer);
+  final options = next == null
+      ? null
+      : resolveVariationForkOptions(game: game, current: pointer, next: next);
+  return jsonEncode(<Object?>[
+    sourceGameId ?? game.gameId,
+    game.startingFen,
+    pointer,
+    _pathFromPointer(game, pointer).map((move) => move.uci).toList(),
+    next,
+    if (options != null)
+      for (final option in options)
+        <Object?>[
+          option.pointer,
+          _pathFromPointer(game, option.pointer).map((move) => move.uci).toList(),
+        ],
+  ]);
+}
+
+// Separate the manual-forward policy from cross-line replay/navigation.
+ChessMovePointer? _nextManualPointer(ChessGame game, ChessMovePointer pointer) {
+  if (pointer.length >= 3) {
+    final line = _lineAt(game, pointer);
+    if (line == null || pointer.last + 1 >= line.length) return null;
+  }
+  return _nextPointer(game, pointer);
+}
+
 /// Step one move forward in the tree, walking up through parent lines
 /// when the current line is exhausted. Returns `null` at the leaf of
 /// the mainline.
@@ -8251,7 +8511,9 @@ class _BoardArea extends ConsumerWidget {
   final VoidCallback onRestoreMainWindow;
   final VoidCallback onDismissPictureInPicture;
   final VoidCallback onNextGame;
-  final double? boardSizePreference;
+  /// Listened to inside the board's layout only, so a resize-grip drag
+  /// rebuilds the board area and not the pane that owns it.
+  final ValueListenable<double?> boardSizePreference;
   final ValueChanged<double> onBoardSizeChanged;
   final VoidCallback onBoardSizeReset;
   final VoidCallback onBoardSizeChangeEnd;
@@ -8422,326 +8684,216 @@ class _BoardArea extends ConsumerWidget {
     final headerGapTotal = chromeMetrics.headerGapTotal;
     final extraVertical = topRowHeight + bottomRowHeight + headerGapTotal;
 
+    // Top header is whichever player sits at the top of the board: black
+    // when not flipped, white when flipped. Nothing here depends on the
+    // board's size, so the headers are built once per build instead of on
+    // every pass of the layout builder below, which re-runs for each frame
+    // of a window, sidebar, split or board-grip resize.
+    final topIsWhite = flipped;
+    final topName = topIsWhite ? displayWhiteName : displayBlackName;
+    final topFed = topIsWhite ? whiteFed : blackFed;
+    final topTitle = topIsWhite ? whiteTitle : blackTitle;
+    final topRating = topIsWhite ? whiteRating : blackRating;
+    final topClock = topIsWhite ? whiteClockDisplay : blackClockDisplay;
+    final topResult =
+        showFinishedResult
+            ? boardPlayerResultForSide(gameStatus, isWhite: topIsWhite)
+            : null;
+    final bottomIsWhite = !flipped;
+    final bottomName = bottomIsWhite ? displayWhiteName : displayBlackName;
+    final bottomFed = bottomIsWhite ? whiteFed : blackFed;
+    final bottomTitle = bottomIsWhite ? whiteTitle : blackTitle;
+    final bottomRating = bottomIsWhite ? whiteRating : blackRating;
+    final bottomClock = bottomIsWhite ? whiteClockDisplay : blackClockDisplay;
+    final bottomResult =
+        showFinishedResult
+            ? boardPlayerResultForSide(gameStatus, isWhite: bottomIsWhite)
+            : null;
+    final topHeader =
+        hasHeaders
+            ? DesktopBoardPlayerHeader(
+              name: topName,
+              federation: topFed,
+              title: topTitle,
+              rating: topRating,
+              fideId: topIsWhite ? whiteFideId : blackFideId,
+              result: topResult,
+              isWhite: topIsWhite,
+              isToMove:
+                  (topIsWhite && sideToMove == Side.white) ||
+                  (!topIsWhite && sideToMove == Side.black),
+              clockText: topClock,
+              // The menu lives in notation; reserve no trailing control or
+              // gap after the clock.
+              trailingControl: null,
+              activeGameId: activeGameId,
+              historyOwnerId: tabId,
+              useLiveClock: isForegroundTab && isLiveAtTip,
+              boardArgs: boardArgs,
+              sourceGame: sourceGame,
+              viewSource: viewSource,
+              openAbove: false,
+            )
+            : null;
+    final bottomHeader =
+        hasHeaders
+            ? DesktopBoardPlayerHeader(
+              name: bottomName,
+              federation: bottomFed,
+              title: bottomTitle,
+              rating: bottomRating,
+              fideId: bottomIsWhite ? whiteFideId : blackFideId,
+              result: bottomResult,
+              isWhite: bottomIsWhite,
+              isToMove:
+                  (bottomIsWhite && sideToMove == Side.white) ||
+                  (!bottomIsWhite && sideToMove == Side.black),
+              clockText: bottomClock,
+              // The resize grip overlays the board corner.
+              trailingControl: null,
+              activeGameId: activeGameId,
+              historyOwnerId: tabId,
+              useLiveClock: isForegroundTab && isLiveAtTip,
+              boardArgs: boardArgs,
+              sourceGame: sourceGame,
+              viewSource: viewSource,
+              openAbove: true,
+            )
+            : null;
+
+    // Player headers eat fixed vertical space; the board takes the square of
+    // whatever is left after reserving room for the optional left-side
+    // evaluation bar and the button strips.
+    final evalBarReservation =
+        showEvalBar ? _BoardArea.evalBarReservation : 0.0;
+
+    // The board subtree for the last layout pass of this build. A resize that
+    // leaves the board's own size alone (the common case once the board sits
+    // at its preferred size) hands back this identical widget, so the eval
+    // bar, annotations and chessground scene are re-laid out, not rebuilt.
+    Widget? boardStack;
+    Object? boardStackKey;
+
     final boardSurface = Container(
       color: kBackgroundColor,
       padding: EdgeInsets.all(chromeMetrics.outerPadding),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // Player headers eat fixed vertical space; the board takes the
-          // square of whatever is left after reserving room for the
-          // optional left-side evaluation bar and the button strips.
-          final evalBarReservation =
-              showEvalBar ? _BoardArea.evalBarReservation : 0.0;
-          final hLimit = math.max(
-            0.0,
-            constraints.biggest.width - evalBarReservation,
-          );
-          final vLimit = math.max(
-            0.0,
-            constraints.biggest.height - extraVertical,
-          );
-          final maxBoardSize = math.min(hLimit, vLimit);
-          final defaultSize = math.min(maxBoardSize, _defaultDesktopBoardSize);
-          // Fullscreen / focus mode forces the board to its biggest possible
-          // square — equivalent to dragging the resize grip to its limit.
-          // Honour the user's stored preference outside of focus so the
-          // explicit toggle doesn't clobber it.
-          final preferredSize =
-              focusMode
-                  ? math.min(vLimit, _maxDesktopBoardSize)
-                  : (boardSizePreference ?? defaultSize);
-          final minBoardSize = math.min(_minDesktopBoardSize, maxBoardSize);
-          final boardSize =
-              maxBoardSize <= 0
-                  ? 0.0
-                  : preferredSize
-                      .clamp(
-                        minBoardSize,
-                        math.min(maxBoardSize, _maxDesktopBoardSize),
-                      )
-                      .toDouble();
-          final boardWithBar = boardSize + evalBarReservation;
-
-          // Top header is whichever player sits at the top of the board:
-          // black when not flipped, white when flipped.
-          final topIsWhite = flipped;
-          final topName = topIsWhite ? displayWhiteName : displayBlackName;
-          final topFed = topIsWhite ? whiteFed : blackFed;
-          final topTitle = topIsWhite ? whiteTitle : blackTitle;
-          final topRating = topIsWhite ? whiteRating : blackRating;
-          final topClock = topIsWhite ? whiteClockDisplay : blackClockDisplay;
-          final topResult =
-              showFinishedResult
-                  ? boardPlayerResultForSide(gameStatus, isWhite: topIsWhite)
-                  : null;
-          final bottomIsWhite = !flipped;
-          final bottomName =
-              bottomIsWhite ? displayWhiteName : displayBlackName;
-          final bottomFed = bottomIsWhite ? whiteFed : blackFed;
-          final bottomTitle = bottomIsWhite ? whiteTitle : blackTitle;
-          final bottomRating = bottomIsWhite ? whiteRating : blackRating;
-          final bottomClock =
-              bottomIsWhite ? whiteClockDisplay : blackClockDisplay;
-          final bottomResult =
-              showFinishedResult
-                  ? boardPlayerResultForSide(gameStatus, isWhite: bottomIsWhite)
-                  : null;
-
-          final boardRow = SizedBox(
-            height: boardSize,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                if (showEvalBar) ...[
-                  SizedBox(
-                    key: e2eKey(E2eIds.boardEvalBar),
-                    width: _evalBarWidth,
-                    height: boardSize,
-                    child: _BoardEvalBarSurface(
-                      enabled: showEngineAnalysis,
-                      fen: analysisFen,
-                      width: _evalBarWidth,
-                      height: boardSize,
-                      isFlipped: flipped,
-                    ),
-                  ),
-                  const SizedBox(width: _evalBarGap),
-                ],
-                SizedBox(
-                  width: boardSize,
-                  height: boardSize,
-                  child: _BoardWithAnnotations(
-                    tabId: tabId,
-                    boardRenderKey: boardRenderKey,
-                    boardSize: boardSize,
-                    fen: fen,
-                    threatMode: threatActive,
-                    flipped: flipped,
-                    playerSide: playerSide,
-                    sideToMove: sideToMove,
-                    validMoves: validMoves,
-                    isCheck: isCheck,
-                    lastMove: lastMove,
-                    onMove: onMove,
-                    promotionMove: promotionMove,
-                    onPromotionSelection: onPromotionSelection,
-                    pgnShapes: pgnShapes,
-                    onGraphicCommentaryChanged: onGraphicCommentaryChanged,
-                    boardAnnotation: boardAnnotation,
-                    boardAnnotationGlyph: boardAnnotationGlyph,
-                    boardAnnotationSquare: boardAnnotationSquare,
-                    gameEnding: gameEnding,
-                    onWheelStep: onWheelStep,
-                    evalPvs: evalPvs,
-                  ),
-                ),
-              ],
-            ),
-          );
-
-          final resizeHandle =
-              pictureInPicture || boardSize < 16
-                  ? null
-                  : BoardResizeHandle(
-                    boardSize: boardSize,
-                    minSize: math.min(
-                      _minDesktopBoardSize,
-                      math.min(maxBoardSize, _maxDesktopBoardSize),
-                    ),
-                    // Grow's true bottleneck is vertical. Horizontal can always be
-                    // earned back via setSize on the split column, so bound by
-                    // vLimit alone — using maxBoardSize (min(hLimit, vLimit))
-                    // clamped grow-drags to the current column width and no-op'd.
-                    maxSize: math.min(vLimit, _maxDesktopBoardSize),
-                    onResize: onBoardSizeChanged,
-                    onResizeEnd: onBoardSizeChangeEnd,
-                    onReset: onBoardSizeReset,
-                  );
-
-          Widget chromeRow({
-            required double height,
-            required Widget? header,
-            required Widget? trailing,
-          }) {
-            return SizedBox(
-              width: boardWithBar,
-              height: height,
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: SizedBox(
-                  width: boardSize,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      if (header != null)
-                        Expanded(child: header)
-                      else
-                        const Spacer(),
-                      if (trailing != null) ...[
-                        const SizedBox(width: 6),
-                        trailing,
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }
-
-          void clearGraphicCommentaryForCurrentPosition() {
-            final positionKey = _fenPositionKey(fen);
-            final hasShapes =
-                ref
-                    .read(boardAnnotationsProvider(tabId))
-                    .shapesForPosition(positionKey)
-                    .isNotEmpty ||
-                pgnShapes.isNotEmpty;
-            if (!hasShapes) return;
-            ref
-                .read(boardAnnotationsProvider(tabId).notifier)
-                .clear(positionKey: positionKey);
-            onGraphicCommentaryChanged?.call(const <cg.Shape>{});
-          }
-
-          return Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (event) {
-              if (event.buttons & kPrimaryMouseButton == 0) return;
-              // Resizing is chrome interaction, not a board-square click.
-              // The overlay is a sibling of the annotation layer; exclude it
-              // here too so starting a drag/reset cannot erase annotations.
-              final cornerRight = (constraints.maxWidth + boardWithBar) / 2;
-              final cornerBottom =
-                  (constraints.maxHeight + boardSize + extraVertical) / 2 -
-                  bottomRowHeight -
-                  _BoardArea.headerGap;
-              if (hasHeaders &&
-                  !focusMode &&
-                  resizeHandle != null &&
-                  Rect.fromLTWH(
-                    cornerRight - 16,
-                    cornerBottom - 16,
-                    16,
-                    16,
-                  ).contains(event.localPosition)) {
-                return;
-              }
-              final shouldClear = shouldClearBoardAnnotationsForBoardAreaClick(
-                localPosition: event.localPosition,
-                contentSize: constraints.biggest,
-                boardSize: boardSize,
-                boardWithBar: boardWithBar,
-                topRowHeight: topRowHeight,
-                bottomRowHeight: bottomRowHeight,
-                headerGap: _BoardArea.headerGap,
+      child: ValueListenableBuilder<double?>(
+        valueListenable: boardSizePreference,
+        builder: (context, sizePreference, _) {
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final hLimit = math.max(
+                0.0,
+                constraints.biggest.width - evalBarReservation,
               );
-              if (shouldClear) clearGraphicCommentaryForCurrentPosition();
+              final vLimit = math.max(
+                0.0,
+                constraints.biggest.height - extraVertical,
+              );
+              final maxBoardSize = math.min(hLimit, vLimit);
+              final defaultSize = math.min(
+                maxBoardSize,
+                _defaultDesktopBoardSize,
+              );
+              // Fullscreen / focus mode forces the board to its biggest
+              // possible square — equivalent to dragging the resize grip to
+              // its limit. Honour the user's stored preference outside of
+              // focus so the explicit toggle doesn't clobber it.
+              final preferredSize =
+                  focusMode
+                      ? math.min(vLimit, _maxDesktopBoardSize)
+                      : (sizePreference ?? defaultSize);
+              final minBoardSize = math.min(_minDesktopBoardSize, maxBoardSize);
+              final boardSize =
+                  maxBoardSize <= 0
+                      ? 0.0
+                      : preferredSize
+                          .clamp(
+                            minBoardSize,
+                            math.min(maxBoardSize, _maxDesktopBoardSize),
+                          )
+                          .toDouble();
+              final boardWithBar = boardSize + evalBarReservation;
+              final hasResizeHandle = !(pictureInPicture || boardSize < 16);
+
+              // Everything inside the stack depends on these three values
+              // only; the pointer listener below reads live constraints.
+              final stackKey = (boardSize, maxBoardSize, vLimit);
+              if (boardStack == null || stackKey != boardStackKey) {
+                boardStackKey = stackKey;
+                boardStack = _buildBoardStack(
+                  boardSize: boardSize,
+                  boardWithBar: boardWithBar,
+                  maxBoardSize: maxBoardSize,
+                  vLimit: vLimit,
+                  hasResizeHandle: hasResizeHandle,
+                  showEvalBar: showEvalBar,
+                  showEngineAnalysis: showEngineAnalysis,
+                  threatActive: threatActive,
+                  evalPvs: evalPvs,
+                  hasHeaders: hasHeaders,
+                  topRowHeight: topRowHeight,
+                  bottomRowHeight: bottomRowHeight,
+                  topHeader: topHeader,
+                  bottomHeader: bottomHeader,
+                );
+              }
+
+              void clearGraphicCommentaryForCurrentPosition() {
+                final positionKey = _fenPositionKey(fen);
+                final hasShapes =
+                    ref
+                        .read(boardAnnotationsProvider(tabId))
+                        .shapesForPosition(positionKey)
+                        .isNotEmpty ||
+                    pgnShapes.isNotEmpty;
+                if (!hasShapes) return;
+                ref
+                    .read(boardAnnotationsProvider(tabId).notifier)
+                    .clear(positionKey: positionKey);
+                onGraphicCommentaryChanged?.call(const <cg.Shape>{});
+              }
+
+              return Listener(
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (event) {
+                  if (event.buttons & kPrimaryMouseButton == 0) return;
+                  // Resizing is chrome interaction, not a board-square
+                  // click. The overlay is a sibling of the annotation layer;
+                  // exclude it here too so starting a drag/reset cannot
+                  // erase annotations.
+                  final cornerRight =
+                      (constraints.maxWidth + boardWithBar) / 2;
+                  final cornerBottom =
+                      (constraints.maxHeight + boardSize + extraVertical) / 2 -
+                      bottomRowHeight -
+                      _BoardArea.headerGap;
+                  if (hasHeaders &&
+                      !focusMode &&
+                      hasResizeHandle &&
+                      Rect.fromLTWH(
+                        cornerRight - 16,
+                        cornerBottom - 16,
+                        16,
+                        16,
+                      ).contains(event.localPosition)) {
+                    return;
+                  }
+                  final shouldClear =
+                      shouldClearBoardAnnotationsForBoardAreaClick(
+                        localPosition: event.localPosition,
+                        contentSize: constraints.biggest,
+                        boardSize: boardSize,
+                        boardWithBar: boardWithBar,
+                        topRowHeight: topRowHeight,
+                        bottomRowHeight: bottomRowHeight,
+                        headerGap: _BoardArea.headerGap,
+                      );
+                  if (shouldClear) clearGraphicCommentaryForCurrentPosition();
+                },
+                child: boardStack,
+              );
             },
-            child: Center(
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  RepaintBoundary(
-                    key: shareCaptureKey,
-                    child: ColoredBox(
-                      color: kBackgroundColor,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          chromeRow(
-                            height: topRowHeight,
-                            header:
-                                hasHeaders
-                                    ? DesktopBoardPlayerHeader(
-                                      name: topName,
-                                      federation: topFed,
-                                      title: topTitle,
-                                      rating: topRating,
-                                      fideId:
-                                          topIsWhite
-                                              ? whiteFideId
-                                              : blackFideId,
-                                      result: topResult,
-                                      isWhite: topIsWhite,
-                                      isToMove:
-                                          (topIsWhite &&
-                                              sideToMove == Side.white) ||
-                                          (!topIsWhite &&
-                                              sideToMove == Side.black),
-                                      clockText: topClock,
-                                      // The menu lives in notation; reserve no
-                                      // trailing control or gap after the clock.
-                                      trailingControl: null,
-                                      activeGameId: activeGameId,
-                                      historyOwnerId: tabId,
-                                      useLiveClock:
-                                          isForegroundTab && isLiveAtTip,
-                                      boardArgs: boardArgs,
-                                      sourceGame: sourceGame,
-                                      viewSource: viewSource,
-                                      openAbove: false,
-                                    )
-                                    : null,
-                            trailing: null,
-                          ),
-                          SizedBox(height: _BoardArea.headerGap),
-                          boardRow,
-                          SizedBox(height: _BoardArea.headerGap),
-                          chromeRow(
-                            height: bottomRowHeight,
-                            header:
-                                hasHeaders
-                                    ? DesktopBoardPlayerHeader(
-                                      name: bottomName,
-                                      federation: bottomFed,
-                                      title: bottomTitle,
-                                      rating: bottomRating,
-                                      fideId:
-                                          bottomIsWhite
-                                              ? whiteFideId
-                                              : blackFideId,
-                                      result: bottomResult,
-                                      isWhite: bottomIsWhite,
-                                      isToMove:
-                                          (bottomIsWhite &&
-                                              sideToMove == Side.white) ||
-                                          (!bottomIsWhite &&
-                                              sideToMove == Side.black),
-                                      clockText: bottomClock,
-                                      // The resize grip overlays the board corner.
-                                      trailingControl: null,
-                                      activeGameId: activeGameId,
-                                      historyOwnerId: tabId,
-                                      useLiveClock:
-                                          isForegroundTab && isLiveAtTip,
-                                      boardArgs: boardArgs,
-                                      sourceGame: sourceGame,
-                                      viewSource: viewSource,
-                                      openAbove: true,
-                                    )
-                                    : null,
-                            trailing: null,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (hasHeaders && !focusMode && resizeHandle != null)
-                    Positioned(
-                      // Coordinates are inside the squares, not a separate
-                      // gutter. Keep the target in the extreme 16px corner,
-                      // away from the piece centre, and outside share exports.
-                      bottom: bottomRowHeight + _BoardArea.headerGap,
-                      right: 0,
-                      child: SizedBox.square(
-                        dimension: 16,
-                        child: resizeHandle,
-                      ),
-                    ),
-                ],
-              ),
-            ),
           );
         },
       ),
@@ -8753,6 +8905,150 @@ class _BoardArea extends ConsumerWidget {
       onDismiss: onDismissPictureInPicture,
       onNextGame: onNextGame,
       child: boardSurface,
+    );
+  }
+
+  /// The board, its eval bar, the two player rows and the resize grip at one
+  /// resolved board size. Kept free of live constraints so [build] can reuse
+  /// the result across layout passes that leave the board size unchanged.
+  Widget _buildBoardStack({
+    required double boardSize,
+    required double boardWithBar,
+    required double maxBoardSize,
+    required double vLimit,
+    required bool hasResizeHandle,
+    required bool showEvalBar,
+    required bool showEngineAnalysis,
+    required bool threatActive,
+    required List<BoardPv> evalPvs,
+    required bool hasHeaders,
+    required double topRowHeight,
+    required double bottomRowHeight,
+    required Widget? topHeader,
+    required Widget? bottomHeader,
+  }) {
+    final boardRow = SizedBox(
+      height: boardSize,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (showEvalBar) ...[
+            SizedBox(
+              key: e2eKey(E2eIds.boardEvalBar),
+              width: _evalBarWidth,
+              height: boardSize,
+              child: _BoardEvalBarSurface(
+                enabled: showEngineAnalysis,
+                fen: analysisFen,
+                width: _evalBarWidth,
+                height: boardSize,
+                isFlipped: flipped,
+              ),
+            ),
+            const SizedBox(width: _evalBarGap),
+          ],
+          SizedBox(
+            width: boardSize,
+            height: boardSize,
+            child: _BoardWithAnnotations(
+              tabId: tabId,
+              boardRenderKey: boardRenderKey,
+              boardSize: boardSize,
+              fen: fen,
+              threatMode: threatActive,
+              flipped: flipped,
+              playerSide: playerSide,
+              sideToMove: sideToMove,
+              validMoves: validMoves,
+              isCheck: isCheck,
+              lastMove: lastMove,
+              onMove: onMove,
+              promotionMove: promotionMove,
+              onPromotionSelection: onPromotionSelection,
+              pgnShapes: pgnShapes,
+              onGraphicCommentaryChanged: onGraphicCommentaryChanged,
+              boardAnnotation: boardAnnotation,
+              boardAnnotationGlyph: boardAnnotationGlyph,
+              boardAnnotationSquare: boardAnnotationSquare,
+              gameEnding: gameEnding,
+              onWheelStep: onWheelStep,
+              evalPvs: evalPvs,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final resizeHandle =
+        hasResizeHandle
+            ? BoardResizeHandle(
+              boardSize: boardSize,
+              minSize: math.min(
+                _minDesktopBoardSize,
+                math.min(maxBoardSize, _maxDesktopBoardSize),
+              ),
+              // Grow's true bottleneck is vertical. Horizontal can always be
+              // earned back via setSize on the split column, so bound by
+              // vLimit alone — using maxBoardSize (min(hLimit, vLimit))
+              // clamped grow-drags to the current column width and no-op'd.
+              maxSize: math.min(vLimit, _maxDesktopBoardSize),
+              onResize: onBoardSizeChanged,
+              onResizeEnd: onBoardSizeChangeEnd,
+              onReset: onBoardSizeReset,
+            )
+            : null;
+
+    Widget chromeRow({required double height, required Widget? header}) {
+      return SizedBox(
+        width: boardWithBar,
+        height: height,
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: SizedBox(
+            width: boardSize,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (header != null) Expanded(child: header) else const Spacer(),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Center(
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          RepaintBoundary(
+            key: shareCaptureKey,
+            child: ColoredBox(
+              color: kBackgroundColor,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  chromeRow(height: topRowHeight, header: topHeader),
+                  SizedBox(height: _BoardArea.headerGap),
+                  boardRow,
+                  SizedBox(height: _BoardArea.headerGap),
+                  chromeRow(height: bottomRowHeight, header: bottomHeader),
+                ],
+              ),
+            ),
+          ),
+          if (hasHeaders && !focusMode && resizeHandle != null)
+            Positioned(
+              // Coordinates are inside the squares, not a separate gutter.
+              // Keep the target in the extreme 16px corner, away from the
+              // piece centre, and outside share exports.
+              bottom: bottomRowHeight + _BoardArea.headerGap,
+              right: 0,
+              child: SizedBox.square(dimension: 16, child: resizeHandle),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -8798,6 +9094,7 @@ class _BoardEvalBarSurface extends ConsumerWidget {
       mate: snapshot.mate,
       isEvaluating: snapshot.isEvaluating,
       positionKey: _fenPositionKey(fen),
+      retainWhileRetargeting: true,
     );
   }
 }
@@ -8826,71 +9123,17 @@ class _BoardMoreActionsButtonState extends State<_BoardMoreActionsButton> {
 
   @override
   Widget build(BuildContext context) {
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: DesktopTooltip(
+    return SizedBox.square(
+      key: _anchorKey,
+      dimension: 28,
+      child: DesktopHeaderIconButton(
+        key: const ValueKey<String>('desktop-board-more-actions'),
         message: 'More board actions',
-        child: SizedBox.square(
-          key: _anchorKey,
-          dimension: _focusButtonSize,
-          child: FButton.icon(
-            key: const ValueKey<String>('desktop-board-more-actions'),
-            style: _floatingBoardIconButtonStyle(selected: false),
-            onPress: _openMenu,
-            child: const Icon(Icons.more_vert_rounded, size: 16),
-          ),
-        ),
+        icon: Icons.more_vert_rounded,
+        onPress: _openMenu,
       ),
     );
   }
-}
-
-FBaseButtonStyle Function(FButtonStyle style) _floatingBoardIconButtonStyle({
-  required bool selected,
-}) {
-  return FButtonStyle.outline(
-    (style) => style.copyWith(
-      decoration: FWidgetStateMap({
-        WidgetState.disabled: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.transparent),
-        ),
-        WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-          color:
-              selected
-                  ? kPrimaryColor.withValues(alpha: 0.12)
-                  : kWhiteColor.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color:
-                selected
-                    ? kPrimaryColor.withValues(alpha: 0.42)
-                    : kWhiteColor.withValues(alpha: 0.10),
-          ),
-        ),
-        WidgetState.any: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.transparent),
-        ),
-      }),
-      iconContentStyle:
-          (content) => content.copyWith(
-            padding: const EdgeInsets.all(8),
-            iconStyle: FWidgetStateMap({
-              WidgetState.disabled: const IconThemeData(
-                color: Color(0x4DFFFFFF),
-                size: 18,
-              ),
-              WidgetState.any: IconThemeData(
-                color: selected ? kPrimaryColor : kWhiteColor70,
-                size: 18,
-              ),
-            }),
-          ),
-    ),
-  );
 }
 
 /// The chessboard plus its annotation layer (right-click drawing) and a
@@ -9215,8 +9458,11 @@ EventPlayerGamesKey? boardPlayerHistoryKey({
   required int? fideId,
   required String ownerId,
   GamesTourModel? sourceGame,
+  bool allowSourceFallback = false,
 }) {
-  final primaryTourId = eventKey?.tourId.trim() ?? '';
+  final primaryTourId = eventKey?.tourId.trim() ??
+      (allowSourceFallback && sourceGame?.source == GameSource.supabase
+          ? sourceGame?.tourId.trim() : null) ?? '';
   if (primaryTourId.isEmpty || playerName.trim().isEmpty) return null;
 
   final additionalTourIds = <String>{};
@@ -9350,15 +9596,22 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     // ids. Live clocks now rebuild below this header, while other header state
     // changes still avoid an O(eventGames) scan plus a UI-isolate string join.
     final historyKey = useMemoized(
-      () => boardPlayerHistoryKey(
+      () => boardArgs?.eventPlayerScope is EventPlayerBoardScope
+          ? EventPlayerGamesKey(
+              tourId: (boardArgs!.eventPlayerScope!).tourIds.first,
+              additionalTourIds: (boardArgs!.eventPlayerScope!).tourIds.skip(1),
+              playerName: name, fideId: fideId, ownerId: historyOwnerId ?? '',
+            )
+          : boardPlayerHistoryKey(
         eventKey: eventKey,
         eventGames: hydratedEventGames,
         sourceGame: sourceGame,
+        allowSourceFallback: _canOpenEventPlayerGames,
         playerName: name,
         fideId: fideId,
         ownerId: historyOwnerId ?? '',
       ),
-      [eventKey, hydratedEventGames, sourceGame, name, fideId, historyOwnerId],
+      [boardArgs?.eventPlayerScope, eventKey, hydratedEventGames, sourceGame, name, fideId, historyOwnerId],
     );
     final requestedHistoryContext = useState<String?>(null);
     final historyRequestContext = useMemoized(
@@ -9378,6 +9631,17 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             ?.map(TournamentGameSummary.fromGamesTourModel)
             .toList(growable: false) ??
         const <TournamentGameSummary>[];
+
+    final hoverRounds =
+        historyKey == null ||
+                requestedHistoryContext.value != historyRequestContext
+            ? const <PlayerHoverRound>[]
+            : ref
+                    .watch(playerHoverRoundsProvider(
+                      playerHoverRoundsKey(historyKey.tourIds),
+                    ))
+                    .valueOrNull ??
+                const <PlayerHoverRound>[];
 
     // Local PGNs (e.g. TWIC) often carry a FIDE ID but no title tag; resolve
     // the title on demand from chess_players, same as the flag backfill.
@@ -9433,9 +9697,10 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             photoUrl: photoUrl,
           ),
           games: hoverGames,
+          rounds: hoverRounds,
           isLoading: hoverIsLoading,
           openAbove: openAbove,
-          contextKey: hoverContextKey,
+          contextKey: '$hoverContextKey|$historyRequestContext',
           onPreviewOpened:
               historyRequestContext == null
                   ? null
@@ -9457,10 +9722,11 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             fontWeight: FontWeight.w600,
           ),
           onOpenPlayerInNewTab: (player) => _openProfileInNewTab(ref, player),
+          onOpenScoreCard: () => _openPlayer(ref, name),
           onOpenOpponentInNewTab:
               (opponent) => _openProfileInNewTab(ref, opponent),
           onOpenGameInNewTab:
-              (game) => _openPreviewGameInNewTab(ref, game, hoverGames),
+              (game) => _openPreviewGameInNewTab(ref, game, hoverGames, historyKey),
         );
       },
       [
@@ -9475,6 +9741,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         photoUrl,
         hoverGames,
         hoverIsLoading,
+        hoverRounds,
         historyRequestContext,
         boardArgs,
         sourceGame,
@@ -9720,12 +9987,52 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     );
   }
 
+  bool get _canOpenEventPlayerGames {
+    final args = boardArgs;
+    return args != null &&
+        (args.viewSource == ChessboardView.tour ||
+            args.viewSource == ChessboardView.forYou ||
+            args.viewSource == ChessboardView.countryman) &&
+        args.databaseGames.isEmpty &&
+        args.databaseGamesContinuation == null &&
+        (args.eventPlayerScope != null ||
+            (sourceGame ?? args.sourceGame)?.source == GameSource.supabase);
+  }
+
   void _openPreviewGameInNewTab(
     WidgetRef ref,
     TournamentGameSummary selected,
     List<TournamentGameSummary> previewGames,
+    EventPlayerGamesKey? historyKey,
   ) {
     final args = boardArgs;
+    if (historyKey != null && args != null && _canOpenEventPlayerGames) {
+      final priorScope = args.eventPlayerScope;
+      final scope = EventPlayerBoardScope(
+        tourIds: historyKey.tourIds,
+        playerName: name, fideId: fideId,
+        eventTitle: priorScope is EventPlayerBoardScope ? priorScope.eventTitle : args.tournamentTitle,
+        eventBroadcastId: args.eventBroadcastId,
+      );
+      final games = eventPlayerBoardGames(scope, previewGames);
+      if (!games.any((game) => game.id == selected.id)) return;
+      final openContext = ref.context;
+      unawaited(openTournamentGameTab(
+        ref,
+        _gamesTourModelFromSummary(selected, source: sourceGame?.source ?? GameSource.supabase),
+        scope.title,
+        eventGames: [for (final game in games) _gamesTourModelFromSummary(game, source: sourceGame?.source ?? GameSource.supabase)],
+        eventPlayerScope: scope,
+        eventBroadcastId: scope.eventBroadcastId,
+        // A player subset changes the rail, never its source entitlement.
+        accessContext: args.sourceAccessContext,
+        viewSource: ChessboardView.tour,
+        focus: true, reuseExisting: false, replaceActive: false,
+      ).catchError((Object error) {
+        if (openContext.mounted) showDesktopToast(openContext, 'Could not open event games. Please retry.', error: true);
+      }));
+      return;
+    }
     if (args?.databaseGames.isNotEmpty == true) {
       final pgn = selected.pgn?.trim() ?? '';
       final localPgnSaveOrigin = _boardLibrarySaveOriginForSummary(selected);
@@ -9769,6 +10076,8 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           hideLocalOpeningTreePicker: args.hideLocalOpeningTreePicker,
           gameListSelectedId: selected.id,
           librarySaveOrigin: localPgnSaveOrigin,
+          // Source provenance only: the next rail game is a fresh request.
+          accessContext: args.sourceAccessContext,
         ),
         focus: true,
         reuseExisting: false,
@@ -9824,6 +10133,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         replaceActive: false,
         viewSource: viewSource,
         eventBroadcastId: args?.eventBroadcastId,
+        accessContext: args?.sourceAccessContext,
       ),
     );
   }
@@ -9926,7 +10236,10 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         .read(scoreCardGamesContextProvider.notifier)
         .state = _scoreCardGamesContextForBoardTap(eventGame, boardArgs);
 
-    openPlayerScoreCard(ref, player, fromTournamentContext: true);
+    openPlayerScoreCard(
+      ref, player, fromTournamentContext: true,
+      accessContext: boardArgs?.sourceAccessContext,
+    );
   }
 
   PlayerProfileDataSource _profileSourceFor(GameSource source) {
@@ -10660,7 +10973,8 @@ Square? _normaliseLastMoveSquare(Move? move) {
 /// SVG badge whether the glyph came from PGN-baked `$1`–`$6` or from a
 /// Lichess / ChessEver analysis classification.
 LichessMoveAnnotationType? _mapNagToAnnotationType(int nag) {
-  return annotationTypeFromQualityNags(<int>[nag]);
+  return annotationTypeFromClassificationNags(<int>[nag]) ??
+      annotationTypeFromQualityNags(<int>[nag]);
 }
 
 LichessMoveAnnotationType _annotationTypeForReportClassification(
@@ -11104,26 +11418,44 @@ String? _nullableFenPositionKey(String? fen) {
   }
 }
 
-({Position position, Move move, String san})? _previewExplorerLine(
-  Position position,
-  List<String> ucis,
-  int step,
-) {
-  if (ucis.isEmpty || step < 0) return null;
-  final upTo = step.clamp(0, ucis.length - 1).toInt();
-  var cursor = position;
-  Move? lastMove;
-  String? lastSan;
-  for (var i = 0; i <= upTo; i++) {
-    final move = Move.parse(ucis[i].trim());
-    if (move == null || !cursor.isLegal(move)) return null;
-    final made = cursor.makeSan(move);
-    cursor = made.$1;
-    lastMove = move;
-    lastSan = made.$2;
+typedef _ExplorerLineFrame = ({Position position, Move move, String san});
+
+typedef _BoardPreviewView =
+    ({
+      _ExplorerLineFrame? linePreview,
+      Position position,
+      Move? lastMove,
+      ActiveBoardEvalTarget evalTarget,
+    });
+
+/// Replays a previewed line lazily and keeps every frame it reached, so a
+/// preview start costs one ply and each autoplay step one more, instead of a
+/// replay from the first move on every step.
+class _ExplorerLineFrames {
+  _ExplorerLineFrames(this._cursor, this.ucis);
+
+  final List<String> ucis;
+  Position _cursor;
+  bool _blocked = false;
+  final List<_ExplorerLineFrame> _frames = <_ExplorerLineFrame>[];
+
+  /// The frame shown at [step], or null when the line is empty or reaches an
+  /// illegal move at or before [step].
+  _ExplorerLineFrame? at(int step) {
+    if (ucis.isEmpty || step < 0) return null;
+    final upTo = step.clamp(0, ucis.length - 1).toInt();
+    while (_frames.length <= upTo && !_blocked) {
+      final move = Move.parse(ucis[_frames.length].trim());
+      if (move == null || !_cursor.isLegal(move)) {
+        _blocked = true;
+        break;
+      }
+      final made = _cursor.makeSan(move);
+      _cursor = made.$1;
+      _frames.add((position: _cursor, move: move, san: made.$2));
+    }
+    return upTo < _frames.length ? _frames[upTo] : null;
   }
-  if (lastMove == null || lastSan == null) return null;
-  return (position: cursor, move: lastMove, san: lastSan);
 }
 
 String _boardRenderKey({

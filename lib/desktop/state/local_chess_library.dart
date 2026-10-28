@@ -1,14 +1,18 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:chessever/desktop/services/cbh_conversion_origin.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:chessever/desktop/services/cbh_conversion_service.dart';
+import 'package:chessever/desktop/services/local_pgn_rename.dart';
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_pgn_performance_log.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -230,7 +234,11 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Open chess files',
       type: FileType.custom,
-      allowedExtensions: localChessPickerExtensions,
+      allowedExtensions: [
+        ...localChessPickerExtensions,
+        if (CbhConversionService.isAvailable) 'cbh',
+        if (CbhConversionService.isAvailable) 'cbv',
+      ],
       allowMultiple: true,
       withData: false,
       lockParentWindow: true,
@@ -251,9 +259,38 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     LocalLibraryEntryMetadata? registryMetadata,
     bool forceRefresh = false,
   }) async {
+    final openClock = Stopwatch()..start();
+    LocalPgnPerformanceLog.event(
+      'open_start',
+      'paths=${paths.length} extension=${paths.isEmpty ? '' : p.extension(paths.first)} '
+          'forceRefresh=$forceRefresh',
+    );
+    LocalPgnPerformanceLog.watchFrames('library_open');
     final token = Object();
     _scanToken = token;
     _invalidateTreeBuilds();
+    if (paths.any((path) => const {'.cbh', '.cbv'}.contains(p.extension(path).toLowerCase()))) {
+      // This request supersedes any older scan, including its progress UI.
+      state = state.copyWith(isScanning: false, scanProgress: null, error: null);
+      try {
+        // A binary database is never passed to the PGN scanner or registry.
+        // Conversion is explicit, and an edited converted copy is never replaced.
+        final resolved = <String>[];
+        for (final path in paths) {
+          final converted = const {'.cbh', '.cbv'}.contains(p.extension(path).toLowerCase())
+              ? await CbhConversionGateway.convert(path)
+              : path;
+          if (_scanToken != token || converted == null) return false;
+          resolved.add(converted);
+        }
+        paths = resolved;
+      } catch (error) {
+        if (_scanToken == token) {
+          state = state.copyWith(error: error.toString(), isScanning: false);
+        }
+        return false;
+      }
+    }
     final sessionSource =
         !forceRefresh && paths.length == 1
             ? state.sessionSourceForPath(paths.single)
@@ -270,6 +307,10 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         error: null,
         warning: null,
       );
+      LocalPgnPerformanceLog.event(
+        'open_complete',
+        'route=session elapsedMs=${openClock.elapsedMilliseconds}',
+      );
       return true;
     }
     // Do NOT enter the scanning state up front. A source that was already
@@ -279,6 +320,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     // flips `isScanning` on below.
     state = state.copyWith(error: null, warning: null);
     try {
+      final cacheClock = Stopwatch()..start();
       final cached =
           forceRefresh
               ? null
@@ -294,6 +336,10 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
                   );
                 },
               );
+      LocalPgnPerformanceLog.event(
+        'cache_lookup',
+        'elapsedMs=${cacheClock.elapsedMilliseconds} hit=${cached != null}',
+      );
       if (_scanToken != token) return false;
 
       LocalChessSource? source = cached;
@@ -302,10 +348,17 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         final repository = localDatabaseRepository;
         final immediatePgnPath = await _immediatePgnCatalogPath(paths);
         if (repository != null && immediatePgnPath != null) {
+          final catalogClock = Stopwatch()..start();
           final preview = await _scanPgnCatalog(
             immediatePgnPath,
             sourceLabel: sourceLabel,
             maxGames: _immediatePgnCatalogGameLimit,
+          );
+          final scannedFile = preview.nodeForPath(immediatePgnPath);
+          LocalPgnPerformanceLog.event(
+            'catalog_scan',
+            'elapsedMs=${catalogClock.elapsedMilliseconds} '
+                'games=${scannedFile is LocalChessFileNode ? scannedFile.gameCount : 0}',
           );
           if (_scanToken != token) return false;
           final previewOutcome = _localChessSourceOpenOutcome(paths, preview);
@@ -345,10 +398,20 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
             warning: previewOutcome.warning,
             sessionSources: _sessionSourcesWith(openedSource),
           );
+          LocalPgnPerformanceLog.event(
+            'source_publish',
+            'route=catalog elapsedMs=${openClock.elapsedMilliseconds}',
+          );
+          final registryClock = Stopwatch()..start();
           await _registerAllBestEffort(
             paths,
             source: openedSource,
             registryMetadata: registryMetadata,
+          );
+          LocalPgnPerformanceLog.event(
+            'open_complete',
+            'route=catalog elapsedMs=${openClock.elapsedMilliseconds} '
+                'registryMs=${registryClock.elapsedMilliseconds}',
           );
           return true;
         }
@@ -402,6 +465,15 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         warning: outcome.warning,
         sessionSources: _sessionSourcesWith(source),
       );
+      LocalPgnPerformanceLog.event(
+        'source_publish',
+        'route=${cached != null
+                ? 'cache'
+                : imported != null
+                ? 'import'
+                : 'scan'} '
+            'elapsedMs=${openClock.elapsedMilliseconds}',
+      );
       await _registerAllBestEffort(
         paths,
         source: source,
@@ -410,8 +482,21 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       if (cached == null && imported == null) {
         await _persistSourceBestEffort(source);
       }
+      LocalPgnPerformanceLog.event(
+        'open_complete',
+        'route=${cached != null
+                ? 'cache'
+                : imported != null
+                ? 'import'
+                : 'scan'} '
+            'elapsedMs=${openClock.elapsedMilliseconds}',
+      );
       return true;
     } catch (e) {
+      LocalPgnPerformanceLog.event(
+        'open_failed',
+        'elapsedMs=${openClock.elapsedMilliseconds} errorType=${e.runtimeType}',
+      );
       if (_scanToken != token) return false;
       state = state.copyWith(
         isScanning: false,
@@ -546,6 +631,47 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     final source = state.source;
     if (source == null || source.nodeForPath(path) == null) return;
     state = state.copyWith(source: source, selectedPath: path);
+  }
+
+  /// Rename only a closed PGN. Active editor ownership is checked by the
+  /// shell before and after every await leading up to the filesystem commit.
+  Future<String> renameRegisteredPgn(String path, String name, {
+    required void Function() ensureUnused,
+  }) async {
+    final target = localPgnRenameDestination(path, name);
+    if (p.normalize(target) == p.normalize(path)) return path;
+    if (localChessInputPathKey(target) == localChessInputPathKey(path)) {
+      throw const FormatException('Choose a name that differs by more than letter case.');
+    }
+    final registry = this.registry;
+    final repository = localDatabaseRepository;
+    if (registry == null || repository == null) {
+      throw StateError('The local database library is unavailable.');
+    }
+    return repository.runLocalPgnWriteQueued(() async {
+      ensureUnused();
+      if (FileSystemEntity.typeSync(target, followLinks: false) != FileSystemEntityType.notFound ||
+          registry.state.entries.any((entry) => localChessInputPathKey(entry.path) == localChessInputPathKey(target))) {
+        throw const FormatException('A database with this filename already exists.');
+      }
+      // A stale cache keyed by the unused target name is safe to drop first.
+      // The original's cache and opening tree are dropped only once the
+      // rename has committed, so a failed move (a Windows file lock, a
+      // refused link) leaves the database fully usable under its old name.
+      await repository.deleteCachedSource(target);
+      await prepareCbhCopyRename(path, target);
+      ensureUnused();
+      final result = await registry.renamePgn(path, name, ensureUnused: ensureUnused);
+      try {
+        await repository.deleteCachedSource(path);
+      } catch (error, stackTrace) {
+        // The PGN already lives under its new name; an orphaned cache for the
+        // old path is dead weight, not a correctness problem.
+        _debugLocalChessCacheFailure('cleanup after rename', error, stackTrace);
+      }
+      if (mounted) clear();
+      return result;
+    });
   }
 
   void clear() {

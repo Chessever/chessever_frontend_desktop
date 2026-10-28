@@ -938,7 +938,53 @@ GamesTourModel watchLiveGame(
     batchKey: batchKey,
     streamEnabled: streamEnabled,
   );
-  return ref.watch(scopedLiveGameCardProvider(params)) ?? game;
+  final provider = scopedLiveGameCardProvider(params);
+  // WEB PARITY (RoundGameRow.tsx:294 `railRowEqual`, RoundGamesList.tsx:396):
+  // a scoped Realtime batch covers every board in the round, so subscribing to
+  // the raw value rebuilt each mounted card for EVERY other board's tick.
+  // Subscribe to the card's own visible content instead; `read` still returns
+  // the newest value whenever that content really changed.
+  ref.watch(provider.select(liveGameCardContentKey));
+  return ref.read(provider) ?? game;
+}
+
+/// Everything a tournament card renders. Kept beside the card providers so a
+/// Realtime tick that does not change one of these values cannot rebuild the
+/// card's mini board, players, clocks or eval bar.
+Object? liveGameCardContentKey(GamesTourModel? g) {
+  if (g == null) return null;
+  final PlayerCard w = g.whitePlayer;
+  final PlayerCard b = g.blackPlayer;
+  return Object.hashAll(<Object?>[
+    g.gameId,
+    g.fen,
+    g.lastMove,
+    g.pgn?.length,
+    g.gameStatus,
+    g.whiteClockSeconds,
+    g.blackClockSeconds,
+    g.whiteClockCentiseconds,
+    g.blackClockCentiseconds,
+    g.whiteTimeDisplay,
+    g.blackTimeDisplay,
+    g.lastMoveTime,
+    w.name,
+    w.rating,
+    w.federation,
+    w.title,
+    w.fideId,
+    w.customPoints,
+    b.name,
+    b.rating,
+    b.federation,
+    b.title,
+    b.fideId,
+    b.customPoints,
+    g.eco,
+    g.openingName,
+    g.boardNr,
+    g.roundId,
+  ]);
 }
 
 GamesTourModel watchLiveGamePosition(

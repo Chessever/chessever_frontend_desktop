@@ -1,6 +1,12 @@
 import 'dart:async';
+import 'package:chessever/desktop/state/engine_display.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/state/desktop_account_identity.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 
-import 'package:dartchess/dartchess.dart';
+import 'package:chessever/desktop/services/engine/pv_san_formatter.dart';
+import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -8,14 +14,17 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/services/desktop_subscription_stub.dart'
+    show DesktopSubscriptionNotifier;
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
+import 'package:chessever/desktop/services/engine/game_report_request_coordinator.dart';
 import 'package:chessever/desktop/services/engine/game_report_book_lookup.dart';
 import 'package:chessever/desktop/services/engine/server_game_report.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/game_review/evaluation_graph_markers.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
-import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
+import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_settings_popover.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
@@ -24,9 +33,13 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
+
+import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
 
 @visibleForTesting
 const String desktopEngineReportSplitStorageKey =
@@ -52,6 +65,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     required this.fen,
     required this.sideToMove,
     this.onPlayUci,
+    this.pvPlayOwner,
     this.game,
     this.headers = const <String, String>{},
     this.activePly = 0,
@@ -59,12 +73,16 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.onReportRunningChanged,
     this.onReportChanged,
     this.reportResetRevision = 0,
+    this.reportRevealRevision = 0,
     this.reportVisible = false,
     this.isForegroundTab = true,
     this.autoAnalysisAllowed = true,
+    this.reportSourceAccessible = true,
     this.reportController,
+    this.reportCoordinator,
     this.onPictureInPicture,
     this.pictureInPictureSelected = false,
+    this.headerTrailing,
   });
 
   final String fen;
@@ -79,6 +97,9 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// taps so both surfaces share the legality + onMove path.
   final void Function(String uci)? onPlayUci;
 
+  /// Stable Board/tab/game identity; callback closures may change on rebuild.
+  final Object? pvPlayOwner;
+
   /// Loaded game snapshot used only by the session-scoped Report tab.
   final ChessGame? game;
   final Map<String, String> headers;
@@ -88,9 +109,12 @@ class EnginePanel extends ConsumerStatefulWidget {
   final ValueChanged<GameAnalysisReport?>? onReportChanged;
 
   /// Increment to cancel and discard the current report without changing the
-  /// game fingerprint. The cleared game is not auto-analyzed again until its
-  /// mainline changes or the user explicitly requests a report.
+  /// game fingerprint. A later explicit request restores it from the cache.
   final int reportResetRevision;
+
+  /// Incremented by the Show Report command. A new value while [reportVisible]
+  /// is true represents an explicit user admission request.
+  final int reportRevealRevision;
 
   /// Whether the session-scoped game-analysis report is currently shown.
   /// Fully independent of the engine on/off state — closing the engine lines
@@ -103,7 +127,15 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// from occupying the single engine queue.
   final bool isForegroundTab;
 
+  /// Kept for call-site compatibility only. Automatic report generation was
+  /// removed: every new report admission starts from an explicit Show Report,
+  /// Analyze or Retry. This flag starts nothing.
   final bool autoAnalysisAllowed;
+
+  /// Whether the loaded game's source lets this account create a report.
+  /// Provenance gating supplies false; the request is then refused before any
+  /// claim or engine work.
+  final bool reportSourceAccessible;
 
   /// Toggles the current game in the compact always-on-top board window.
   /// It remains available after that game finishes while the same PiP is
@@ -111,11 +143,18 @@ class EnginePanel extends ConsumerStatefulWidget {
   final VoidCallback? onPictureInPicture;
   final bool pictureInPictureSelected;
 
+  /// Optional action clustered with the engine gear (board more-actions).
+  final Widget? headerTrailing;
+
   /// Test seam for driving report lifecycle transitions without spawning a
   /// real Stockfish process. The controller must remain stable for this
   /// widget's lifetime and is owned by the caller when supplied.
   @visibleForTesting
   final GameAnalysisReportController? reportController;
+
+  /// Test seam for the admission-first request path.
+  @visibleForTesting
+  final GameReportRequestCoordinator? reportCoordinator;
 
   @override
   ConsumerState<EnginePanel> createState() => _EnginePanelState();
@@ -124,10 +163,18 @@ class EnginePanel extends ConsumerStatefulWidget {
 class _EnginePanelState extends ConsumerState<EnginePanel> {
   late final GameAnalysisReportController _reportController;
   late final bool _ownsReportController;
+  final _display = EngineDisplay();
+  int _targetGeneration = 0;
   bool _lastReportedRunning = false;
   GameAnalysisReport? _lastPublishedReport;
-  String? _autoStartedFingerprint;
   String? _gameFingerprint;
+  late final GameReportRequestCoordinator _reportCoordinator;
+
+  /// Why the last explicit request produced no report, until the game changes
+  /// or the next request starts.
+  GameReportRequestResult? _requestNotice;
+  bool _requesting = false;
+  bool Function()? _reportOwnerIsCurrent;
 
   @override
   void initState() {
@@ -144,7 +191,29 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           remoteRunner: serverGameReportRunner(),
         );
     _reportController.addListener(_onReport);
+    // Both closures are read lazily, on an explicit request only, so building
+    // the panel never touches Supabase.
+    _reportCoordinator =
+        widget.reportCoordinator ??
+        GameReportRequestCoordinator(
+          accountId: () => Supabase.instance.client.auth.currentUser?.id,
+          isPremium:
+              () =>
+                  desktopPremiumAccess(ref.read(subscriptionProvider)) ==
+                  DesktopAccess.allowed,
+          accountEpoch: () => ref.read(desktopAccountIdentityProvider),
+          entitlementKnown: () {
+            final value = desktopPremiumAccess(ref.read(subscriptionProvider));
+            return value == DesktopAccess.allowed ||
+                value == DesktopAccess.premiumRequired;
+          },
+        );
     _gameFingerprint = _fingerprint(widget.game);
+    if (widget.reportVisible && widget.reportRevealRevision > 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_analyze());
+      });
+    }
   }
 
   @override
@@ -156,14 +225,25 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       unawaited(_reportController.cancel());
     }
     final nextFingerprint = _fingerprint(widget.game);
-    if (oldWidget.reportResetRevision != widget.reportResetRevision) {
+    if (oldWidget.game?.gameId != widget.game?.gameId) _display.clear();
+    if (oldWidget.fen != widget.fen ||
+        oldWidget.isForegroundTab != widget.isForegroundTab ||
+        oldWidget.game?.gameId != widget.game?.gameId ||
+        oldWidget.pvPlayOwner != widget.pvPlayOwner ||
+        _gameFingerprint != nextFingerprint) {
+      _targetGeneration++;
+    }
+    if (oldWidget.reportResetRevision != widget.reportResetRevision ||
+        _gameFingerprint != nextFingerprint) {
       _gameFingerprint = nextFingerprint;
-      _autoStartedFingerprint = nextFingerprint;
+      _requestNotice = null;
       _reportController.invalidate();
-    } else if (_gameFingerprint != nextFingerprint) {
-      _gameFingerprint = nextFingerprint;
-      _autoStartedFingerprint = null;
-      _reportController.invalidate();
+    }
+    if (widget.reportVisible &&
+        oldWidget.reportRevealRevision != widget.reportRevealRevision) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_analyze());
+      });
     }
   }
 
@@ -183,12 +263,22 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       });
     }
     final report = reportState.report;
-    final reportChanged = !identical(report, _lastPublishedReport);
+    final reportChanged =
+        !_requesting &&
+        (_reportOwnerIsCurrent?.call() ?? true) &&
+        !identical(report, _lastPublishedReport);
     if (reportChanged) {
       _lastPublishedReport = report;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !identical(_lastPublishedReport, report)) return;
-        widget.onReportChanged?.call(report);
+        if (!mounted ||
+            !identical(_lastPublishedReport, report) ||
+            !(_reportOwnerIsCurrent?.call() ?? true)) {
+          return;
+        }
+        final current = _gameFingerprint;
+        widget.onReportChanged?.call(
+          report == null || report.fingerprint == current ? report : null,
+        );
       });
     }
     // Progress-only ticks stream in as fast as the engine reports; those are
@@ -198,47 +288,72 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     if (runningChanged || reportChanged) setState(() {});
   }
 
+  /// Analyze, Retry and every other report entry point. Only the foreground
+  /// tab may ask, so a paywall or sign-in sheet opens in the initiating window.
   Future<void> _analyze() async {
+    if (!widget.isForegroundTab || _requesting) return;
     final game = widget.game;
-    if (!widget.isForegroundTab || game == null || game.mainline.isEmpty) {
+    final account = ref.read(desktopAccountIdentityProvider);
+    bool ownsRequest() =>
+        mounted &&
+        widget.isForegroundTab &&
+        identical(widget.game, game) &&
+        ref.read(desktopAccountIdentityProvider) == account;
+    _reportOwnerIsCurrent = ownsRequest;
+    setState(() {
+      _requesting = true;
+      _requestNotice = null;
+    });
+    GameReportRequestResult? result;
+    try {
+      result = await _reportCoordinator.request(
+        controller: _reportController,
+        isCurrent: ownsRequest,
+        game: game,
+        gameFinished:
+            game != null && gameReportHasFinalResult(game, widget.headers),
+        sourceAccessible: widget.reportSourceAccessible,
+        whiteRating: _headerRating('WhiteElo'),
+        blackRating: _headerRating('BlackElo'),
+        ui: GameReportRequestUi(
+          requestAccount: () async {
+            if (!mounted) return false;
+            return requireFullAuthGuard(context);
+          },
+          requestUpgrade: () async {
+            if (!ownsRequest()) return false;
+            return showDesktopPaywall(
+              context,
+              const DesktopAccessDecision(
+                DesktopAccess.quotaExceeded,
+                DesktopAccessReason.quotaGameReportsPerUtcDay,
+              ),
+              surface: 'lifetime_report_limit',
+            );
+          },
+          refreshEntitlement: () async {
+            await DesktopSubscriptionNotifier.current?.refreshFromBackend(
+              forceSessionRefresh: true,
+            );
+          },
+        ),
+      );
+    } finally {
+      _requesting = false;
+    }
+    if (!mounted) return;
+    if (!ownsRequest()) {
+      setState(() {});
       return;
     }
-    await _reportController.analyze(
-      game,
-      whiteRating: _headerRating('WhiteElo'),
-      blackRating: _headerRating('BlackElo'),
-    );
+    _onReport();
+    final notice = result;
+    setState(() => _requestNotice = notice.isBlocked ? notice : null);
   }
 
   int? _headerRating(String key) {
     final raw = widget.headers[key]?.replaceAll(RegExp(r'[^0-9]'), '');
     return raw == null ? null : int.tryParse(raw);
-  }
-
-  void _scheduleAutomaticAnalysis(EngineSettings settings) {
-    final game = widget.game;
-    if (!widget.autoAnalysisAllowed ||
-        !settings.autoGameAnalysis ||
-        game == null ||
-        game.mainline.isEmpty) {
-      return;
-    }
-    final fingerprint = gameReportFingerprint(game);
-    if (_autoStartedFingerprint == fingerprint ||
-        _reportController.state.isRunning ||
-        _reportController.state.report?.fingerprint == fingerprint) {
-      return;
-    }
-    _autoStartedFingerprint = fingerprint;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          !widget.autoAnalysisAllowed ||
-          widget.game == null ||
-          gameReportFingerprint(widget.game!) != fingerprint) {
-        return;
-      }
-      unawaited(_analyze());
-    });
   }
 
   @override
@@ -256,14 +371,23 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<DesktopAccountIdentity>(desktopAccountIdentityProvider, (
+      before,
+      after,
+    ) {
+      if (before != null && before != after) _reportController.invalidate();
+    });
+    ref.watch(desktopAccountIdentityProvider);
     final asyncSettings = ref.watch(engineSettingsProviderNew);
     final settings = asyncSettings.valueOrNull;
-    if (settings != null) _scheduleAutomaticAnalysis(settings);
     final engineOn =
         settings?.showEngineAnalysis ??
         const EngineSettings().showEngineAnalysis;
     final reportOn = widget.reportVisible;
-    final reportState = _reportController.state;
+    final reportState =
+        (_reportOwnerIsCurrent?.call() ?? true)
+            ? _reportController.state
+            : const GameReportState();
     final liveAnalysisPausedForReport = reportOn && reportState.isRunning;
     final runLiveBoardAnalysis = shouldRunLiveBoardAnalysis(
       isForeground: widget.isForegroundTab,
@@ -280,12 +404,6 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         runLiveBoardAnalysis &&
         (engineReady || widget.fen.isNotEmpty);
 
-    final engineContent =
-        liveAnalysisPausedForReport
-            ? const _EnginePausedForReport()
-            : engineActive
-            ? _EngineLinesSurface(fen: widget.fen, onPlayUci: widget.onPlayUci)
-            : const _EngineNotReady();
     final reportContent = GameReportView(
       state: reportState,
       progressController: _reportController,
@@ -295,56 +413,118 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       onAnalyze: _analyze,
       onCancel: _reportController.cancel,
       onJumpToPly: widget.onJumpToPly,
+      requestNotice: _requestNotice,
     );
+    // Engine ticks do not rebuild the report or schedule automatic analysis.
+    return Consumer(
+      builder: (context, ref, _) {
+        final current =
+            engineActive
+                ? ref.watch(boardEvalProvider(widget.fen))
+                : const BoardEvalState(pvs: [], isEvaluating: false, depth: 0);
+        final reading = _display.update(
+          widget.fen,
+          current,
+          enabled: engineActive,
+        );
+        final linesCurrent = _display.isCurrent(widget.fen, current);
+        final targetFen = widget.fen;
+        final generation = _targetGeneration;
+        final sourceReading = reading;
+        void playCurrent(String uci) {
+          if (!mounted ||
+              !widget.isForegroundTab ||
+              widget.fen != targetFen ||
+              generation != _targetGeneration ||
+              !identical(_display.reading, sourceReading) ||
+              ref
+                      .read(engineSettingsProviderNew)
+                      .valueOrNull
+                      ?.showEngineAnalysis !=
+                  true ||
+              !identical(
+                ref.read(boardEvalProvider(targetFen)),
+                sourceReading,
+              )) {
+            return;
+          }
+          widget.onPlayUci?.call(uci);
+        }
 
-    final Widget? body =
-        engineOn && reportOn
-            ? ResizableSplitView(
-              axis: Axis.vertical,
-              storageKey: desktopEngineReportSplitStorageKey,
-              gutterThickness: desktopEngineReportGutterThickness,
-              gutterColor: kPrimaryColor,
-              children: [
-                SplitChild(
-                  minSize: 80,
-                  initialWeight: 0.40,
-                  label: 'Live engine',
-                  dismissible: false,
-                  child: engineContent,
-                ),
-                SplitChild(
-                  minSize: 140,
-                  initialWeight: 0.60,
-                  label: 'Game report',
-                  dismissible: false,
-                  child: reportContent,
-                ),
-              ],
-            )
-            : engineOn
-            ? engineContent
-            : reportOn
-            ? reportContent
-            : null;
+        final engineContent =
+            liveAnalysisPausedForReport
+                ? const _EnginePausedForReport()
+                : engineActive
+                ? _EngineLinesSurface(
+                  fen: _display.fen ?? widget.fen,
+                  state: reading,
+                  interactive: linesCurrent,
+                  playOwner: widget.pvPlayOwner ?? widget.game ?? this,
+                  onPlayUci:
+                      linesCurrent && widget.onPlayUci != null
+                          ? playCurrent
+                          : null,
+                )
+                : const _EngineNotReady();
 
-    // Engine lines and the report remain independently toggled; when both
-    // are visible, either can be resized without moving the notation boundary.
-    return Container(
-      color: kBlack2Color,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildHeader(engineOn: engineOn, engineActive: engineActive),
-          if (body != null) Expanded(child: body),
-        ],
-      ),
+        final Widget? body =
+            engineOn && reportOn
+                ? ResizableSplitView(
+                  axis: Axis.vertical,
+                  storageKey: desktopEngineReportSplitStorageKey,
+                  gutterThickness: desktopEngineReportGutterThickness,
+                  gutterColor: kPrimaryColor,
+                  children: [
+                    SplitChild(
+                      minSize: 80,
+                      initialWeight: 0.40,
+                      label: 'Live engine',
+                      dismissible: false,
+                      child: engineContent,
+                    ),
+                    SplitChild(
+                      minSize: 140,
+                      initialWeight: 0.60,
+                      label: 'Game report',
+                      dismissible: false,
+                      child: reportContent,
+                    ),
+                  ],
+                )
+                : engineOn
+                ? engineContent
+                : reportOn
+                ? reportContent
+                : null;
+
+        // Engine lines and the report remain independently toggled; when both
+        // are visible, either can be resized without moving the notation boundary.
+        return Container(
+          color: kBlack2Color,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildHeader(
+                engineOn: engineOn,
+                engineActive: engineActive,
+                reading: reading,
+              ),
+              if (body != null) Expanded(child: body),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  /// Persistent header carrying the two independent toggles (engine on/off
-  /// and report on/off) plus the engine gear. The engine readout collapses
+  /// Persistent header carrying the engine toggle, optional PiP control,
+  /// engine gear, and optional trailing chrome. The engine readout collapses
   /// away when the engine is off so the report can own the panel alone.
-  Widget _buildHeader({required bool engineOn, required bool engineActive}) {
+  Widget _buildHeader({
+    required bool engineOn,
+    required bool engineActive,
+    required BoardEvalState reading,
+  }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
       child: Row(
@@ -366,7 +546,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           ),
           if (engineActive) ...[
             const SizedBox(width: 8),
-            _EngineScoreDepthReadout(fen: widget.fen),
+            _EngineScoreDepthReadout(snapshot: reading),
           ],
           const SizedBox(width: 6),
           _EngineQuickToggle(enabled: engineOn),
@@ -379,6 +559,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             const SizedBox(width: 4),
           ],
           const EngineSettingsPopover(dimension: 28),
+          if (widget.headerTrailing != null) ...[
+            const SizedBox(width: 4),
+            SizedBox.square(dimension: 28, child: widget.headerTrailing!),
+          ],
         ],
       ),
     );
@@ -406,23 +590,13 @@ class _EngineActivityIndicator extends ConsumerWidget {
   }
 }
 
-class _EngineScoreDepthReadout extends ConsumerWidget {
-  const _EngineScoreDepthReadout({required this.fen});
+class _EngineScoreDepthReadout extends StatelessWidget {
+  const _EngineScoreDepthReadout({required this.snapshot});
 
-  final String fen;
+  final BoardEvalState snapshot;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final snapshot = ref.watch(
-      boardEvalProvider(fen).select(
-        (state) => (
-          evaluation: state.evaluation,
-          mate: state.mate,
-          depth: state.depth,
-          isEvaluating: state.isEvaluating,
-        ),
-      ),
-    );
+  Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -483,16 +657,24 @@ class _EngineLinesSnapshot {
 }
 
 class _EngineLinesSurface extends ConsumerWidget {
-  const _EngineLinesSurface({required this.fen, required this.onPlayUci});
+  const _EngineLinesSurface({
+    required this.fen,
+    required this.onPlayUci,
+    required this.playOwner,
+    required this.state,
+    required this.interactive,
+  });
+
+  final BoardEvalState state;
+  final bool interactive;
 
   final String fen;
   final void Function(String uci)? onPlayUci;
+  final Object playOwner;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final snapshot = ref.watch(
-      boardEvalProvider(fen).select(_EngineLinesSnapshot.fromState),
-    );
+    final snapshot = _EngineLinesSnapshot.fromState(state);
     final pvs = snapshot.pvs;
     if (pvs.isEmpty) {
       return Padding(
@@ -519,6 +701,8 @@ class _EngineLinesSurface extends ConsumerWidget {
             pv: pvs[index],
             fen: fen,
             onPlayUci: onPlayUci,
+            playOwner: playOwner,
+            interactive: interactive,
           ),
     );
   }
@@ -535,6 +719,7 @@ class GameReportView extends StatefulWidget {
     required this.onCancel,
     required this.onJumpToPly,
     this.progressController,
+    this.requestNotice,
   });
 
   final GameReportState state;
@@ -550,6 +735,10 @@ class GameReportView extends StatefulWidget {
   final Future<void> Function() onAnalyze;
   final Future<void> Function() onCancel;
   final ValueChanged<int>? onJumpToPly;
+
+  /// Why the last explicit request produced no report. Shown instead of the
+  /// start or retry message; never over a running or completed report.
+  final GameReportRequestResult? requestNotice;
 
   @override
   State<GameReportView> createState() => _GameReportViewState();
@@ -580,6 +769,14 @@ class _GameReportViewState extends State<GameReportView> {
       );
     }
 
+    final notice = widget.requestNotice;
+    final status = widget.state.status;
+    if (notice != null &&
+        status != GameReportStatus.running &&
+        status != GameReportStatus.completed) {
+      return _requestNoticeMessage(notice);
+    }
+
     return switch (widget.state.status) {
       GameReportStatus.idle => _ReportStart(
         moveCount: game.mainline.length,
@@ -603,6 +800,39 @@ class _GameReportViewState extends State<GameReportView> {
         onAction: widget.onAnalyze,
       ),
       GameReportStatus.completed => _completed(widget.state.report!),
+    };
+  }
+
+  Widget _requestNoticeMessage(GameReportRequestResult notice) {
+    return switch (notice.outcome) {
+      GameReportRequestOutcome.quotaExceeded => _ReportMessage(
+        icon: Icons.hourglass_bottom_rounded,
+        title: 'Your free report is used',
+        body:
+            'Free accounts get one successful game report. Reopening an '
+            'admitted report is free. Premium includes unlimited reports.',
+        actionLabel: 'See Premium',
+        onAction: widget.onAnalyze,
+      ),
+      GameReportRequestOutcome.accountRequired => _ReportMessage(
+        icon: Icons.person_outline_rounded,
+        title: 'Sign in to create reports',
+        body: 'Game reports need a Chessever account.',
+        actionLabel: 'Sign In',
+        onAction: widget.onAnalyze,
+      ),
+      GameReportRequestOutcome.temporarilyUnavailable => _ReportMessage(
+        icon: Icons.cloud_off_rounded,
+        title: "Couldn't check your report allowance",
+        body: 'Check your connection and try again.',
+        actionLabel: 'Retry',
+        onAction: widget.onAnalyze,
+      ),
+      _ => _ReportMessage(
+        icon: Icons.info_outline_rounded,
+        title: 'Report not available',
+        body: notice.message ?? 'This game cannot be analyzed.',
+      ),
     };
   }
 
@@ -651,13 +881,6 @@ class _GameReportViewState extends State<GameReportView> {
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
-            ),
-            const Spacer(),
-            DesktopToolbarPillButton(
-              label: 'Analyze Again',
-              icon: Icons.refresh_rounded,
-              onPress: widget.onAnalyze,
-              tooltip: 'Re-run Stockfish analysis on this game',
             ),
           ],
         ),
@@ -1404,18 +1627,43 @@ class _GameReportClassificationIcon extends StatelessWidget {
 Color _classificationColor(GameMoveClassification classification) =>
     classificationColor(classification);
 
+/// Exercises the production row with a controllable worker completion.
+@visibleForTesting
+Widget enginePvLineForTesting({
+  required BoardPv pv,
+  required String fen,
+  void Function(String uci)? onPlayUci,
+  Object? playOwner,
+  bool interactive = true,
+  Future<List<String>> Function(Map<String, String>)? formatSan,
+}) => _PvLine(
+  rank: 1,
+  pv: pv,
+  fen: fen,
+  onPlayUci: onPlayUci,
+  playOwner: playOwner,
+  interactive: interactive,
+  formatSan: formatSan,
+);
+
 class _PvLine extends StatefulWidget {
   const _PvLine({
     required this.rank,
+    this.interactive = true,
     required this.pv,
     required this.fen,
     required this.onPlayUci,
+    this.playOwner,
+    this.formatSan,
   });
 
   final int rank;
   final BoardPv pv;
+  final bool interactive;
   final String fen;
   final void Function(String uci)? onPlayUci;
+  final Object? playOwner;
+  final Future<List<String>> Function(Map<String, String>)? formatSan;
 
   @override
   State<_PvLine> createState() => _PvLineState();
@@ -1429,8 +1677,13 @@ class _PvLineState extends State<_PvLine> {
   String? _cachedFen;
   String? _cachedMoves;
   String? _cachedFirstUci;
+  BoardPv? _displayPv;
   String _cachedDisplayLine = '';
   List<_PvToken> _cachedTokens = const <_PvToken>[];
+  Timer? _formatTimer;
+  bool _formatInFlight = false;
+  int _formatGeneration = 0;
+  int _playOwnerGeneration = 0;
 
   static final RegExp _pvWhitespace = RegExp(r'\s+');
 
@@ -1443,9 +1696,20 @@ class _PvLineState extends State<_PvLine> {
   @override
   void didUpdateWidget(covariant _PvLine oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.fen != widget.fen ||
+        oldWidget.playOwner != widget.playOwner ||
+        oldWidget.interactive != widget.interactive ||
+        (oldWidget.onPlayUci == null) != (widget.onPlayUci == null)) {
+      _playOwnerGeneration += 1;
+    }
+    if (_cachedFen == widget.fen && _displayPv?.moves == widget.pv.moves) {
+      _displayPv = widget.pv;
+    }
     if (oldWidget.fen != widget.fen || oldWidget.pv.moves != widget.pv.moves) {
       _refreshCachedLine();
-      _hoveredTokenIndex = null;
+      if (oldWidget.fen != widget.fen || _cachedTokens.isEmpty) {
+        _hoveredTokenIndex = null;
+      }
     } else if (_hoveredTokenIndex != null &&
         _hoveredTokenIndex! >= _cachedTokens.length) {
       _hoveredTokenIndex = null;
@@ -1456,95 +1720,105 @@ class _PvLineState extends State<_PvLine> {
     final moves = widget.pv.moves;
     final parts =
         moves.split(_pvWhitespace).where((s) => s.trim().isNotEmpty).toList();
+    // Retain one coherent formatted reading only within the same position.
+    // Never flash the incoming raw UCI while the isolate prepares its SAN.
+    if (_cachedFen != widget.fen || parts.isEmpty) {
+      _cachedTokens = const <_PvToken>[];
+      _cachedDisplayLine = 'Formatting…';
+      _displayPv = null;
+    }
     _cachedFen = widget.fen;
     _cachedMoves = moves;
     _cachedFirstUci = parts.isEmpty ? null : parts.first.trim();
+    _formatGeneration += 1;
+    if (parts.isNotEmpty) _scheduleFormat();
+  }
 
-    final tokens = _tokensFor(widget.fen, parts);
-    _cachedTokens = tokens;
-    _cachedDisplayLine =
-        tokens.isEmpty ? moves : tokens.map((t) => t.san).join(' ');
+  void _scheduleFormat() {
+    // Engine info can arrive many times per second. Keep one pending request
+    // per row and format the latest line, without blocking a Flutter frame.
+    _formatTimer ??= Timer(const Duration(milliseconds: 120), () {
+      _formatTimer = null;
+      if (_formatInFlight) return;
+      unawaited(_formatCurrentLine());
+    });
+  }
+
+  Future<void> _formatCurrentLine() async {
+    _formatInFlight = true;
+    final generation = _formatGeneration;
+    final fen = _cachedFen!;
+    final moves = _cachedMoves!;
+    try {
+      final input = <String, String>{'fen': fen, 'moves': moves};
+      final labels =
+          await (widget.formatSan?.call(input) ??
+              compute(formatEnginePvSanLine, input));
+      if (!mounted || generation != _formatGeneration) return;
+      // Invalid input/failed conversion must not expose a raw-coordinate line.
+      if (labels.isEmpty ||
+          labels.any(
+            (label) => RegExp(r'^[a-h][1-8][a-h][1-8][qrbn]?$').hasMatch(label),
+          )) {
+        return;
+      }
+      final ucis = moves
+          .split(_pvWhitespace)
+          .where((move) => move.isNotEmpty)
+          .toList(growable: false);
+      final tokens = <_PvToken>[];
+      for (var i = 0; i < labels.length && i < ucis.length; i++) {
+        tokens.add(
+          _PvToken(
+            san: labels[i],
+            uci: ucis[i],
+            ucisUpTo: List<String>.unmodifiable(ucis.take(i + 1)),
+          ),
+        );
+      }
+      setState(() {
+        _cachedTokens = tokens;
+        _cachedDisplayLine = tokens.map((token) => token.san).join(' ');
+        _displayPv = BoardPv(
+          evaluation: widget.pv.evaluation,
+          mate: widget.pv.mate,
+          moves: tokens.map((token) => token.uci).join(' '),
+        );
+        _hoveredTokenIndex = null;
+      });
+    } catch (_) {
+      // Keep the last coherent SAN reading (or the initial placeholder).
+    } finally {
+      _formatInFlight = false;
+      if (mounted &&
+          generation != _formatGeneration &&
+          _cachedFirstUci != null) {
+        _scheduleFormat();
+      }
+    }
   }
 
   /// First UCI move of the line. The bar's `pv.moves` is a space-
   /// separated UCI string ("e2e4 e7e5 g1f3 …"); the first token is what
   /// gets played when the user clicks the row.
   String? get _firstUci {
-    if (_cachedFen != widget.fen || _cachedMoves != widget.pv.moves) {
-      _refreshCachedLine();
-    }
-    return _cachedFirstUci;
+    return _cachedTokens.isEmpty ? null : _cachedTokens.first.uci;
   }
 
-  /// Render the PV line as numbered SAN ("8.dxc3 Bc5 9.Qe2+ Qe7 10.O-O …")
-  /// — readable, copy-friendly, and matches how desktop database and web analysis boards print
-  /// engine lines. Move numbers are derived from the queried FEN's full-
-  /// move + side-to-move fields (same logic as the position-games table's
-  /// Notation column). Falls back to the raw UCI string when the position
-  /// can't be parsed (e.g. a stale snapshot mid-position-update).
-  /// Walks the UCI line on top of [fen] and emits one [_PvToken] per
-  /// move with the formatted SAN label, the move's UCI, and the
-  /// cumulative UCI list up to (and including) that token. The hover
-  /// preview reads `ucisUpTo` to render the position after the hovered
-  /// move; the visible label uses `san`.
-  List<_PvToken> _tokensFor(String fen, List<String> uciMoves) {
-    try {
-      final position = Chess.fromSetup(Setup.parseFen(fen));
-      final parts = fen.trim().split(_pvWhitespace);
-      final initialFullMove =
-          parts.length >= 6 ? int.tryParse(parts[5]) ?? 1 : 1;
-      final whiteFirst = parts.length >= 2 ? parts[1] == 'w' : true;
-
-      final out = <_PvToken>[];
-      Position cursor = position;
-      var fullMove = initialFullMove;
-      var whiteToMove = whiteFirst;
-      final ucisSoFar = <String>[];
-      for (final raw in uciMoves) {
-        final uci = raw.trim();
-        if (uci.isEmpty) continue;
-        final move = Move.parse(uci);
-        if (move == null) break;
-        if (!cursor.isLegal(move)) break;
-        final san = cursor.makeSan(move).$2;
-        final String label;
-        if (whiteToMove) {
-          label = '$fullMove.$san';
-        } else if (out.isEmpty) {
-          label = '$fullMove…$san';
-        } else {
-          label = san;
-        }
-        ucisSoFar.add(uci);
-        out.add(
-          _PvToken(
-            san: label,
-            uci: uci,
-            ucisUpTo: List<String>.unmodifiable(ucisSoFar),
-          ),
-        );
-        cursor = cursor.playUnchecked(move);
-        if (!whiteToMove) fullMove += 1;
-        whiteToMove = !whiteToMove;
-      }
-      return out;
-    } catch (_) {
-      return uciMoves
-          .map((u) => _PvToken(san: u, uci: u, ucisUpTo: const <String>[]))
-          .toList(growable: false);
-    }
-  }
-
-  String _sanLineString() {
-    if (_cachedFen != widget.fen || _cachedMoves != widget.pv.moves) {
-      _refreshCachedLine();
-    }
-    return _cachedDisplayLine;
+  @override
+  void dispose() {
+    _formatTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _showContextMenu(Offset globalPos) async {
+    if (_displayPv == null) return;
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     final firstUci = _firstUci;
+    final fen = widget.fen;
+    final ownerGeneration = _playOwnerGeneration;
+    final sanLine = _cachedDisplayLine;
+    final uciLine = _displayPv!.moves;
     final selected = await showMenu<_PvAction>(
       context: context,
       color: kBlack2Color,
@@ -1583,18 +1857,24 @@ class _PvLineState extends State<_PvLine> {
         ),
       ],
     );
-    if (selected == null) return;
+    if (!mounted || selected == null) return;
     switch (selected) {
       case _PvAction.play:
-        if (firstUci != null) widget.onPlayUci?.call(firstUci);
+        if (mounted &&
+            widget.interactive &&
+            widget.fen == fen &&
+            _playOwnerGeneration == ownerGeneration &&
+            firstUci != null) {
+          widget.onPlayUci?.call(firstUci);
+        }
       case _PvAction.copySan:
-        await Clipboard.setData(ClipboardData(text: _sanLineString()));
+        await Clipboard.setData(ClipboardData(text: sanLine));
       case _PvAction.copyFirst:
         if (firstUci != null) {
           await Clipboard.setData(ClipboardData(text: firstUci));
         }
       case _PvAction.copyUci:
-        await Clipboard.setData(ClipboardData(text: widget.pv.moves));
+        await Clipboard.setData(ClipboardData(text: uciLine));
     }
   }
 
@@ -1606,15 +1886,28 @@ class _PvLineState extends State<_PvLine> {
 
   @override
   Widget build(BuildContext context) {
-    final score = _formatScore(widget.pv.evaluation, widget.pv.mate);
+    // A score-only update can be shown immediately when its moves are already
+    // formatted; otherwise the score remains paired with the visible old PV.
+    final displayPv =
+        _displayPv != null &&
+                _cachedFen == widget.fen &&
+                _displayPv!.moves == widget.pv.moves
+            ? widget.pv
+            : _displayPv;
+    final score =
+        displayPv == null
+            ? '—'
+            : _formatScore(displayPv.evaluation, displayPv.mate);
     final isAdvantage =
-        (widget.pv.mate ?? 0) > 0 || widget.pv.evaluation > 0.05;
+        (displayPv?.mate ?? 0) > 0 || (displayPv?.evaluation ?? 0) > 0.05;
     final scoreColor =
-        (widget.pv.mate ?? 0) != 0
+        (displayPv?.mate ?? 0) != 0
             ? kPrimaryColor
             : (isAdvantage
                 ? kWhiteColor
-                : (widget.pv.evaluation < -0.05 ? kRedColor : kWhiteColor70));
+                : ((displayPv?.evaluation ?? 0) < -0.05
+                    ? kRedColor
+                    : kWhiteColor70));
 
     if (_cachedFen != widget.fen || _cachedMoves != widget.pv.moves) {
       _refreshCachedLine();
@@ -1707,7 +2000,11 @@ class _PvLineState extends State<_PvLine> {
     final preview = MoveHoverPreview(
       startingFen: widget.fen,
       movesUpToHover: movesUpToHover,
-      enabled: _hovered && _cachedTokens.isNotEmpty,
+      enabled:
+          widget.interactive &&
+          _hovered &&
+          _hoveredTokenIndex != null &&
+          _cachedTokens.isNotEmpty,
       placement: MoveHoverPreviewPlacement.engineLine,
       placementAnchorKey: _lineAnchorKey,
       child: body,
@@ -1719,39 +2016,42 @@ class _PvLineState extends State<_PvLine> {
     // toward it. We don't track press here — these rows update many
     // times a second, and a press-down spring would conflict with the
     // ongoing redraws.
-    return ClickCursor(
-      enabled: clickable,
-      child: MouseRegion(
-        onEnter:
-            (_) => setState(() {
-              _hovered = true;
-              _hoveredTokenIndex ??= _cachedTokens.isEmpty ? null : 0;
-            }),
-        onHover: (_) {
-          if (_hoveredTokenIndex == null && _cachedTokens.isNotEmpty) {
-            setState(() => _hoveredTokenIndex = 0);
-          }
-        },
-        onExit:
-            (_) => setState(() {
-              _hovered = false;
-              _hoveredTokenIndex = null;
-            }),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: clickable ? () => widget.onPlayUci!(_firstUci!) : null,
-          onSecondaryTapUp:
-              (details) => _showContextMenu(details.globalPosition),
-          child: SingleMotionBuilder(
-            value: clickable && _hovered ? 1.005 : 1.0,
-            motion: DesktopMotion.hover,
-            builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: preview,
+    return IgnorePointer(
+      ignoring: !widget.interactive,
+      child: ClickCursor(
+        enabled: clickable,
+        child: MouseRegion(
+          onEnter:
+              (_) => setState(() {
+                _hovered = true;
+                _hoveredTokenIndex ??= _cachedTokens.isEmpty ? null : 0;
+              }),
+          onHover: (_) {
+            if (_hoveredTokenIndex == null && _cachedTokens.isNotEmpty) {
+              setState(() => _hoveredTokenIndex = 0);
+            }
+          },
+          onExit:
+              (_) => setState(() {
+                _hovered = false;
+                _hoveredTokenIndex = null;
+              }),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: clickable ? () => widget.onPlayUci!(_firstUci!) : null,
+            onSecondaryTapUp:
+                (details) => _showContextMenu(details.globalPosition),
+            child: SingleMotionBuilder(
+              value: clickable && _hovered ? 1.005 : 1.0,
+              motion: DesktopMotion.hover,
+              builder:
+                  (context, scale, child) => Transform.scale(
+                    scale: scale,
+                    filterQuality: FilterQuality.medium,
+                    child: child,
+                  ),
+              child: preview,
+            ),
           ),
         ),
       ),
@@ -1812,61 +2112,11 @@ class _EnginePictureInPictureButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final tooltip =
         selected ? 'Close picture in picture' : 'Open picture in picture';
-    return DesktopTooltip(
+    return DesktopHeaderIconButton(
       message: tooltip,
-      child: Semantics(
-        button: true,
-        toggled: selected,
-        label: tooltip,
-        child: FTheme(
-          data: FThemes.zinc.dark,
-          child: SizedBox.square(
-            dimension: 28,
-            child: FButton.icon(
-              style: FButtonStyle.ghost(
-                (style) => style.copyWith(
-                  decoration: FWidgetStateMap({
-                    WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-                      color:
-                          selected
-                              ? kPrimaryColor.withValues(alpha: 0.18)
-                              : kBlack3Color,
-                      borderRadius: BorderRadius.circular(6),
-                      border:
-                          selected
-                              ? Border.all(
-                                color: kPrimaryColor.withValues(alpha: 0.42),
-                              )
-                              : null,
-                    ),
-                    WidgetState.any: BoxDecoration(
-                      color:
-                          selected
-                              ? kPrimaryColor.withValues(alpha: 0.11)
-                              : Colors.transparent,
-                      borderRadius: BorderRadius.circular(6),
-                      border:
-                          selected
-                              ? Border.all(
-                                color: kPrimaryColor.withValues(alpha: 0.34),
-                              )
-                              : null,
-                    ),
-                  }),
-                  iconContentStyle:
-                      (content) => content.copyWith(padding: EdgeInsets.zero),
-                ),
-              ),
-              onPress: onPress,
-              child: Icon(
-                Icons.picture_in_picture_alt_rounded,
-                color: selected ? kPrimaryColor : kWhiteColor70,
-                size: 16,
-              ),
-            ),
-          ),
-        ),
-      ),
+      icon: Icons.picture_in_picture_alt_rounded,
+      selected: selected,
+      onPress: onPress,
     );
   }
 }
@@ -1896,87 +2146,25 @@ class _MenuRow extends StatelessWidget {
 /// users actually look for an engine switch — right next to the eval read-
 /// out. Single global Stockfish process; toggling here pauses/resumes the
 /// search for whichever board tab is focused (#461).
-class _EngineQuickToggle extends ConsumerStatefulWidget {
+class _EngineQuickToggle extends ConsumerWidget {
   const _EngineQuickToggle({required this.enabled});
 
   final bool enabled;
 
   @override
-  ConsumerState<_EngineQuickToggle> createState() => _EngineQuickToggleState();
-}
-
-class _EngineQuickToggleState extends ConsumerState<_EngineQuickToggle> {
-  bool _hovered = false;
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = widget.enabled;
-    final tooltip = enabled ? 'Pause engine' : 'Resume engine';
-    final fg =
-        enabled ? kPrimaryColor : (_hovered ? kWhiteColor : kWhiteColor70);
-    final bg =
-        enabled
-            ? kPrimaryColor.withValues(alpha: _hovered ? 0.22 : 0.14)
-            : (_hovered ? kBlack3Color : Colors.transparent);
-    final border =
-        enabled
-            ? kPrimaryColor.withValues(alpha: 0.55)
-            : (_hovered ? kWhiteColor.withValues(alpha: 0.20) : kDividerColor);
-
-    Future<void> toggle() async {
-      await ref
-          .read(engineSettingsProviderNew.notifier)
-          .toggleEngineAnalysis(!enabled);
-    }
-
-    return DesktopTooltip(
-      message: tooltip,
-      child: ClickCursor(
-        child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit:
-              (_) => setState(() {
-                _hovered = false;
-                _pressed = false;
-              }),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: toggle,
-            onTapDown: (_) => setState(() => _pressed = true),
-            onTapUp: (_) => setState(() => _pressed = false),
-            onTapCancel: () => setState(() => _pressed = false),
-            child: SingleMotionBuilder(
-              value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
-              motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-              builder:
-                  (context, scale, child) => Transform.scale(
-                    scale: scale,
-                    filterQuality: FilterQuality.medium,
-                    child: child,
-                  ),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 110),
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: border),
-                ),
-                alignment: Alignment.center,
-                child: Icon(
-                  enabled
-                      ? Icons.power_settings_new_rounded
-                      : Icons.power_settings_new_outlined,
-                  size: 14,
-                  color: fg,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+  Widget build(BuildContext context, WidgetRef ref) {
+    return DesktopHeaderIconButton(
+      message: enabled ? 'Pause engine' : 'Resume engine',
+      icon:
+          enabled
+              ? Icons.power_settings_new_rounded
+              : Icons.power_settings_new_outlined,
+      selected: enabled,
+      onPress: () {
+        ref
+            .read(engineSettingsProviderNew.notifier)
+            .toggleEngineAnalysis(!enabled);
+      },
     );
   }
 }

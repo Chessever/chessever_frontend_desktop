@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:chessever/repository/local_storage/tournament/games/games_local_storage.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
+import 'package:chessever/repository/supabase/round/round.dart';
+import 'package:chessever/repository/supabase/round/round_repository.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/live_rounds_id_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -10,10 +13,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 Games _game(String id) {
+  return _gameInRound(id, 'round');
+}
+
+Games _gameInRound(String id, String roundId) {
   return Games(
     id: id,
-    roundId: 'round',
-    roundSlug: 'round',
+    roundId: roundId,
+    roundSlug: roundId,
     tourId: 'tour',
     tourSlug: 'tour',
   );
@@ -34,6 +41,56 @@ void main() {
   });
 
   group('initial tournament game loading', () {
+    testWidgets('publishes the current round before the full catalog', (
+      tester,
+    ) async {
+      final completeCatalog = Completer<List<Games>>();
+      final current = _gameInRound('current-board', 'current');
+      final historical = _gameInRound('historical-board', 'historical');
+      final container = ProviderContainer(
+        overrides: [
+          shouldStreamProvider.overrideWith((ref) => false),
+          roundRepositoryProvider.overrideWithValue(_CurrentRoundRepository()),
+          liveRoundsIdProvider.overrideWith(
+            (ref) => Stream.value(const <String>['current']),
+          ),
+          gamesLocalStorage.overrideWith(
+            (ref) => _PreviewGamesLocalStorage(
+              ref,
+              preview: [current],
+              complete: completeCatalog.future,
+            ),
+          ),
+        ],
+      );
+      final subscription = container.listen(
+        gamesTourProvider('tour'),
+        (_, __) {},
+      );
+      addTearDown(() {
+        subscription.close();
+        container.dispose();
+      });
+
+      await tester.pump();
+      expect(container.read(gamesTourProvider('tour')).valueOrNull, [current]);
+      expect(
+        container.read(completeGamesTourProvider('tour')).isLoading,
+        isTrue,
+      );
+
+      completeCatalog.complete([current, historical]);
+      await tester.pump();
+      expect(container.read(gamesTourProvider('tour')).valueOrNull, [
+        current,
+        historical,
+      ]);
+      expect(
+        container.read(completeGamesTourProvider('tour')).hasValue,
+        isTrue,
+      );
+    });
+
     test(
       'mounted notifier replaces an arbitrary partial cache with fresh games',
       () async {
@@ -53,6 +110,10 @@ void main() {
         final container = ProviderContainer(
           overrides: [
             shouldStreamProvider.overrideWith((ref) => false),
+            roundRepositoryProvider.overrideWithValue(_EmptyRoundRepository()),
+            liveRoundsIdProvider.overrideWith(
+              (ref) => Stream.value(const <String>[]),
+            ),
             gamesLocalStorage.overrideWith((ref) {
               storage = _StaleCacheGamesLocalStorage(
                 ref,
@@ -217,6 +278,61 @@ class _ThrowingGameRepository extends GameRepository {
   }
 }
 
+class _EmptyRoundRepository extends RoundRepository {
+  @override
+  Future<List<Round>> getRoundsByTourId(String tourId) async => const [];
+
+  @override
+  Future<Round?> getLatestRoundByLastMove(String tourId) async => null;
+}
+
+class _CurrentRoundRepository extends RoundRepository {
+  @override
+  Future<List<Round>> getRoundsByTourId(String tourId) async => [
+    Round(
+      id: 'current',
+      slug: 'current',
+      tourId: tourId,
+      tourSlug: tourId,
+      name: 'Current',
+      createdAt: DateTime.utc(2026, 9, 20),
+      startsAt: DateTime.utc(2026, 9, 20),
+      url: '',
+    ),
+  ];
+
+  @override
+  Future<Round?> getLatestRoundByLastMove(String tourId) async => null;
+}
+
+class _PreviewGamesLocalStorage extends GamesLocalStorage {
+  _PreviewGamesLocalStorage(
+    super.ref, {
+    required this.preview,
+    required this.complete,
+  });
+
+  final List<Games> preview;
+  final Future<List<Games>> complete;
+
+  @override
+  Future<List<Games>> getCachedGames(String tourId) async => const [];
+
+  @override
+  Future<List<Games>> fetchAndSaveGames(
+    String tourId, {
+    bool forceRefresh = false,
+    String? priorityRoundId,
+    void Function(List<Games>)? onPriorityRound,
+    Future<void> Function()? afterPriorityRound,
+  }) async {
+    expect(priorityRoundId, 'current');
+    onPriorityRound?.call(preview);
+    await afterPriorityRound?.call();
+    return complete;
+  }
+}
+
 class _StaleCacheGamesLocalStorage extends GamesLocalStorage {
   _StaleCacheGamesLocalStorage(
     super.ref, {
@@ -235,6 +351,9 @@ class _StaleCacheGamesLocalStorage extends GamesLocalStorage {
   Future<List<Games>> fetchAndSaveGames(
     String tourId, {
     bool forceRefresh = false,
+    String? priorityRoundId,
+    void Function(List<Games>)? onPriorityRound,
+    Future<void> Function()? afterPriorityRound,
   }) {
     freshFetches += 1;
     return freshGames.future;

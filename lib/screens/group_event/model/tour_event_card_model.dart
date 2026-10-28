@@ -168,19 +168,45 @@ class GroupEventCardModel extends Equatable {
       liveGroupIds: liveGroupIds,
     );
     if (refreshed == tourEventCategory) return this;
+    return copyWith(tourEventCategory: refreshed);
+  }
+
+  /// Past-tab events come from `group_broadcasts_past`, which means the
+  /// broadcast is finished. Calendar [endDate] can still be in the future
+  /// (weekend leagues, season-long events), so those cards must not keep an
+  /// Ongoing / LIVE / Upcoming chip in a tab that means "done".
+  GroupEventCardModel asCompleted() {
+    if (tourEventCategory == TourEventCategory.completed) return this;
+    return copyWith(tourEventCategory: TourEventCategory.completed);
+  }
+
+  GroupEventCardModel copyWith({
+    String? id,
+    String? title,
+    String? dates,
+    int? maxAvgElo,
+    String? timeUntilStart,
+    TourEventCategory? tourEventCategory,
+    String? timeControl,
+    DateTime? endDate,
+    DateTime? startDate,
+    String? location,
+    List<String>? searchTerms,
+    EventSource? eventSource,
+  }) {
     return GroupEventCardModel(
-      id: id,
-      title: title,
-      dates: dates,
-      maxAvgElo: maxAvgElo,
-      timeUntilStart: timeUntilStart,
-      tourEventCategory: refreshed,
-      timeControl: timeControl,
-      endDate: endDate,
-      startDate: startDate,
-      location: location,
-      searchTerms: searchTerms,
-      eventSource: eventSource,
+      id: id ?? this.id,
+      title: title ?? this.title,
+      dates: dates ?? this.dates,
+      maxAvgElo: maxAvgElo ?? this.maxAvgElo,
+      timeUntilStart: timeUntilStart ?? this.timeUntilStart,
+      tourEventCategory: tourEventCategory ?? this.tourEventCategory,
+      timeControl: timeControl ?? this.timeControl,
+      endDate: endDate ?? this.endDate,
+      startDate: startDate ?? this.startDate,
+      location: location ?? this.location,
+      searchTerms: searchTerms ?? this.searchTerms,
+      eventSource: eventSource ?? this.eventSource,
     );
   }
 

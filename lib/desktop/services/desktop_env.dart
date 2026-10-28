@@ -49,6 +49,12 @@ class DesktopEnv {
       'BILLING_API_BASE',
       defaultValue: '',
     ),
+    // Publication is opt-in per environment and never reuses a default
+    // catalog endpoint. Configure the authenticated test proxy explicitly.
+    'LIBRARY_BOOK_PUBLISHING_BASE': String.fromEnvironment(
+      'LIBRARY_BOOK_PUBLISHING_BASE',
+      defaultValue: '',
+    ),
     'GAMEBASE_PROXY_BASE': String.fromEnvironment(
       'GAMEBASE_PROXY_BASE',
       defaultValue: '',
@@ -76,20 +82,6 @@ class DesktopEnv {
     // local API for end-to-end work.
     'BROADCAST_API_BASE': String.fromEnvironment(
       'BROADCAST_API_BASE',
-      defaultValue: '',
-    ),
-    // Feedback relay. Optional: absent, the feedback dialog still works and
-    // simply skips the Telegram notification. Declared here so the release
-    // `--verify-release-env` probe can confirm CI actually injected them —
-    // `TelegramNotificationService` reads the same defines through its own
-    // const map, because that file is shared with the phone repo which has no
-    // `DesktopEnv`.
-    'TELEGRAM_FEEDBACK_BOT_TOKEN': String.fromEnvironment(
-      'TELEGRAM_FEEDBACK_BOT_TOKEN',
-      defaultValue: '',
-    ),
-    'TELEGRAM_FEEDBACK_CHAT_ID': String.fromEnvironment(
-      'TELEGRAM_FEEDBACK_CHAT_ID',
       defaultValue: '',
     ),
   };

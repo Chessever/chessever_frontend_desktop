@@ -195,14 +195,43 @@ class _MajorUpdateAction extends StatelessWidget {
         ),
       );
     }
-    if (state.isRetrying) {
-      return const _UpdateProgress(label: 'Retrying update…');
-    }
-    return _UpdateProgress(
+    // The gate cannot be dismissed, so a download that stalls or keeps
+    // failing must not be a dead end: the installer is always one press away.
+    return _ProgressWithManualDownload(
       label:
-          state.progress > 0 && state.progress < 1
+          state.isRetrying
+              ? 'Retrying update…'
+              : state.progress > 0 && state.progress < 1
               ? 'Downloading ${(state.progress * 100).floor()}%…'
               : 'Downloading update…',
+    );
+  }
+}
+
+class _ProgressWithManualDownload extends StatelessWidget {
+  const _ProgressWithManualDownload({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 14,
+      runSpacing: 10,
+      children: [
+        _UpdateProgress(label: label),
+        FButton(
+          style: FButtonStyle.outline(),
+          onPress: () => DesktopUpdaterService.instance.openDownloadPage(),
+          mainAxisSize: MainAxisSize.min,
+          child: const Text(
+            'Open download page',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
     );
   }
 }

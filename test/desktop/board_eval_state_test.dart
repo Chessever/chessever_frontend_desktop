@@ -207,8 +207,14 @@ void main() {
       expect(const EngineSettings().showPvArrows, isTrue);
     });
 
-    test('defaults automatic whole-game analysis on', () {
-      expect(const EngineSettings().autoGameAnalysis, isTrue);
+    test('a legacy cached automatic-report setting is ignored', () {
+      final settings = engineSettingsFromCache(<String, dynamic>{
+        'showPvArrows': false,
+        'autoGameAnalysis': true,
+        'maxArrowsOnBoard': 1,
+      });
+      expect(settings.showPvArrows, isFalse);
+      expect(settings.maxArrowsOnBoard, 1);
     });
 
     test(

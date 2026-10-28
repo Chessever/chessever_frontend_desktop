@@ -12,6 +12,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/services/telegram_notification_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -41,7 +42,7 @@ class DesktopFeedbackDialog extends StatefulWidget {
 
 class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
   final TextEditingController _messageController = TextEditingController();
-  bool _includeScreenshot = true;
+  bool _includeScreenshot = !isMacAppStore;
   bool _submitting = false;
   Uint8List? _previewBytes;
   String? _errorMessage;
@@ -101,6 +102,9 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
       final packageInfo = await PackageInfo.fromPlatform();
       final supabase = Supabase.instance.client;
       final userId = supabase.auth.currentUser?.id;
+      if (isMacAppStore && userId == null) {
+        throw StateError('An app session is required to send feedback.');
+      }
       final feedback = desktopFeedbackMessageWithMetadata(
         message: _messageController.text.trim(),
         screenshotIncluded: screenshotBytes != null,
@@ -120,8 +124,11 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
         });
       }
 
-      final telegramSent = await TelegramNotificationService.instance
-          .sendFeedbackNotification(
+      // Store reports are delivered by the authenticated database write above.
+      // Notification credentials must never be compiled into this public app.
+      final telegramSent =
+          isMacAppStore ||
+          await TelegramNotificationService.instance.sendFeedbackNotification(
             rating: 0,
             feedback: feedback,
             source: 'desktop_report_issue',
@@ -171,9 +178,15 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
-            'Reports include app version and platform. Screenshots are optional and capture only the ChessEver desktop window content, not your OS toolbar or other apps.',
-            style: TextStyle(color: kWhiteColor70, fontSize: 13, height: 1.35),
+          Text(
+            isMacAppStore
+                ? 'Reports include app version and platform.'
+                : 'Reports include app version and platform. Screenshots are optional and capture only the ChessEver desktop window content, not your OS toolbar or other apps.',
+            style: const TextStyle(
+              color: kWhiteColor70,
+              fontSize: 13,
+              height: 1.35,
+            ),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -205,18 +218,20 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          _ScreenshotOption(
-            selected: _includeScreenshot,
-            hasPreview: _previewBytes != null,
-            onChanged: (value) {
-              setState(() {
-                _includeScreenshot = value;
-                if (!value) _previewBytes = null;
-              });
-            },
-            onPreview: _includeScreenshot ? _previewScreenshot : null,
-          ),
+          if (!isMacAppStore) ...[
+            const SizedBox(height: 10),
+            _ScreenshotOption(
+              selected: _includeScreenshot,
+              hasPreview: _previewBytes != null,
+              onChanged: (value) {
+                setState(() {
+                  _includeScreenshot = value;
+                  if (!value) _previewBytes = null;
+                });
+              },
+              onPreview: _includeScreenshot ? _previewScreenshot : null,
+            ),
+          ],
           if (_previewBytes != null) ...[
             const SizedBox(height: 12),
             ClipRRect(

@@ -170,7 +170,19 @@ BoardEvalState? terminalBoardEvalStateForFen(String fen) {
 
 class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
   BoardEvalNotifier(this.ref, this.fen, this.config)
-    : super(const BoardEvalState.evaluating()) {
+    : super(
+        terminalBoardEvalStateForFen(fen) ?? const BoardEvalState.evaluating(),
+      ) {
+    ref.onCancel(() {
+      _listening = false;
+      _generation++;
+      _cancelPendingSearchUpdate();
+      unawaited(StockfishSingleton().cancelEvaluationsForOwner(_ownerId));
+      // Do not revive a completed A snapshot during the auto-dispose grace
+      // frame in A -> B -> A. The next listener creates a fresh request owner;
+      // only the panel-local display cache survives navigation.
+      ref.invalidateSelf();
+    });
     // _start mutates the shared depth tracker; keep provider creation side-effect free.
     _startTimer = Timer(Duration.zero, () {
       _startTimer = null;
@@ -184,7 +196,9 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
   final BoardEvalConfig config;
   static const Duration _minUiUpdateInterval = Duration(milliseconds: 80);
   Timer? _startTimer;
-  late final String _ownerId = StockfishSingleton.generateOwnerId(
+  bool _listening = true;
+  int _generation = 0;
+  late String _ownerId = StockfishSingleton.generateOwnerId(
     'boardEval',
     identityHashCode(this),
   );
@@ -197,7 +211,13 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
   bool _pendingHasDepthProgress = false;
 
   Future<void> _start() async {
-    if (!mounted) return;
+    if (!mounted || !_listening) return;
+    final generation = ++_generation;
+    _ownerId = StockfishSingleton.generateOwnerId(
+      "boardEval",
+      identityHashCode(this),
+    );
+    bool current() => mounted && _listening && generation == _generation;
     if (fen.isEmpty || !config.enabled) {
       _clearDepth();
       state = const BoardEvalState(
@@ -215,7 +235,15 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
     }
     _clearDepth();
     final settings = config.toEngineSettings();
-    final multiPV = settings.multiPvForStockfish();
+    final requested = settings.multiPvForStockfish();
+    int legalCount;
+    try {
+      legalCount = Chess.fromSetup(Setup.parseFen(fen)).legalMoves.length;
+    } catch (_) {
+      state = const BoardEvalState(pvs: [], isEvaluating: false, depth: 0);
+      return;
+    }
+    final multiPV = legalCount < requested ? legalCount : requested;
     final searchDuration = settings.searchDurationFor(
       EngineComponent.principalVariation,
     );
@@ -231,10 +259,23 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
         isCurrentPosition: true,
         allowCache: false,
         ownerId: _ownerId,
-        onDepthUpdate: _onDepthUpdate,
-        onPvUpdate: _onPvUpdate,
+        completePvBatches: true,
+        isRequestCurrent: current,
+        onDepthUpdate: (depth, knodes) {
+          if (current()) _onDepthUpdate(depth, knodes);
+        },
+        onPvUpdate: (pvs, depth) {
+          if (current()) _onPvUpdate(pvs, depth);
+        },
       );
-      if (!mounted) return;
+      if (!current()) return;
+      if (result.isCancelled ||
+          result.fen != fen ||
+          result.pvs.every((pv) => pv.moves.isEmpty)) {
+        _cancelPendingSearchUpdate();
+        state = const BoardEvalState(pvs: [], isEvaluating: false, depth: 0);
+        return;
+      }
       _flushPendingSearchUpdate();
       final resultPvs = _toBoardPvs(result.pvs, alreadyWhite: true);
       final nextDepth = monotonicSearchDepth(
@@ -250,20 +291,16 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
         preserveExistingPvsOnDepthRegression: true,
       );
     } catch (_) {
-      if (!mounted) return;
+      if (!current()) return;
       _cancelPendingSearchUpdate();
-      state = state.copyWith(isEvaluating: false);
+      state = const BoardEvalState(pvs: [], isEvaluating: false, depth: 0);
     }
   }
 
   void _onDepthUpdate(int depth, int knodes) {
     if (!mounted) return;
-    _scheduleSearchUpdate(
-      depth: depth,
-      knodes: knodes,
-      isEvaluating: true,
-      publishDepth: true,
-    );
+    // Progress is diagnostic only: do not pair a new depth with old PVs.
+    _pendingKnodes = knodes;
   }
 
   void _onPvUpdate(List<Pv> snapshot, int depth) {
@@ -273,7 +310,7 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
       depth: depth,
       knodes: 0,
       isEvaluating: true,
-      publishDepth: false,
+      publishDepth: true,
     );
   }
 
@@ -308,7 +345,7 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
   }
 
   void _flushPendingSearchUpdate({DateTime? now}) {
-    if (!mounted || _pendingDepth == null) return;
+    if (!mounted || !_listening || _pendingDepth == null) return;
     _uiUpdateTimer?.cancel();
     _uiUpdateTimer = null;
     final pvs = _pendingPvs;

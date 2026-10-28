@@ -1,0 +1,1932 @@
+{
+  "sourceApp": "6752567269",
+  "destinationApp": "6824524785",
+  "currencySource": "Published mobile App Store subscriptions",
+  "regions": [
+    {
+      "region": "AE",
+      "monthly": {
+        "amount_micros": 49990000,
+        "currency": "AED"
+      },
+      "annual": {
+        "amount_micros": 499990000,
+        "currency": "AED"
+      }
+    },
+    {
+      "region": "AF",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "AG",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "AI",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "AL",
+      "monthly": {
+        "amount_micros": 9990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 89990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "AM",
+      "monthly": {
+        "amount_micros": 9990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 89990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "AO",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "AR",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "AT",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "AU",
+      "monthly": {
+        "amount_micros": 19990000,
+        "currency": "AUD"
+      },
+      "annual": {
+        "amount_micros": 199990000,
+        "currency": "AUD"
+      }
+    },
+    {
+      "region": "AZ",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BA",
+      "monthly": {
+        "amount_micros": 8990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 79990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "BB",
+      "monthly": {
+        "amount_micros": 14990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 149990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BE",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "BF",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BG",
+      "monthly": {
+        "amount_micros": 8990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 79990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "BH",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BJ",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BM",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BN",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BO",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BR",
+      "monthly": {
+        "amount_micros": 29900000,
+        "currency": "BRL"
+      },
+      "annual": {
+        "amount_micros": 229900000,
+        "currency": "BRL"
+      }
+    },
+    {
+      "region": "BS",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BT",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BW",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BY",
+      "monthly": {
+        "amount_micros": 9990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 89990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "BZ",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "CA",
+      "monthly": {
+        "amount_micros": 14990000,
+        "currency": "CAD"
+      },
+      "annual": {
+        "amount_micros": 149990000,
+        "currency": "CAD"
+      }
+    },
+    {
+      "region": "CD",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "CG",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "CH",
+      "monthly": {
+        "amount_micros": 10000000,
+        "currency": "CHF"
+      },
+      "annual": {
+        "amount_micros": 100000000,
+        "currency": "CHF"
+      }
+    },
+    {
+      "region": "CI",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "CL",
+      "monthly": {
+        "amount_micros": 9990000000,
+        "currency": "CLP"
+      },
+      "annual": {
+        "amount_micros": 79990000000,
+        "currency": "CLP"
+      }
+    },
+    {
+      "region": "CM",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "CN",
+      "monthly": {
+        "amount_micros": 58000000,
+        "currency": "CNY"
+      },
+      "annual": {
+        "amount_micros": 498000000,
+        "currency": "CNY"
+      }
+    },
+    {
+      "region": "CO",
+      "monthly": {
+        "amount_micros": 39900000000,
+        "currency": "COP"
+      },
+      "annual": {
+        "amount_micros": 349900000000,
+        "currency": "COP"
+      }
+    },
+    {
+      "region": "CR",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "CV",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "CY",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "CZ",
+      "monthly": {
+        "amount_micros": 299000000,
+        "currency": "CZK"
+      },
+      "annual": {
+        "amount_micros": 2990000000,
+        "currency": "CZK"
+      }
+    },
+    {
+      "region": "DE",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "DK",
+      "monthly": {
+        "amount_micros": 99000000,
+        "currency": "DKK"
+      },
+      "annual": {
+        "amount_micros": 999000000,
+        "currency": "DKK"
+      }
+    },
+    {
+      "region": "DM",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "DO",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "DZ",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "EC",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "EE",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "EG",
+      "monthly": {
+        "amount_micros": 249990000,
+        "currency": "EGP"
+      },
+      "annual": {
+        "amount_micros": 1999990000,
+        "currency": "EGP"
+      }
+    },
+    {
+      "region": "ES",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "FI",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "FJ",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "FM",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "FR",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "GA",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "GB",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "GBP"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "GBP"
+      }
+    },
+    {
+      "region": "GD",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "GE",
+      "monthly": {
+        "amount_micros": 9990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 89990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "GH",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "GM",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "GR",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "GT",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "GW",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "GY",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "HK",
+      "monthly": {
+        "amount_micros": 88000000,
+        "currency": "HKD"
+      },
+      "annual": {
+        "amount_micros": 888000000,
+        "currency": "HKD"
+      }
+    },
+    {
+      "region": "HN",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "HR",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "HU",
+      "monthly": {
+        "amount_micros": 4990000000,
+        "currency": "HUF"
+      },
+      "annual": {
+        "amount_micros": 49990000000,
+        "currency": "HUF"
+      }
+    },
+    {
+      "region": "ID",
+      "monthly": {
+        "amount_micros": 99000000000,
+        "currency": "IDR"
+      },
+      "annual": {
+        "amount_micros": 699000000000,
+        "currency": "IDR"
+      }
+    },
+    {
+      "region": "IE",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "IL",
+      "monthly": {
+        "amount_micros": 39900000,
+        "currency": "ILS"
+      },
+      "annual": {
+        "amount_micros": 399900000,
+        "currency": "ILS"
+      }
+    },
+    {
+      "region": "IN",
+      "monthly": {
+        "amount_micros": 499000000,
+        "currency": "INR"
+      },
+      "annual": {
+        "amount_micros": 3999000000,
+        "currency": "INR"
+      }
+    },
+    {
+      "region": "IQ",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "IS",
+      "monthly": {
+        "amount_micros": 14990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 149990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "IT",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "JM",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "JO",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "JP",
+      "monthly": {
+        "amount_micros": 2000000000,
+        "currency": "JPY"
+      },
+      "annual": {
+        "amount_micros": 20000000000,
+        "currency": "JPY"
+      }
+    },
+    {
+      "region": "KE",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "KG",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "KH",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "KN",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "KR",
+      "monthly": {
+        "amount_micros": 17000000000,
+        "currency": "KRW"
+      },
+      "annual": {
+        "amount_micros": 179000000000,
+        "currency": "KRW"
+      }
+    },
+    {
+      "region": "KW",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "KY",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "KZ",
+      "monthly": {
+        "amount_micros": 4990000000,
+        "currency": "KZT"
+      },
+      "annual": {
+        "amount_micros": 39990000000,
+        "currency": "KZT"
+      }
+    },
+    {
+      "region": "LA",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "LB",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "LC",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "LK",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "LR",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "LT",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "LU",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "LV",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "LY",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MA",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MD",
+      "monthly": {
+        "amount_micros": 9990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 89990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "ME",
+      "monthly": {
+        "amount_micros": 6990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 69990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "MG",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MK",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "ML",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MM",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MN",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MO",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MR",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MS",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MT",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "MU",
+      "monthly": {
+        "amount_micros": 9990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 89990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MV",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MW",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "MX",
+      "monthly": {
+        "amount_micros": 179000000,
+        "currency": "MXN"
+      },
+      "annual": {
+        "amount_micros": 1499000000,
+        "currency": "MXN"
+      }
+    },
+    {
+      "region": "MY",
+      "monthly": {
+        "amount_micros": 39900000,
+        "currency": "MYR"
+      },
+      "annual": {
+        "amount_micros": 349900000,
+        "currency": "MYR"
+      }
+    },
+    {
+      "region": "MZ",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "NA",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "NE",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "NG",
+      "monthly": {
+        "amount_micros": 7900000000,
+        "currency": "NGN"
+      },
+      "annual": {
+        "amount_micros": 59900000000,
+        "currency": "NGN"
+      }
+    },
+    {
+      "region": "NI",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "NL",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "NO",
+      "monthly": {
+        "amount_micros": 149000000,
+        "currency": "NOK"
+      },
+      "annual": {
+        "amount_micros": 1490000000,
+        "currency": "NOK"
+      }
+    },
+    {
+      "region": "NP",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "NR",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "NZ",
+      "monthly": {
+        "amount_micros": 19990000,
+        "currency": "NZD"
+      },
+      "annual": {
+        "amount_micros": 199990000,
+        "currency": "NZD"
+      }
+    },
+    {
+      "region": "OM",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "PA",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "PE",
+      "monthly": {
+        "amount_micros": 34900000,
+        "currency": "PEN"
+      },
+      "annual": {
+        "amount_micros": 299900000,
+        "currency": "PEN"
+      }
+    },
+    {
+      "region": "PG",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "PH",
+      "monthly": {
+        "amount_micros": 499000000,
+        "currency": "PHP"
+      },
+      "annual": {
+        "amount_micros": 4990000000,
+        "currency": "PHP"
+      }
+    },
+    {
+      "region": "PK",
+      "monthly": {
+        "amount_micros": 1300000000,
+        "currency": "PKR"
+      },
+      "annual": {
+        "amount_micros": 9900000000,
+        "currency": "PKR"
+      }
+    },
+    {
+      "region": "PL",
+      "monthly": {
+        "amount_micros": 49990000,
+        "currency": "PLN"
+      },
+      "annual": {
+        "amount_micros": 499990000,
+        "currency": "PLN"
+      }
+    },
+    {
+      "region": "PT",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "PW",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "PY",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "QA",
+      "monthly": {
+        "amount_micros": 39990000,
+        "currency": "QAR"
+      },
+      "annual": {
+        "amount_micros": 399990000,
+        "currency": "QAR"
+      }
+    },
+    {
+      "region": "RO",
+      "monthly": {
+        "amount_micros": 69990000,
+        "currency": "RON"
+      },
+      "annual": {
+        "amount_micros": 699990000,
+        "currency": "RON"
+      }
+    },
+    {
+      "region": "RS",
+      "monthly": {
+        "amount_micros": 8990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 79990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "RU",
+      "monthly": {
+        "amount_micros": 699000000,
+        "currency": "RUB"
+      },
+      "annual": {
+        "amount_micros": 5990000000,
+        "currency": "RUB"
+      }
+    },
+    {
+      "region": "RW",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "SA",
+      "monthly": {
+        "amount_micros": 49990000,
+        "currency": "SAR"
+      },
+      "annual": {
+        "amount_micros": 499990000,
+        "currency": "SAR"
+      }
+    },
+    {
+      "region": "SB",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "SC",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "SE",
+      "monthly": {
+        "amount_micros": 149000000,
+        "currency": "SEK"
+      },
+      "annual": {
+        "amount_micros": 1495000000,
+        "currency": "SEK"
+      }
+    },
+    {
+      "region": "SG",
+      "monthly": {
+        "amount_micros": 17980000,
+        "currency": "SGD"
+      },
+      "annual": {
+        "amount_micros": 179980000,
+        "currency": "SGD"
+      }
+    },
+    {
+      "region": "SI",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "SK",
+      "monthly": {
+        "amount_micros": 12990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 129990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "SL",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "SN",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "SR",
+      "monthly": {
+        "amount_micros": 8990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 79990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "ST",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "SV",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "SZ",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "TC",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "TD",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "TH",
+      "monthly": {
+        "amount_micros": 299000000,
+        "currency": "THB"
+      },
+      "annual": {
+        "amount_micros": 2490000000,
+        "currency": "THB"
+      }
+    },
+    {
+      "region": "TJ",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "TM",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "TN",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "TO",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "TR",
+      "monthly": {
+        "amount_micros": 249990000,
+        "currency": "TRY"
+      },
+      "annual": {
+        "amount_micros": 1999990000,
+        "currency": "TRY"
+      }
+    },
+    {
+      "region": "TT",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "TW",
+      "monthly": {
+        "amount_micros": 390000000,
+        "currency": "TWD"
+      },
+      "annual": {
+        "amount_micros": 3990000000,
+        "currency": "TWD"
+      }
+    },
+    {
+      "region": "TZ",
+      "monthly": {
+        "amount_micros": 14900000000,
+        "currency": "TZS"
+      },
+      "annual": {
+        "amount_micros": 99900000000,
+        "currency": "TZS"
+      }
+    },
+    {
+      "region": "UA",
+      "monthly": {
+        "amount_micros": 9990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 89990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "UG",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "US",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "UY",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "UZ",
+      "monthly": {
+        "amount_micros": 8990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 79990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "VC",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "VE",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "VG",
+      "monthly": {
+        "amount_micros": 11990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 119990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "VN",
+      "monthly": {
+        "amount_micros": 249000000000,
+        "currency": "VND"
+      },
+      "annual": {
+        "amount_micros": 1999000000000,
+        "currency": "VND"
+      }
+    },
+    {
+      "region": "VU",
+      "monthly": {
+        "amount_micros": 7990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 71990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "XK",
+      "monthly": {
+        "amount_micros": 8990000,
+        "currency": "EUR"
+      },
+      "annual": {
+        "amount_micros": 79990000,
+        "currency": "EUR"
+      }
+    },
+    {
+      "region": "YE",
+      "monthly": {
+        "amount_micros": 4990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 35990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "ZA",
+      "monthly": {
+        "amount_micros": 149990000,
+        "currency": "ZAR"
+      },
+      "annual": {
+        "amount_micros": 1499990000,
+        "currency": "ZAR"
+      }
+    },
+    {
+      "region": "ZM",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    },
+    {
+      "region": "ZW",
+      "monthly": {
+        "amount_micros": 5990000,
+        "currency": "USD"
+      },
+      "annual": {
+        "amount_micros": 39990000,
+        "currency": "USD"
+      }
+    }
+  ]
+}

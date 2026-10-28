@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
@@ -8,6 +9,88 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 void main() {
+  test('Board save has no local-PGN scope or whole-database upload path', () {
+    final pane = File('lib/desktop/panes/board_pane.dart').readAsStringSync();
+    final menu =
+        File('lib/desktop/widgets/board_context_menu.dart').readAsStringSync();
+    expect(pane, isNot(contains('showBoardSaveScopeDialog')));
+    expect(pane, isNot(contains('saveSourceDatabaseToCloud')));
+    expect(menu, isNot(contains('Save entire PGN to cloud')));
+    expect(menu, isNot(contains('onSaveSourceDatabaseToCloud')));
+    expect(
+      File('lib/desktop/widgets/board_save_scope_dialog.dart').existsSync(),
+      isFalse,
+    );
+    // Keep the real single-game destination flow and existing save safeguards.
+    expect(pane, contains('games: [gameSnapshot]'));
+    expect(pane, contains('LibrarySaveDestinationMode.cloudAndLocal'));
+    expect(pane, contains('unawaited(saveGameToLibraryAction())'));
+    final saveEntry = pane.substring(
+      pane.indexOf('Future<void> saveGameToLibraryAction()'),
+      pane.indexOf('Future<void> savePgnAction()'),
+    );
+    expect(saveEntry, contains('if (refuseCollectionExport()) return;'));
+    expect(saveEntry, contains('runBoardSave(saveGameToLibraryActionImpl)'));
+  });
+
+  testWidgets(
+    'Board menu saves the game and exports PGN through distinct actions',
+    (tester) async {
+      var librarySaves = 0;
+      var fileExports = 0;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            keyboardShortcutsProvider.overrideWith(
+              _TestKeyboardShortcutsNotifier.new,
+            ),
+          ],
+          child: MaterialApp(
+            home: Consumer(
+              builder:
+                  (context, ref, _) => TextButton(
+                    onPressed:
+                        () => unawaited(
+                          showBoardContextMenu(
+                            ref,
+                            context,
+                            position: const Offset(16, 16),
+                            onShareGame: () {},
+                            onFlipBoard: () {},
+                            onToggleBoardFocus: () {},
+                            onCopyPgn: () {},
+                            onCopyFen: () {},
+                            onSavePgn: () => fileExports++,
+                            onSaveGameToLibrary: () => librarySaves++,
+                            onOpenBoardSettings: () {},
+                            onOpenPositionSetup: () {},
+                            canCopyOrSavePgn: true,
+                            boardFocusMode: false,
+                          ),
+                        ),
+                    child: const Text('Open save menu'),
+                  ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open save menu'));
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('Save entire PGN to cloud…'), findsNothing);
+      expect(find.text('Save to library…'), findsOneWidget);
+      await tester.tap(find.text('Save to library…'));
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(librarySaves, 1);
+      expect(fileExports, 0);
+      await tester.tap(find.text('Open save menu'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.text('Save PGN to file...'));
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(librarySaves, 1);
+      expect(fileExports, 1);
+    },
+  );
+
   test('annotated Event games save a detached user copy', () {
     expect(
       shouldUsePristineEventSourceForLibrarySave(

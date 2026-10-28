@@ -14,6 +14,7 @@ enum DesktopPane {
   board,
   tournaments,
   library,
+  collections,
   favorites,
   players,
   rankings,
@@ -23,17 +24,22 @@ enum DesktopPane {
   boardEditor,
   play,
   settings,
+  inbox,
 }
 
 /// Maps a sidebar pane identifier to its corresponding tab kind.
 TabKind tabKindForPane(DesktopPane pane) {
   switch (pane) {
+    case DesktopPane.inbox:
+      return TabKind.inbox;
     case DesktopPane.board:
       return TabKind.board;
     case DesktopPane.tournaments:
       return TabKind.tournaments;
     case DesktopPane.library:
       return TabKind.library;
+    case DesktopPane.collections:
+      return TabKind.collections;
     case DesktopPane.favorites:
       return TabKind.favorites;
     case DesktopPane.players:
@@ -60,6 +66,8 @@ TabKind tabKindForPane(DesktopPane pane) {
 /// the new-tab menu).
 DesktopPane? paneForTabKind(TabKind kind) {
   switch (kind) {
+    case TabKind.inbox:
+      return DesktopPane.inbox;
     case TabKind.board:
       return DesktopPane.board;
     case TabKind.tournaments:
@@ -71,6 +79,10 @@ DesktopPane? paneForTabKind(TabKind kind) {
     case TabKind.library:
     case TabKind.databaseWorkspace:
       return DesktopPane.library;
+    case TabKind.collections:
+    case TabKind.collectionWorkspace:
+      // An opened collection is a deeper view of Collections.
+      return DesktopPane.collections;
     case TabKind.favorites:
       return DesktopPane.favorites;
     case TabKind.players:
@@ -93,6 +105,7 @@ DesktopPane? paneForTabKind(TabKind kind) {
     case TabKind.play:
       return DesktopPane.play;
     case TabKind.playerScoreCard:
+    case TabKind.teamScoreCard:
     case TabKind.playerProfile:
     case TabKind.userProfile:
       // Player detail/profile tabs are destinations, not the Prepare
@@ -100,9 +113,8 @@ DesktopPane? paneForTabKind(TabKind kind) {
       // clickable as an explicit way back to opponent preparation.
       return null;
     case TabKind.boardSettings:
-    case TabKind.notificationSettings:
-      // Both subscreens of the desktop preferences pane — keep the
-      // Settings sidebar item highlighted while one is foregrounded.
+      // Subscreen of the desktop preferences pane: keep the Settings
+      // sidebar item highlighted while it is foregrounded.
       return DesktopPane.settings;
   }
 }

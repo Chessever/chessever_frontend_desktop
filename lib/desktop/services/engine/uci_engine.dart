@@ -7,6 +7,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'package:chessever/desktop/services/mac_app_store.dart';
+
 /// Minimal UCI engine driver that talks to a chess engine binary over
 /// stdin/stdout. Used on desktop where the `stockfish` Flutter package
 /// (Android/iOS only) cannot be loaded.
@@ -214,9 +216,15 @@ class UciEngine {
     }
   }
 
+  // Engines are third-party binaries: an author or option name in Latin-1
+  // is not valid UTF-8, and the strict decoder threw "Missing extension
+  // byte" into the zone from the stderr listener, which has no onError
+  // (CHESSEVER-23M). Malformed bytes become U+FFFD instead.
+  static const _engineOutputDecoder = Utf8Decoder(allowMalformed: true);
+
   void _bindProcessStreams() {
     _stdoutSub = _process.stdout
-        .transform(utf8.decoder)
+        .transform(_engineOutputDecoder)
         .transform(const LineSplitter())
         .listen(
           _stdoutLines.add,
@@ -225,7 +233,7 @@ class UciEngine {
           },
         );
     _stderrSub = _process.stderr
-        .transform(utf8.decoder)
+        .transform(_engineOutputDecoder)
         .transform(const LineSplitter())
         .listen((line) {
           if (kDebugMode) debugPrint('UCI stderr: $line');
@@ -355,6 +363,16 @@ class UciEngine {
 /// (disable engine UI / show a "configure engine" prompt) rather than
 /// crashing the app.
 Future<String?> findStockfishBinary() async {
+  if (isMacAppStore) {
+    // Store helpers are sealed and signed in the app bundle. Never extract an
+    // executable to Application Support or discover an engine outside it.
+    final helper = File(p.join(
+      File(Platform.resolvedExecutable).parent.parent.path,
+      'Helpers',
+      'stockfish',
+    ));
+    return await helper.exists() ? helper.path : null;
+  }
   // 1. Bundled asset.
   final bundled = await _ensureBundledBinary();
   if (bundled != null) return bundled;

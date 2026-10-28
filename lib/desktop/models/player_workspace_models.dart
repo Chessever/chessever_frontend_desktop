@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:chessever/desktop/models/player_download_preferences.dart';
 
 enum PlayerWorkspaceSource {
   chessever,
@@ -98,6 +99,8 @@ class PlayerWorkspaceAccount {
     this.drawCount = 0,
     this.lossCount = 0,
     this.error,
+    this.downloadPreferences = const PlayerDownloadPreferences(),
+    this.appliedDownloadPreferences = const PlayerDownloadPreferences(),
   });
 
   final PlayerWorkspaceSource source;
@@ -120,6 +123,11 @@ class PlayerWorkspaceAccount {
   final int drawCount;
   final int lossCount;
   final String? error;
+  final PlayerDownloadPreferences downloadPreferences;
+
+  /// The selection that produced the local PGN. Kept separately so failed or
+  /// canceled selection changes retry a full snapshot rather than a delta.
+  final PlayerDownloadPreferences appliedDownloadPreferences;
 
   bool get isConnected => username.trim().isNotEmpty || externalId != null;
   bool get hasDownloadedGames => gameCount > 0 && pgnPath != null;
@@ -179,6 +187,8 @@ class PlayerWorkspaceAccount {
     int? lossCount,
     String? error,
     bool clearError = false,
+    PlayerDownloadPreferences? downloadPreferences,
+    PlayerDownloadPreferences? appliedDownloadPreferences,
   }) {
     return PlayerWorkspaceAccount(
       source: source,
@@ -201,6 +211,9 @@ class PlayerWorkspaceAccount {
       drawCount: drawCount ?? this.drawCount,
       lossCount: lossCount ?? this.lossCount,
       error: clearError ? null : (error ?? this.error),
+      downloadPreferences: downloadPreferences ?? this.downloadPreferences,
+      appliedDownloadPreferences:
+          appliedDownloadPreferences ?? this.appliedDownloadPreferences,
     );
   }
 
@@ -226,6 +239,8 @@ class PlayerWorkspaceAccount {
       'drawCount': drawCount,
       'lossCount': lossCount,
       'error': error,
+      'downloadPreferences': downloadPreferences.toJson(),
+      'appliedDownloadPreferences': appliedDownloadPreferences.toJson(),
     };
   }
 
@@ -263,6 +278,12 @@ class PlayerWorkspaceAccount {
       drawCount: _intOrNull(json['drawCount']) ?? 0,
       lossCount: _intOrNull(json['lossCount']) ?? 0,
       error: _stringOrNull(json['error']),
+      downloadPreferences: PlayerDownloadPreferences.fromJson(
+        json['downloadPreferences'],
+      ),
+      appliedDownloadPreferences: PlayerDownloadPreferences.fromJson(
+        json['appliedDownloadPreferences'],
+      ),
     );
   }
 }
@@ -286,6 +307,7 @@ class PlayerWorkspacePlayer {
     this.combinedDrawCount = 0,
     this.combinedLossCount = 0,
     this.combinedBuiltAtMs,
+    this.combinedDownloadOptionsChanged = false,
   });
 
   final String id;
@@ -304,6 +326,9 @@ class PlayerWorkspacePlayer {
   final int combinedDrawCount;
   final int combinedLossCount;
   final int? combinedBuiltAtMs;
+
+  /// Persisted until Combined is rebuilt after a download selection change.
+  final bool combinedDownloadOptionsChanged;
 
   PlayerWorkspaceAccount? account(PlayerWorkspaceSource source) {
     final account = accounts[source];
@@ -396,6 +421,7 @@ class PlayerWorkspacePlayer {
     int? combinedDrawCount,
     int? combinedLossCount,
     int? combinedBuiltAtMs,
+    bool? combinedDownloadOptionsChanged,
   }) {
     return PlayerWorkspacePlayer(
       id: id,
@@ -414,6 +440,8 @@ class PlayerWorkspacePlayer {
       combinedDrawCount: combinedDrawCount ?? this.combinedDrawCount,
       combinedLossCount: combinedLossCount ?? this.combinedLossCount,
       combinedBuiltAtMs: combinedBuiltAtMs ?? this.combinedBuiltAtMs,
+      combinedDownloadOptionsChanged:
+          combinedDownloadOptionsChanged ?? this.combinedDownloadOptionsChanged,
     );
   }
 
@@ -524,6 +552,7 @@ class PlayerWorkspacePlayer {
       'combinedDrawCount': combinedDrawCount,
       'combinedLossCount': combinedLossCount,
       'combinedBuiltAtMs': combinedBuiltAtMs,
+      'combinedDownloadOptionsChanged': combinedDownloadOptionsChanged,
     };
   }
 
@@ -569,6 +598,8 @@ class PlayerWorkspacePlayer {
       combinedDrawCount: _intOrNull(json['combinedDrawCount']) ?? 0,
       combinedLossCount: _intOrNull(json['combinedLossCount']) ?? 0,
       combinedBuiltAtMs: _intOrNull(json['combinedBuiltAtMs']),
+      combinedDownloadOptionsChanged:
+          json['combinedDownloadOptionsChanged'] == true,
     );
   }
 }

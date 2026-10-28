@@ -1,0 +1,3 @@
+# Root ignores markdown; this provenance notice is part of the helper source.
+!NOTICE.md
+__pycache__/

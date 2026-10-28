@@ -747,7 +747,9 @@ class _ForkChooserDialogState extends ConsumerState<_ForkChooserDialog> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowRight) {
-      _pick(_focused);
+      // Holding Right to reach a fork must not immediately accept its first
+      // option. Consume repeats; a fresh press still chooses the focused move.
+      if (event is KeyDownEvent) _pick(_focused);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowLeft) {

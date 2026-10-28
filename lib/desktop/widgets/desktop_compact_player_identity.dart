@@ -156,10 +156,14 @@ class DesktopPlainPlayerTitle extends StatelessWidget {
     super.key,
     required this.title,
     this.compact = false,
+    this.color = kPrimaryColor,
   });
 
   final String title;
   final bool compact;
+
+  /// The brand cyan by default; a neutral tone on a card drawn locked.
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
@@ -169,7 +173,7 @@ class DesktopPlainPlayerTitle extends StatelessWidget {
       overflow: TextOverflow.fade,
       softWrap: false,
       style: TextStyle(
-        color: kPrimaryColor,
+        color: color,
         fontSize: compact ? 9.5 : 10.5,
         fontWeight: FontWeight.w800,
         letterSpacing: 0.2,

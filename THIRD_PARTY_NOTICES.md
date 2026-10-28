@@ -34,6 +34,33 @@ https://github.com/official-stockfish/Stockfish. A full copy of the GPL-3.0
 license text is in this repository's `LICENSE` file, which applies to both
 Chessever Desktop and the bundled Stockfish binaries.
 
+### Mac App Store engine resources
+
+The dedicated Mac App Store package seals its executable engines inside
+`Contents/Helpers` and model data inside `Contents/Resources/Engines`:
+
+- **Stockfish 18:** official `sf_18` release, combined from the unmodified
+  Apple Silicon and Intel AVX2 executables. GPL-3.0; source and build files:
+  https://github.com/official-stockfish/Stockfish/tree/sf_18.
+- **Leela Chess Zero 0.32.0:** official universal macOS executable,
+  GPL-3.0-or-later. Source and build files:
+  https://github.com/LeelaChessZero/lc0/tree/v0.32.0.
+- **Leela network `t1-256x10-distilled-swa-2432500.pb.gz`:** created by
+  `masterkni6`, distributed unchanged from the official network host. The
+  creator permits anyone to use it however they want:
+  https://github.com/orgs/LeelaChessZero/discussions/2430.
+- **Maia-3:** the unmodified `maia3_simplified.onnx` model published at
+  https://www.maiachess.com/maia3/maia3_simplified.onnx. Maia-3 is released by
+  the University of Toronto CSSLab under AGPL-3.0. Source and model links:
+  https://github.com/CSSLab/maia3. Citation: Daniel Monroe, George Eilender,
+  Philip Chalmers, Zhenwei Tang and Ashton Anderson, *Chessformer: A Unified
+  Architecture for Chess Modeling*, ICLR 2026.
+
+`scripts/prepare_mac_app_store_engines.py` pins download URLs and SHA-256
+checksums. The package includes the GPL text, the Maia-3 AGPL text, and these
+notices in its engine resource directory. The Maia-3 license copy comes from
+upstream commit `1e13597c42d4858b7cfd7cfdae01e297263364b2`.
+
 ## Vendored source
 
 ### desktop_updater

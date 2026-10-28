@@ -1,7 +1,11 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderProxyBox;
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -15,6 +19,7 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/gamebase/models/move_aggregate.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
+import 'package:chessever/screens/gamebase/providers/explorer_games_prefetch.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/figurine_notation.dart';
@@ -121,6 +126,8 @@ class DesktopOpeningExplorer extends ConsumerWidget {
     this.enableRowHover = true,
     this.usePlayerOpeningTree = false,
     this.localOpeningTreeIndex,
+    this.warmPositionGames = false,
+    this.warmPinnedGames = false,
   });
 
   /// Invoked when the user clicks a move row. UCI form (e.g. `e2e4`).
@@ -183,6 +190,23 @@ class DesktopOpeningExplorer extends ConsumerWidget {
   /// backend aggregate endpoint.
   final PlayerOpeningTreeIndex? localOpeningTreeIndex;
 
+  /// The host lists the global database's games for the board position next
+  /// to these moves (a `DesktopPositionGamesTable` fed the explorer's
+  /// position, line and filters). Clicking a row plays its move, so the
+  /// games of the position each visible row leads to are warmed: the top
+  /// rows once the reader stops on a position
+  /// ([kExplorerGamesRowWarmDwell]), any row the pointer rests on
+  /// ([kExplorerGamesHoverWarmDelay], a bounded few at a time), and a row
+  /// pressed at once. Off for exact-position (custom FEN) searches, whose
+  /// games are not keyed by the move line, and while the board replays its
+  /// line on a timer.
+  final bool warmPositionGames;
+
+  /// The host pins its games table to a move when that row's list icon is
+  /// clicked ([onShowGames]), so the pinned page is warmed as the pointer
+  /// rests on the icon or presses it.
+  final bool warmPinnedGames;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(gamebaseExplorerProvider);
@@ -240,10 +264,6 @@ class DesktopOpeningExplorer extends ConsumerWidget {
       });
     }
     final localCriteria = _localTreeCriteriaForFilters(state.filters);
-    final localFallbackMoves =
-        localIndex == null
-            ? const <MoveAggregate>[]
-            : localIndex.movesForFen(state.currentFen, filters: localCriteria);
     final localDatabasePath = localIndex?.playerId?.trim() ?? '';
     final localFen = state.currentFen.trim();
     final localSqlMoves =
@@ -263,6 +283,13 @@ class DesktopOpeningExplorer extends ConsumerWidget {
       data: (moves) => moves,
       orElse: () => null,
     );
+    // The in-memory index only stands in until the database answers. With a
+    // full index and a player scope it walks every game at this position, so
+    // skip it on the many rebuilds after the query has returned.
+    final localFallbackMoves =
+        localIndex == null || queriedLocalMoves != null
+            ? const <MoveAggregate>[]
+            : localIndex.movesForFen(state.currentFen, filters: localCriteria);
     final effectiveState =
         localIndex == null
             ? state
@@ -297,6 +324,15 @@ class DesktopOpeningExplorer extends ConsumerWidget {
           compactColumns: compactColumns,
           showHeader: showHeader,
           enableRowHover: enableRowHover,
+          // Local trees and downloaded player trees never ask the server for
+          // games, so there is nothing to warm.
+          warmPositionGames:
+              warmPositionGames && localIndex == null && localPlayerId == null,
+          warmPinnedGames:
+              warmPinnedGames &&
+              onShowGames != null &&
+              localIndex == null &&
+              localPlayerId == null,
         ),
       ),
     );
@@ -313,7 +349,7 @@ PlayerOpeningTreeFilterCriteria _localTreeCriteriaForFilters(
   return playerOpeningTreeCriteriaFromFilters(filters);
 }
 
-class _ExplorerBody extends StatefulWidget {
+class _ExplorerBody extends ConsumerStatefulWidget {
   const _ExplorerBody({
     required this.state,
     required this.reachedTreeBoundary,
@@ -328,6 +364,8 @@ class _ExplorerBody extends StatefulWidget {
     required this.compactColumns,
     required this.showHeader,
     required this.enableRowHover,
+    required this.warmPositionGames,
+    required this.warmPinnedGames,
   });
 
   final GamebaseExplorerState state;
@@ -343,12 +381,14 @@ class _ExplorerBody extends StatefulWidget {
   final bool compactColumns;
   final bool showHeader;
   final bool enableRowHover;
+  final bool warmPositionGames;
+  final bool warmPinnedGames;
 
   @override
-  State<_ExplorerBody> createState() => _ExplorerBodyState();
+  ConsumerState<_ExplorerBody> createState() => _ExplorerBodyState();
 }
 
-class _ExplorerBodyState extends State<_ExplorerBody> {
+class _ExplorerBodyState extends ConsumerState<_ExplorerBody> {
   final ScrollController _scrollController = ScrollController();
   final Map<int, GlobalKey> _moveKeys = <int, GlobalKey>{};
   int? _suppressRevealForFocusedMoveIndex;
@@ -368,10 +408,138 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
     });
   }
 
+  // ── Games warm-up ───────────────────────────────────────────────────────
+  //
+  // Timers, not timestamps, so a test's fake clock sees what the app does.
+
+  /// Position (FEN + line) the dwell below is counting for.
+  String? _warmPositionKey;
+  Timer? _warmDwell;
+
+  /// The position has been on screen for [kExplorerGamesRowWarmDwell].
+  bool _dwelled = false;
+  Timer? _warmPass;
+  int? _warmedSignature;
+  List<GamebasePositionGamesQuery> _warmedQueries =
+      const <GamebasePositionGamesQuery>[];
+
+  /// The move rows in the order they are displayed, from the latest build.
+  List<MoveAggregate> _displayedAggregates = const <MoveAggregate>[];
+
+  /// Held from the start: `ref` is gone by the time [dispose] runs.
+  late final ExplorerGamesPrefetcher _prefetcher;
+
+  @override
+  void initState() {
+    super.initState();
+    _prefetcher = ref.read(explorerGamesPrefetchProvider);
+    _trackWarmPosition();
+  }
+
   @override
   void dispose() {
+    _warmDwell?.cancel();
+    _warmPass?.cancel();
+    _cancelQueuedWarm();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// Restarts the dwell whenever the board shows a new position, and drops
+  /// whatever the previous position still had waiting for a slot.
+  void _trackWarmPosition() {
+    final state = widget.state;
+    final key = '${state.currentFen}|${state.exploredMoves.join(' ')}';
+    if (key == _warmPositionKey && widget.warmPositionGames) return;
+    _warmPositionKey = key;
+    _warmDwell?.cancel();
+    _warmDwell = null;
+    _dwelled = false;
+    _warmedSignature = null;
+    _cancelQueuedWarm();
+    if (!widget.warmPositionGames) return;
+    _warmDwell = Timer(kExplorerGamesRowWarmDwell, () {
+      _warmDwell = null;
+      _dwelled = true;
+      _warmVisibleRows();
+    });
+  }
+
+  void _cancelQueuedWarm() {
+    if (_warmedQueries.isEmpty) return;
+    final queries = _warmedQueries;
+    _warmedQueries = const <GamebasePositionGamesQuery>[];
+    _prefetcher.cancel(queries);
+  }
+
+  /// Once the position has dwelled and its moves are on screen, warms the
+  /// games behind the top rows (again only when the rows change).
+  void _warmVisibleRows() {
+    if (!mounted || !_dwelled || !widget.warmPositionGames) return;
+    final state = widget.state;
+    final aggregates = _displayedAggregates;
+    if (state.isLoading || aggregates.isEmpty) return;
+    final signature = explorerGamesPrefetchSignature(
+      fen: state.currentFen,
+      moves: state.exploredMoves,
+      filters: state.filters,
+      aggregates: aggregates,
+    );
+    if (signature == _warmedSignature) return;
+    final queries = buildExplorerGamesPrefetchQueries(
+      fen: state.currentFen,
+      moves: state.exploredMoves,
+      aggregates: aggregates,
+      filters: state.filters,
+    );
+    _warmedSignature = signature;
+    _warmedQueries = queries;
+    _prefetcher.warm(queries);
+  }
+
+  /// Runs [_warmVisibleRows] after this build: warming reads providers, which
+  /// must not happen while the table builds.
+  void _scheduleWarmVisibleRows() {
+    if (!_dwelled || (_warmPass?.isActive ?? false)) return;
+    _warmPass = Timer(Duration.zero, () {
+      _warmPass = null;
+      _warmVisibleRows();
+    });
+  }
+
+  /// Head start for the games of the position [uci] leads to: the pointer
+  /// rests on its row, or presses it.
+  _GamesWarmHooks? _warmMoveGames(String uci) {
+    if (!widget.warmPositionGames) return null;
+    GamebasePositionGamesQuery? query() {
+      if (!mounted) return null;
+      final state = widget.state;
+      return desktopExplorerChildGamesQuery(
+        fen: state.currentFen,
+        moves: state.exploredMoves,
+        uci: uci,
+        filters: state.filters,
+      );
+    }
+
+    return _GamesWarmHooks(prefetcher: _prefetcher, query: query);
+  }
+
+  /// Head start for the games pinned to [uci] by the row's list icon.
+  _GamesWarmHooks? _warmPinnedGames(String uci) {
+    if (!widget.warmPinnedGames) return null;
+    GamebasePositionGamesQuery? query() {
+      if (!mounted) return null;
+      final state = widget.state;
+      return desktopExplorerPinnedGamesQuery(
+        fen: state.currentFen,
+        moves: state.exploredMoves,
+        uci: uci,
+        filters: state.filters,
+      );
+    }
+
+    return _GamesWarmHooks(prefetcher: _prefetcher, query: query);
   }
 
   String _positionKey(String fen) {
@@ -383,6 +551,10 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
   @override
   void didUpdateWidget(covariant _ExplorerBody old) {
     super.didUpdateWidget(old);
+    if (old.warmPositionGames != widget.warmPositionGames) {
+      _warmPositionKey = null;
+    }
+    _trackWarmPosition();
     // Whenever the board's position changes we jump back to the top of
     // the move list. The previous scroll offset belonged to a different
     // position's aggregate and would just feel random. (#461)
@@ -497,6 +669,8 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
     }
     final aggs = _applySort(state.moveAggregates, _sort, state.currentFen);
     _pruneMoveKeys(aggs.length);
+    _displayedAggregates = aggs;
+    _scheduleWarmVisibleRows();
     // Report move-count up to the host before render so the keyboard-nav
     // cursor can extend through this rebuild's range without lagging a
     // frame behind the visible rows.
@@ -515,12 +689,19 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
                 : 'No master/online games are indexed for the position on the board.',
       );
     }
+    // Dims only change at width breakpoints, so a resize inside one
+    // breakpoint hands back the identical subtree and the visible move rows
+    // are re-laid out rather than rebuilt each frame.
+    _ColumnDims? builtDims;
+    Widget? built;
     return LayoutBuilder(
       builder: (context, constraints) {
         final dims = _ColumnDims.forWidth(
           constraints.maxWidth,
           compact: widget.compactColumns,
         );
+        if (built != null && dims == builtDims) return built!;
+        builtDims = dims;
         final header =
             widget.showHeader
                 ? _ExplorerHeader(
@@ -572,6 +753,8 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
                       onShowGames == null
                           ? null
                           : () => onShowGames(aggs[i].uci),
+                  onWarmMove: _warmMoveGames(aggs[i].uci),
+                  onWarmGames: _warmPinnedGames(aggs[i].uci),
                 ),
                 if (i < aggs.length - 1)
                   const Divider(color: kDividerColor, height: 1, indent: 14),
@@ -607,13 +790,15 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
                   },
                   onShowGames:
                       onShowGames == null ? null : () => onShowGames(agg.uci),
+                  onWarmMove: _warmMoveGames(agg.uci),
+                  onWarmGames: _warmPinnedGames(agg.uci),
                 );
               },
             ),
           );
         }
 
-        return Column(
+        return built = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: widget.shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
           children: [
@@ -634,6 +819,11 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
 /// the OpeningExplorerPane centre column (wide). Picking column widths
 /// off `constraints.maxWidth` keeps both rendering modes in one place
 /// instead of forcing the caller to pass a "compact" flag.
+///
+/// Every field is fixed per width breakpoint, so dims compare equal across a
+/// resize that stays inside one breakpoint and the rows are not rebuilt. The
+/// width-proportional result bar is sized at layout time by [_ResultBarSlot].
+@immutable
 class _ColumnDims {
   const _ColumnDims({
     required this.move,
@@ -641,7 +831,6 @@ class _ColumnDims {
     required this.gamesIcon,
     required this.last,
     required this.score,
-    required this.resultBar,
     required this.gap,
     required this.horizontalPad,
     required this.showResultBar,
@@ -657,10 +846,6 @@ class _ColumnDims {
   /// `null` when SCORE column is hidden (narrow mode).
   final double? score;
 
-  /// Result-bar width is proportional to the moves view so W/D/L percentages
-  /// have enough room to breathe in both the right rail and full explorer.
-  final double resultBar;
-
   final double gap;
   final double horizontalPad;
   final bool showResultBar;
@@ -669,27 +854,48 @@ class _ColumnDims {
 
   bool get hasScore => score != null;
 
-  factory _ColumnDims.forWidth(double width, {required bool compact}) {
-    double resultBarFor({
-      required double horizontalPad,
-      required double move,
-      required double gamesValue,
-      required double gamesIcon,
-      required double last,
-      required double? score,
-      required double gap,
-    }) {
-      final contentWidth = (width - horizontalPad * 2 - 4).clamp(0, width);
-      final fixedWidth =
-          move +
-          gamesValue +
-          gamesIcon +
-          last +
-          (score ?? 0) +
-          gap * (score == null ? 3 : 5);
-      return (contentWidth - fixedWidth).clamp(48.0, contentWidth * 0.5);
-    }
+  /// Width of every row column except the result bar, gaps included.
+  double get rowFixedWidth =>
+      move +
+      gamesValue +
+      gamesIcon +
+      last +
+      (score ?? 0) +
+      gap * (hasScore ? 4 : 3);
 
+  /// Space left after the result bar. The bar historically reserved 4px of
+  /// row slack, plus one gap more than the row has when SCORE is shown.
+  double get resultBarSlack => 4 + (hasScore ? gap : 0);
+
+  @override
+  bool operator ==(Object other) =>
+      other is _ColumnDims &&
+      other.move == move &&
+      other.gamesValue == gamesValue &&
+      other.gamesIcon == gamesIcon &&
+      other.last == last &&
+      other.score == score &&
+      other.gap == gap &&
+      other.horizontalPad == horizontalPad &&
+      other.showResultBar == showResultBar &&
+      other.headerHeight == headerHeight &&
+      other.rowMinHeight == rowMinHeight;
+
+  @override
+  int get hashCode => Object.hash(
+    move,
+    gamesValue,
+    gamesIcon,
+    last,
+    score,
+    gap,
+    horizontalPad,
+    showResultBar,
+    headerHeight,
+    rowMinHeight,
+  );
+
+  factory _ColumnDims.forWidth(double width, {required bool compact}) {
     if (compact) {
       if (width >= 300) {
         const horizontalPad = 8.0;
@@ -710,15 +916,6 @@ class _ColumnDims {
           gamesIcon: gamesIcon,
           last: last,
           score: score,
-          resultBar: resultBarFor(
-            horizontalPad: horizontalPad,
-            move: move,
-            gamesValue: gamesValue,
-            gamesIcon: gamesIcon,
-            last: last,
-            score: score,
-            gap: gap,
-          ),
           gap: gap,
           horizontalPad: horizontalPad,
           showResultBar: true,
@@ -739,15 +936,6 @@ class _ColumnDims {
         gamesIcon: gamesIcon,
         last: last,
         score: score,
-        resultBar: resultBarFor(
-          horizontalPad: horizontalPad,
-          move: move,
-          gamesValue: gamesValue,
-          gamesIcon: gamesIcon,
-          last: last,
-          score: score,
-          gap: gap,
-        ),
         gap: gap,
         horizontalPad: horizontalPad,
         showResultBar: true,
@@ -769,15 +957,6 @@ class _ColumnDims {
         gamesIcon: gamesIcon,
         last: last,
         score: score,
-        resultBar: resultBarFor(
-          horizontalPad: horizontalPad,
-          move: move,
-          gamesValue: gamesValue,
-          gamesIcon: gamesIcon,
-          last: last,
-          score: score,
-          gap: gap,
-        ),
         gap: gap,
         horizontalPad: horizontalPad,
         showResultBar: true,
@@ -799,15 +978,6 @@ class _ColumnDims {
         gamesIcon: gamesIcon,
         last: last,
         score: score,
-        resultBar: resultBarFor(
-          horizontalPad: horizontalPad,
-          move: move,
-          gamesValue: gamesValue,
-          gamesIcon: gamesIcon,
-          last: last,
-          score: score,
-          gap: gap,
-        ),
         gap: gap,
         horizontalPad: horizontalPad,
         showResultBar: true,
@@ -829,15 +999,6 @@ class _ColumnDims {
         gamesIcon: gamesIcon,
         last: last,
         score: score,
-        resultBar: resultBarFor(
-          horizontalPad: horizontalPad,
-          move: move,
-          gamesValue: gamesValue,
-          gamesIcon: gamesIcon,
-          last: last,
-          score: score,
-          gap: gap,
-        ),
         gap: gap,
         horizontalPad: horizontalPad,
         showResultBar: true,
@@ -858,21 +1019,103 @@ class _ColumnDims {
       gamesIcon: gamesIcon,
       last: last,
       score: score,
-      resultBar: resultBarFor(
-        horizontalPad: horizontalPad,
-        move: move,
-        gamesValue: gamesValue,
-        gamesIcon: gamesIcon,
-        last: last,
-        score: score,
-        gap: gap,
-      ),
       gap: gap,
       horizontalPad: horizontalPad,
       showResultBar: true,
       headerHeight: 28,
       rowMinHeight: 34,
     );
+  }
+}
+
+/// Sizes the result bar from the free row space its [Flexible] offers at
+/// layout time: `clamp(free - slack, 48, contentWidth / 2)`, the width
+/// [_ColumnDims] used to precompute for every pixel of a resize. Doing it
+/// here keeps the dims, and so every visible move row, unchanged while the
+/// rail is resized.
+class _ResultBarSlot extends SingleChildRenderObjectWidget {
+  const _ResultBarSlot({required this.dims, super.child});
+
+  final _ColumnDims dims;
+
+  @override
+  _RenderResultBarSlot createRenderObject(BuildContext context) =>
+      _RenderResultBarSlot(
+        fixedWidth: dims.rowFixedWidth,
+        slack: dims.resultBarSlack,
+      );
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderResultBarSlot renderObject,
+  ) {
+    renderObject
+      ..fixedWidth = dims.rowFixedWidth
+      ..slack = dims.resultBarSlack;
+  }
+}
+
+class _RenderResultBarSlot extends RenderProxyBox {
+  _RenderResultBarSlot({required double fixedWidth, required double slack})
+    : _fixedWidth = fixedWidth,
+      _slack = slack;
+
+  static const double _minWidth = 48;
+
+  double _fixedWidth;
+  set fixedWidth(double value) {
+    if (value == _fixedWidth) return;
+    _fixedWidth = value;
+    markNeedsLayout();
+  }
+
+  double _slack;
+  set slack(double value) {
+    if (value == _slack) return;
+    _slack = value;
+    markNeedsLayout();
+  }
+
+  double _widthFor(BoxConstraints constraints) {
+    final free = constraints.maxWidth;
+    if (!free.isFinite) return constraints.constrainWidth(_minWidth);
+    // The row's content width less the 4px slack the explorer always kept.
+    final contentWidth = math.max(0.0, free + _fixedWidth - 4);
+    final width = (free - _slack)
+        .clamp(_minWidth, math.max(_minWidth, contentWidth * 0.5))
+        .toDouble();
+    return constraints.constrainWidth(width);
+  }
+
+  BoxConstraints _childConstraints(BoxConstraints constraints) {
+    final width = _widthFor(constraints);
+    return BoxConstraints(
+      minWidth: width,
+      maxWidth: width,
+      minHeight: constraints.minHeight,
+      maxHeight: constraints.maxHeight,
+    );
+  }
+
+  @override
+  Size computeDryLayout(covariant BoxConstraints constraints) {
+    final width = _widthFor(constraints);
+    final childHeight =
+        child?.getDryLayout(_childConstraints(constraints)).height ?? 0;
+    return constraints.constrain(Size(width, childHeight));
+  }
+
+  @override
+  void performLayout() {
+    final width = _widthFor(constraints);
+    final child = this.child;
+    if (child == null) {
+      size = constraints.constrain(Size(width, 0));
+      return;
+    }
+    child.layout(_childConstraints(constraints), parentUsesSize: true);
+    size = constraints.constrain(Size(width, child.size.height));
   }
 }
 
@@ -997,11 +1240,13 @@ class _ColumnHeader extends StatelessWidget {
               ),
               SizedBox(width: dims.gap),
               if (dims.showResultBar) ...[
-                SizedBox(
-                  width: dims.resultBar,
-                  child: const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('RESULT', style: _kHeaderStyle),
+                Flexible(
+                  child: _ResultBarSlot(
+                    dims: dims,
+                    child: const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('RESULT', style: _kHeaderStyle),
+                    ),
                   ),
                 ),
                 if (dims.hasScore) ...[
@@ -1239,6 +1484,8 @@ class _MoveRow extends ConsumerStatefulWidget {
     required this.enableHoverFeedback,
     this.onFocus,
     this.selected = false,
+    this.onWarmMove,
+    this.onWarmGames,
   });
 
   final MoveAggregate aggregate;
@@ -1250,12 +1497,27 @@ class _MoveRow extends ConsumerStatefulWidget {
   final VoidCallback? onFocus;
   final bool selected;
 
+  /// Warms the games behind this row's move: once the pointer has rested on
+  /// the row ([kExplorerGamesHoverWarmDelay]), and at once on pointer-down.
+  final _GamesWarmHooks? onWarmMove;
+
+  /// Warms the games the list icon pins: once the pointer has rested on the
+  /// icon, and at once on pointer-down on it.
+  final _GamesWarmHooks? onWarmGames;
+
   @override
   ConsumerState<_MoveRow> createState() => _MoveRowState();
 }
 
 class _MoveRowState extends ConsumerState<_MoveRow> {
   bool _hovered = false;
+  final _HoverWarm _hoverWarm = _HoverWarm();
+
+  @override
+  void dispose() {
+    _hoverWarm.dispose();
+    super.dispose();
+  }
 
   /// Convert the row's UCI move into SAN using dartchess. Falls back to
   /// the raw UCI string if the position can't be parsed (the explorer
@@ -1315,106 +1577,116 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
             : (widget.enableHoverFeedback && _hovered
                 ? kBlack3Color
                 : Colors.transparent);
+    final warm = widget.onWarmMove;
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) {
+          // Warming is independent of the visual hover feedback: the board
+          // rail keeps rows visually passive but still warms them.
+          _hoverWarm.enter(() => mounted ? widget.onWarmMove : null);
           if (!widget.enableHoverFeedback) return;
           setState(() => _hovered = true);
           widget.onFocus?.call();
         },
-        onExit:
-            widget.enableHoverFeedback
-                ? (_) => setState(() => _hovered = false)
-                : null,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
-            constraints: BoxConstraints(minHeight: dims.rowMinHeight),
-            decoration: BoxDecoration(
-              color: backgroundColor,
-              border:
-                  selected
-                      ? const Border(
-                        left: BorderSide(color: kPrimaryColor, width: 2),
-                      )
-                      : null,
-            ),
-            padding: EdgeInsets.symmetric(
-              horizontal: dims.horizontalPad,
-              vertical: 6,
-            ),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: dims.move,
-                  child: _MoveLabel(
-                    prefix: prefix,
-                    san: san,
-                    useFigurine: useFigurine,
-                    pieceAssets: pieceAssets,
-                  ),
-                ),
-                SizedBox(width: dims.gap),
-                if (dims.showResultBar) ...[
+        onExit: (_) {
+          _hoverWarm.exit();
+          if (widget.enableHoverFeedback) setState(() => _hovered = false);
+        },
+        child: Listener(
+          onPointerDown: warm == null ? null : (_) => warm.press(),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 80),
+              constraints: BoxConstraints(minHeight: dims.rowMinHeight),
+              decoration: BoxDecoration(
+                color: backgroundColor,
+                border:
+                    selected
+                        ? const Border(
+                          left: BorderSide(color: kPrimaryColor, width: 2),
+                        )
+                        : null,
+              ),
+              padding: EdgeInsets.symmetric(
+                horizontal: dims.horizontalPad,
+                vertical: 6,
+              ),
+              child: Row(
+                children: [
                   SizedBox(
-                    width: dims.resultBar,
-                    child: _ResultBar(aggregate: agg),
+                    width: dims.move,
+                    child: _MoveLabel(
+                      prefix: prefix,
+                      san: san,
+                      useFigurine: useFigurine,
+                      pieceAssets: pieceAssets,
+                    ),
                   ),
-                  if (dims.hasScore) ...[
+                  SizedBox(width: dims.gap),
+                  if (dims.showResultBar) ...[
+                    Flexible(
+                      child: _ResultBarSlot(
+                        dims: dims,
+                        child: _ResultBar(aggregate: agg),
+                      ),
+                    ),
+                    if (dims.hasScore) ...[
+                      SizedBox(width: dims.gap),
+                      SizedBox(
+                        width: dims.score!,
+                        child: _ScoreCell(aggregate: agg),
+                      ),
+                    ],
+                  ] else ...[
+                    SizedBox(
+                      width: dims.gamesValue,
+                      child: _GamesCountCell(aggregate: agg),
+                    ),
                     SizedBox(width: dims.gap),
                     SizedBox(
                       width: dims.score!,
-                      child: _ScoreCell(aggregate: agg),
+                      child: _ScoreCell(aggregate: agg, decimals: 1),
+                    ),
+                    SizedBox(width: dims.gap),
+                    SizedBox(
+                      width: dims.last,
+                      child: _LastPlayedCell(aggregate: agg),
                     ),
                   ],
-                ] else ...[
-                  SizedBox(
-                    width: dims.gamesValue,
-                    child: _GamesCountCell(aggregate: agg),
-                  ),
-                  SizedBox(width: dims.gap),
-                  SizedBox(
-                    width: dims.score!,
-                    child: _ScoreCell(aggregate: agg, decimals: 1),
-                  ),
-                  SizedBox(width: dims.gap),
-                  SizedBox(
-                    width: dims.last,
-                    child: _LastPlayedCell(aggregate: agg),
-                  ),
-                ],
-                if (dims.showResultBar) ...[
-                  SizedBox(width: dims.gap),
-                  SizedBox(
-                    width: dims.gamesValue,
-                    child: _GamesCountCell(aggregate: agg),
-                  ),
-                  // Open-games icon — always rendered when supported so the
-                  // affordance is discoverable without hovering. The slot
-                  // collapses to zero width when unsupported, keeping
-                  // header columns aligned with row content.
-                  SizedBox(
-                    width: dims.gamesIcon,
-                    child:
-                        widget.onShowGames == null
-                            ? const SizedBox.shrink()
-                            : Align(
-                              alignment: Alignment.centerRight,
-                              child: _OpenGamesIcon(
-                                onTap: widget.onShowGames!,
-                                highlighted: _hovered,
+                  if (dims.showResultBar) ...[
+                    SizedBox(width: dims.gap),
+                    SizedBox(
+                      width: dims.gamesValue,
+                      child: _GamesCountCell(aggregate: agg),
+                    ),
+                    // Open-games icon — always rendered when supported so the
+                    // affordance is discoverable without hovering. The slot
+                    // collapses to zero width when unsupported, keeping
+                    // header columns aligned with row content.
+                    SizedBox(
+                      width: dims.gamesIcon,
+                      child:
+                          widget.onShowGames == null
+                              ? const SizedBox.shrink()
+                              : Align(
+                                alignment: Alignment.centerRight,
+                                child: _OpenGamesIcon(
+                                  onTap: widget.onShowGames!,
+                                  highlighted: _hovered,
+                                  onWarm: widget.onWarmGames,
+                                ),
                               ),
-                            ),
-                  ),
-                  SizedBox(width: dims.gap),
-                  SizedBox(
-                    width: dims.last,
-                    child: _LastPlayedCell(aggregate: agg),
-                  ),
+                    ),
+                    SizedBox(width: dims.gap),
+                    SizedBox(
+                      width: dims.last,
+                      child: _LastPlayedCell(aggregate: agg),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -1657,15 +1929,84 @@ class _ScoreCell extends StatelessWidget {
   }
 }
 
+/// How a move row, or its list icon, warms the games behind it.
+///
+/// A rested pointer goes through the prefetcher's bounded hover slots
+/// ([ExplorerGamesPrefetcher.warmHover]); a pointer-down, a click already
+/// under way, starts at once ([ExplorerGamesPrefetcher.warmNow]).
+class _GamesWarmHooks {
+  const _GamesWarmHooks({required this.prefetcher, required this.query});
+
+  final ExplorerGamesPrefetcher prefetcher;
+
+  /// The page to warm, built when it is needed (the position may have moved
+  /// since the row was built). Null when there is nothing to warm.
+  final GamebasePositionGamesQuery? Function() query;
+
+  /// Warms the page through the hover slots; returns the page it warmed.
+  GamebasePositionGamesQuery? hover() {
+    final page = query();
+    if (page != null) prefetcher.warmHover(page);
+    return page;
+  }
+
+  void press() {
+    final page = query();
+    if (page != null) prefetcher.warmNow(page);
+  }
+}
+
+/// Warms a target's [_GamesWarmHooks] once the pointer has rested on it for
+/// [kExplorerGamesHoverWarmDelay], and takes that warm-up back out of the
+/// wait when the pointer leaves.
+class _HoverWarm {
+  Timer? _timer;
+  ExplorerGamesPrefetcher? _prefetcher;
+  GamebasePositionGamesQuery? _warmed;
+
+  /// [hooks] is read when the rest is over, so a row rebuilt for another
+  /// move in the meantime warms that move.
+  void enter(_GamesWarmHooks? Function() hooks) {
+    exit();
+    if (hooks() == null) return;
+    _timer = Timer(kExplorerGamesHoverWarmDelay, () {
+      _timer = null;
+      final current = hooks();
+      if (current == null) return;
+      _prefetcher = current.prefetcher;
+      _warmed = current.hover();
+    });
+  }
+
+  void exit() {
+    _timer?.cancel();
+    _timer = null;
+    final warmed = _warmed;
+    if (warmed != null) _prefetcher?.cancelHover(warmed);
+    _warmed = null;
+    _prefetcher = null;
+  }
+
+  void dispose() => exit();
+}
+
 /// Always-visible icon button that opens the position-games table
 /// pinned to this row's UCI. Replaces the prior fade-in "GAMES" pill,
 /// which was both undiscoverable (hover-only) and a layout-eater (the
 /// `AnimatedOpacity` reserved its full width even when hidden, which
 /// was the source of the games-count truncation).
 class _OpenGamesIcon extends StatefulWidget {
-  const _OpenGamesIcon({required this.onTap, required this.highlighted});
+  const _OpenGamesIcon({
+    required this.onTap,
+    required this.highlighted,
+    this.onWarm,
+  });
   final VoidCallback onTap;
   final bool highlighted;
+
+  /// Warms the games this icon pins: once the pointer has rested on it
+  /// ([kExplorerGamesHoverWarmDelay]), and at once on pointer-down.
+  final _GamesWarmHooks? onWarm;
 
   @override
   State<_OpenGamesIcon> createState() => _OpenGamesIconState();
@@ -1673,18 +2014,33 @@ class _OpenGamesIcon extends StatefulWidget {
 
 class _OpenGamesIconState extends State<_OpenGamesIcon> {
   bool _hovered = false;
+  final _HoverWarm _hoverWarm = _HoverWarm();
+
+  @override
+  void dispose() {
+    _hoverWarm.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final active = _hovered || widget.highlighted;
+    final warm = widget.onWarm;
     return DesktopTooltip(
       message: 'Open games for this move',
       child: ClickCursor(
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
+          onEnter: (_) {
+            _hoverWarm.enter(() => mounted ? widget.onWarm : null);
+            setState(() => _hovered = true);
+          },
+          onExit: (_) {
+            _hoverWarm.exit();
+            setState(() => _hovered = false);
+          },
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
+            onTapDown: warm == null ? null : (_) => warm.press(),
             onTap: () {
               widget.onTap();
             },

@@ -5,13 +5,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:chessever/desktop/services/desktop_sentry_filter.dart';
+import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
+import 'package:chessever/desktop/state/desktop_window_role.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -31,11 +35,16 @@ import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
 import 'package:chessever/desktop/services/desktop_file_open_service.dart';
 import 'package:chessever/desktop/services/desktop_picture_in_picture_channel.dart';
 import 'package:chessever/desktop/services/desktop_shutdown_coordinator.dart';
+import 'package:chessever/desktop/auth/desktop_player_profile_access.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
+import 'package:chessever/desktop/services/mac_sandbox_file_picker.dart';
+import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_ui_stall_monitor.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
+import 'package:chessever/desktop/services/desktop_updater_startup.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
+import 'package:chessever/desktop/services/desktop_window_work_area_guard.dart';
 import 'package:chessever/desktop/services/window_state_persistence.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -98,6 +107,7 @@ Future<void> _desktopEntrypoint(List<String> initialArguments) async {
   final boardWindowPayload = await _boardWindowPayloadForCurrentEngine(
     initialArguments,
   );
+  await MacSandboxFilePicker.initialize();
   if (boardWindowPayload != null) {
     await _desktopBoardWindowBoot(boardWindowPayload);
     return;
@@ -235,6 +245,8 @@ Future<void> _desktopMainWithSentry({
         options.enableUserInteractionBreadcrumbs = true;
         options.enableAutoSessionTracking = false;
         options.sampleRate = 1.0;
+        options.beforeSend = (event, hint) =>
+            shouldDropDesktopSentryEvent(event) ? null : event;
       },
       appRunner: () => _desktopBootOnce(initialArguments: initialArguments),
     ).timeout(
@@ -272,11 +284,10 @@ Future<void> _desktopBoot({
   });
 
   await _initializeFirebaseForCurrentPlatform(tag: 'desktop.firebase_init');
-  await AnalyticsService.instance.initialize();
-
   // SQLite must be initialized before any AppDatabase access.
   initializeDesktopDatabaseFactory();
   print('[desktop] sqflite ffi initialized');
+  await AnalyticsService.instance.initialize();
 
   // Window manager wiring (size, min size, hide-until-ready).
   await DesktopWindow.initialize();
@@ -287,6 +298,9 @@ Future<void> _desktopBoot({
   try {
     await WindowStatePersistence.instance.restore();
     await WindowStatePersistence.instance.startTracking();
+    // Keeps the window inside the work area when the display, its scaling or
+    // the display set changes after launch.
+    await DesktopWindowWorkAreaGuard.instance.start();
     print('[desktop] window-state persistence wired');
   } catch (e, stack) {
     print('[desktop] ⚠️ window-state persistence failed');
@@ -346,22 +360,7 @@ Future<void> _desktopBoot({
   // the window appearing. The chip in the top bar appears only after a
   // verified update is staged.
   if (DesktopBuildIdentity.current.updatesEnabled) {
-    ForegroundTaskScheduler.schedule(
-      key: 'desktop_startup_desktop_updater',
-      delay: kStartupWarmupDelay + const Duration(seconds: 2),
-      task: () async {
-        try {
-          await DesktopUpdaterService.instance.initialize();
-        } catch (e, stack) {
-          print('[desktop] ⚠️ auto-updater init failed');
-          ErrorReporter.report(
-            e,
-            stackTrace: stack,
-            tag: 'desktop.updater_init',
-          );
-        }
-      },
-    );
+    _updaterStartup.schedule();
   } else {
     print('[desktop] production updater disabled for development build');
   }
@@ -371,7 +370,13 @@ Future<void> _desktopBoot({
     // The desktop subscription notifier polls our /entitlement edge
     // function (backed by public.subscriptions, which mirrors both Stripe
     // web and RevenueCat mobile state). Replaces the stub-true override.
-    overrides: [desktopSubscriptionOverride],
+    overrides: [
+      desktopSubscriptionOverride,
+      // Combined player-game filters are Premium on every entry point.
+      desktopPlayerProfileGamesOverride,
+      // Desktop never builds the shared push settings; see desktop_push_isolation.
+      ...desktopPushIsolationOverrides,
+    ],
   );
   try {
     await registerPictureInPictureMainWindowHandler(
@@ -379,11 +384,14 @@ Future<void> _desktopBoot({
         final payload = DesktopBoardWindowPayload.decode(encodedBoardPayload);
         final args = payload.args;
         if (payload.kind != TabKind.board || args == null) return;
+        // Restoring a PiP board hands a board back from another window:
+        // the board admits it (or shows its locked surface), no paywall.
         openBoardGameTabFromContainer(
           container,
           args,
           reuseExisting: true,
           focus: true,
+          admission: DesktopBoardAdmission.deferred,
         );
       },
       onPictureInPictureDismissed: () async {
@@ -542,7 +550,17 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
         : '[desktop] ⚠️ board window supabase unavailable',
   );
 
-  final container = ProviderContainer(overrides: [desktopSubscriptionOverride]);
+  final container = ProviderContainer(
+    overrides: [
+      desktopSubscriptionOverride,
+      // Combined player-game filters are Premium on every entry point.
+      desktopPlayerProfileGamesOverride,
+      // Board engines never prompt about the account; see DesktopWindowRole.
+      desktopWindowRoleProvider.overrideWithValue(DesktopWindowRole.detached),
+      // Desktop never builds the shared push settings; see desktop_push_isolation.
+      ...desktopPushIsolationOverrides,
+    ],
+  );
   container.read(boardPictureInPictureModeProvider.notifier).state =
       payload.pictureInPicture;
   await _preloadChessgroundPieceImages(
@@ -557,6 +575,10 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
             boardArgs,
             reuseExisting: false,
             focus: true,
+            // Detached boot: membership is still loading here. The board
+            // admits or locks itself once it resolves; nothing is fetched
+            // for a locked game.
+            admission: DesktopBoardAdmission.deferred,
           )
           : container
               .read(desktopTabsProvider.notifier)
@@ -600,6 +622,7 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
             reuseExisting: false,
             focus: true,
             replaceActive: true,
+            admission: DesktopBoardAdmission.deferred,
           );
           await windowManager.setTitle(replacement.title);
         },
@@ -629,6 +652,7 @@ Future<void> _initializeFirebaseForCurrentPlatform({
   required String tag,
 }) async {
   if (Firebase.apps.isNotEmpty) {
+    await _configureStoreAnalytics();
     print('[desktop] firebase already initialized');
     return;
   }
@@ -637,6 +661,7 @@ Future<void> _initializeFirebaseForCurrentPlatform({
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    await _configureStoreAnalytics();
     print('[desktop] firebase init done');
   } on UnsupportedError catch (e, stack) {
     print('[desktop] firebase unavailable on this platform: $e');
@@ -644,6 +669,21 @@ Future<void> _initializeFirebaseForCurrentPlatform({
   } catch (e, stack) {
     print('[desktop] firebase init failed; starting without Firebase');
     ErrorReporter.report(e, stackTrace: stack, tag: tag);
+  }
+}
+
+Future<void> _configureStoreAnalytics() async {
+  if (!isMacAppStore) return;
+  try {
+    await FirebaseAnalytics.instance.setConsent(
+      adStorageConsentGranted: false,
+      adUserDataConsentGranted: false,
+      adPersonalizationSignalsConsentGranted: false,
+    );
+  } catch (_) {
+    // If this SDK cannot enforce the store build's advertising policy, stop
+    // collection instead of falling back to permissive persisted settings.
+    await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(false);
   }
 }
 
@@ -906,3 +946,17 @@ List<String> _pathExtensions(Iterable<String> paths) {
   final sorted = extensions.toList()..sort();
   return sorted;
 }
+
+/// Kept for the life of the process: it listens for the app coming back to
+/// the foreground until the updater has started.
+final DesktopUpdaterStartup _updaterStartup = DesktopUpdaterStartup(
+  firstDelay: kStartupWarmupDelay + const Duration(seconds: 2),
+  start: () async {
+    try {
+      await DesktopUpdaterService.instance.initialize();
+    } catch (e, stack) {
+      print('[desktop] ⚠️ auto-updater init failed');
+      ErrorReporter.report(e, stackTrace: stack, tag: 'desktop.updater_init');
+    }
+  },
+);

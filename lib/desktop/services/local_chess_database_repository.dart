@@ -14,6 +14,7 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/compact_local_tree_index.dart';
+import 'package:chessever/desktop/services/local_chess_database_open_guard.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
@@ -23,6 +24,7 @@ import 'package:chessever/desktop/services/local_pgn_atomic_write.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/player_identity_name.dart';
 import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
@@ -106,7 +108,20 @@ class LocalChessResqliteDatabase {
 
   Future<resqlite.Database> openDedicatedConnection() async {
     final path = await _resolvePath();
-    final db = await resqlite.Database.open(path);
+    final db = await openLocalChessDatabaseHandle(
+      path: path,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'dedicated local cache connection',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+    );
+    if (db == null) {
+      throw LocalChessDatabaseUnavailableException(
+        path: path,
+        operation: LocalChessDatabaseOperation.open,
+        attempts: 1,
+        purpose: 'dedicated local cache connection',
+      );
+    }
     await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
       () => _configure(db),
     );
@@ -132,7 +147,20 @@ class LocalChessResqliteDatabase {
         message: 'Preparing local database cache...',
       ),
     );
-    final db = await resqlite.Database.open(path);
+    final db = await openLocalChessDatabaseHandle(
+      path: path,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'app local cache database',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+    );
+    if (db == null) {
+      throw LocalChessDatabaseUnavailableException(
+        path: path,
+        operation: LocalChessDatabaseOperation.open,
+        attempts: 1,
+        purpose: 'app local cache database',
+      );
+    }
     await LocalChessDatabaseRepository._runLocalCacheWriteQueued(() async {
       await _configure(db);
       await createLocalChessResqliteDatabaseSchema(db);
@@ -463,9 +491,45 @@ Future<void> createLocalChessResqliteDatabaseSchema(
   // gigabytes of raw PGN text before a download could begin, even when there
   // was nothing to migrate. Keep the upgrade path below, but avoid taking the
   // writer queue at all when the required schema and migrations are present.
-  if (await _localChessResqliteSchemaIsCurrent(db)) return;
+  if (await _localChessResqliteSchemaIsCurrent(db)) {
+    await _ensureLocalChessGamesOriginalOrderIndex(db);
+    return;
+  }
   await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
     () => _createLocalChessResqliteDatabaseSchemaUnlocked(db),
+  );
+}
+
+@visibleForTesting
+const String localChessGamesOriginalOrderIndexName =
+    'idx_local_chess_games_db_original_order';
+
+// Matches the default Library/Board ordering (`originalOrder` in
+// `_localDatabaseGamesOrderBy`) column for column, collation included, so an
+// unfiltered games page walks this index for OFFSET + LIMIT entries instead of
+// reading and sorting every game row of the database on each page turn.
+const String _localChessGamesOriginalOrderIndexSql =
+    'CREATE INDEX IF NOT EXISTS $localChessGamesOriginalOrderIndexName ON '
+    '$localChessGamesTable('
+    'database_id, source_relative_path COLLATE NOCASE, index_in_file, id)';
+
+/// Adds the original-order index to an otherwise current cache.
+///
+/// Deliberately not part of `_localChessResqliteSchemaIsCurrent`: a missing
+/// additive index must not send every existing cache through the full upgrade
+/// transaction (which rescans games and position refs for backfills). One
+/// `sqlite_master` probe per open, and a single queued CREATE INDEX the first
+/// time an upgraded install opens its cache.
+Future<void> _ensureLocalChessGamesOriginalOrderIndex(
+  resqlite.Database db,
+) async {
+  final rows = await db.select(
+    "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ? LIMIT 1",
+    const <Object?>[localChessGamesOriginalOrderIndexName],
+  );
+  if (rows.isNotEmpty) return;
+  await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
+    () => db.execute(_localChessGamesOriginalOrderIndexSql),
   );
 }
 
@@ -1829,6 +1893,7 @@ const List<String> _localChessSchemaStatements = <String>[
   ''',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_database ON $localChessGamesTable(database_id)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_database_index ON $localChessGamesTable(database_id, index_in_file)',
+  _localChessGamesOriginalOrderIndexSql,
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_date ON $localChessGamesTable(date)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_white ON $localChessGamesTable(white_id)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_black ON $localChessGamesTable(black_id)',
@@ -2190,7 +2255,13 @@ class LocalChessDatabaseRepository {
     );
     final path = await resolver();
     if (path == null || path.trim().isEmpty) return null;
-    final db = await resqlite.Database.open(path);
+    final db = await openLocalChessDatabaseHandle(
+      path: path,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'path-only local import cache',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fallBackToExistingConnection,
+    );
+    if (db == null) return null;
     try {
       onProgress?.call(
         LocalChessScanProgress(
@@ -2243,7 +2314,13 @@ class LocalChessDatabaseRepository {
     if (resolver == null) return null;
     final path = await resolver();
     if (path == null || path.trim().isEmpty) return null;
-    final db = await resqlite.Database.open(path);
+    final db = await openLocalChessDatabaseHandle(
+      path: path,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'shared cache read connection',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fallBackToExistingConnection,
+    );
+    if (db == null) return null;
     try {
       await db.execute('PRAGMA busy_timeout=5000');
       await db.execute('PRAGMA query_only=ON');
@@ -2259,7 +2336,22 @@ class LocalChessDatabaseRepository {
   ) async {
     final path = compactLocalTreeGameIndexPath(databasePath);
     if (!await File(path).exists()) return null;
-    final db = await resqlite.Database.open(path);
+    // The tree store is written by the tree build (`_publishCompactPgnGameIndex`
+    // replaces the file through `.previous`) while position queries open it for
+    // reading. Opening it inside that replace window fails with resqlite's
+    // all-or-nothing `Failed to open database at "<path>"`, because
+    // `sqlite3_open_v2` and the `journal_mode=WAL` probe inside resqlite's
+    // `open_connection` run with no busy timeout at all. A bounded retry (the
+    // guard) covers that window; a store that is present but unopenable after
+    // the retries fails loudly instead of silently answering from the main
+    // cache database.
+    final db = await openLocalChessDatabaseHandle(
+      path: path,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'opening-tree game index',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fallBackToExistingConnection,
+    );
+    if (db == null) return null;
     try {
       await db.execute('PRAGMA busy_timeout=5000');
       await db.execute('PRAGMA query_only=ON');
@@ -2812,6 +2904,95 @@ class LocalChessDatabaseRepository {
     }
   }
 
+  // Small, independent imports may run at another import's batch boundary.
+  // The outer import STILL owns the global writer queue throughout: this is
+  // cooperative execution by that owner, never a second concurrent writer.
+  static final _pendingSmallImports = <_QueuedLocalChessImport>[];
+  static final _activeImportPaths = <String>{};
+  static bool _servicingSmallImport = false;
+
+  static Future<void> _serviceSmallImportAtBatchBoundary() async {
+    if (_servicingSmallImport ||
+        _activeImportPaths.isEmpty ||
+        Zone.current[_localCacheWriteQueueZoneKey] != true) {
+      return;
+    }
+    final pending =
+        _pendingSmallImports
+            .where(
+              (job) =>
+                  !job.started &&
+                  !job.result.isCompleted &&
+                  !_activeImportPaths.contains(job.path),
+            )
+            .firstOrNull;
+    if (pending == null) return;
+    _servicingSmallImport = true;
+    try {
+      await _executeQueuedImport(pending);
+    } finally {
+      _servicingSmallImport = false;
+    }
+  }
+
+  static Future<void> _executeQueuedImport(_QueuedLocalChessImport job) async {
+    if (job.started || job.result.isCompleted) return;
+    job.started = true;
+    _pendingSmallImports.remove(job);
+    _activeImportPaths.add(job.path);
+    try {
+      job.token?.throwIfCanceled();
+      job.result.complete(await job.action());
+    } catch (error, stack) {
+      job.result.completeError(error, stack);
+    } finally {
+      _activeImportPaths.remove(job.path);
+    }
+  }
+
+  static Future<LocalChessSource> _runImportWriteQueued({
+    required String path,
+    required Future<LocalChessSource> Function() action,
+    OperationCancellationToken? cancellationToken,
+    void Function()? onWaiting,
+  }) async {
+    // A nested caller may own a wider file mutation lifetime. Do not turn its
+    // import into a cooperative scheduling point for unrelated work.
+    if (Zone.current[_localCacheWriteQueueZoneKey] == true) return action();
+    final stat = await File(path).stat();
+    cancellationToken?.throwIfCanceled();
+    final job = _QueuedLocalChessImport(
+      _databaseId(path),
+      action,
+      cancellationToken,
+    );
+    // Bound the exceptional lane by source bytes, and exclude compressed input
+    // whose decoded cost cannot be bounded by its on-disk length.
+    if (p.extension(path).toLowerCase() == '.pgn' && stat.size <= 64 * 1024) {
+      _pendingSmallImports.add(job);
+    }
+    final removeCancellation = cancellationToken?.addListener(() {
+      if (!job.started && !job.result.isCompleted) {
+        _pendingSmallImports.remove(job);
+        job.result.completeError(const OperationCanceledException());
+      }
+    });
+    unawaited(
+      _runLocalCacheWriteQueued(
+        () => _executeQueuedImport(job),
+        onWaiting: () {
+          if (!job.result.isCompleted && !job.started) onWaiting?.call();
+        },
+      ),
+    );
+    try {
+      return await job.result.future;
+    } finally {
+      removeCancellation?.call();
+      _pendingSmallImports.remove(job);
+    }
+  }
+
   Future<LocalChessSource?> _importSingleFileSourceUnlocked({
     required String path,
     String? sourceLabel,
@@ -2845,15 +3026,18 @@ class LocalChessDatabaseRepository {
       // app cache may itself need that queue for schema or migration work; if
       // import holds it while awaiting a pending open, the UI stalls around the
       // early import progress range.
-      final source = await _runLocalCacheWriteQueued(
-        () => _importSingleLocalChessFileInline(
-          path: trimmed,
-          sourceLabel: sourceLabel,
-          deduplicateGames: deduplicateGames,
-          writerRepository: session.repository,
-          cancellationToken: cancellationToken,
-          onProgress: onProgress,
-        ),
+      final source = await _runImportWriteQueued(
+        path: trimmed,
+        cancellationToken: cancellationToken,
+        action:
+            () => _importSingleLocalChessFileInline(
+              path: trimmed,
+              sourceLabel: sourceLabel,
+              deduplicateGames: deduplicateGames,
+              writerRepository: session.repository,
+              cancellationToken: cancellationToken,
+              onProgress: onProgress,
+            ),
         onWaiting:
             onProgress == null
                 ? null
@@ -2938,6 +3122,8 @@ class LocalChessDatabaseRepository {
         onProgress: emit,
         onImportStart: (start) async {
           cancellationToken?.throwIfCanceled();
+          await _serviceSmallImportAtBatchBoundary();
+          cancellationToken?.throwIfCanceled();
           await writerRepository._beginImportedFileNode(
             start,
             sourceLabel: label,
@@ -2948,6 +3134,8 @@ class LocalChessDatabaseRepository {
           cancellationToken?.throwIfCanceled();
         },
         onGameBatch: (batch) async {
+          cancellationToken?.throwIfCanceled();
+          await _serviceSmallImportAtBatchBoundary();
           cancellationToken?.throwIfCanceled();
           await writerRepository._persistImportedGameBatch(path, batch.games);
           cancellationToken?.throwIfCanceled();
@@ -3470,7 +3658,13 @@ class LocalChessDatabaseRepository {
     if (resolver != null) {
       final path = await resolver();
       if (path == null || path.trim().isEmpty) return false;
-      final db = await resqlite.Database.open(path);
+      final db = await openLocalChessDatabaseHandle(
+        path: path,
+        operation: LocalChessDatabaseOperation.write,
+        purpose: 'compact opening-tree metadata publish',
+        absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+      );
+      if (db == null) return false;
       try {
         await db.execute('PRAGMA busy_timeout=20000');
         final result = await db.execute(
@@ -4251,7 +4445,9 @@ class LocalChessDatabaseRepository {
     final parameters = <Object?>[databaseId];
     _appendLocalGameSearch(where, parameters, search);
     final activeFilter = filter;
-    if (activeFilter != null && activeFilter.hasActiveFilters) {
+    final hasActiveFilter =
+        activeFilter != null && activeFilter.hasActiveFilters;
+    if (hasActiveFilter) {
       appendLocalChessGameFilter(
         where,
         parameters,
@@ -4268,8 +4464,12 @@ class LocalChessDatabaseRepository {
       LEFT JOIN $localChessEventsTable ev ON ev.id = g.event_id
       LEFT JOIN $localChessSitesTable st ON st.id = g.site_id
     ''';
+    final whereSql = where.toString();
     final totalRows = await db.select(
-      'SELECT COUNT(*) AS count $fromClause WHERE $where',
+      'SELECT COUNT(*) AS count '
+      'FROM $localChessGamesTable g '
+      '${_localGameLookupJoinsReferencedBy(whereSql)}'
+      'WHERE $whereSql',
       parameters,
     );
     final total = _readInt(totalRows.single['count']);
@@ -4279,8 +4479,8 @@ class LocalChessDatabaseRepository {
       '''
       SELECT ${_localChessGameProjection('g')}
       $fromClause
-      WHERE $where
-      ORDER BY ${_localDatabaseGamesOrderBy(sortBy, sortDirection)}
+      WHERE $whereSql
+      ORDER BY ${_localDatabaseGamesOrderBy(sortBy, sortDirection, useOriginalOrderIndex: !hasActiveFilter)}
       LIMIT ? OFFSET ?
       ''',
       <Object?>[...parameters, size, page * size],
@@ -5261,18 +5461,23 @@ class LocalChessDatabaseRepository {
       );
     }
     final indexPath = compactLocalTreeIndexPath(databasePath);
-    final matches = await Isolate.run(
-      () => readCompactLocalTreePositionMatchesSync(
+    // Read and encode in the worker: at a shallow ply the match list is every
+    // game in the file, and copying it back to encode it here stalled frames
+    // on each move of a scoped (Prep) tree.
+    final encodedMatches = await Isolate.run(() {
+      final matches = readCompactLocalTreePositionMatchesSync(
         indexPath: indexPath,
         fen: fen,
-      ),
-    );
-    if (matches.isEmpty) return const <MoveAggregate>[];
+      );
+      if (matches.isEmpty) return null;
+      return jsonEncode(<List<Object?>>[
+        for (final match in matches)
+          if (match.nextUci != null)
+            <Object?>[match.indexInFile, match.nextUci],
+      ]);
+    });
+    if (encodedMatches == null) return const <MoveAggregate>[];
 
-    final encodedMatches = jsonEncode(<List<Object?>>[
-      for (final match in matches)
-        if (match.nextUci != null) <Object?>[match.indexInFile, match.nextUci],
-    ]);
     final where = StringBuffer('g.database_id = ?');
     final parameters = <Object?>[databaseId];
     _appendLocalPositionFilters(where, parameters, filters);
@@ -5589,14 +5794,19 @@ class LocalChessDatabaseRepository {
       LEFT JOIN $localChessEventsTable ev ON ev.id = g.event_id
       LEFT JOIN $localChessSitesTable st ON st.id = g.site_id
     ''';
+    final whereSql = where.toString();
     final total = await _localPositionGamesTotalCount(
       db,
       databaseId: databaseId,
       fenKey: fenKey,
       pinnedUci: pinnedUci,
       filters: filters,
-      joinedFromClause: fromClause,
-      joinedWhere: where.toString(),
+      joinedFromClause:
+          'FROM $localChessPositionGamesTable pg '
+          'JOIN $localChessGamesTable g '
+          'ON g.database_id = pg.database_id AND g.id = pg.game_id '
+          '${_localGameLookupJoinsReferencedBy(whereSql)}',
+      joinedWhere: whereSql,
       joinedParameters: parameters,
     );
     if (total == 0 && moves.isNotEmpty) {
@@ -5657,22 +5867,39 @@ class LocalChessDatabaseRepository {
     required int pageSize,
   }) async {
     final indexPath = compactLocalTreeIndexPath(databasePath);
-    var matches = await Isolate.run(
-      () => readCompactLocalTreePositionMatchesSync(
+    final pinnedUci = uci?.trim().toLowerCase();
+    final pagedInMemory =
+        !filters.hasFilters && sortBy == GamebaseSortField.date;
+    // The SQL path needs every match encoded. Encode in the worker so the
+    // match list (every game at shallow plies) is not copied back and
+    // encoded on the UI isolate for each page of a scoped (Prep) tree.
+    final read = await Isolate.run<
+      ({List<CompactLocalTreePositionMatch> matches, String? encoded})
+    >(() {
+      var matches = readCompactLocalTreePositionMatchesSync(
         indexPath: indexPath,
         fen: fen,
-      ),
-    );
-    final pinnedUci = uci?.trim().toLowerCase();
-    if (pinnedUci != null && pinnedUci.isNotEmpty) {
-      matches = <CompactLocalTreePositionMatch>[
-        for (final match in matches)
-          if (match.nextUci == pinnedUci) match,
-      ];
-    }
+      );
+      if (pinnedUci != null && pinnedUci.isNotEmpty) {
+        matches = <CompactLocalTreePositionMatch>[
+          for (final match in matches)
+            if (match.nextUci == pinnedUci) match,
+        ];
+      }
+      if (pagedInMemory || matches.isEmpty) {
+        return (matches: matches, encoded: null);
+      }
+      return (
+        matches: const <CompactLocalTreePositionMatch>[],
+        encoded: jsonEncode(<List<int>>[
+          for (final match in matches) <int>[match.indexInFile, match.ply],
+        ]),
+      );
+    });
+    final matches = read.matches;
     final size = pageSize <= 0 ? 20 : pageSize;
     final page = pageNumber < 0 ? 0 : pageNumber;
-    if (matches.isEmpty) {
+    if (matches.isEmpty && read.encoded == null) {
       return GamebaseSearchQueryResponse(
         status: 'success',
         data: const <Map<String, dynamic>>[],
@@ -5685,7 +5912,7 @@ class LocalChessDatabaseRepository {
       );
     }
 
-    if (!filters.hasFilters && sortBy == GamebaseSortField.date) {
+    if (pagedInMemory) {
       final ordered = List<CompactLocalTreePositionMatch>.of(matches)..sort((
         left,
         right,
@@ -5753,9 +5980,7 @@ class LocalChessDatabaseRepository {
       );
     }
 
-    final encodedMatches = jsonEncode(<List<int>>[
-      for (final match in matches) <int>[match.indexInFile, match.ply],
-    ]);
+    final encodedMatches = read.encoded!;
     final where = StringBuffer('g.database_id = ?');
     final filterParameters = <Object?>[databaseId];
     _appendLocalPositionFilters(where, filterParameters, filters);
@@ -5841,8 +6066,12 @@ class LocalChessDatabaseRepository {
       LEFT JOIN $localChessEventsTable ev ON ev.id = g.event_id
       LEFT JOIN $localChessSitesTable st ON st.id = g.site_id
     ''';
+    final whereSql = where.toString();
     final totalRows = await db.select(
-      'SELECT COUNT(*) AS count $fromClause WHERE $where',
+      'SELECT COUNT(*) AS count '
+      'FROM $localChessGamesTable g '
+      '${_localGameLookupJoinsReferencedBy(whereSql)}'
+      'WHERE $whereSql',
       parameters,
     );
     final total = _readInt(totalRows.single['count']);
@@ -5858,7 +6087,7 @@ class LocalChessDatabaseRepository {
         ? AS ref_ply,
         g.*
       $fromClause
-      WHERE $where
+      WHERE $whereSql
       ORDER BY $sortExpression $direction, g.index_in_file ASC
       LIMIT ? OFFSET ?
       ''',
@@ -7915,6 +8144,15 @@ final localChessDatabaseRepositoryProvider =
       );
     });
 
+class _QueuedLocalChessImport {
+  _QueuedLocalChessImport(this.path, this.action, this.token);
+  final String path;
+  final Future<LocalChessSource> Function() action;
+  final OperationCancellationToken? token;
+  final result = Completer<LocalChessSource>();
+  bool started = false;
+}
+
 class _LocalChessInlineImportSession {
   const _LocalChessInlineImportSession({
     required this.repository,
@@ -7940,7 +8178,20 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
   CompactLocalTreeIndexBuilder? builder;
   try {
     emit(LocalChessScanProgress(fraction: 0.01, message: 'Opening cache...'));
-    db = await resqlite.Database.open(request.databaseFilePath);
+    db = await openLocalChessDatabaseHandle(
+      path: request.databaseFilePath,
+      operation: LocalChessDatabaseOperation.open,
+      purpose: 'opening-tree cache rebuild (worker)',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+    );
+    if (db == null) {
+      throw LocalChessDatabaseUnavailableException(
+        path: request.databaseFilePath,
+        operation: LocalChessDatabaseOperation.open,
+        attempts: 1,
+        purpose: 'opening-tree cache rebuild (worker)',
+      );
+    }
 
     final repository = LocalChessDatabaseRepository(database: () async => db!);
     final databaseId = _databaseId(request.databasePath);
@@ -8194,7 +8445,20 @@ Future<_LocalTreePositionRefStage> _openLocalTreePositionRefStage(
     'chessever-tree-stage-${_stableId(databaseId)}-'
     '${DateTime.now().microsecondsSinceEpoch}.db',
   );
-  final db = await resqlite.Database.open(path);
+  final db = await openLocalChessDatabaseHandle(
+    path: path,
+    operation: LocalChessDatabaseOperation.write,
+    purpose: 'disposable tree position ref stage',
+    absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+  );
+  if (db == null) {
+    throw LocalChessDatabaseUnavailableException(
+      path: path,
+      operation: LocalChessDatabaseOperation.write,
+      attempts: 1,
+      purpose: 'disposable tree position ref stage',
+    );
+  }
   await db.execute('''
     CREATE TABLE $_localTreePositionRefStageTable (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8838,6 +9102,32 @@ String _rootPathFromRelativePath(String databasePath, String? relativePath) {
 
 String _stableId(String value) => sha1.convert(utf8.encode(value)).toString();
 
+/// LEFT JOINs to the player / event / site lookups, keeping only the ones
+/// [whereSql] actually reads.
+///
+/// Each lookup is matched on its INTEGER PRIMARY KEY, so a LEFT JOIN yields
+/// exactly one row per game and can never change `COUNT(*)`. SQLite still
+/// performs all four rowid probes per game (and cannot answer the count from a
+/// covering `database_id` index), which made an unfiltered games count ~45x
+/// slower than the plain count. Count queries use this; page queries keep all
+/// joins because their projection and sort read the names.
+String _localGameLookupJoinsReferencedBy(String whereSql) {
+  final out = StringBuffer();
+  if (whereSql.contains(RegExp(r'\bwp\.'))) {
+    out.write('LEFT JOIN $localChessPlayersTable wp ON wp.id = g.white_id ');
+  }
+  if (whereSql.contains(RegExp(r'\bbp\.'))) {
+    out.write('LEFT JOIN $localChessPlayersTable bp ON bp.id = g.black_id ');
+  }
+  if (whereSql.contains(RegExp(r'\bev\.'))) {
+    out.write('LEFT JOIN $localChessEventsTable ev ON ev.id = g.event_id ');
+  }
+  if (whereSql.contains(RegExp(r'\bst\.'))) {
+    out.write('LEFT JOIN $localChessSitesTable st ON st.id = g.site_id ');
+  }
+  return out.toString();
+}
+
 String _localChessGameProjection(String alias) {
   final column = alias.isEmpty ? '' : '$alias.';
   return '''
@@ -8937,15 +9227,21 @@ String _escapeSqlLike(String value) {
 
 String _localDatabaseGamesOrderBy(
   LocalChessGameSortField sortBy,
-  LocalChessGameSortDirection sortDirection,
-) {
+  LocalChessGameSortDirection sortDirection, {
+  bool useOriginalOrderIndex = true,
+}) {
   final direction =
       sortDirection == LocalChessGameSortDirection.asc ? 'ASC' : 'DESC';
   const stableTieBreak =
       'g.source_relative_path COLLATE NOCASE ASC, g.index_in_file ASC, g.id ASC';
+  // A unary `+` keeps the identical ordering but stops SQLite from satisfying
+  // it with idx_local_chess_games_db_original_order. With an indexed filter
+  // active (ECO, result, rating...), walking the whole database in index order
+  // to find a few matches is slower than the filter index plus a small sort.
+  final originalOrderLead = useOriginalOrderIndex ? '' : '+';
   return switch (sortBy) {
     LocalChessGameSortField.originalOrder =>
-      'g.source_relative_path COLLATE NOCASE $direction, '
+      '${originalOrderLead}g.source_relative_path COLLATE NOCASE $direction, '
           'g.index_in_file $direction, g.id $direction',
     LocalChessGameSortField.white =>
       '${_localTextSortExpression("COALESCE(wp.name, json_extract(g.headers_json, '\$.White'), '')", direction)}, $stableTieBreak',
@@ -9201,6 +9497,11 @@ String? _localSideIdentityClause(
 
   final columnPrefix = side == 'white' ? 'white' : 'black';
   final jsonPrefix = side == 'white' ? 'White' : 'Black';
+  // Both header spellings occur in imported PGNs; the ID match and the ID-less
+  // name fallback must read the same value or a game can fall between them.
+  final fideIdSql =
+      "TRIM(COALESCE(NULLIF(TRIM(json_extract(g.headers_json, '\$.${jsonPrefix}FideId')), ''), "
+      "json_extract(g.headers_json, '\$.${jsonPrefix}FideID'), ''))";
   final clauses = <String>[];
   if (localNumericIds.isNotEmpty) {
     clauses.add(
@@ -9210,15 +9511,19 @@ String? _localSideIdentityClause(
   }
   if (normalizedFideIds.isNotEmpty) {
     clauses.add(
-      "LOWER(TRIM(COALESCE(json_extract(g.headers_json, '\$.${jsonPrefix}FideId'), ''))) "
-      'IN (${_sqlPlaceholders(normalizedFideIds.length)})',
+      'LOWER($fideIdSql) IN (${_sqlPlaceholders(normalizedFideIds.length)})',
     );
     parameters.addAll(normalizedFideIds);
   }
   if (normalizedNames.isNotEmpty) {
+    final normalizedName = playerIdentityNameSql(
+      "json_extract(g.headers_json, '\$.$jsonPrefix')",
+    );
+    // A known FIDE scope permits name fallback only on ID-less rows; a
+    // matching FIDE header is already covered by the identity clause above.
+    final idless = normalizedFideIds.isEmpty ? '' : " AND $fideIdSql = ''";
     clauses.add(
-      "LOWER(TRIM(COALESCE(json_extract(g.headers_json, '\$.$jsonPrefix'), ''))) "
-      'IN (${_sqlPlaceholders(normalizedNames.length)})',
+      '($normalizedName IN (${_sqlPlaceholders(normalizedNames.length)})$idless)',
     );
     parameters.addAll(normalizedNames);
   }
@@ -9452,9 +9757,8 @@ Set<String> _normalizedPlayerNames(Iterable<Object?> values) {
 }
 
 String? _normalizePlayerName(String? value) {
-  final raw = value?.trim().toLowerCase();
-  if (raw == null || raw.isEmpty || raw == '?') return null;
-  return raw.replaceAll(RegExp(r'\s+'), ' ');
+  final key = playerIdentityNameKey(value);
+  return key.isEmpty ? null : key;
 }
 
 String? _localGameTimeControlCategory({

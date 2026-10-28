@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'dart:async';
 
 import 'package:flutter/gestures.dart';
@@ -21,6 +22,7 @@ import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/standings/score_card_screen.dart'
     show selectedPlayerProvider, scoreCardHasEventContextProvider;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/federation_flag.dart';
@@ -31,6 +33,36 @@ final _mergedGamesSourcesStateProvider =
     );
 
 void main() {
+  test('double forfeits replace live rows and show zero for both players', () {
+    final white = _standing(name: 'White', fideId: 1, rating: 2000, rank: 1);
+    final black = _standing(name: 'Black', fideId: 2, rating: 2000, rank: 2);
+    final live = _game(
+      id: 'adjudicated',
+      round: 'Round 1',
+      white: _card('White', 1, 2000),
+      black: _card('Black', 2, 2000),
+      status: GameStatus.ongoing,
+    );
+    final adjudicated = live.copyWith(
+      gameStatus: GameStatus.unknown,
+      isDoubleForfeit: true,
+    );
+    for (final games in [
+      [live, adjudicated],
+      [adjudicated, live],
+    ]) {
+      final table = buildTournamentStandingsRoundTable(
+        standings: [white, black],
+        games: games,
+      );
+      for (final player in [white, black]) {
+        final cell = table.cellsFor(player).single;
+        expect(cell.resultText, '0');
+        expect(cell.isOngoing, isFalse);
+      }
+    }
+  });
+
   test(
     'maps round results and opponent tooltip from the player perspective',
     () {
@@ -180,6 +212,23 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         _mergedGamesSourcesStateProvider.overrideWith((ref) => dataSources),
+        completeGamesTourProvider('event-1').overrideWith((ref) {
+          return ref
+              .watch(_mergedGamesSourcesStateProvider)
+              .gamesTour
+              .whenData(
+                (screen) => [
+                  for (final model in screen.gamesTourModels)
+                    Games(
+                      id: model.gameId,
+                      roundId: model.roundId,
+                      roundSlug: model.roundSlug ?? model.roundId,
+                      tourId: 'event-1',
+                      tourSlug: 'event-1',
+                    ),
+                ],
+              );
+        }),
         mergedTournamentGamesSourceProvider.overrideWith(
           (ref) => ref.watch(_mergedGamesSourcesStateProvider),
         ),
@@ -324,6 +373,18 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      expect(find.text('TB1'), findsOneWidget);
+      final firstTie = find.byKey(const Key('standings-tiebreak-1503014-TB1'));
+      final missingTie = find.byKey(
+        const Key('standings-tiebreak-46616543-TB1'),
+      );
+      expect(tester.widget<Text>(firstTie).data, '9.5');
+      expect(tester.widget<Text>(missingTie).data, '');
+      expect(tester.getTopLeft(firstTie).dx, tester.getTopLeft(missingTie).dx);
+      expect(
+        tester.getTopLeft(firstTie).dx,
+        tester.getTopLeft(find.text('TB1')).dx,
+      );
       expect(find.byKey(const Key('standings-round-header-1')), findsOneWidget);
       expect(
         find.byKey(const Key('standings-round-1503014-1')),
@@ -417,9 +478,154 @@ void main() {
       expect(flagX, lessThan(titleX));
       expect(titleX, lessThan(nameX));
       expect(nameX, lessThan(firstRatingX));
+      final tiebreakMouse = await tester.createGesture(
+        kind: PointerDeviceKind.mouse,
+      );
+      await tiebreakMouse.addPointer();
+      await tiebreakMouse.moveTo(tester.getCenter(find.text('TB1')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(find.text('Buchholz Cut-1'), findsOneWidget);
+      await tiebreakMouse.removePointer();
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     },
   );
+
+  Future<void> pumpIdentityTable(
+    WidgetTester tester,
+    List<PlayerStandingModel> rows,
+  ) async {
+    final container = ProviderContainer(
+      overrides: [
+        playerTourStandingsSnapshotProvider.overrideWith(
+          () => _RowsStandingsNotifier(rows),
+        ),
+        mergedTournamentGamesProvider.overrideWith((ref) => const []),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1100,
+              height: 480,
+              child: TournamentStandingsView(
+                tabId: 'identity-tab',
+                tournamentId: 'event-1',
+                photoResolver: (_) async => null,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('shows SNo and Club/City in Chess-Results column order', (
+    tester,
+  ) async {
+    await pumpIdentityTable(tester, [
+      _standing(
+        name: 'Carlsen, Magnus',
+        fideId: 1503014,
+        rating: 2830,
+        rank: 1,
+      ).copyWith(
+        matchScore: '4.5',
+        startNumber: 3,
+        club: 'Offerspill Sjakklubb Oslo And A Much Longer Club Name Than Fits',
+      ),
+      _standing(name: 'Gukesh D', fideId: 46616543, rating: 2750, rank: 2),
+    ]);
+
+    double x(String key) => tester.getTopLeft(find.byKey(Key(key))).dx;
+    expect(find.text('SNo'), findsOneWidget);
+    expect(find.text('Club/City'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('standings-start-number-1503014')))
+          .data,
+      '3',
+    );
+    expect(
+      tester
+          .widget<Text>(
+            find.byKey(const Key('standings-start-number-46616543')),
+          )
+          .data,
+      '',
+    );
+    final club = tester.widget<Text>(
+      find.byKey(const Key('standings-club-1503014')),
+    );
+    expect(club.maxLines, 1);
+    expect(club.overflow, TextOverflow.ellipsis);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('standings-club-46616543')))
+          .data,
+      '',
+    );
+    // Rk, SNo, Title, Name, (FED flag in the identity cell), Rtg, Club, Pts.
+    expect(
+      tester.getTopLeft(find.text('1').first).dx,
+      lessThan(x('standings-start-number-1503014')),
+    );
+    expect(
+      x('standings-start-number-1503014'),
+      lessThan(x('standings-title-1503014')),
+    );
+    expect(
+      x('standings-title-1503014'),
+      lessThan(tester.getTopLeft(find.text('Carlsen, Magnus')).dx),
+    );
+    expect(
+      x('standings-rating-1503014'),
+      lessThan(x('standings-club-1503014')),
+    );
+    expect(
+      x('standings-club-1503014'),
+      lessThan(x('standings-points-1503014')),
+    );
+    expect(
+      x('standings-header-start-number'),
+      x('standings-start-number-1503014'),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('hides SNo and Club/City when no row publishes them', (
+    tester,
+  ) async {
+    await pumpIdentityTable(tester, [
+      _standing(
+        name: 'Carlsen, Magnus',
+        fideId: 1503014,
+        rating: 2830,
+        rank: 1,
+      ),
+      _standing(
+        name: 'Gukesh D',
+        fideId: 46616543,
+        rating: 2750,
+        rank: 2,
+      ).copyWith(club: '   '),
+    ]);
+
+    expect(find.text('SNo'), findsNothing);
+    expect(find.text('Club/City'), findsNothing);
+    expect(
+      find.byKey(const Key('standings-start-number-1503014')),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('standings-club-1503014')), findsNothing);
+    expect(find.text('Rating'), findsOneWidget);
+  });
 
   testWidgets(
     'compact event rail standings keep identity rating and points in 44px rows',
@@ -946,6 +1152,20 @@ class _FakeStandingsNotifier extends PlayerTourScreenNotifier {
   }
 }
 
+class _RowsStandingsNotifier extends PlayerTourScreenNotifier {
+  _RowsStandingsNotifier(this.rows);
+
+  final List<PlayerStandingModel> rows;
+
+  @override
+  Future<PlayerTourStandingsSnapshot> build() async {
+    return PlayerTourStandingsSnapshot(
+      tourIds: const {'event-1'},
+      standings: rows,
+    );
+  }
+}
+
 class _LayoutStandingsNotifier extends PlayerTourScreenNotifier {
   @override
   Future<PlayerTourStandingsSnapshot> build() async {
@@ -957,7 +1177,16 @@ class _LayoutStandingsNotifier extends PlayerTourScreenNotifier {
           fideId: 1503014,
           rating: 2830,
           rank: 1,
-        ).copyWith(matchScore: '1 / 1'),
+        ).copyWith(
+          matchScore: '1 / 1',
+          tiebreaks: const [
+            PublishedTiebreak(
+              points: 9.5,
+              description: 'Buchholz Cut-1',
+              extendedCode: 'TB1',
+            ),
+          ],
+        ),
         _standing(
           name: 'A Very Long Opponent Name That Must Not Move Rating',
           fideId: 46616543,

@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 
 class PlayerStandingModel {
@@ -12,10 +13,19 @@ class PlayerStandingModel {
   final String? memorialSourceIdentity;
   final String? memorialRouteId;
 
+  /// Team name for team events; null for individual events. Carried so team
+  /// standings can group individual rows under their club.
+  final String? team;
+
   /// 1-based position in the *unfiltered* sorted standings. Preserved across
   /// search so filtered results still display the player's overall standing
   /// (e.g. "#42") instead of re-numbering the filtered list from 1.
   final int? overallRank;
+  final List<PublishedTiebreak> tiebreaks;
+
+  /// Chess-Results start number (SNo) and Club/City.
+  final int? startNumber;
+  final String? club;
 
   const PlayerStandingModel({
     required this.countryCode,
@@ -28,7 +38,11 @@ class PlayerStandingModel {
     this.gamebasePlayerId,
     this.memorialSourceIdentity,
     this.memorialRouteId,
+    this.team,
     this.overallRank,
+    this.tiebreaks = const [],
+    this.startNumber,
+    this.club,
   });
 
   factory PlayerStandingModel.fromPlayer(TournamentPlayer player) {
@@ -41,10 +55,18 @@ class PlayerStandingModel {
       matchScore: _formatTournamentScore(player.score, player.played),
       fideId: player.fideId,
       gamebasePlayerId: null,
+      team: player.team,
+      tiebreaks: player.tiebreaks,
+      startNumber: player.startNumber,
+      club: player.club,
     );
   }
 
-  /// Formats tournament score as "score / games_played" or null if no score
+  /// Formats tournament score as "score / games_played" or null if no score.
+  ///
+  /// A published table can rank a player without a games count (Chess-Results
+  /// rows the broadcast never paired). Show the score alone rather than
+  /// "4.5 / 0".
   static String? _formatTournamentScore(double? score, int played) {
     if (score == null) {
       return played > 0 ? '0.0 / $played' : null;
@@ -53,7 +75,7 @@ class PlayerStandingModel {
     // Format score with 1 decimal place if needed, otherwise as integer
     final scoreStr =
         score % 1 == 0 ? score.toInt().toString() : score.toStringAsFixed(1);
-    return '$scoreStr / $played';
+    return played > 0 ? '$scoreStr / $played' : scoreStr;
   }
 
   // Copy with method to create a new instance with some changes
@@ -68,7 +90,11 @@ class PlayerStandingModel {
     String? gamebasePlayerId,
     String? memorialSourceIdentity,
     String? memorialRouteId,
+    String? team,
     int? overallRank,
+    List<PublishedTiebreak>? tiebreaks,
+    int? startNumber,
+    String? club,
   }) {
     return PlayerStandingModel(
       countryCode: countryCode ?? this.countryCode,
@@ -82,7 +108,11 @@ class PlayerStandingModel {
       memorialSourceIdentity:
           memorialSourceIdentity ?? this.memorialSourceIdentity,
       memorialRouteId: memorialRouteId ?? this.memorialRouteId,
+      team: team ?? this.team,
       overallRank: overallRank ?? this.overallRank,
+      tiebreaks: tiebreaks ?? this.tiebreaks,
+      startNumber: startNumber ?? this.startNumber,
+      club: club ?? this.club,
     );
   }
 
@@ -98,7 +128,11 @@ class PlayerStandingModel {
       gamebasePlayerId: json['gamebasePlayerId'] as String?,
       memorialSourceIdentity: json['memorialSourceIdentity'] as String?,
       memorialRouteId: json['memorialRouteId'] as String?,
+      team: json['team'] as String?,
       overallRank: json['overallRank'] as int?,
+      tiebreaks: PublishedTiebreak.parse(json['tiebreaks']),
+      startNumber: (json['startNumber'] as num?)?.toInt(),
+      club: json['club'] as String?,
     );
   }
 
@@ -115,7 +149,12 @@ class PlayerStandingModel {
       'gamebasePlayerId': gamebasePlayerId,
       'memorialSourceIdentity': memorialSourceIdentity,
       'memorialRouteId': memorialRouteId,
+      'team': team,
       'overallRank': overallRank,
+      if (tiebreaks.isNotEmpty)
+        'tiebreaks': tiebreaks.map((t) => t.toJson()).toList(),
+      if (startNumber != null) 'startNumber': startNumber,
+      if (club != null) 'club': club,
     };
   }
 
@@ -133,7 +172,11 @@ class PlayerStandingModel {
         other.gamebasePlayerId == gamebasePlayerId &&
         other.memorialSourceIdentity == memorialSourceIdentity &&
         other.memorialRouteId == memorialRouteId &&
-        other.overallRank == overallRank;
+        other.team == team &&
+        other.overallRank == overallRank &&
+        other.startNumber == startNumber &&
+        other.club == club &&
+        PublishedTiebreak.same(other.tiebreaks, tiebreaks);
   }
 
   @override
@@ -149,7 +192,11 @@ class PlayerStandingModel {
       gamebasePlayerId,
       memorialSourceIdentity,
       memorialRouteId,
+      team,
       overallRank,
+      startNumber,
+      club,
+      Object.hashAll(tiebreaks),
     );
   }
 }

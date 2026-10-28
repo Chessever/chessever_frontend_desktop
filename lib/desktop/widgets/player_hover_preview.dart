@@ -2,9 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/state/player_hover_rounds.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
@@ -62,8 +65,10 @@ class PlayerHoverPreview extends StatefulWidget {
     required this.player,
     required this.games,
     required this.onOpenOpponentInNewTab,
+    this.rounds = const [],
     required this.onOpenGameInNewTab,
     this.onOpenPlayerInNewTab,
+    this.onOpenScoreCard,
     this.onPreviewOpened,
     this.onPreviewClosed,
     this.isLoading = false,
@@ -79,6 +84,10 @@ class PlayerHoverPreview extends StatefulWidget {
   final PlayerHoverPreviewIdentity player;
   final List<TournamentGameSummary> games;
   final ValueChanged<PlayerHoverPreviewIdentity>? onOpenPlayerInNewTab;
+  final List<PlayerHoverRound> rounds;
+
+  /// Event report activation stays separate from public-profile navigation.
+  final VoidCallback? onOpenScoreCard;
   final ValueChanged<PlayerHoverPreviewIdentity> onOpenOpponentInNewTab;
   final ValueChanged<TournamentGameSummary> onOpenGameInNewTab;
   final VoidCallback? onPreviewOpened;
@@ -295,15 +304,14 @@ class _PlayerHoverPreviewState extends State<PlayerHoverPreview>
                   }),
               child: _PlayerPreviewCard(
                 player: widget.player,
+                onOpenScoreCard:
+                    widget.onOpenScoreCard == null
+                        ? null
+                        : () => _hideBeforeAction(widget.onOpenScoreCard!),
                 games: filteredGames,
+                rounds: widget.rounds,
                 isLoading: widget.isLoading,
                 scrollController: _scrollController,
-                onOpenPlayer:
-                    widget.onOpenPlayerInNewTab == null
-                        ? null
-                        : () => _hideBeforeAction(
-                          () => widget.onOpenPlayerInNewTab!(widget.player),
-                        ),
                 onOpenOpponent:
                     (opponent) => _hideBeforeAction(
                       () => widget.onOpenOpponentInNewTab(opponent),
@@ -361,7 +369,7 @@ class _PlayerHoverPreviewState extends State<PlayerHoverPreview>
   }
 }
 
-@visibleForTesting
+/// Shared identity-safe, newest-round-first card and Board ordering.
 List<TournamentGameSummary> playerHoverPreviewGames(
   PlayerHoverPreviewIdentity player,
   List<TournamentGameSummary> games,
@@ -404,9 +412,10 @@ class _PlayerPreviewCard extends StatelessWidget {
   const _PlayerPreviewCard({
     required this.player,
     required this.games,
+    required this.rounds,
     required this.isLoading,
     required this.scrollController,
-    required this.onOpenPlayer,
+    this.onOpenScoreCard,
     required this.onOpenOpponent,
     required this.onOpenGame,
   });
@@ -414,13 +423,16 @@ class _PlayerPreviewCard extends StatelessWidget {
   final PlayerHoverPreviewIdentity player;
   final List<TournamentGameSummary> games;
   final bool isLoading;
+  final List<PlayerHoverRound> rounds;
   final ScrollController scrollController;
-  final VoidCallback? onOpenPlayer;
+  final VoidCallback? onOpenScoreCard;
   final ValueChanged<PlayerHoverPreviewIdentity> onOpenOpponent;
   final ValueChanged<TournamentGameSummary> onOpenGame;
 
   @override
   Widget build(BuildContext context) {
+    final roundLabels = playerHoverRoundLabels(rounds);
+    final roundNames = {for (final round in rounds) round.id: round.name};
     return Material(
       color: Colors.transparent,
       child: Container(
@@ -442,7 +454,7 @@ class _PlayerPreviewCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _PlayerPreviewHeader(player: player, onOpenPlayer: onOpenPlayer),
+            _PlayerPreviewHeader(player: player, onOpenPlayer: onOpenScoreCard),
             const Divider(height: 1, thickness: 1, color: kDividerColor),
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
@@ -532,6 +544,8 @@ class _PlayerPreviewCard extends StatelessWidget {
                       final opponent = _opponentFor(game, side);
                       return _PreviewGameRow(
                         game: game,
+                        roundLabel: roundLabels[game.roundId],
+                        roundName: roundNames[game.roundId],
                         opponent: opponent,
                         playerIsWhite: side,
                         onOpenOpponent: () => onOpenOpponent(opponent),
@@ -546,6 +560,42 @@ class _PlayerPreviewCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PlayerHeaderAction extends StatelessWidget {
+  const _PlayerHeaderAction({
+    super.key,
+    required this.onActivate,
+    required this.child,
+  });
+  final VoidCallback? onActivate;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => FocusableActionDetector(
+    enabled: onActivate != null,
+    shortcuts: const <ShortcutActivator, Intent>{
+      SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+      SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+    },
+    actions: <Type, Action<Intent>>{
+      ActivateIntent: CallbackAction<ActivateIntent>(
+        onInvoke: (_) {
+          onActivate?.call();
+          return null;
+        },
+      ),
+    },
+    child: Semantics(
+      button: true,
+      enabled: onActivate != null,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onActivate,
+        child: child,
+      ),
+    ),
+  );
 }
 
 class _PlayerPreviewHeader extends StatelessWidget {
@@ -566,11 +616,17 @@ class _PlayerPreviewHeader extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       child: Row(
         children: [
-          PlayerInitialsAvatarCompact(
-            photoUrl: photoUrl?.isEmpty == true ? null : photoUrl,
-            initials: _initials(player.name),
-            size: 48,
-            borderRadius: 8,
+          ClickCursor(
+            child: _PlayerHeaderAction(
+              key: const ValueKey('player-hover-header-avatar'),
+              onActivate: onOpenPlayer,
+              child: PlayerInitialsAvatarCompact(
+                photoUrl: photoUrl?.isEmpty == true ? null : photoUrl,
+                initials: _initials(player.name),
+                size: 48,
+                borderRadius: 8,
+              ),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -603,12 +659,11 @@ class _PlayerPreviewHeader extends StatelessWidget {
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: ClickCursor(
-                          child: GestureDetector(
+                          child: _PlayerHeaderAction(
                             key: const ValueKey<String>(
                               'player-hover-header-name',
                             ),
-                            behavior: HitTestBehavior.opaque,
-                            onTap: onOpenPlayer,
+                            onActivate: onOpenPlayer,
                             child: Text(
                               player.name,
                               maxLines: 1,
@@ -685,6 +740,8 @@ class _PlayerPreviewHeader extends StatelessWidget {
 class _PreviewGameRow extends StatelessWidget {
   const _PreviewGameRow({
     required this.game,
+    this.roundLabel,
+    this.roundName,
     required this.opponent,
     required this.playerIsWhite,
     required this.onOpenOpponent,
@@ -693,6 +750,8 @@ class _PreviewGameRow extends StatelessWidget {
 
   final TournamentGameSummary game;
   final PlayerHoverPreviewIdentity opponent;
+  final String? roundLabel;
+  final String? roundName;
   final bool playerIsWhite;
   final VoidCallback onOpenOpponent;
   final VoidCallback onOpenGame;
@@ -700,7 +759,28 @@ class _PreviewGameRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final result = _resultFor(game.status, playerIsWhite);
-    final round = _roundLabel(game);
+    final fullName =
+        roundName ??
+        (game.roundName.isNotEmpty ? game.roundName : game.roundLabel);
+    final explicit = explicitPlayerHoverRoundNumber(fullName);
+    final numeric = RegExp(
+      r'^(?:round\s*|r\s*)?\d+(?:\.\d+)*$',
+      caseSensitive: false,
+    );
+    final hasNumericSource = numeric.hasMatch(fullName.trim());
+    // Without the complete event schedule, named rounds remain unknown.
+    // Never infer a number from a match's digits, round ID or player subset.
+    final round =
+        hasNumericSource && numeric.hasMatch(game.roundLabel.trim())
+            ? game.roundLabel
+            : hasNumericSource && explicit == null
+            ? fullName
+            : roundLabel ?? (explicit == null ? 'R?' : 'R$explicit');
+    final description = fullName.isEmpty ? 'Round unavailable' : fullName;
+    final tooltip =
+        !hasNumericSource && roundLabel != null
+            ? '$description\n$round is inferred event order, not an official round number.'
+            : description;
     return SizedBox(
       height: 52,
       child: Padding(
@@ -709,15 +789,28 @@ class _PreviewGameRow extends StatelessWidget {
           children: [
             SizedBox(
               width: 28,
-              child: Text(
-                key: ValueKey<String>('game-round-${game.id}'),
-                round,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: [FontFeature.tabularFigures()],
+              child: DesktopTooltip(
+                key: ValueKey<String>('game-round-tooltip-${game.id}'),
+                message: tooltip,
+                child: Semantics(
+                  label: '$round: $tooltip',
+                  excludeSemantics: true,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      key: ValueKey<String>('game-round-${game.id}'),
+                      round,
+                      maxLines: 1,
+                      softWrap: false,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),

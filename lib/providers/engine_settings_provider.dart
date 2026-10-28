@@ -176,7 +176,6 @@ class EngineSettings {
     this.showDepthOverlay = true,
     this.showPvArrows = true,
     this.showEngineAnalysis = false,
-    this.autoGameAnalysis = true,
     this.searchTimeIndex = 0,
     int principalVariationIndex = 4, // Default to 5 lines (index 4)
     int maxArrowsOnBoard = 2, // Default to 3 arrows (index 2)
@@ -197,7 +196,6 @@ class EngineSettings {
   final bool showPvArrows;
   final bool
   showEngineAnalysis; // Controls visibility of PV cards & arrows (computer icon)
-  final bool autoGameAnalysis;
   final int searchTimeIndex;
   final int principalVariationIndex;
   final int
@@ -319,7 +317,6 @@ class EngineSettings {
     bool? showDepthOverlay,
     bool? showPvArrows,
     bool? showEngineAnalysis,
-    bool? autoGameAnalysis,
     int? searchTimeIndex,
     int? principalVariationIndex,
     int? maxArrowsOnBoard,
@@ -329,7 +326,6 @@ class EngineSettings {
       showDepthOverlay: showDepthOverlay ?? this.showDepthOverlay,
       showPvArrows: showPvArrows ?? this.showPvArrows,
       showEngineAnalysis: showEngineAnalysis ?? this.showEngineAnalysis,
-      autoGameAnalysis: autoGameAnalysis ?? this.autoGameAnalysis,
       searchTimeIndex: searchTimeIndex ?? this.searchTimeIndex,
       principalVariationIndex: (principalVariationIndex ??
               this.principalVariationIndex)
@@ -427,15 +423,6 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
     await _persist(newSettings);
   }
 
-  /// Automatically generate the whole-game report when a game lands on a
-  /// regular board. Build Tree boards opt out at the caller.
-  Future<void> toggleAutoGameAnalysis(bool value) async {
-    final currentState = state.valueOrNull ?? const EngineSettings();
-    final newSettings = currentState.copyWith(autoGameAnalysis: value);
-    state = AsyncValue.data(newSettings);
-    await _persist(newSettings);
-  }
-
   /// Toggle engine analysis visibility (PV cards & arrows from computer icon)
   /// When turned off, also stops the Stockfish engine to save resources
   Future<void> toggleEngineAnalysis(bool value) async {
@@ -452,6 +439,9 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
         '🛑 EngineSettings: Stopping Stockfish engine (analysis disabled)',
       );
       await StockfishSingleton().cancelAllEvaluations();
+      // A stop barrier can outlive a newer toggle. The old off must not clear
+      // the replacement search's depth or persist itself over a newer on.
+      if (state.valueOrNull?.showEngineAnalysis != value) return;
       // Clear depth tracker since engine is stopped
       ref
           .read(engineDepthTrackerProvider.notifier)
@@ -463,6 +453,7 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
       try {
         // Reload latest settings to avoid clobbering other fields, then persist
         final latest = await _loadSettings();
+        if (state.valueOrNull?.showEngineAnalysis != value) return;
         final merged = latest.copyWith(showEngineAnalysis: value);
         state = AsyncValue.data(merged);
         await _persist(merged);
@@ -562,7 +553,6 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
         'showDepthOverlay': settings.showDepthOverlay,
         'showPvArrows': settings.showPvArrows,
         'showEngineAnalysis': settings.showEngineAnalysis,
-        'autoGameAnalysis': settings.autoGameAnalysis,
         'searchTimeIndex': settings.searchTimeIndex,
         'principalVariationIndex': settings.principalVariationIndex,
         'maxArrowsOnBoard': settings.maxArrowsOnBoard,
@@ -595,25 +585,7 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
         return const EngineSettings();
       }
 
-      const defaults = EngineSettings();
-      final settings = EngineSettings(
-        showEngineGauge:
-            map['showEngineGauge'] as bool? ?? defaults.showEngineGauge,
-        showDepthOverlay:
-            map['showDepthOverlay'] as bool? ?? defaults.showDepthOverlay,
-        showPvArrows: map['showPvArrows'] as bool? ?? defaults.showPvArrows,
-        showEngineAnalysis:
-            map['showEngineAnalysis'] as bool? ?? defaults.showEngineAnalysis,
-        autoGameAnalysis:
-            map['autoGameAnalysis'] as bool? ?? defaults.autoGameAnalysis,
-        searchTimeIndex:
-            map['searchTimeIndex'] as int? ?? defaults.searchTimeIndex,
-        principalVariationIndex:
-            map['principalVariationIndex'] as int? ??
-            defaults.principalVariationIndex,
-        maxArrowsOnBoard:
-            map['maxArrowsOnBoard'] as int? ?? defaults.maxArrowsOnBoard,
-      );
+      final settings = engineSettingsFromCache(map);
       debugPrint('[EngineSettings] Loaded settings from cache');
       return settings;
     } catch (e) {
@@ -632,4 +604,28 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
       debugPrint('[EngineSettings] Error clearing cache: $e');
     }
   }
+}
+
+/// Builds settings from the device-local cache map.
+///
+/// A legacy `autoGameAnalysis` key written by builds up to 20.32.16 is ignored
+/// on purpose: automatic report generation no longer exists, and a user who
+/// once switched it on must not keep getting reports that spend daily claims.
+@visibleForTesting
+EngineSettings engineSettingsFromCache(Map<String, dynamic> map) {
+  const defaults = EngineSettings();
+  return EngineSettings(
+    showEngineGauge: map['showEngineGauge'] as bool? ?? defaults.showEngineGauge,
+    showDepthOverlay:
+        map['showDepthOverlay'] as bool? ?? defaults.showDepthOverlay,
+    showPvArrows: map['showPvArrows'] as bool? ?? defaults.showPvArrows,
+    showEngineAnalysis:
+        map['showEngineAnalysis'] as bool? ?? defaults.showEngineAnalysis,
+    searchTimeIndex: map['searchTimeIndex'] as int? ?? defaults.searchTimeIndex,
+    principalVariationIndex:
+        map['principalVariationIndex'] as int? ??
+        defaults.principalVariationIndex,
+    maxArrowsOnBoard:
+        map['maxArrowsOnBoard'] as int? ?? defaults.maxArrowsOnBoard,
+  );
 }

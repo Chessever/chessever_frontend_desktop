@@ -11,7 +11,7 @@ String section(String text, String start, String end) =>
     text.substring(text.indexOf(start), text.indexOf(end, text.indexOf(start)));
 
 void main() {
-  test('Board owns one menu trigger in its notation metadata/ECO header', () {
+  test('Board owns one menu trigger beside the engine gear', () {
     final board = source('lib/desktop/panes/board_pane.dart');
     final area = section(
       board,
@@ -21,19 +21,22 @@ void main() {
     expect(area, isNot(contains('_BoardMoreActionsButton')));
     expect(board.split('headerTrailing: _BoardMoreActionsButton(').length, 2);
     expect(board, contains('onPressed: openBoardContextMenu'));
-    expect(board, contains('headerTrailing: headerTrailing'));
-    final notation = source('lib/desktop/widgets/notation_ladder_view.dart');
+    expect(board, isNot(contains('headerTrailing: headerTrailing')));
+    final engine = source('lib/desktop/widgets/engine_panel.dart');
     final header = section(
-      notation,
-      'class _Header ',
-      'class _PgnMetadataHeader',
+      engine,
+      'Widget _buildHeader({',
+      'class _EngineActivityIndicator ',
     );
-    expect(header, contains('Expanded(child: _PgnMetadataHeader'));
+    expect(header, contains('const EngineSettingsPopover(dimension: 28)'));
     expect(
-      header.indexOf('trailing!]'),
-      greaterThan(header.indexOf('Expanded(child: _PgnMetadataHeader')),
+      header,
+      contains('SizedBox.square(dimension: 28, child: widget.headerTrailing!)'),
     );
-    expect(notation, contains('trailing: widget.headerTrailing'));
+    expect(
+      header.indexOf('widget.headerTrailing'),
+      greaterThan(header.indexOf('EngineSettingsPopover')),
+    );
     expect(board, contains("message: 'More board actions'"));
     expect(board, contains('onPress: _openMenu'));
   });
@@ -133,6 +136,13 @@ void main() {
     },
   );
 
+  test('event rail Standings tab swaps in team rows for team events', () {
+    final rail = source('lib/desktop/widgets/event_games_table.dart');
+    expect(rail, contains('DesktopCompactTeamStandingsView'));
+    expect(rail, contains('eventRailShowsTeamStandings'));
+    expect(rail, contains('TournamentStandingsView('));
+  });
+
   test('event rail keeps team names in matchup header, not player rows', () {
     final rail = source('lib/desktop/widgets/event_games_table.dart');
     final playerLine = section(
@@ -149,6 +159,24 @@ void main() {
       'enum _GameRowAction',
     );
     expect(matchupHeader, contains('title'));
+    expect(matchupHeader, contains('expanded: widget.expanded'));
+    expect(matchupHeader, contains('LogicalKeyboardKey.enter'));
+    expect(matchupHeader, contains('LogicalKeyboardKey.space'));
+  });
+
+  test('event rail puts matchup toggle-all before live-first', () {
+    final rail = source('lib/desktop/widgets/event_games_table.dart');
+    final header = section(
+      rail,
+      'class _EventRoundHeaderState ',
+      'class _EventMatchupHeader',
+    );
+    expect(header, contains('event-rail-toggle-all-matchups'));
+    expect(header, contains('event-rail-live-first-toggle'));
+    expect(
+      header.indexOf('event-rail-toggle-all-matchups'),
+      lessThan(header.indexOf('event-rail-live-first-toggle')),
+    );
   });
 
   test('round header always reserves date and start time beside its name', () {
@@ -190,7 +218,19 @@ void main() {
       contains('oldWidget.reportResetRevision != widget.reportResetRevision'),
     );
     expect(engine, contains('_reportController.invalidate()'));
-    expect(engine, contains('_autoStartedFingerprint = nextFingerprint'));
+    // Automatic reports were removed: a reset or a new game re-keys the panel
+    // and clears the stale notice, and nothing re-requests a report on its
+    // own. A cleared report only comes back from the cache on an explicit
+    // request.
+    final update = section(
+      engine,
+      'void didUpdateWidget(covariant EnginePanel oldWidget)',
+      'String? _fingerprint(',
+    );
+    expect(update, contains('_gameFingerprint = nextFingerprint'));
+    expect(update, contains('_requestNotice = null'));
+    expect(update, isNot(contains('_analyze(')));
+    expect(update, isNot(contains('_reportCoordinator.request(')));
   });
 
   test('board menu exposes Clear analysis only through optional callback', () {

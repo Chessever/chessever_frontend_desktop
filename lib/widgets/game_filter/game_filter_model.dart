@@ -1,4 +1,7 @@
+import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/utils/eco_openings.dart';
+import 'package:flutter/foundation.dart';
 
 /// Result filter options for chess games
 enum GameResultFilter { all, whiteWins, blackWins, draw }
@@ -44,6 +47,22 @@ extension GameResultFilterX on GameResultFilter {
   }
 }
 
+/// Color filter options
+enum GameColorFilter { all, white, black }
+
+extension GameColorFilterX on GameColorFilter {
+  String get displayText {
+    switch (this) {
+      case GameColorFilter.all:
+        return 'All Colors';
+      case GameColorFilter.white:
+        return 'White';
+      case GameColorFilter.black:
+        return 'Black';
+    }
+  }
+}
+
 /// Finish-length filter for miniature-style game collections.
 enum GameFinishFilter { all, byMove25, byMove20, byMove15 }
 
@@ -75,18 +94,19 @@ extension GameFinishFilterX on GameFinishFilter {
   }
 }
 
-/// Color filter options
-enum GameColorFilter { all, white, black }
+/// Live/completed filter — filters games by ongoing vs finished state.
+/// Mirrors the EventStatus filter from the event view, but applied to games.
+enum GameLiveFilter { all, live, completed }
 
-extension GameColorFilterX on GameColorFilter {
+extension GameLiveFilterX on GameLiveFilter {
   String get displayText {
     switch (this) {
-      case GameColorFilter.all:
-        return 'All Colors';
-      case GameColorFilter.white:
-        return 'White';
-      case GameColorFilter.black:
-        return 'Black';
+      case GameLiveFilter.all:
+        return 'All Games';
+      case GameLiveFilter.live:
+        return 'Live';
+      case GameLiveFilter.completed:
+        return 'Completed';
     }
   }
 }
@@ -159,34 +179,103 @@ extension GameTournamentTypeFilterX on GameTournamentTypeFilter {
   }
 }
 
-/// ECO opening filter - supports individual ECO codes (A00-E99)
+/// ECO opening filter - supports individual codes and safe family prefixes.
 class GameEcoFilter {
   const GameEcoFilter({this.code});
 
-  /// The specific ECO code (e.g., "B90", "C89") or null for all openings
+  /// A specific ECO code (B90), a family ID/range (B9, D30-D42, or
+  /// E6+E7+E8+E9), or null.
   final String? code;
 
   /// Factory for "all openings" filter
   static const GameEcoFilter all = GameEcoFilter();
 
-  /// Create a filter for a specific ECO code
-  factory GameEcoFilter.forCode(String code) =>
-      GameEcoFilter(code: code.toUpperCase());
+  /// Gamebase stores `'?'` verbatim for games whose PGN carried no ECO —
+  /// Chess960/Freestyle broadcasts above all, plus a chess24 residue of
+  /// `[Variant "From Position"]` standard games. It is a real stored value, so
+  /// it filters like any other code; it just has no code to display.
+  static const String unknownEcoCode = '?';
+  static const String unknownEcoLabel = 'Chess960 & unclassified';
+
+  bool get isUnknownEco => code == unknownEcoCode;
+
+  /// Create a filter for a specific ECO code. A persisted visible range is
+  /// canonicalized to its stable family ID for backward-compatible equality.
+  factory GameEcoFilter.forCode(String code) {
+    final normalized = code.trim().toUpperCase().replaceAll('–', '-');
+    return GameEcoFilter(
+      code: EcoOpenings.getFamily(normalized)?.id ?? normalized,
+    );
+  }
+
+  /// Create a bulk filter for a parent family backed by an exact prefix cover.
+  /// Unknown ranges are rejected so a family can never over-select.
+  factory GameEcoFilter.forFamily(String codePrefix) {
+    final normalized = codePrefix.trim().toUpperCase().replaceAll('–', '-');
+    final family = EcoOpenings.getFamily(normalized);
+    assert(family != null, '$normalized is not a safe ECO family prefix');
+    return GameEcoFilter(code: family?.id ?? normalized);
+  }
 
   /// Whether this filter shows all openings
   bool get isAll => code == null;
+
+  bool get isFamily => EcoOpenings.getFamily(code) != null;
+
+  /// Exact ECO prefixes represented by this filter. Single codes and the old
+  /// one-decade families remain one-element lists; broad families safely use
+  /// several prefixes with OR semantics.
+  List<String> get ecoPrefixes {
+    if (isAll) return const [];
+    final family = EcoOpenings.getFamily(code);
+    return family?.codePrefixes ?? [code!];
+  }
+
+  /// Every exact three-character ECO code represented by this selection.
+  ///
+  /// Supabase stores normalized ECO values (`B97`, not a longer opening
+  /// string), so its query path can use equality / `IN` rather than `ILIKE`.
+  /// That lets PostgreSQL use the ordinary B-tree ECO index for exact codes,
+  /// full families, and irregular inclusive ranges alike.
+  List<String> get exactEcoCodes {
+    if (isAll) return const [];
+    final family = EcoOpenings.getFamily(code);
+    if (family == null) return [code!];
+
+    final range = EcoCodeRange(start: family.rangeStart, end: family.rangeEnd);
+    return List<String>.unmodifiable([
+      for (var number = range.startNumber; number <= range.endNumber; number++)
+        '${family.rangeStart[0]}${number.toString().padLeft(2, '0')}',
+    ]);
+  }
+
+  bool get hasMultiplePrefixes => ecoPrefixes.length > 1;
+
+  String? get openingName => EcoOpenings.getFilterName(code);
 
   /// Get the category letter (A, B, C, D, E) or null
   String? get categoryLetter => code?.isNotEmpty == true ? code![0] : null;
 
   /// Display text for the filter
-  String get displayText => code ?? 'All Openings';
+  String get displayText =>
+      isUnknownEco
+          ? unknownEcoLabel
+          : (_familyDisplayText ?? code ?? 'All Openings');
+
+  String? get _familyDisplayText {
+    final family = EcoOpenings.getFamily(code);
+    if (family == null) return null;
+    return family.codePrefixes.length == 1
+        ? family.codePrefix
+        : family.rangeLabel;
+  }
 
   /// Check if a game's ECO code matches this filter
   bool matches(String? eco) {
     if (isAll) return true;
     if (eco == null || eco.isEmpty) return false;
-    return eco.toUpperCase().startsWith(code!);
+    final normalized = eco.toUpperCase();
+    return ecoPrefixes.any(normalized.startsWith);
   }
 
   @override
@@ -199,6 +288,39 @@ class GameEcoFilter {
   int get hashCode => code.hashCode;
 }
 
+/// A single ordered sort key: a field plus its direction. Multiple criteria
+/// combine into a multi-key sort (applied in list order — index 0 is the
+/// primary key, index 1 the tie-breaker, and so on).
+class GameSortCriterion {
+  const GameSortCriterion({
+    required this.field,
+    this.direction = GamebaseSortDirection.desc,
+  });
+
+  final GamebaseSortField field;
+  final GamebaseSortDirection direction;
+
+  GameSortCriterion copyWith({
+    GamebaseSortField? field,
+    GamebaseSortDirection? direction,
+  }) {
+    return GameSortCriterion(
+      field: field ?? this.field,
+      direction: direction ?? this.direction,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is GameSortCriterion &&
+          other.field == field &&
+          other.direction == direction;
+
+  @override
+  int get hashCode => Object.hash(field, direction);
+}
+
 /// Complete filter state for chess games
 class GameFilter {
   static const int defaultMinYear = 1800;
@@ -208,37 +330,65 @@ class GameFilter {
   static const int absoluteMaxRating = 3500;
 
   GameFilter({
-    this.result = GameResultFilter.all,
+    GameResultFilter result = GameResultFilter.all,
     this.color = GameColorFilter.all,
-    this.finish = GameFinishFilter.all,
     this.timeControl = GameTimeControlFilter.all,
     this.online = GameOnlineFilter.all,
+    this.finish = GameFinishFilter.all,
+    GameLiveFilter live = GameLiveFilter.all,
     GameEcoFilter? eco,
-    this.minYear = defaultMinYear,
+    int minYear = defaultMinYear,
     int? maxYear,
     this.minRating = defaultMinRating,
     this.maxRating = absoluteMaxRating,
-  }) : eco = eco ?? GameEcoFilter.all,
-       maxYear = maxYear ?? DateTime.now().year;
+    List<GameSortCriterion>? sorts,
+  }) : result = live == GameLiveFilter.live ? GameResultFilter.all : result,
+       live = live,
+       eco = eco ?? GameEcoFilter.all,
+       minYear =
+           live == GameLiveFilter.live && minYear > DateTime.now().year
+               ? DateTime.now().year
+               : minYear,
+       maxYear =
+           live == GameLiveFilter.live
+               ? DateTime.now().year
+               : (maxYear ?? DateTime.now().year),
+       sorts = sorts ?? const [];
 
   final GameResultFilter result;
-  final GameColorFilter color;
   final GameFinishFilter finish;
+  final GameColorFilter color;
   final GameTimeControlFilter timeControl;
   final GameOnlineFilter online;
+  final GameLiveFilter live;
   final GameEcoFilter eco;
   final int minYear;
   final int maxYear;
   final int minRating;
   final int maxRating;
 
+  /// Ordered multi-key presentation sort, surfaced when the caller's dialog
+  /// enables the Sort section (database/My-Likes contexts). Empty means the
+  /// consumer falls back to its own default ordering. Sort is *not* counted as
+  /// an "active filter" ([activeFilterCount]) — it shapes presentation, not the
+  /// result set — but it is surfaced in the filter-bar badge via
+  /// [activeSortCount] so users can tell a sort is applied.
+  final List<GameSortCriterion> sorts;
+
+  /// Whether any sort criterion is applied.
+  bool get hasActiveSorts => sorts.isNotEmpty;
+
+  /// Number of applied sort criteria (folded into the filter-bar badge count).
+  int get activeSortCount => sorts.length;
+
   /// Check if any filter is active (not default)
   bool get hasActiveFilters =>
       result != GameResultFilter.all ||
-      color != GameColorFilter.all ||
       finish != GameFinishFilter.all ||
+      color != GameColorFilter.all ||
       timeControl != GameTimeControlFilter.all ||
       online != GameOnlineFilter.all ||
+      live != GameLiveFilter.all ||
       !eco.isAll ||
       minYear != defaultMinYear ||
       maxYear != DateTime.now().year ||
@@ -249,10 +399,11 @@ class GameFilter {
   int get activeFilterCount {
     int count = 0;
     if (result != GameResultFilter.all) count++;
-    if (color != GameColorFilter.all) count++;
     if (finish != GameFinishFilter.all) count++;
+    if (color != GameColorFilter.all) count++;
     if (timeControl != GameTimeControlFilter.all) count++;
     if (online != GameOnlineFilter.all) count++;
+    if (live != GameLiveFilter.all) count++;
     if (!eco.isAll) count++;
     if (minYear != defaultMinYear || maxYear != DateTime.now().year) count++;
     if (minRating != defaultMinRating ||
@@ -264,27 +415,31 @@ class GameFilter {
 
   GameFilter copyWith({
     GameResultFilter? result,
-    GameColorFilter? color,
     GameFinishFilter? finish,
+    GameColorFilter? color,
     GameTimeControlFilter? timeControl,
     GameOnlineFilter? online,
+    GameLiveFilter? live,
     GameEcoFilter? eco,
     int? minYear,
     int? maxYear,
     int? minRating,
     int? maxRating,
+    List<GameSortCriterion>? sorts,
   }) {
     return GameFilter(
       result: result ?? this.result,
-      color: color ?? this.color,
       finish: finish ?? this.finish,
+      color: color ?? this.color,
       timeControl: timeControl ?? this.timeControl,
       online: online ?? this.online,
+      live: live ?? this.live,
       eco: eco ?? this.eco,
       minYear: minYear ?? this.minYear,
       maxYear: maxYear ?? this.maxYear,
       minRating: minRating ?? this.minRating,
       maxRating: maxRating ?? this.maxRating,
+      sorts: sorts ?? this.sorts,
     );
   }
 
@@ -295,34 +450,75 @@ class GameFilter {
     if (identical(this, other)) return true;
     return other is GameFilter &&
         other.result == result &&
-        other.color == color &&
         other.finish == finish &&
+        other.color == color &&
         other.timeControl == timeControl &&
         other.online == online &&
+        other.live == live &&
         other.eco == eco &&
         other.minYear == minYear &&
         other.maxYear == maxYear &&
         other.minRating == minRating &&
-        other.maxRating == maxRating;
+        other.maxRating == maxRating &&
+        listEquals(other.sorts, sorts);
   }
 
   @override
   int get hashCode => Object.hash(
     result,
-    color,
     finish,
+    color,
     timeControl,
     online,
+    live,
     eco,
     minYear,
     maxYear,
     minRating,
     maxRating,
+    Object.hashAll(sorts),
   );
 }
 
 /// Helper to filter games locally based on GameFilter
 class GameFilterHelper {
+  /// A game is live only while it is marked ongoing and belongs to today.
+  ///
+  /// Prefer `lastMoveTime` because it proves active play. For not-yet-moved
+  /// same-day games, fall back to the scheduled game day/date.
+  static bool isLiveNow(GamesTourModel game, {DateTime? now}) {
+    if (!game.effectiveGameStatus.isOngoing) return false;
+
+    final comparisonTime = now ?? DateTime.now();
+    if (game.lastMoveTime != null) {
+      return _isSameUtcDay(game.lastMoveTime!, comparisonTime);
+    }
+
+    final liveDate = game.gameDay ?? game.dateStart;
+    if (liveDate == null) return false;
+
+    return _isSameCalendarDay(liveDate, _todayUtc(comparisonTime));
+  }
+
+  static bool _isSameUtcDay(DateTime left, DateTime right) {
+    final leftUtc = left.toUtc();
+    final rightUtc = right.toUtc();
+    return leftUtc.year == rightUtc.year &&
+        leftUtc.month == rightUtc.month &&
+        leftUtc.day == rightUtc.day;
+  }
+
+  static DateTime _todayUtc(DateTime now) {
+    final nowUtc = now.toUtc();
+    return DateTime.utc(nowUtc.year, nowUtc.month, nowUtc.day);
+  }
+
+  static bool _isSameCalendarDay(DateTime left, DateTime right) {
+    return left.year == right.year &&
+        left.month == right.month &&
+        left.day == right.day;
+  }
+
   /// Apply filter to a list of games
   ///
   /// [targetFideId] - When provided, color filter checks if target player
@@ -337,6 +533,18 @@ class GameFilterHelper {
     int? targetFideId,
   }) {
     return games.where((game) {
+      // Live/completed filter — use effectiveGameStatus so games whose clock
+      // hit 00:00 but DB hasn't caught up still count as completed. A stale
+      // ongoing marker from an old day is neither live nor completed.
+      if (filter.live != GameLiveFilter.all) {
+        final isLive = isLiveNow(game);
+        final isCompleted = game.effectiveGameStatus.isFinished;
+        if (filter.live == GameLiveFilter.live && !isLive) return false;
+        if (filter.live == GameLiveFilter.completed && !isCompleted) {
+          return false;
+        }
+      }
+
       // Result filter
       if (!filter.result.matches(game.gameStatus)) return false;
 

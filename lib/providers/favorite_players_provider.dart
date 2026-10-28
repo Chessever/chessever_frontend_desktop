@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:chessever/repository/favorites/models/favorite_player.dart';
+import 'package:chessever/repository/freemium/freemium_quota.dart';
+import 'package:chessever/repository/freemium/freemium_quota_repository.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/screens/favorites/favorite_players_provider.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
-import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/utils/favorite_constants.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -185,26 +186,6 @@ class FavoritePlayersNotifierNew extends AsyncNotifier<List<FavoritePlayer>> {
         throw Exception('User must be logged in to favorite players');
       }
 
-      // Enforce free-tier favorite cap. The count comes from a fresh
-      // server-side COUNT, NOT from `state.valueOrNull?.length`, because
-      // the AsyncNotifier reflects the cached Supabase realtime stream
-      // which lags behind the latest INSERT by the round-trip time. The
-      // subscriptionProvider read converges desktop (Stripe-backed) and
-      // mobile (RC-backed) entitlement so the gate is unified.
-      final isSubscribed = ref.read(subscriptionProvider).isSubscribed;
-      if (!isSubscribed) {
-        final currentCount = await _supabase
-            .from('user_favorite_players')
-            .count(CountOption.exact)
-            .eq('user_id', userId);
-        if (currentCount >= kFreeFavoriteLimit) {
-          debugPrint(
-            '[FavoritePlayers] Free user at limit ($kFreeFavoriteLimit), blocking add',
-          );
-          throw FavoriteLimitExceededException(kFreeFavoriteLimit);
-        }
-      }
-
       // Check if already exists by fide_id to prevent duplicates
       if (fideId != null && fideId.isNotEmpty) {
         final existing =
@@ -223,6 +204,26 @@ class FavoritePlayersNotifierNew extends AsyncNotifier<List<FavoritePlayer>> {
         }
       }
 
+      // Server-authorized admission (check_freemium_quota). The server owns
+      // the limit and the premium check; a re-favourite above returns before
+      // any slot is requested. Unknown is never treated as allowed.
+      final quota = await ref
+          .read(freemiumQuotaRepositoryProvider)
+          .check(FreemiumQuotaKind.favoritePlayers);
+      switch (quota.outcome) {
+        case FreemiumQuotaOutcome.allowed:
+          break;
+        case FreemiumQuotaOutcome.quotaExceeded:
+          debugPrint('[FavoritePlayers] Blocked by quota: $quota');
+          throw FavoriteLimitExceededException(
+            quota.limit ?? kFreeFavoriteLimit,
+          );
+        case FreemiumQuotaOutcome.accountRequired:
+          throw Exception('User must be logged in to favorite players');
+        case FreemiumQuotaOutcome.temporarilyUnavailable:
+          throw FreemiumQuotaUnavailableException(quota);
+      }
+
       final metadata = <String, dynamic>{
         if (countryCode != null) 'countryCode': countryCode,
         if (rating != null) 'rating': rating,
@@ -234,18 +235,33 @@ class FavoritePlayersNotifierNew extends AsyncNotifier<List<FavoritePlayer>> {
       };
 
       // Insert to Supabase (upsert prevents duplicates by player_name as fallback)
-      await _supabase
-          .from('user_favorite_players')
-          .upsert(
-            {
-              'user_id': userId,
-              'fide_id': fideId,
-              'player_name': playerName,
-              'metadata': metadata,
-            },
-            onConflict: 'user_id,player_name',
-            ignoreDuplicates: true,
+      try {
+        await _supabase
+            .from('user_favorite_players')
+            .upsert(
+              {
+                'user_id': userId,
+                'fide_id': fideId,
+                'player_name': playerName,
+                'metadata': metadata,
+              },
+              onConflict: 'user_id,player_name',
+              ignoreDuplicates: true,
+            );
+      } catch (error) {
+        // Another device took the last slot between the check and this write;
+        // the quota trigger rejected it atomically.
+        final rejection = freemiumQuotaRejection(
+          error,
+          fallbackKind: FreemiumQuotaKind.favoritePlayers,
+        );
+        if (rejection != null) {
+          throw FavoriteLimitExceededException(
+            rejection.limit ?? kFreeFavoriteLimit,
           );
+        }
+        rethrow;
+      }
 
       debugPrint('[FavoritePlayers] Added player $playerName to Supabase');
 

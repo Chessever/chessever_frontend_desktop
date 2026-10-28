@@ -681,6 +681,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_markdown_plus:
+    dependency: "direct main"
+    description:
+      name: flutter_markdown_plus
+      sha256: fce641d6c2106cc495de1cd603f97a4f9d615a97a64011928ded380dbdade935
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.12"
   flutter_native_splash:
     dependency: "direct main"
     description:
@@ -1147,6 +1155,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.3.0"
+  markdown:
+    dependency: transitive
+    description:
+      name: markdown
+      sha256: ee85086ad7698b42522c6ad42fe195f1b9898e4d974a1af4576c1a3a176cada9
+      url: "https://pub.dev"
+    source: hosted
+    version: "7.3.1"
   matcher:
     dependency: transitive
     description:
@@ -1483,6 +1499,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.5.0"
+  purchases_flutter:
+    dependency: "direct main"
+    description:
+      name: purchases_flutter
+      sha256: fde6dceb02a237ba3e4e015afe6721f864ae6a8b0f8eaa8b811244b31515e7ea
+      url: "https://pub.dev"
+    source: hosted
+    version: "10.16.0"
   realtime_client:
     dependency: transitive
     description:
@@ -2235,9 +2259,10 @@ packages:
   webview_all_windows:
     dependency: "direct main"
     description:
-      path: "third_party/webview_all_windows"
-      relative: true
-    source: path
+      name: webview_all_windows
+      sha256: d9b81f16ec41fe19ea966ad690dba6ed65989d2287b04da0eeb19905e4eb3d2f
+      url: "https://pub.dev"
+    source: hosted
     version: "1.4.1"
   webview_all_wkwebview:
     dependency: "direct main"
@@ -2247,7 +2272,7 @@ packages:
     source: path
     version: "1.4.1"
   webview_platform_interface:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: webview_platform_interface
       sha256: "50b00322919bdae4b27cdb6e1d0ad9bf4348d26a592bf6bab6610e36af083335"

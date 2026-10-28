@@ -2578,6 +2578,7 @@ class ChessBoardScreenNotifierNew
       gameId: existingGame.gameId,
       startingFen: startingPosition.fen,
       metadata: metadata,
+      rootComments: existingGame.rootComments,
       mainline: newMainline,
     );
 

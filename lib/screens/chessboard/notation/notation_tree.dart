@@ -2,6 +2,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
 import 'package:chessever/screens/chessboard/notation/pgn_move_number_repair.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 import 'package:chessever/utils/pgn_time_control.dart';
 import 'package:dartchess/dartchess.dart'
     show PgnChildNode, PgnGame, PgnNode, PgnNodeData;
@@ -185,7 +186,7 @@ String exportGameToPgn(ChessGame game) {
       PgnGame<PgnNodeData>(
         headers: headers,
         moves: root,
-        comments: const [],
+        comments: game.rootComments,
       ).makePgn();
   return _withRepairedMoveNumbers(pgn);
 }
@@ -235,6 +236,11 @@ const _internalMetadataKeys = <String>{
   ChessGame.metadataAllowMainlineExtensionKey,
   ChessGame.metadataIsLiveKey,
   ChessGame.metadataGameEndingPlyIndexKey,
+  // The private classification carrier of a copied game. Import already turns
+  // it into the native `$240`–`$247` block and drops it from the headers; this
+  // keeps it out of our own files and out of any header surface even if it
+  // arrives some other way.
+  kChesseverClassificationHeaderTag,
 };
 
 Map<String, String> _buildPgnHeaders(ChessGame game) {
@@ -326,20 +332,24 @@ PgnNodeData _toPgnNodeData(ChessMove move) {
   for (final comment in move.comments ?? const <String>[]) {
     // Strip only the machine values already emitted above, never the prose or
     // graphic/source directives that happen to share their comment block.
-    final remaining = comment.replaceAllMapped(
-      RegExp(r'\[%(clk|eval)\s+[^\]]+\]'),
-      (match) =>
-          (match.group(1) == 'clk'
-                  ? (move.clockTime?.isNotEmpty ?? false)
-                  : (move.eval?.isNotEmpty ?? false))
-              ? ''
-              : match.group(0)!,
-    ).trim();
+    final remaining =
+        comment
+            .replaceAllMapped(
+              RegExp(r'\[%(clk|eval)\s+[^\]]+\]'),
+              (match) =>
+                  (match.group(1) == 'clk'
+                          ? (move.clockTime?.isNotEmpty ?? false)
+                          : (move.eval?.isNotEmpty ?? false))
+                      ? ''
+                      : match.group(0)!,
+            )
+            .trim();
     if (remaining.isNotEmpty) comments.add(remaining);
   }
 
   return PgnNodeData(
     san: move.san,
+    startingComments: move.startingComments,
     comments: comments.isEmpty ? null : comments,
     nags: move.nags,
   );

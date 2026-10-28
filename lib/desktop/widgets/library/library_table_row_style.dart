@@ -36,6 +36,12 @@ String libraryStandardTablePlayerName(String raw) {
 
   final tokens = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
   if (tokens.length < 2) return name;
+  // FIDE records a mononym player as "Gukesh D": the trailing letter is the
+  // initial, so the name stays "Gukesh, D.", never "D, G.".
+  final trailing = tokens.last.replaceAll('.', '');
+  if (trailing.characters.length == 1) {
+    return '${tokens.take(tokens.length - 1).join(' ')}, ${initial(trailing)}';
+  }
   final last = tokens.last;
   final firstInitial = initial(tokens.first);
   return firstInitial.isEmpty ? last : '$last, $firstInitial';
@@ -51,6 +57,7 @@ class LibraryTablePlayerCell extends StatelessWidget {
     this.fideId,
     required this.title,
     this.rating = '',
+    this.abbreviate = true,
   });
 
   final String name;
@@ -59,9 +66,16 @@ class LibraryTablePlayerCell extends StatelessWidget {
   final String title;
   final String rating;
 
+  /// `Last, F.` for dense two-player rows. Pass false where the name is the
+  /// row's subject and the column has room for it (a player leaderboard).
+  final bool abbreviate;
+
   @override
   Widget build(BuildContext context) {
-    final playerName = libraryStandardTablePlayerName(name);
+    final playerName =
+        abbreviate
+            ? libraryStandardTablePlayerName(name)
+            : desktopTablePlayerValue(name);
     if (playerName.isEmpty) return const SizedBox.shrink();
     return Row(
       children: [
@@ -171,16 +185,20 @@ class LibraryTableEcoCell extends StatelessWidget {
 /// Colorful W/D/L palette aligned with players Overview:
 /// white wins → brand primary, black wins → red, draws → slate.
 class LibraryTableResultPill extends StatelessWidget {
-  const LibraryTableResultPill({super.key, required this.result});
+  const LibraryTableResultPill({super.key, required this.result, this.color});
 
   final String result;
+
+  /// Replaces the board-colour palette: a neutral tone on a locked row, or the
+  /// outcome for one player on a single-player record.
+  final Color? color;
 
   static const Color _kDraw = Color(0xFF8B93A7);
 
   @override
   Widget build(BuildContext context) {
     final r = desktopTableDisplayValue(result);
-    final (label, color) = switch (r) {
+    final (label, paletteColor) = switch (r) {
       '1-0' => ('1 – 0', kPrimaryColor),
       '0-1' => ('0 – 1', kRedColor),
       '1/2-1/2' || '½-½' => ('½ – ½', _kDraw),
@@ -192,7 +210,7 @@ class LibraryTableResultPill extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          color: color,
+          color: color ?? paletteColor,
           fontSize: 12,
           fontWeight: FontWeight.w800,
           fontFeatures: const [FontFeature.tabularFigures()],

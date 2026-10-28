@@ -208,7 +208,7 @@ void main() {
     );
   });
 
-  testWidgets('card header player name opens that player profile', (
+  testWidgets('compact card omits redundant profile action', (
     tester,
   ) async {
     PlayerHoverPreviewIdentity? openedPlayer;
@@ -225,15 +225,15 @@ void main() {
     );
 
     await _open(tester, pointer, trigger);
-    await tester.tap(
-      find.byKey(const ValueKey<String>('player-hover-header-name')),
+    expect(find.text('Open player profile'), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('player-hover-open-profile')),
+      findsNothing,
     );
-    await tester.pumpAndSettle();
-
-    expect(openedPlayer, same(player));
+    expect(openedPlayer, isNull);
     expect(
       find.byKey(const ValueKey<String>('player-hover-preview-card')),
-      findsNothing,
+      findsOneWidget,
     );
   });
 

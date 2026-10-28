@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'pgn_record_boundaries.dart';
+import 'local_pgn_position.dart';
 import 'dart:isolate';
 
 import 'package:archive/archive.dart';
@@ -11,7 +12,10 @@ import 'package:path/path.dart' as p;
 import 'package:libcompress/libcompress.dart';
 import 'package:resqlite/resqlite.dart' as resqlite;
 
+import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
+
 import 'package:chessever/desktop/services/compact_local_tree_index.dart';
+import 'package:chessever/desktop/services/local_chess_database_open_guard.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
@@ -20,6 +24,7 @@ import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/utils/local_pgn_metadata.dart';
 
 const localChessSupportedExtensions = <String>{
   '.pgn',
@@ -104,6 +109,23 @@ String localChessDatabaseDisplayNameForPath(String path) {
           : base.substring(0, base.length - extension.length);
   if (!_shouldPolishLocalDatabaseStem(stem)) return base;
   return '${_polishLocalDatabaseStem(stem)}$extension';
+}
+
+/// Cloud database name for a local PGN database: the actual file name with
+/// the trailing `.pgn` removed (`sadler1.pgn` -> `sadler1`). The local display
+/// label may change capitalization, but saving must keep the user's name.
+///
+/// Saving a local database to the cloud creates a cloud database under this
+/// name, so it must be derived from the file, never from a tab label.
+String localChessDatabaseStemForPath(String path) =>
+    localChessDatabaseStemForLabel(_basename(path));
+
+/// Same derivation for a caller that only holds the displayed label.
+String localChessDatabaseStemForLabel(String label) {
+  final trimmed = label.trim();
+  final dot = trimmed.lastIndexOf('.');
+  if (dot <= 0) return trimmed;
+  return trimmed.substring(0, dot).trim();
 }
 
 String localChessDatabaseDisplayNameForPaths(List<String> paths) {
@@ -394,6 +416,7 @@ class LocalChessFileNode extends LocalChessNode {
     this.message,
     this.openingTreeIndex,
     this.pgnOffsetIndex,
+    this.rawPgnCatalog,
     this.contentFingerprint = '',
     this.isWritableEmptyDatabase = false,
     int? gameCount,
@@ -409,6 +432,7 @@ class LocalChessFileNode extends LocalChessNode {
   final String? message;
   final PlayerOpeningTreeIndex? openingTreeIndex;
   final LocalChessPgnOffsetIndex? pgnOffsetIndex;
+  final LocalRawPgnCatalogDescriptor? rawPgnCatalog;
   final String contentFingerprint;
   final bool isWritableEmptyDatabase;
 
@@ -457,6 +481,60 @@ class LocalChessPgnOffsetIndex {
 
   bool matchesFileStat(FileStat stat) {
     return fileSizeBytes == stat.size && modifiedAt == stat.modified;
+  }
+}
+
+@immutable
+class LocalRawPgnCatalogDescriptor {
+  const LocalRawPgnCatalogDescriptor({
+    required this.sessionId,
+    required this.path,
+    required this.label,
+    required this.rootPath,
+    required this.fileSizeBytes,
+    required this.modifiedAt,
+    required this.contentFingerprint,
+    this.fullSha256 = '',
+    required this.totalGames,
+  });
+
+  final String sessionId;
+  final String path;
+  final String label;
+  final String rootPath;
+  final int fileSizeBytes;
+  final DateTime? modifiedAt;
+  final String contentFingerprint;
+  final String fullSha256;
+  final int totalGames;
+
+  Map<String, Object?> toJson() => {
+    'sessionId': sessionId,
+    'path': path,
+    'label': label,
+    'rootPath': rootPath,
+    'fileSizeBytes': fileSizeBytes,
+    'modifiedAtMs': modifiedAt?.millisecondsSinceEpoch,
+    'contentFingerprint': contentFingerprint,
+    'fullSha256': fullSha256,
+    'totalGames': totalGames,
+  };
+
+  factory LocalRawPgnCatalogDescriptor.fromJson(Map<String, dynamic> json) {
+    final modifiedAtMs = json['modifiedAtMs'] as int?;
+    return LocalRawPgnCatalogDescriptor(
+      sessionId: json['sessionId'] as String,
+      path: json['path'] as String,
+      label: json['label'] as String,
+      rootPath: json['rootPath'] as String,
+      fileSizeBytes: json['fileSizeBytes'] as int,
+      modifiedAt: modifiedAtMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(modifiedAtMs),
+      contentFingerprint: json['contentFingerprint'] as String,
+      fullSha256: json['fullSha256'] as String? ?? '',
+      totalGames: json['totalGames'] as int,
+    );
   }
 }
 
@@ -535,7 +613,9 @@ class LocalChessGame {
         expectedPgnFingerprint: pgnFingerprint,
       );
       final entry = _entryFromPgnChunk(raw);
-      if (entry == null || (hasMoves && !entry.hasMoves)) {
+      if (entry == null ||
+          (hasMoves && !entry.hasMoves &&
+              !localPgnHasValidSetupHeaders(entry.game.metadata))) {
         throw StateError(
           'The local PGN moves are unavailable. Refresh the database.',
         );
@@ -553,7 +633,7 @@ class LocalChessGame {
   }
 
   bool _matchesKnownIdentity(_ParsedLocalChessGame entry) {
-    for (final key in const ['Event', 'White', 'Black', 'Date', 'Round']) {
+    for (final key in const ['Event', 'White', 'Black', 'Date', 'Round', 'SetUp', 'FEN']) {
       final expected = game.metadata[key]?.toString().trim() ?? '';
       if (expected.isNotEmpty &&
           expected != '?' &&
@@ -625,22 +705,27 @@ class LocalChessGame {
       return null;
     }
     final entry = _entryFromPgnChunk(raw);
-    if (entry == null || (hasMoves && !entry.hasMoves)) return null;
+    if (entry == null ||
+        (hasMoves && !entry.hasMoves &&
+            !localPgnHasValidSetupHeaders(entry.game.metadata))) {
+      return null;
+    }
     if (pgnFingerprint.isEmpty && !_matchesKnownIdentity(entry)) return null;
     return raw;
   }
 
   String get title {
-    final white = (game.metadata['White']?.toString().trim() ?? '');
-    final black = (game.metadata['Black']?.toString().trim() ?? '');
     final event = (game.metadata['Event']?.toString().trim() ?? '');
     final isPosition =
         !hasMoves &&
         (game.metadata['SetUp']?.toString().trim() == '1' ||
             game.metadata['FEN']?.toString().trim().isNotEmpty == true);
     if (isPosition && event.isNotEmpty && event != '?') return event;
-    return '${white.isEmpty ? 'White' : white} vs '
-        '${black.isEmpty ? 'Black' : black}';
+    // Player-aware: a record whose headers are still placeholders (a PGN
+    // exported before its players were known) names the side that is unknown
+    // instead of a bare "? vs ?" that reads like a broken entry.
+    return '${localPgnDisplayPlayerName(game.metadata, 'White')} vs '
+        '${localPgnDisplayPlayerName(game.metadata, 'Black')}';
   }
 }
 
@@ -690,7 +775,10 @@ LocalChessGame? localChessGameFromRawPgnChunk({
   int? sourceByteEnd,
 }) {
   final entry = _entryFromPgnChunk(rawPgn.trim());
-  if (entry == null || !entry.hasMoves) return null;
+  if (entry == null ||
+      (!entry.hasMoves && !localPgnHasValidSetupHeaders(entry.game.metadata))) {
+    return null;
+  }
   final id = 'local_${_stableId('$sourcePath#$indexInFile')}';
   final relativePath = _relative(rootPath, sourcePath);
   return LocalChessGame(
@@ -1881,6 +1969,23 @@ Future<LocalChessSource> scanLocalChessPgnCatalog(
   );
 }
 
+Future<LocalChessSource> scanLocalChessPgnCatalogInlineForWorker(
+  String path, {
+  String? sourceLabel,
+  int maxGames = _kMaxTotalGames,
+  void Function(LocalChessScanProgress progress)? onProgress,
+}) {
+  return _runScan(
+    <String>[path],
+    sourceLabel: sourceLabel,
+    maxDecodedBytes: _kMaxParseBytes,
+    maxGames: maxGames,
+    buildOpeningTree: false,
+    fullPgnCatalog: true,
+    onProgress: onProgress,
+  );
+}
+
 class _CompactPgnTreeWorkerRequest {
   const _CompactPgnTreeWorkerRequest({
     required this.sendPort,
@@ -2147,7 +2252,20 @@ Future<void> _buildCompactPgnTreeWorker(
         '$gameIndexPath.build-${DateTime.now().microsecondsSinceEpoch}';
     final temporaryGameIndex = File(temporaryGameIndexPath);
     if (await temporaryGameIndex.exists()) await temporaryGameIndex.delete();
-    gameDatabase = await resqlite.Database.open(temporaryGameIndexPath);
+    gameDatabase = await openLocalChessDatabaseHandle(
+      path: temporaryGameIndexPath,
+      operation: LocalChessDatabaseOperation.write,
+      purpose: 'opening-tree game index build',
+      absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+    );
+    if (gameDatabase == null) {
+      throw LocalChessDatabaseUnavailableException(
+        path: temporaryGameIndexPath,
+        operation: LocalChessDatabaseOperation.write,
+        attempts: 1,
+        purpose: 'opening-tree game index build',
+      );
+    }
     await _createCompactPgnGameDatabase(gameDatabase);
     final databaseId = _compactPgnDatabaseId(request.path);
     var processed = 0;
@@ -2223,17 +2341,24 @@ Future<void> _buildCompactPgnTreeWorker(
       throw LocalChessFileAccessException.changed(path: request.path);
     }
     emit(0.92, 'Finalizing tree...');
-    final result = compactBuilder.finish();
-    if (result.metadata.positionCount <= 0) {
-      deleteCompactLocalTreeIndexBestEffort(request.path);
-      throw StateError('Opening tree build did not produce an index.');
-    }
+    // Publish in the order readers depend on: the tree store first, then the
+    // `.ceti` metadata that makes a reader treat the tree as fresh. The store is
+    // replaced through `.previous` (`_publishCompactPgnGameIndex`), so a reader
+    // that saw fresh metadata could otherwise open the store inside that replace
+    // window and fail with resqlite's all-or-nothing
+    // `Failed to open database at "<path>"`. Committing and releasing the store
+    // handle before the rename keeps the window as short as the OS allows.
     await gameDatabase.close();
     gameDatabase = null;
     _publishCompactPgnGameIndex(
       temporaryPath: temporaryGameIndexPath,
       targetPath: gameIndexPath,
     );
+    final result = compactBuilder.finish();
+    if (result.metadata.positionCount <= 0) {
+      deleteCompactLocalTreeIndexBestEffort(request.path);
+      throw StateError('Opening tree build did not produce an index.');
+    }
     gameIndexPublished = true;
     emit(1, 'Tree ready.');
     request.sendPort.send(_CompactPgnTreeWorkerSuccess(result));
@@ -4039,6 +4164,13 @@ _ParsedLocalChessGame? _entryFromPgnChunk(String rawPgn) {
   // A chunk that carries neither headers nor moves isn't a playable PGN.
   if (headers.isEmpty && !hasMoves) return null;
 
+  // A setup is data, not a hint: reject invalid FEN (including missing FEN
+  // with SetUp=1) rather than allowing Board to fall back to the initial board.
+  if ((headers.containsKey('FEN') || headers['SetUp'] == '1') &&
+      !localPgnHasValidSetupHeaders(headers)) {
+    return null;
+  }
+
   final startingFen =
       (headers['FEN']?.toString().trim().isNotEmpty == true)
           ? headers['FEN'] as String
@@ -4048,7 +4180,11 @@ _ParsedLocalChessGame? _entryFromPgnChunk(String rawPgn) {
     game: ChessGame(
       gameId: 'pending',
       startingFen: startingFen,
-      metadata: headers,
+      // A PGN copied out of ChessEver carries the classes in its private
+      // `[ChessEverClassification …]` header tag. Scanning such a file must not
+      // turn that private carrier into a user-visible header (or into a header
+      // the app writes back out).
+      metadata: withoutChesseverClassificationHeader(headers),
       mainline: const [],
     ),
     rawPgn: rawPgn,
@@ -4058,12 +4194,64 @@ _ParsedLocalChessGame? _entryFromPgnChunk(String rawPgn) {
 
 bool _pgnHasMoves(String movetext) {
   if (movetext.isEmpty) return false;
-  // A cheap probe — a move-number token ("1.", "12.", etc.) within the first
-  // chunk of movetext is a strong signal that real moves follow. We avoid
-  // scrubbing comments/variations because that work would dominate the scan
-  // on large databases.
-  final sample = movetext.length > 256 ? movetext.substring(0, 256) : movetext;
-  return _kPgnMoveHintRegex.hasMatch(sample);
+  // A cheap probe — a move-number token ("1.", "12.", etc.) in the opening
+  // stretch of *notation*. Comments and variation text are skipped: a game
+  // exported with a long leading `{[%evp …]}` evaluation comment used to hide
+  // every move number from this probe, so the record was reported as having no
+  // movetext while the line scanner's hint said the opposite, and
+  // `LocalChessGame.rawPgn` refuses a record whose stored hint and parsed
+  // movetext disagree — which made such games impossible to open from a local
+  // database. Sampling stops after [_kPgnMoveHintSampleChars] code characters
+  // so the probe stays cheap on large databases.
+  final sample = _pgnMoveHintSample(movetext);
+  return sample.isNotEmpty && _kPgnMoveHintRegex.hasMatch(sample);
+}
+
+/// Code characters [_pgnHasMoves] samples before giving up.
+const int _kPgnMoveHintSampleChars = 512;
+
+/// The opening stretch of [movetext] with comments (`{…}`, `;…`) and variation
+/// text removed, so a move hint is read from real notation only.
+String _pgnMoveHintSample(String movetext) {
+  final sample = StringBuffer();
+  var braceDepth = 0;
+  var variationDepth = 0;
+  var inLineComment = false;
+  for (var index = 0; index < movetext.length; index++) {
+    final code = movetext.codeUnitAt(index);
+    if (inLineComment) {
+      if (code == 0x0A) inLineComment = false;
+      continue;
+    }
+    if (braceDepth > 0) {
+      if (code == 0x7D) braceDepth--;
+      continue;
+    }
+    if (code == 0x7B) {
+      braceDepth++;
+      continue;
+    }
+    if (code == 0x3B) {
+      inLineComment = true;
+      continue;
+    }
+    if (code == 0x28) {
+      variationDepth++;
+      continue;
+    }
+    if (code == 0x29) {
+      if (variationDepth > 0) variationDepth--;
+      continue;
+    }
+    if (variationDepth > 0) continue;
+    if (code == 0x20 || code == 0x09 || code == 0x0A || code == 0x0D) {
+      sample.writeCharCode(0x20);
+    } else {
+      sample.writeCharCode(code);
+    }
+    if (sample.length >= _kPgnMoveHintSampleChars) break;
+  }
+  return sample.toString();
 }
 
 String _unescapePgnHeader(String value) {
@@ -4185,7 +4373,8 @@ String _displayExtensionForBasename(String base) {
 bool _shouldPolishLocalDatabaseStem(String stem) {
   if (stem.isEmpty) return false;
   if (!RegExp(r'[a-z]').hasMatch(stem)) return false;
-  return RegExp(r'[_\-\s]|\d').hasMatch(stem);
+  // A numeric suffix is part of a file's name, not a word separator.
+  return RegExp(r'[_\-\s]').hasMatch(stem);
 }
 
 String _polishLocalDatabaseStem(String stem) {

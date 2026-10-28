@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:country_flags/country_flags.dart';
 import 'package:cue/cue.dart';
@@ -12,6 +13,7 @@ import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
+import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_filter_dialog.dart';
@@ -27,7 +29,7 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show LiveDesktopGameCard, openTournamentGameTab;
-import 'package:chessever/providers/favorite_players_provider.dart';
+
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/favorites/favorite_players_provider.dart';
 import 'package:chessever/screens/favorites/player_games/provider/favorites_combined_games_provider.dart';
@@ -425,9 +427,16 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
 
   String get _liveCardsPauseReason => 'desktop_favorites_scroll';
 
+  late final StateController<Set<String>> _liveCardsPauseReasonsController;
+
   @override
   void initState() {
     super.initState();
+    // Read once: dispose() releases the pause, and `ref` throws there
+    // (CHESSEVER-24Q).
+    _liveCardsPauseReasonsController = ref.read(
+      liveGameCardsPauseReasonsProvider.notifier,
+    );
     _scrollController.addListener(_maybeLoadMore);
   }
 
@@ -469,7 +478,11 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
   void _setLiveCardsPausedForScroll(bool paused) {
     if (_liveCardsPausedForScroll == paused) return;
     _liveCardsPausedForScroll = paused;
-    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+    setLiveGameCardsPausedWithNotifier(
+      _liveCardsPauseReasonsController,
+      reason: _liveCardsPauseReason,
+      paused: paused,
+    );
   }
 
   @override
@@ -497,13 +510,13 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
       // Compute column count first so PageUp/PageDown can stride by a full
       // page (~3 rows of `columns` cards) — `pageStride: 9` was hardcoded to
       // an assumed 3×3 grid and broke on every other window width.
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          const targetWidth = 280.0;
-          final columns = (constraints.maxWidth / targetWidth).floor().clamp(
-            2,
-            6,
-          );
+      // Rebuilds only when the column count changes, not on every resize
+      // frame; the grid itself still re-lays out at the new width.
+      return BucketedLayoutBuilder<int>(
+        bucket:
+            (constraints) =>
+                (constraints.maxWidth / 280.0).floor().clamp(2, 6).toInt(),
+        builder: (context, columns) {
           return DesktopGroupedGameKeyboardFocus(
             scopeId: 'favorites-games',
             groups: keyboardGroups,
@@ -697,6 +710,7 @@ void _openFavoriteGame(
     eventGames: allGames,
     eventGamesContinuation: const BoardTabGamesContinuation.favorites(),
     viewSource: ChessboardView.favScorecard,
+    accessContext: desktopFavoritesFeedAccessContext,
   );
 }
 
@@ -736,6 +750,7 @@ class _FavoriteLiveGameCard extends ConsumerWidget {
         layout: layout,
         selected: selected,
         viewSource: ChessboardView.favScorecard,
+        accessContext: desktopFavoritesFeedAccessContext,
         streamingEnabled: streamingEnabled && streamEnabled,
         allowStockfishFallback: streamEnabled,
       ),
@@ -1022,12 +1037,20 @@ class _WorldPlayersListState extends ConsumerState<_WorldPlayersList> {
           child: _PlayerTile(
             player: player,
             isFavorite: favorite,
-            onFavoriteTap: () async {
-              await ref
-                  .read(favoritePlayersNotifierProvider.notifier)
-                  .toggleFavorite(player);
-              ref.invalidate(favoritePlayersProviderNew);
-            },
+            onFavoriteTap:
+                () => setDesktopPlayerFavorite(
+                  context,
+                  ref,
+                  favorite: !favorite,
+                  playerName: player.name,
+                  fideId: player.fideId?.toString(),
+                  countryCode: player.countryCode,
+                  rating: player.score,
+                  title: player.title,
+                  gamebasePlayerId: player.gamebasePlayerId,
+                  memorialSourceIdentity: player.memorialSourceIdentity,
+                  memorialRouteId: player.memorialRouteId,
+                ),
           ),
         );
       },
@@ -1129,9 +1152,15 @@ class _PlayerTileState extends ConsumerState<_PlayerTile> {
       await custom();
       return;
     }
-    await ref
-        .read(favoritePlayersNotifierProvider.notifier)
-        .removeFavorite(widget.player);
+    final player = widget.player;
+    await setDesktopPlayerFavorite(
+      context,
+      ref,
+      favorite: false,
+      playerName: player.name,
+      fideId: player.fideId?.toString(),
+      memorialSourceIdentity: player.memorialSourceIdentity,
+    );
   }
 
   @override

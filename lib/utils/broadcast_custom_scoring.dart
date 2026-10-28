@@ -41,3 +41,25 @@ String? standardResultLabelForSide(GameStatus status, {required bool isWhite}) {
 
   return (score: calculatedScore, played: calculatedPlayed);
 }
+
+
+({double white, double black}) aggregateBroadcastResultPoints({
+  required double standardWhitePoints,
+  required double standardBlackPoints,
+  double? whiteCustomPoints,
+  double? blackCustomPoints,
+}) {
+  final hasAdaptedPoints =
+      ((whiteCustomPoints ?? 0) != 0 &&
+          whiteCustomPoints != standardWhitePoints) ||
+      ((blackCustomPoints ?? 0) != 0 &&
+          blackCustomPoints != standardBlackPoints);
+  if (!hasAdaptedPoints) {
+    return (white: standardWhitePoints, black: standardBlackPoints);
+  }
+
+  return (
+    white: whiteCustomPoints ?? standardWhitePoints,
+    black: blackCustomPoints ?? standardBlackPoints,
+  );
+}

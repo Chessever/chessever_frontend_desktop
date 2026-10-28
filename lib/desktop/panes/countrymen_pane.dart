@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:cue/cue.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:motor/motor.dart';
 
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
+import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
 import 'package:chessever/desktop/widgets/desktop_event_context_menu.dart';
@@ -34,7 +36,7 @@ import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/providers/event_favorite_players_provider.dart';
 import 'package:chessever/providers/favorite_events_provider.dart';
-import 'package:chessever/providers/favorite_players_provider.dart';
+
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_combined_games_provider.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
@@ -749,12 +751,20 @@ class _CountrymenPlayersListState
             child: _CountryPlayerTile(
               player: player,
               isFavorite: favorite,
-              onFavoriteTap: () async {
-                await ref
-                    .read(favoritePlayersNotifierProvider.notifier)
-                    .toggleFavorite(player);
-                ref.invalidate(favoritePlayersProviderNew);
-              },
+              onFavoriteTap:
+                  () => setDesktopPlayerFavorite(
+                    context,
+                    ref,
+                    favorite: !favorite,
+                    playerName: player.name,
+                    fideId: player.fideId?.toString(),
+                    countryCode: player.countryCode,
+                    rating: player.score,
+                    title: player.title,
+                    gamebasePlayerId: player.gamebasePlayerId,
+                    memorialSourceIdentity: player.memorialSourceIdentity,
+                    memorialRouteId: player.memorialRouteId,
+                  ),
             ),
           );
         },
@@ -1673,9 +1683,16 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
 
   String get _liveCardsPauseReason => 'desktop_countrymen_scroll';
 
+  late final StateController<Set<String>> _liveCardsPauseReasonsController;
+
   @override
   void initState() {
     super.initState();
+    // Read once: dispose() releases the pause, and `ref` throws there
+    // (CHESSEVER-24Q).
+    _liveCardsPauseReasonsController = ref.read(
+      liveGameCardsPauseReasonsProvider.notifier,
+    );
     _scrollController.addListener(_maybeLoadMore);
   }
 
@@ -1717,7 +1734,11 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
   void _setLiveCardsPausedForScroll(bool paused) {
     if (_liveCardsPausedForScroll == paused) return;
     _liveCardsPausedForScroll = paused;
-    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+    setLiveGameCardsPausedWithNotifier(
+      _liveCardsPauseReasonsController,
+      reason: _liveCardsPauseReason,
+      paused: paused,
+    );
   }
 
   @override
@@ -1748,13 +1769,13 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
       // Compute column count first so PageUp/PageDown can stride by a full
       // page (~3 rows of `columns` cards). The previous `pageStride: 9`
       // was hardcoded to an assumed 3×3 grid.
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          const targetWidth = 280.0;
-          final columns = (constraints.maxWidth / targetWidth).floor().clamp(
-            2,
-            6,
-          );
+      // Rebuilds only when the column count changes, not on every resize
+      // frame; the grid itself still re-lays out at the new width.
+      return BucketedLayoutBuilder<int>(
+        bucket:
+            (constraints) =>
+                (constraints.maxWidth / 280.0).floor().clamp(2, 6).toInt(),
+        builder: (context, columns) {
           return DesktopGroupedGameKeyboardFocus(
             scopeId: 'countrymen-games',
             groups: keyboardGroups,

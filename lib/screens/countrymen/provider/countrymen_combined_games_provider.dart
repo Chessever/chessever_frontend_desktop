@@ -342,48 +342,34 @@ class CountrymenCombinedGamesNotifier
       final gameRepo = _ref.read(gameRepositoryProvider);
       final fideCode = CountryUtils.toFideCode(countryCode);
 
-      // Step 1: Get available dates if not cached
-      if (_availableDates.isEmpty && _hasMoreDates) {
-        final dates = await gameRepo.getDistinctDatesForCountry(
+      final dateOffset = isInitial ? 0 : state.dateOffset;
+      final needed = dateOffset + _datesPerBatch;
+
+      while (_availableDates.length < needed && _hasMoreDates) {
+        final remaining = needed - _availableDates.length;
+        final moreDates = await gameRepo.getDistinctDatesForCountry(
           countryCode: fideCode,
-          limit: 30, // Get enough dates
-          offset: 0,
+          limit: remaining,
+          before: _availableDates.isEmpty ? null : _availableDates.last,
         );
-        _availableDates = dates;
-        _hasMoreDates = dates.length >= 30;
-        debugPrint('[CountrymenGames] Got ${dates.length} available dates');
+        if (moreDates.isEmpty) {
+          _hasMoreDates = false;
+          break;
+        }
+        _availableDates.addAll(moreDates);
+        if (moreDates.length < remaining) {
+          _hasMoreDates = false;
+        }
       }
 
-      // Step 2: Determine which dates to load
-      final dateOffset = isInitial ? 0 : state.dateOffset;
+      debugPrint(
+        '[CountrymenGames] Got ${_availableDates.length} available dates',
+      );
+
       final datesToLoad =
           _availableDates.skip(dateOffset).take(_datesPerBatch).toList();
 
       if (datesToLoad.isEmpty) {
-        // Try to get more dates
-        if (_hasMoreDates) {
-          final moreDates = await gameRepo.getDistinctDatesForCountry(
-            countryCode: fideCode,
-            limit: 30,
-            offset: _availableDates.length,
-          );
-          _availableDates.addAll(moreDates);
-          _hasMoreDates = moreDates.length >= 30;
-
-          // Retry with new dates
-          final retryDates =
-              _availableDates.skip(dateOffset).take(_datesPerBatch).toList();
-          if (retryDates.isNotEmpty) {
-            await _loadGamesForDates(
-              dates: retryDates,
-              fideCode: fideCode,
-              isInitial: isInitial,
-              dateOffset: dateOffset,
-            );
-            return;
-          }
-        }
-
         state = state.copyWith(isLoading: false, hasMore: false);
         return;
       }
@@ -413,17 +399,19 @@ class CountrymenCombinedGamesNotifier
     final seenKeys = Set<String>.from(isInitial ? {} : state.seenGameIds);
     final loadedDates = List<DateTime>.from(isInitial ? [] : state.loadedDates);
 
-    for (final date in dates) {
-      debugPrint(
-        '[CountrymenGames] Loading ALL games for ${date.toString().split(' ')[0]}',
-      );
+    final eco = state.filter.eco.isAll ? null : state.filter.eco.code;
+    final dayPages = await Future.wait([
+      for (final date in dates)
+        gameRepo.getGamesByCountryAndDate(
+          countryCode: fideCode,
+          date: date,
+          eco: eco,
+        ),
+    ]);
 
-      final dayGames = await gameRepo.getGamesByCountryAndDate(
-        countryCode: fideCode,
-        date: date,
-        eco: state.filter.eco.isAll ? null : state.filter.eco.code,
-      );
-
+    for (var i = 0; i < dates.length; i++) {
+      final date = dates[i];
+      final dayGames = dayPages[i];
       debugPrint(
         '[CountrymenGames] Got ${dayGames.length} games for ${date.toString().split(' ')[0]}',
       );
@@ -576,10 +564,7 @@ class CountrymenCombinedGamesNotifier
   /// Clear all filters
   void clearFilter() {
     debugPrint('[CountrymenGames] Clearing filter');
-    state = state.copyWith(
-      filter: GameFilter.defaultFilter(),
-      liveOnly: false,
-    );
+    state = state.copyWith(filter: GameFilter.defaultFilter(), liveOnly: false);
   }
 
   /// Toggle the Live-only pill. When true, finished games are hidden.

@@ -237,6 +237,7 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
   late LibraryFolderCreateKind _kind;
   String? _selectedParentId;
   bool _attemptedSubmit = false;
+  bool _didSubmit = false;
 
   @override
   void initState() {
@@ -264,6 +265,7 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
   }
 
   void _confirm() {
+    if (_didSubmit) return;
     final name = _controller.text.trim();
     if (name.isEmpty) {
       setState(() => _attemptedSubmit = true);
@@ -271,9 +273,11 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
     }
     if (widget.isRename) {
       if (name == widget.initialName?.trim()) {
+        _didSubmit = true;
         Navigator.of(context).pop();
         return;
       }
+      _didSubmit = true;
       Navigator.of(context).pop(name);
       return;
     }
@@ -289,6 +293,7 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
       setState(() => _attemptedSubmit = true);
       return;
     }
+    _didSubmit = true;
     Navigator.of(
       context,
     ).pop(LibraryFolderDraft(name: name, kind: _kind, parentId: parentId));

@@ -1,0 +1,1132 @@
+import 'package:dio/dio.dart';
+import 'package:chessever/desktop/services/library_book_failure_message.dart';
+
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart' show immutable;
+
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'package:chessever/desktop/services/desktop_env.dart';
+import 'package:chessever/repository/library/models/library_folder.dart';
+import 'package:chessever/screens/library/providers/library_folders_provider.dart'
+    show kTwicBookId;
+
+const _testSupabaseHost = 'odmekzlfunfocvedqusl.supabase.co';
+const _productionSupabaseHost = 'oelbsuggrzyqwzmvidju.supabase.co';
+
+/// Where a draft stands with ChessEver staff. A submission is not a status:
+/// the book stays a draft, [pending] while it waits and [changesRequested]
+/// once staff send it back with a note.
+enum LibraryBookReviewState { none, pending, changesRequested }
+
+/// The review round of a draft, as the server answers it. Servers that
+/// predate reviews omit it; that reads as [none].
+class LibraryBookReview {
+  const LibraryBookReview({
+    this.state = LibraryBookReviewState.none,
+    this.submittedAt,
+    this.note = '',
+    this.decidedAt,
+  });
+
+  static const none = LibraryBookReview();
+
+  final LibraryBookReviewState state;
+
+  /// When it was last submitted; null unless it is pending.
+  final DateTime? submittedAt;
+
+  /// What staff asked to change; empty unless it was sent back.
+  final String note;
+
+  /// When staff sent it back; null unless it was sent back.
+  final DateTime? decidedAt;
+
+  factory LibraryBookReview.fromJson(Object? raw) {
+    if (raw is! Map) return none;
+    DateTime? when(Object? value) =>
+        value is String ? DateTime.tryParse(value)?.toLocal() : null;
+    final note = raw['note'];
+    return switch (raw['state']) {
+      'pending' => LibraryBookReview(
+        state: LibraryBookReviewState.pending,
+        submittedAt: when(raw['submittedAt']),
+      ),
+      // Sent back without a note is not a state the author could act on.
+      'changes_requested' when note is String && note.trim().isNotEmpty =>
+        LibraryBookReview(
+          state: LibraryBookReviewState.changesRequested,
+          // The server caps a note at 1,000 characters; never trust that
+          // with the dialog's layout.
+          note:
+              note.trim().length > 1000
+                  ? '${note.trim().substring(0, 1000)}…'
+                  : note.trim(),
+          decidedAt: when(raw['decidedAt']),
+        ),
+      _ => none,
+    };
+  }
+}
+
+/// Where a collection is on its way to readers. Derived, never stored: the
+/// publication status plus, for a draft, its review round.
+enum LibraryBookStage {
+  /// Private, and not waiting on anyone.
+  draft,
+
+  /// Private, waiting for a ChessEver decision.
+  inReview,
+
+  /// Private again: staff sent it back with a note.
+  changesRequested,
+
+  /// Public in Collections.
+  live,
+
+  /// Archived by ChessEver; the owner cannot change it.
+  takenDown,
+}
+
+/// Who a collection is credited to. [self] is the publishing account (the
+/// server shows that account's profile photo); [other] credits a named author
+/// with their own, separate photo. Old servers omit the field entirely, which
+/// means [self] — see [LibraryBookMetadata.authorCredit] for the send rule.
+enum AuthorCredit {
+  self,
+  other;
+
+  static AuthorCredit? maybeParse(Object? raw) => switch (raw) {
+    'self' => AuthorCredit.self,
+    'other' => AuthorCredit.other,
+    _ => null,
+  };
+
+  String get wire => name;
+}
+
+/// One existing published-author match returned by the author directory. The
+/// id groups a person's collections together across ChessEver.
+class AuthorSuggestion {
+  const AuthorSuggestion({
+    required this.id,
+    required this.name,
+    this.bookCount = 0,
+    this.avatarUrl,
+    this.userId,
+    this.authProject,
+  });
+
+  final String id;
+  final String name;
+  final int bookCount;
+  final String? avatarUrl;
+
+  /// The ChessEver account behind an account author, so picking the match
+  /// can file the collection under that same author. Null for a name that
+  /// is only ever credited.
+  final String? userId;
+  final String? authProject;
+
+  bool get hasAccount => userId != null && authProject != null;
+
+  factory AuthorSuggestion.fromJson(Map<String, dynamic> json) =>
+      AuthorSuggestion(
+        id: json['id'] as String? ?? '',
+        name: (json['name'] as String? ?? '').trim(),
+        bookCount: (json['bookCount'] as num?)?.toInt() ?? 0,
+        avatarUrl: _httpsOrNull(json['avatarUrl']),
+        userId: json['userId'] as String?,
+        authProject: json['authProject'] as String?,
+      );
+
+  static String? _httpsOrNull(Object? raw) {
+    if (raw is! String) return null;
+    final uri = Uri.tryParse(raw.trim());
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return null;
+    return uri.toString();
+  }
+}
+
+/// Link sharing and catalog publication are independent. A share token alone
+/// never makes a folder a public book.
+bool libraryFolderCanPublish(LibraryFolder folder) =>
+    !folder.isSubscribed &&
+    !folder.isLikedGames &&
+    !folder.isPermanentLibraryFolder &&
+    folder.id != kTwicBookId;
+
+/// One credited author of a collection: the name readers see and, when one
+/// was uploaded, their own photo. Every author carries their own credit,
+/// like the first author always could: [AuthorCredit.self] is their own
+/// ChessEver account (linked by [userId]/[authProject] when it is not the
+/// publishing account), pictured by its profile photo; [AuthorCredit.other]
+/// credits the person, pictured by [photoUrl].
+@immutable
+class BookAuthor {
+  const BookAuthor({
+    required this.name,
+    this.photoUrl = '',
+    this.id = '',
+    this.about,
+    this.credit,
+    this.userId,
+    this.authProject,
+  });
+
+  final String name;
+  final String photoUrl;
+
+  /// The catalog identity (`account:`/`credit:`) the author's collections
+  /// are filed under, when the server sent one.
+  final String id;
+
+  /// This author's description, when the payload carries one (a book's own
+  /// detail and editor answers; list rows omit it). Null leaves it alone.
+  final String? about;
+
+  /// This author's own credit, when the payload carries one.
+  final AuthorCredit? credit;
+
+  /// The ChessEver account a `self` author is linked to (editor answers
+  /// only; never on a public one).
+  final String? userId;
+  final String? authProject;
+
+  bool get hasAccountLink => userId != null && authProject != null;
+
+  @override
+  bool operator ==(Object other) =>
+      other is BookAuthor &&
+      other.name == name &&
+      other.photoUrl == photoUrl &&
+      other.id == id &&
+      other.about == about &&
+      other.credit == credit &&
+      other.userId == userId &&
+      other.authProject == authProject;
+
+  @override
+  int get hashCode =>
+      Object.hash(name, photoUrl, id, about, credit, userId, authProject);
+}
+
+/// How several authors read on one line: "A", "A and B", "A, B and C".
+/// Blank names are skipped; no names give an empty string.
+String bookAuthorCredit(Iterable<String> names) {
+  final named = [
+    for (final name in names)
+      if (name.trim().isNotEmpty) name.trim(),
+  ];
+  if (named.length <= 1) return named.join();
+  return '${named.take(named.length - 1).join(', ')} and ${named.last}';
+}
+
+/// The most authors one collection can credit, the first one included.
+const libraryBookMaxAuthors = 6;
+
+class LibraryBookMetadata {
+  const LibraryBookMetadata({
+    required this.title,
+    this.subtitle = '',
+    this.slug,
+    this.annotator,
+    this.author = '',
+    this.about = '',
+    this.foreword = '',
+    this.publisher = '',
+    this.publishedYear,
+    this.coverUrl = '',
+    this.authorCredit,
+    this.authorPhotoUrl = '',
+    this.coAuthors = const [],
+    this.sendAuthorList = false,
+    this.authorAbout,
+    this.authorUserId,
+    this.authorAuthProject,
+  });
+
+  final String title;
+  final String subtitle;
+  final String? slug;
+  final String? annotator;
+  final String author;
+  final String about;
+  final String foreword;
+  final String publisher;
+  final int? publishedYear;
+  final String coverUrl;
+
+  /// null means the key is absent from the save body entirely — the only safe
+  /// value for an old server that rejects unknown keys with 400, and for a new
+  /// book that never left "Me". [AuthorCredit.self]/[AuthorCredit.other] are
+  /// sent verbatim: "other" when the user credited someone else, "self" (which
+  /// also tells the server to drop any credited photo) when a book that
+  /// already carried the key is switched back to Me.
+  final AuthorCredit? authorCredit;
+
+  /// The credited author's own photo, distinct from the cover and from the
+  /// publishing account's profile photo. Empty when none is set.
+  final String authorPhotoUrl;
+
+  /// Everyone credited after the first author, in order. [author] and
+  /// [authorPhotoUrl] stay the first author's, so a one-author collection
+  /// reads and saves exactly as it always did.
+  final List<BookAuthor> coAuthors;
+
+  /// Whether a save writes the whole author list. Only set when there is more
+  /// than one author, or the saved collection had more than one (so removing
+  /// them reaches the server): an older server refuses the unknown key.
+  final bool sendAuthorList;
+
+  /// The first author's description of themselves, shown on their author
+  /// page and under "About the author". Null when the server predates it (it
+  /// then refuses the key), so it is only sent when known or when one is
+  /// written.
+  final String? authorAbout;
+
+  /// The ChessEver account the first author is linked to when they are
+  /// credited as themselves but are not the publishing account.
+  final String? authorUserId;
+  final String? authorAuthProject;
+
+  bool get authorHasAccountLink =>
+      authorUserId != null && authorAuthProject != null;
+
+  /// Every credited author, the first one included.
+  List<BookAuthor> get authors => [
+    if (author.trim().isNotEmpty || coAuthors.isNotEmpty)
+      BookAuthor(
+        name: author.trim(),
+        photoUrl: authorPhotoUrl,
+        about: authorAbout,
+        credit: authorHasAccountLink ? AuthorCredit.self : authorCredit,
+        userId: authorUserId,
+        authProject: authorAuthProject,
+      ),
+    ...coAuthors,
+  ];
+
+  /// The author list of a book payload, or empty when the server sent none.
+  static List<BookAuthor> _authorsOf(Object? raw) {
+    if (raw is! List) return const [];
+    return [
+      for (final item in raw)
+        if (item is Map && (item['name'] as Object?) is String)
+          if ((item['name'] as String).trim().isNotEmpty)
+            BookAuthor(
+              name: (item['name'] as String).trim(),
+              photoUrl: item['photoUrl'] as String? ?? '',
+              id: item['id'] as String? ?? '',
+              about: item['about'] as String?,
+              credit: AuthorCredit.maybeParse(item['credit']),
+              userId: item['userId'] as String?,
+              authProject: item['authProject'] as String?,
+            ),
+    ];
+  }
+
+  factory LibraryBookMetadata.fromJson(Map<String, dynamic> json) {
+    // With an author list the legacy `author` is every name joined for old
+    // clients; the first entry is the one this form's name field edits.
+    final listed = _authorsOf(json['authors']);
+    return LibraryBookMetadata(
+      title: json['title'] as String? ?? '',
+      subtitle: json['subtitle'] as String? ?? '',
+      slug: json['slug'] as String?,
+      annotator:
+          json.containsKey('annotator')
+              ? json['annotator'] as String? ?? ''
+              : null,
+      author:
+          listed.isNotEmpty
+              ? listed.first.name
+              : json['author'] as String? ?? '',
+      about: json['about'] as String? ?? '',
+      foreword: json['foreword'] as String? ?? '',
+      publisher: json['publisher'] as String? ?? '',
+      publishedYear: (json['publishedYear'] as num?)?.toInt(),
+      coverUrl: json['coverUrl'] as String? ?? '',
+      // A present key (even an unrecognised value, which parses to self via
+      // the caller) is what [LibraryBookPublication.hadAuthorCreditKey]
+      // records; the typed value here is only the known states.
+      authorCredit: AuthorCredit.maybeParse(json['authorCredit']),
+      authorPhotoUrl:
+          listed.isNotEmpty && listed.first.photoUrl.isNotEmpty
+              ? listed.first.photoUrl
+              : json['authorPhotoUrl'] as String? ?? '',
+      coAuthors: listed.skip(1).toList(growable: false),
+      sendAuthorList:
+          listed.length > 1 || listed.any((author) => author.hasAccountLink),
+      authorAbout:
+          json.containsKey('authorBio')
+              ? json['authorBio'] as String? ?? ''
+              : listed.isNotEmpty
+              ? listed.first.about
+              : null,
+      authorUserId: listed.isNotEmpty ? listed.first.userId : null,
+      authorAuthProject: listed.isNotEmpty ? listed.first.authProject : null,
+    );
+  }
+
+  LibraryBookMetadata copyWith({
+    String? author,
+    AuthorCredit? authorCredit,
+    bool clearAuthorCredit = false,
+    String? authorPhotoUrl,
+    List<BookAuthor>? coAuthors,
+    bool? sendAuthorList,
+    String? authorUserId,
+    String? authorAuthProject,
+    bool clearAuthorLink = false,
+  }) => LibraryBookMetadata(
+    title: title,
+    subtitle: subtitle,
+    slug: slug,
+    annotator: annotator,
+    author: author ?? this.author,
+    about: about,
+    foreword: foreword,
+    publisher: publisher,
+    publishedYear: publishedYear,
+    coverUrl: coverUrl,
+    authorCredit:
+        clearAuthorCredit ? null : (authorCredit ?? this.authorCredit),
+    authorPhotoUrl: authorPhotoUrl ?? this.authorPhotoUrl,
+    coAuthors: coAuthors ?? this.coAuthors,
+    sendAuthorList: sendAuthorList ?? this.sendAuthorList,
+    authorAbout: authorAbout,
+    authorUserId: clearAuthorLink ? null : (authorUserId ?? this.authorUserId),
+    authorAuthProject:
+        clearAuthorLink ? null : (authorAuthProject ?? this.authorAuthProject),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'title': title.trim(),
+    'subtitle': _nullable(subtitle),
+    if (slug != null && slug!.trim().isNotEmpty) 'slug': slug!.trim(),
+    if (annotator != null) 'annotator': _nullable(annotator!),
+    'author': _nullable(author),
+    'about': _nullable(about),
+    'foreword': _nullable(foreword),
+    'publisher': _nullable(publisher),
+    'publishedYear': publishedYear,
+    'coverUrl': _nullable(coverUrl),
+    // Omit the key unless it must travel: old servers 400 on unknown keys, so
+    // a new "Me" book sends nothing. authorPhotoUrl is never written here — it
+    // is only ever changed through the author-photo upload/remove endpoints.
+    if (authorCredit != null) 'authorCredit': authorCredit!.wire,
+    // Null clears what this collection wrote about its first author.
+    if (authorAbout != null) 'authorAbout': _nullable(authorAbout!),
+    // Each photo is changed through the author-photo endpoints, and the
+    // server keeps a photo with its name when the list is edited. An empty
+    // list is refused; with nobody left to credit, the null `author` above
+    // is what clears the credit.
+    if (sendAuthorList && _creditedNames.isNotEmpty)
+      'authors': [
+        for (final credited in authors)
+          if (credited.name.trim().isNotEmpty)
+            {
+              'name': credited.name.trim(),
+              if (credited.about != null) 'about': _nullable(credited.about!),
+              if (credited.credit != null) 'credit': credited.credit!.wire,
+              if (credited.hasAccountLink) 'userId': credited.userId,
+              if (credited.hasAccountLink) 'authProject': credited.authProject,
+            },
+      ],
+  };
+
+  List<String> get _creditedNames => [
+    for (final credited in authors)
+      if (credited.name.trim().isNotEmpty) credited.name.trim(),
+  ];
+
+  static String? _nullable(String value) =>
+      value.trim().isEmpty ? null : value.trim();
+}
+
+class LibraryBookPublication {
+  const LibraryBookPublication({
+    required this.status,
+    required this.metadata,
+    this.bookId,
+    this.gameCount = 0,
+    this.hadAuthorCreditKey = false,
+    this.review = LibraryBookReview.none,
+  });
+
+  final String status;
+  final LibraryBookMetadata metadata;
+  final String? bookId;
+  final int gameCount;
+
+  /// Whether the loaded book JSON carried an `authorCredit` key at all (any
+  /// value, even one this client does not recognise). Once a book has the key,
+  /// a save must keep sending it, so the editor seeds its send rule from this.
+  final bool hadAuthorCreditKey;
+
+  /// The draft's review round. Only a draft can be in review.
+  final LibraryBookReview review;
+  bool get isPublished => status == 'published';
+
+  LibraryBookStage get stage => switch (status) {
+    'published' => LibraryBookStage.live,
+    'archived' => LibraryBookStage.takenDown,
+    _ => switch (review.state) {
+      LibraryBookReviewState.pending => LibraryBookStage.inReview,
+      LibraryBookReviewState.changesRequested =>
+        LibraryBookStage.changesRequested,
+      LibraryBookReviewState.none => LibraryBookStage.draft,
+    },
+  };
+
+  factory LibraryBookPublication.fromJson(
+    Map<String, dynamic> json, {
+    required String fallbackTitle,
+  }) {
+    final status = json['status'];
+    if (!const {
+      'unpublished',
+      'draft',
+      'published',
+      'archived',
+    }.contains(status)) {
+      throw const FormatException('Unknown book publication state');
+    }
+    final rawBook = json['book'];
+    final book = rawBook is Map ? Map<String, dynamic>.from(rawBook) : null;
+    return LibraryBookPublication(
+      status: status as String,
+      metadata:
+          book == null
+              ? LibraryBookMetadata(title: fallbackTitle)
+              : LibraryBookMetadata.fromJson(book),
+      bookId: book?['id'] as String?,
+      gameCount: (book?['gameCount'] as num?)?.toInt() ?? 0,
+      hadAuthorCreditKey: book?.containsKey('authorCredit') ?? false,
+      // A stale review on anything but a draft is ignored, as the server does.
+      review:
+          status == 'draft'
+              ? LibraryBookReview.fromJson(book?['review'])
+              : LibraryBookReview.none,
+    );
+  }
+}
+
+abstract class LibraryBookPublisher {
+  bool get isConfigured;
+  Future<LibraryBookPublication> load(LibraryFolder folder);
+  Future<LibraryBookPublication> save(
+    LibraryFolder folder,
+    LibraryBookMetadata metadata, {
+    bool publish = false,
+    bool refreshGames = false,
+  });
+  Future<LibraryBookPublication> unpublish(LibraryFolder folder);
+  Future<void> unpublishTree(LibraryFolder folder);
+
+  /// The collection's own cover (shown in collection cards), never the
+  /// profile photo. [image] is a prepared 2:3 image; the book's details must
+  /// have been saved once.
+  Future<LibraryBookPublication> uploadCover(
+    LibraryFolder folder,
+    Uint8List image,
+  );
+  Future<LibraryBookPublication> removeCover(LibraryFolder folder);
+
+  /// The credited author's own square photo (shown with their name in
+  /// Collections), distinct from the cover and the profile photo. [image] is a
+  /// prepared square image; the book's details must have been saved once.
+  /// Uploading sets the credit to "other" server-side.
+  ///
+  /// [index] is the author's place in the credited list (0 is the first
+  /// author, the only one an older server knows).
+  Future<LibraryBookPublication> uploadAuthorPhoto(
+    LibraryFolder folder,
+    Uint8List image, {
+    int index = 0,
+  });
+  Future<LibraryBookPublication> removeAuthorPhoto(
+    LibraryFolder folder, {
+    int index = 0,
+  });
+
+  /// Existing published ChessEver authors whose name matches [name], so one
+  /// person's collections stay grouped. Any failure (old server, network)
+  /// resolves to an empty list rather than throwing — suggestions are an
+  /// optional aid, never a blocker.
+  Future<List<AuthorSuggestion>> suggestAuthors(String name);
+}
+
+class LibraryBookPublicationException implements Exception {
+  const LibraryBookPublicationException(this.message);
+  final String message;
+}
+
+/// The server could not turn some of the folder's games into a publishable
+/// book and named them. Nothing was changed.
+class LibraryBookInvalidGames extends LibraryBookPublicationException {
+  LibraryBookInvalidGames({required this.count, required this.games})
+    : super(_describe(count, games));
+
+  /// How many games were refused; [games] names at most the first few.
+  final int count;
+  final List<({String label, String reason})> games;
+
+  static String _describe(
+    int count,
+    List<({String label, String reason})> games,
+  ) {
+    // A server that names no games and gives no count: say so plainly rather
+    // than invent a number.
+    final head = switch (count) {
+      0 => 'Some games in this folder could not be prepared for publishing.',
+      1 => '1 game in this folder could not be prepared for publishing.',
+      _ => '$count games in this folder could not be prepared for publishing.',
+    };
+    final named = [
+      for (final game in games)
+        game.reason.isEmpty
+            ? '\u2022 ${game.label}'
+            : '\u2022 ${game.label}: ${game.reason}',
+    ];
+    final more = count - games.length;
+    return [
+      head,
+      ...named,
+      if (named.isNotEmpty && more > 0) '\u2022 and $more more',
+      'Fix ${count == 1 ? 'it' : 'them'} in the folder, then submit again. The collection is unchanged.',
+    ].join('\n');
+  }
+
+  static LibraryBookInvalidGames fromError(Map<dynamic, dynamic> details) {
+    final listed = <({String label, String reason})>[];
+    final raw = details['games'];
+    if (raw is List) {
+      for (final item in raw.whereType<Map>()) {
+        final label = (item['label'] as Object?)?.toString().trim() ?? '';
+        if (label.isEmpty) continue;
+        final reason = (item['reason'] as Object?)?.toString().trim() ?? '';
+        listed.add((label: label, reason: reason));
+      }
+    }
+    final counted = (details['invalidGameCount'] as num?)?.toInt() ?? 0;
+    return LibraryBookInvalidGames(
+      count: counted > listed.length ? counted : listed.length,
+      games: List.unmodifiable(listed),
+    );
+  }
+}
+
+/// The proxy in front of gamebase does not carry book publishing yet: an edge
+/// function deployed before these routes existed answers `route_not_allowed`
+/// (or `method_not_allowed` for PUT and DELETE) instead of forwarding.
+class LibraryBookPublishingUnavailable extends LibraryBookPublicationException {
+  const LibraryBookPublishingUnavailable()
+    : super('Book publishing is not available here yet.');
+}
+
+/// Uses an authenticated proxy. Upstream API keys stay on the server; there
+/// is no fallback endpoint or anonymous publication request.
+///
+/// Which proxy depends on the account's project, and the two never mix:
+/// - a production account goes through [productionBaseUrl], the gamebase
+///   proxy edge function, which injects the upstream key and forwards the
+///   member's own token so the server can tell whose folder it is;
+/// - a test account goes through [baseUrl], an explicitly configured test
+///   proxy that may never point at production.
+class GamebaseLibraryBookPublisher implements LibraryBookPublisher {
+  GamebaseLibraryBookPublisher({
+    required Dio dio,
+    required String? baseUrl,
+    required String? supabaseUrl,
+    required String? Function() accessToken,
+    String? anonKey,
+    String? productionBaseUrl,
+  }) : _dio = dio,
+       _baseUrl = baseUrl?.trim().replaceFirst(RegExp(r'/+$'), ''),
+       _productionBaseUrl = productionBaseUrl?.trim().replaceFirst(
+         RegExp(r'/+$'),
+         '',
+       ),
+       _supabaseUrl = supabaseUrl,
+       _accessToken = accessToken,
+       _anonKey = anonKey;
+
+  final Dio _dio;
+  final String? _baseUrl;
+  final String? _productionBaseUrl;
+  final String? _supabaseUrl;
+  final String? Function() _accessToken;
+  final String? _anonKey;
+
+  @override
+  // Keep invalid-but-present configuration enabled for deletion checks: an
+  // unsafe test endpoint must block withdrawal, never silently skip it. A
+  // production account always has a proxy it may use (its own project's).
+  bool get isConfigured =>
+      _isProductionAccount || (_baseUrl != null && _baseUrl.isNotEmpty);
+
+  /// Signed in to the production project, over a plain https origin.
+  bool get _isProductionAccount => _isProjectOrigin(_productionSupabaseHost);
+
+  bool _isProjectOrigin(String host) {
+    final auth = Uri.tryParse(_supabaseUrl?.trim() ?? '');
+    return auth != null &&
+        auth.scheme == 'https' &&
+        auth.host == host &&
+        auth.port == 443 &&
+        (auth.path.isEmpty || auth.path == '/') &&
+        auth.userInfo.isEmpty &&
+        !auth.hasQuery &&
+        !auth.hasFragment;
+  }
+
+  /// A production proxy carries a member's production token, so it is only
+  /// ever the project's own functions host or a chessever.com host, over
+  /// https, with nothing smuggled into the URL.
+  static bool _mayCarryProductionToken(String? base) {
+    final endpoint = Uri.tryParse(base ?? '');
+    if (endpoint == null ||
+        endpoint.scheme != 'https' ||
+        endpoint.host.isEmpty ||
+        endpoint.userInfo.isNotEmpty ||
+        endpoint.hasQuery ||
+        endpoint.hasFragment) {
+      return false;
+    }
+    final host = endpoint.host.toLowerCase().replaceFirst(RegExp(r'\.+$'), '');
+    return host == _productionSupabaseHost ||
+        host == 'chessever.com' ||
+        host.endsWith('.chessever.com');
+  }
+
+  /// Where a production account publishes. A configured proxy on any other
+  /// host is passed over for the project's own function, which is always
+  /// allowed: refusing instead would make every folder delete fail on a build
+  /// whose read proxy happens to live elsewhere.
+  String get _productionBase {
+    final configured = _productionBaseUrl;
+    if (configured != null && _mayCarryProductionToken(configured)) {
+      return configured;
+    }
+    return 'https://$_productionSupabaseHost/functions/v1/gamebase-proxy';
+  }
+
+  /// The endpoint requests go to, or null when this build must not publish.
+  String? get _safeBase {
+    if (_isProductionAccount) return _productionBase;
+    return _hasSafeTestConfiguration ? _baseUrl : null;
+  }
+
+  bool get _hasSafeTestConfiguration {
+    final auth = Uri.tryParse(_supabaseUrl?.trim() ?? '');
+    if (auth == null ||
+        auth.scheme != 'https' ||
+        auth.host != _testSupabaseHost ||
+        auth.port != 443 ||
+        (auth.path.isNotEmpty && auth.path != '/') ||
+        auth.userInfo.isNotEmpty ||
+        auth.hasQuery ||
+        auth.hasFragment) {
+      return false;
+    }
+    final endpoint = Uri.tryParse(_baseUrl ?? '');
+    if (endpoint == null ||
+        endpoint.host.isEmpty ||
+        endpoint.userInfo.isNotEmpty ||
+        endpoint.hasQuery ||
+        endpoint.hasFragment) {
+      return false;
+    }
+    final host = endpoint.host.toLowerCase().replaceFirst(RegExp(r'\.+$'), '');
+    final loopback = const {'localhost', '127.0.0.1', '::1'}.contains(host);
+    if (endpoint.scheme != 'https' &&
+        !(endpoint.scheme == 'http' && loopback)) {
+      return false;
+    }
+    return host != 'chessever.com' &&
+        !host.endsWith('.chessever.com') &&
+        !host.contains('oelbsuggrzyqwzmvidju') &&
+        (!(host == 'supabase.co' || host.endsWith('.supabase.co')) ||
+            host == _testSupabaseHost);
+  }
+
+  @override
+  Future<LibraryBookPublication> load(LibraryFolder folder) =>
+      _request(folder, 'GET');
+
+  @override
+  Future<LibraryBookPublication> save(
+    LibraryFolder folder,
+    LibraryBookMetadata metadata, {
+    bool publish = false,
+    bool refreshGames = false,
+  }) => _request(
+    folder,
+    'PUT',
+    body: {
+      ...metadata.toJson(),
+      if (publish) 'publish': true,
+      if (refreshGames) 'refreshGames': true,
+    },
+  );
+
+  @override
+  Future<LibraryBookPublication> unpublish(LibraryFolder folder) =>
+      _request(folder, 'DELETE');
+
+  @override
+  Future<void> unpublishTree(LibraryFolder folder) async {
+    try {
+      // Deleting a folder waits on this, with nothing on screen but the
+      // folder: a minute is long enough to withdraw and short enough to say
+      // so when the server is not answering.
+      await _request(
+        folder,
+        'DELETE',
+        query: {'includeDescendants': true},
+        receiveTimeout: const Duration(seconds: 60),
+      );
+    } on LibraryBookPublishingUnavailable {
+      // A production proxy that cannot publish cannot have published from
+      // this app either, and deleting a folder worked before publishing
+      // existed here: do not start refusing it. A test proxy stays strict.
+      if (!_isProductionAccount) rethrow;
+    }
+  }
+
+  @override
+  Future<LibraryBookPublication> uploadCover(
+    LibraryFolder folder,
+    Uint8List image,
+  ) => _request(
+    folder,
+    'POST',
+    resource: 'book/cover',
+    body: {'image': base64Encode(image)},
+  );
+
+  @override
+  Future<LibraryBookPublication> removeCover(LibraryFolder folder) =>
+      _request(folder, 'DELETE', resource: 'book/cover');
+
+  @override
+  Future<LibraryBookPublication> uploadAuthorPhoto(
+    LibraryFolder folder,
+    Uint8List image, {
+    int index = 0,
+  }) => _request(
+    folder,
+    'POST',
+    resource: 'book/author-photo',
+    body: {'image': base64Encode(image)},
+    // The first author needs no index, so an older server still takes it.
+    query: index > 0 ? {'index': index} : null,
+  );
+
+  @override
+  Future<LibraryBookPublication> removeAuthorPhoto(
+    LibraryFolder folder, {
+    int index = 0,
+  }) => _request(
+    folder,
+    'DELETE',
+    resource: 'book/author-photo',
+    query: index > 0 ? {'index': index} : null,
+  );
+
+  @override
+  Future<List<AuthorSuggestion>> suggestAuthors(String name) async {
+    final query = name.trim();
+    // The directory expects 1–60 chars; anything outside that, an unconfigured
+    // or unsafe environment, or no session simply yields no suggestions.
+    final base = _safeBase;
+    // The session is only read once there is a safe place to send it.
+    if (query.isEmpty || query.length > 60 || base == null || base.isEmpty) {
+      return const [];
+    }
+    final token = _accessToken();
+    if (token == null || token.isEmpty) return const [];
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '$base/api/library/authors',
+        queryParameters: {'name': query, 'limit': 6},
+        options: Options(
+          followRedirects: false,
+          maxRedirects: 0,
+          headers: {
+            'Authorization': 'Bearer $token',
+            if (_anonKey != null && _anonKey.isNotEmpty) 'apikey': _anonKey,
+            'Accept': 'application/json',
+          },
+        ),
+      );
+      final items = response.data?['data']?['items'];
+      if (items is! List) return const [];
+      return items
+          .whereType<Map>()
+          .map(
+            (raw) => AuthorSuggestion.fromJson(Map<String, dynamic>.from(raw)),
+          )
+          .where((author) => author.id.isNotEmpty && author.name.isNotEmpty)
+          .toList(growable: false);
+    } catch (_) {
+      // 404 on old servers, network errors, malformed JSON: no suggestions,
+      // silently. Author matching is an aid, never a gate.
+      return const [];
+    }
+  }
+
+  Future<LibraryBookPublication> _request(
+    LibraryFolder folder,
+    String method, {
+    Map<String, dynamic>? body,
+    Map<String, dynamic>? query,
+    String resource = 'book',
+    Duration? receiveTimeout,
+  }) async {
+    if (!libraryFolderCanPublish(folder)) {
+      throw const LibraryBookPublicationException(
+        'Only your own folders and databases can become books.',
+      );
+    }
+    if (!isConfigured) {
+      throw const LibraryBookPublicationException(
+        'Book publishing is not configured for this app.',
+      );
+    }
+    final base = _safeBase;
+    if (base == null) {
+      throw const LibraryBookPublicationException(
+        'Book publishing requires the test account environment and a safe test proxy URL.',
+      );
+    }
+    final token = _accessToken();
+    if (token == null || token.isEmpty) {
+      throw const LibraryBookPublicationException('Sign in to publish a book.');
+    }
+    try {
+      final response = await _dio.request<Map<String, dynamic>>(
+        '$base/api/library/folders/${Uri.encodeComponent(folder.id)}/$resource',
+        data: body,
+        queryParameters: query,
+        options: Options(
+          method: method,
+          followRedirects: false,
+          maxRedirects: 0,
+          receiveTimeout: receiveTimeout,
+          headers: {
+            'Authorization': 'Bearer $token',
+            if (_anonKey != null && _anonKey.isNotEmpty) 'apikey': _anonKey,
+            'Accept': 'application/json',
+          },
+        ),
+      );
+      final data = response.data?['data'];
+      if (data is! Map) throw const FormatException('Missing publication');
+      return LibraryBookPublication.fromJson(
+        Map<String, dynamic>.from(data),
+        fallbackTitle: folder.name,
+      );
+    } on DioException catch (error) {
+      final payload = error.response?.data;
+      final details = payload is Map ? payload['error'] : null;
+      if (details == 'route_not_allowed' || details == 'method_not_allowed') {
+        throw const LibraryBookPublishingUnavailable();
+      }
+      if (resource == 'book/cover') {
+        throw LibraryBookPublicationException(switch (details is Map
+            ? details['code']
+            : null) {
+          'cover_type' => 'Use a JPEG, PNG or WebP image.',
+          'cover_animated' => 'Use a still image, not an animation.',
+          'cover_aspect' => 'The cover must be a 2:3 portrait.',
+          'cover_too_small' => 'Use an image at least 600 × 900 pixels.',
+          'bad_base64' => 'This image could not be read. Choose another one.',
+          'cover_unavailable' =>
+            'Cover uploads are unavailable right now. Try again shortly.',
+          'taken_down' =>
+            'ChessEver took this collection down. Ask ChessEver to restore it.',
+          _ => switch (error.response?.statusCode) {
+            401 => 'Your session expired. Sign in again to continue.',
+            403 => 'You do not have permission to change this cover.',
+            409 => 'Save the collection details, then add the cover.',
+            413 => 'This image is too large. Choose one under 8 MB.',
+            404 || 503 => 'Cover uploads are not available here yet.',
+            _ => 'Could not save the cover. Retry when connected.',
+          },
+        });
+      }
+      if (resource == 'book/author-photo') {
+        throw LibraryBookPublicationException(switch (details is Map
+            ? details['code']
+            : null) {
+          'author_photo_type' => 'Use a JPEG, PNG or WebP image.',
+          'author_photo_animated' => 'Use a still image, not an animation.',
+          'author_photo_aspect' => 'Crop the photo to a square.',
+          'author_photo_too_small' =>
+            'Use an image at least 256 by 256 pixels.',
+          'author_photo_unavailable' =>
+            'Author photo uploads are not available here yet.',
+          // too_large / bad_base64 reuse the cover equivalents.
+          'bad_base64' => 'This image could not be read. Choose another one.',
+          'too_large' => 'This image is too large. Choose one under 8 MB.',
+          'publication_unavailable' =>
+            'Save the collection details, then add the author photo.',
+          'taken_down' =>
+            'ChessEver took this collection down. Ask ChessEver to restore it.',
+          _ => switch (error.response?.statusCode) {
+            401 => 'Your session expired. Sign in again to continue.',
+            403 => 'You do not have permission to change this author photo.',
+            409 => 'Save the collection details, then add the author photo.',
+            413 => 'This image is too large. Choose one under 8 MB.',
+            404 ||
+            405 ||
+            503 => 'Author photo uploads are not available here yet.',
+            _ => 'Could not save the author photo. Retry when connected.',
+          },
+        });
+      }
+      // An older server refuses the unknown author list with a bare 400. This
+      // is checked before the credit key: every server that knows the list
+      // knows the credit, so with both sent the list is what was refused.
+      if (resource == 'book' &&
+          method == 'PUT' &&
+          body?['authors'] != null &&
+          error.response?.statusCode == 400 &&
+          (details is! Map || details['code'] == null)) {
+        throw const LibraryBookPublicationException(
+          'Crediting several authors is not available here yet. Keep one author for now; your details are still here.',
+        );
+      }
+      // An older still server refuses the unknown credit key the same way.
+      if (resource == 'book' &&
+          method == 'PUT' &&
+          body?['authorCredit'] == 'other' &&
+          error.response?.statusCode == 400 &&
+          (details is! Map || details['code'] == null)) {
+        throw const LibraryBookPublicationException(
+          'Crediting someone else is not available here yet. Choose Me for now; your details are still here.',
+        );
+      }
+      if (details is Map && details['code'] == 'invalid_collection_games') {
+        throw LibraryBookInvalidGames.fromError(details);
+      }
+      if (details is Map && details['code'] == 'publication_deleting') {
+        throw const LibraryBookPublicationException(
+          'This folder has a pending deletion. Retry deleting it to finish.',
+        );
+      }
+      final code = details is Map ? details['code'] : null;
+      // Why the server refused, when it said so in words an author can act on.
+      final said = details is Map ? details['message'] : null;
+      final refusal =
+          code == 'forbidden' &&
+                  said is String &&
+                  said.trim().isNotEmpty &&
+                  said.length <= 160
+              ? said.trim()
+              : null;
+      // A 422 is the server refusing the content, in its own words: say them
+      // rather than guess. (A refused game is not an empty folder.)
+      final refused =
+          error.response?.statusCode == 422 &&
+                  code == null &&
+                  said is String &&
+                  said.trim().isNotEmpty &&
+                  said.length <= 240
+              ? said.trim()
+              : null;
+      final named = switch (code) {
+        'taken_down' =>
+          'ChessEver took this collection down. Ask ChessEver to restore it.',
+        'empty_collection' =>
+          'Add at least one game to this folder before submitting.',
+        'invalid_authors' =>
+          'Check the authors: up to $libraryBookMaxAuthors, each named once.',
+        // The server's code for missing details on a submission.
+        'forbidden_field' =>
+          'Add an author credit and a description before submitting.',
+        _ => refusal ?? refused,
+      };
+      if (named != null) throw LibraryBookPublicationException(named);
+      final snapshotFailure = libraryBookSnapshotFailureMessage(
+        details,
+        error.response?.statusCode,
+      );
+      if (snapshotFailure != null) {
+        throw LibraryBookPublicationException(snapshotFailure);
+      }
+      final message = switch (error.response?.statusCode) {
+        401 => 'Your session expired. Sign in again to continue.',
+        403 => 'You do not have permission to publish this folder.',
+        404 ||
+        503 => 'Book publishing is not available in this environment yet.',
+        409 =>
+          query?['includeDescendants'] == true
+              ? 'A book in this folder is being saved. Wait, then retry deleting the folder.'
+              : 'This book is already being processed. Wait a moment and retry.',
+        413 =>
+          'Publish at most 1,000 games and 10 MB at a time. Move a smaller set into a folder.',
+        400 || 422 => 'Could not prepare this collection for publishing.',
+        _ =>
+          'Could not update the book. Your entered details are still here. Retry when connected.',
+      };
+      throw LibraryBookPublicationException(message);
+    }
+  }
+}
+
+/// Withdraw every public book in the source subtree before removing its owner
+/// mapping. A failed withdrawal leaves the private folder recoverable.
+Future<void> deleteLibraryFolderWithPublications({
+  required LibraryFolder folder,
+  required LibraryBookPublisher publisher,
+  required String? supabaseUrl,
+  required Future<void> Function(String folderId) deleteFolder,
+}) async {
+  // Another client may already have published this source. Test accounts must
+  // withdraw even when this installation has no publishing endpoint configured.
+  final testAccount =
+      Uri.tryParse(supabaseUrl?.trim() ?? '')?.host == _testSupabaseHost;
+  // A folder that can never become a book (subscribed, liked games) has no
+  // publication to withdraw, and asking would refuse the delete.
+  if (libraryFolderCanPublish(folder) &&
+      (publisher.isConfigured || testAccount)) {
+    await publisher.unpublishTree(folder);
+  }
+  await deleteFolder(folder.id);
+}
+
+final libraryBookPublisherProvider = Provider<LibraryBookPublisher>((ref) {
+  final dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(minutes: 5),
+    ),
+  );
+  ref.onDispose(() => dio.close());
+  final supabaseUrl = DesktopEnv.maybeGet('SUPABASE_URL')?.trim() ?? '';
+  final proxy = DesktopEnv.maybeGet('GAMEBASE_PROXY_BASE')?.trim() ?? '';
+  return GamebaseLibraryBookPublisher(
+    dio: dio,
+    baseUrl: DesktopEnv.maybeGet('LIBRARY_BOOK_PUBLISHING_BASE'),
+    // Production reaches gamebase the way every other desktop call does: the
+    // proxy edge function, which holds the upstream key (see
+    // supabase/functions/gamebase-proxy). Only a production account uses it.
+    productionBaseUrl:
+        proxy.isNotEmpty
+            ? proxy
+            : supabaseUrl.isEmpty
+            ? null
+            : '${supabaseUrl.replaceFirst(RegExp(r'/+$'), '')}/functions/v1/gamebase-proxy',
+    supabaseUrl: DesktopEnv.maybeGet('SUPABASE_URL'),
+    accessToken:
+        () => Supabase.instance.client.auth.currentSession?.accessToken,
+    anonKey: DesktopEnv.maybeGet('SUPABASE_ANON_KEY'),
+  );
+});

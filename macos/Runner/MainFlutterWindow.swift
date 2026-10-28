@@ -16,8 +16,20 @@ class MainFlutterWindow: NSWindow {
     self.backgroundColor = NSColor(red: 0x0C / 255, green: 0x0C / 255, blue: 0x0E / 255, alpha: 1)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    DesktopSandboxFileAccess.shared.attach(
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    DesktopWebAuthBridge.shared.attach(
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { controller in
       RegisterGeneratedPlugins(registry: controller)
+      DesktopSandboxFileAccess.shared.attach(
+        binaryMessenger: controller.engine.binaryMessenger
+      )
+      DesktopWebAuthBridge.shared.attach(
+        binaryMessenger: controller.engine.binaryMessenger
+      )
     }
     installDesktopFileOpenChannel(
       binaryMessenger: flutterViewController.engine.binaryMessenger

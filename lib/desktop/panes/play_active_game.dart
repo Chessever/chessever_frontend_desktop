@@ -1181,6 +1181,8 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
             ? buildVirtualPlayBoard(state.position.board, state.premoves)
             : review.position.board;
     final boardFen = virtualBoard.fen;
+    // Once per build, not per resize frame inside the LayoutBuilder.
+    final validMoves = makeLegalMoves(review.position);
     return LayoutBuilder(
       builder: (context, c) {
         final size = c.maxWidth < c.maxHeight ? c.maxWidth : c.maxHeight;
@@ -1216,7 +1218,7 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
               orientation: orientation,
               playerSide: playerSide,
               sideToMove: review.position.turn,
-              validMoves: makeLegalMoves(review.position),
+              validMoves: validMoves,
               lastMove: review.lastMove,
               premove: isLiveTip ? _lastQueuedPremove(state.premoves) : null,
               onSetPremove:
@@ -1500,7 +1502,25 @@ class _PlayNotationPanel extends StatelessWidget {
   }
 }
 
-ChessGame _playNotationGame(PlaySessionState state) {
+// Session states are immutable, so a replay is cached on the state object it
+// was built from. Dragging the board-size handle or resizing the window
+// rebuilds the pane every frame without changing the state, and each build
+// used to replay the whole game twice (plus once more while reviewing).
+final Expando<ChessGame> _playNotationGameCache = Expando<ChessGame>(
+  'playNotationGame',
+);
+final Expando<_PlayReviewSnapshotCacheEntry> _playReviewSnapshotCache =
+    Expando<_PlayReviewSnapshotCacheEntry>('playReviewSnapshot');
+
+typedef _PlayReviewSnapshotCacheEntry = ({
+  int? reviewPly,
+  _PlayReviewSnapshot snapshot,
+});
+
+ChessGame _playNotationGame(PlaySessionState state) =>
+    _playNotationGameCache[state] ??= _buildPlayNotationGame(state);
+
+ChessGame _buildPlayNotationGame(PlaySessionState state) {
   final startingPosition = _playStartingPosition(state.startingFen);
   var position = startingPosition;
   final mainline = <ChessMove>[];
@@ -1609,6 +1629,17 @@ class _PlayReviewSnapshot {
 }
 
 _PlayReviewSnapshot _playReviewSnapshot(
+  PlaySessionState state,
+  int? reviewPly,
+) {
+  final cached = _playReviewSnapshotCache[state];
+  if (cached != null && cached.reviewPly == reviewPly) return cached.snapshot;
+  final snapshot = _buildPlayReviewSnapshot(state, reviewPly);
+  _playReviewSnapshotCache[state] = (reviewPly: reviewPly, snapshot: snapshot);
+  return snapshot;
+}
+
+_PlayReviewSnapshot _buildPlayReviewSnapshot(
   PlaySessionState state,
   int? reviewPly,
 ) {

@@ -13,6 +13,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/compact_local_tree_index.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -1719,6 +1720,136 @@ void main() {
         ''');
       expect(rows.single['time_control_category'], isNull);
       expect(rows.single['is_online'], isNull);
+    },
+  );
+
+  test(
+    'current cache gains the original-order index without the full upgrade',
+    () async {
+      await db.execute('''
+        INSERT INTO local_chess_databases(
+          id, path, label, extension, size_bytes, imported_at_ms, updated_at_ms
+        ) VALUES ('order-db', 'order-db', 'Order', '.pgn', 0, 1, 1)
+        ''');
+      await db.execute('''
+        INSERT INTO local_chess_games(
+          id, database_id, moves, raw_pgn, pgn_hash, source_path,
+          source_relative_path, file_name, index_in_file, file_game_count
+        ) VALUES ('order-game', 'order-db', '["e2e4"]', '', 'hash', '', '',
+                  '', 0, 1)
+        ''');
+      // Sentinel for the full upgrade transaction: its next_uci backfill
+      // would rewrite this NULL. Opening an otherwise-current cache must not.
+      await db.execute('''
+        INSERT INTO local_chess_position_games(
+          database_id, fen_key, fen, game_id, ply, next_uci
+        ) VALUES ('order-db', 'k', 'f', 'order-game', 0, NULL)
+        ''');
+      await db.execute('DROP INDEX $localChessGamesOriginalOrderIndexName');
+
+      await createLocalChessResqliteDatabaseSchema(db);
+
+      // Inspect the schema on the writer connection, which ran the DDL. A
+      // pooled reader can answer EXPLAIN from its cached pre-DDL schema
+      // (EXPLAIN never verifies the schema cookie); real reads re-prepare.
+      final (indexes, plan) = await db.transaction((tx) async {
+        final indexes = await tx.select(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+          const <Object?>[localChessGamesOriginalOrderIndexName],
+        );
+        final plan = await tx.select(
+          '''
+          EXPLAIN QUERY PLAN
+          SELECT g.id
+          FROM local_chess_games g
+          LEFT JOIN local_chess_players wp ON wp.id = g.white_id
+          WHERE g.database_id = ?
+          ORDER BY g.source_relative_path COLLATE NOCASE DESC,
+            g.index_in_file DESC, g.id DESC
+          LIMIT 50 OFFSET 100
+          ''',
+          const <Object?>['order-db'],
+        );
+        return (indexes, plan);
+      });
+      expect(indexes, hasLength(1));
+      final refs = await db.select(
+        'SELECT next_uci FROM local_chess_position_games '
+        "WHERE game_id = 'order-game'",
+      );
+      expect(refs.single['next_uci'], isNull);
+
+      final details = plan.map((row) => row['detail']?.toString() ?? '');
+      expect(
+        details,
+        contains(contains(localChessGamesOriginalOrderIndexName)),
+      );
+      expect(details, isNot(contains(contains('TEMP B-TREE'))));
+    },
+  );
+
+  test(
+    'original-order pages and counts match with and without name filters',
+    () async {
+      final pgnFile = File('${temp.path}/original-order.pgn');
+      await pgnFile.writeAsString(
+        List<String>.generate(
+          5,
+          (index) =>
+              '[Event "Order $index"]\n'
+              '[White "White $index"]\n'
+              '[Black "${index.isEven ? 'Even Opponent' : 'Odd Opponent'}"]\n'
+              '[Result "1-0"]\n\n'
+              '1. e4 e5 1-0\n',
+        ).join('\n'),
+      );
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      Future<LocalChessGameQueryPage> page(
+        int pageNumber, {
+        LocalChessGameSortDirection direction = LocalChessGameSortDirection.asc,
+        LocalChessGameFilter? filter,
+      }) async {
+        final result = await repo.localDatabaseGamesPage(
+          databasePath: pgnFile.path,
+          sortDirection: direction,
+          filter: filter,
+          pageNumber: pageNumber,
+          pageSize: 2,
+        );
+        return result!;
+      }
+
+      final first = await page(0);
+      expect(first.totalCount, 5);
+      expect(first.games.map((game) => game.indexInFile), <int>[0, 1]);
+      final last = await page(2);
+      expect(last.games.map((game) => game.indexInFile), <int>[4]);
+      final descending = await page(
+        0,
+        direction: LocalChessGameSortDirection.desc,
+      );
+      expect(descending.games.map((game) => game.indexInFile), <int>[4, 3]);
+
+      // The opponent filter reads wp/bp, so the count keeps those joins.
+      final evenOnly = LocalChessGameFilter(opponentName: 'even opponent');
+      final filteredFirst = await page(0, filter: evenOnly);
+      expect(filteredFirst.totalCount, 3);
+      expect(filteredFirst.games.map((game) => game.indexInFile), <int>[0, 2]);
+      final filteredLast = await page(1, filter: evenOnly);
+      expect(filteredLast.games.map((game) => game.indexInFile), <int>[4]);
+
+      final searched = await repo.localDatabaseGamesPage(
+        databasePath: pgnFile.path,
+        search: 'odd',
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(searched!.totalCount, 2);
+      expect(searched.games.map((game) => game.indexInFile), <int>[1, 3]);
     },
   );
 

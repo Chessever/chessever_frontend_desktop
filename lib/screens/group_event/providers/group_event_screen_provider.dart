@@ -126,6 +126,15 @@ class _GroupEventScreenController
 
   var _groupBroadcastList = <GroupBroadcast>[];
 
+  GroupEventCardModel _cardFromBroadcast(
+    GroupBroadcast broadcast,
+    List<String> liveIds,
+  ) {
+    final card = GroupEventCardModel.fromGroupBroadcast(broadcast, liveIds);
+    if (tourEventCategory != GroupEventCategory.past) return card;
+    return card.asCompleted();
+  }
+
   bool get _isFilterActive {
     if (appliedFilter.formatsAndStates.isNotEmpty) {
       return true;
@@ -356,10 +365,7 @@ class _GroupEventScreenController
 
     final additions =
         toDisplay
-            .map(
-              (broadcast) =>
-                  GroupEventCardModel.fromGroupBroadcast(broadcast, liveIds),
-            )
+            .map((broadcast) => _cardFromBroadcast(broadcast, liveIds))
             .toList();
     final merged = mergeLiveEventsPreservingSourceOrder(
       current: currentModels ?? const <GroupEventCardModel>[],
@@ -381,7 +387,7 @@ class _GroupEventScreenController
     // Create updated models with new live status
     final updatedModels =
         currentModels.map((model) {
-          return GroupEventCardModel.fromGroupBroadcast(
+          return _cardFromBroadcast(
             _groupBroadcastList.firstWhere(
               (broadcast) => broadcast.id == model.id,
               orElse: () => _groupBroadcastList.first,
@@ -449,11 +455,7 @@ class _GroupEventScreenController
       final sortingService = ref.read(tournamentSortingServiceProvider);
 
       final tourEventCardModel =
-          tour
-              .map(
-                (t) => GroupEventCardModel.fromGroupBroadcast(t, strictLiveIds),
-              )
-              .toList();
+          tour.map((t) => _cardFromBroadcast(t, strictLiveIds)).toList();
 
       final sortedTours =
           tourEventCategory == GroupEventCategory.forYou
@@ -504,9 +506,7 @@ class _GroupEventScreenController
           .toList(growable: false);
       final newModels =
           newBroadcasts
-              .map(
-                (b) => GroupEventCardModel.fromGroupBroadcast(b, strictLiveIds),
-              )
+              .map((b) => _cardFromBroadcast(b, strictLiveIds))
               .toList();
 
       final knownIds =
@@ -567,11 +567,7 @@ class _GroupEventScreenController
       }
 
       final tourEventCardModel =
-          toDisplay
-              .map(
-                (t) => GroupEventCardModel.fromGroupBroadcast(t, strictLiveIds),
-              )
-              .toList();
+          toDisplay.map((t) => _cardFromBroadcast(t, strictLiveIds)).toList();
       final sortingService = ref.read(tournamentSortingServiceProvider);
 
       final sortedTours =
@@ -724,20 +720,17 @@ class _GroupEventScreenController
       _groupBroadcastList = groupBroadcast;
 
       final filteredTournaments =
-          groupBroadcast
-              .map(
-                (e) => GroupEventCardModel.fromGroupBroadcast(e, strictLiveIds),
-              )
-              .where((tour) {
-                if (tourEventCategory == GroupEventCategory.current) {
-                  return true;
-                } else if (tourEventCategory == GroupEventCategory.forYou) {
-                  return tour.tourEventCategory == TourEventCategory.upcoming;
-                } else {
-                  return true;
-                }
-              })
-              .toList();
+          groupBroadcast.map((e) => _cardFromBroadcast(e, strictLiveIds)).where(
+            (tour) {
+              if (tourEventCategory == GroupEventCategory.current) {
+                return true;
+              } else if (tourEventCategory == GroupEventCategory.forYou) {
+                return tour.tourEventCategory == TourEventCategory.upcoming;
+              } else {
+                return true;
+              }
+            },
+          ).toList();
 
       state = AsyncValue.data(filteredTournaments);
     } catch (error, stackTrace) {

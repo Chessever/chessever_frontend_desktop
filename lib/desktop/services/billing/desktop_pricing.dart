@@ -14,8 +14,15 @@ class DesktopTierPricing {
 
   double get annualMonthlyEquivalent => annualAmount / 12;
 
+  /// Dollars saved per year versus paying monthly. Same figure the website
+  /// quotes as `Save $31.89/yr` on the annual subtext.
+  double get annualSavingsAmount {
+    final saved = monthlyAmount * 12 - annualAmount;
+    return saved > 0 ? saved : 0;
+  }
+
   /// Same rounded percent the website shows on the Annual tab
-  /// (`Save 26%` for the current Stripe amounts).
+  /// (`Save 24%` for the current tier 1 Stripe amounts).
   int get annualSavingsPercent {
     final yearlyIfMonthly = monthlyAmount * 12;
     if (yearlyIfMonthly <= 0) return 0;
@@ -128,7 +135,6 @@ class DesktopPricing {
     'MV': 2,
     'BG': 2,
     'CL': 2,
-    'TR': 2,
     'KZ': 2,
     'RU': 2,
     'LC': 2,
@@ -142,9 +148,7 @@ class DesktopPricing {
     'MU': 2,
     'GD': 2,
     'DO': 2,
-    'AR': 2,
     'VC': 2,
-    'BR': 2,
     'AL': 2,
     'DM': 2,
     'GE': 2,
@@ -164,7 +168,6 @@ class DesktopPricing {
     'TV': 2,
     'MN': 2,
     'SR': 2,
-    'AZ': 2,
     'MH': 2,
     'EC': 2,
     'LY': 2,
@@ -181,7 +184,6 @@ class DesktopPricing {
     'FM': 2,
     'WS': 2,
     'IR': 2,
-    'ID': 2,
     'VN': 2,
     'JO': 2,
     'LB': 2,
@@ -201,6 +203,11 @@ class DesktopPricing {
     'UZ': 2,
 
     // Tier 3
+    'AR': 3,
+    'BR': 3,
+    'ID': 3,
+    'TR': 3,
+    'AZ': 3,
     'PS': 3,
     'EG': 3,
     'NI': 3,
@@ -284,23 +291,78 @@ class DesktopPricing {
     );
   }
 
-  static String? preferredCountryCode({
-    String? selectedCountryCode,
-    String? platformCountryCode,
-    String? localizationsCountryCode,
+  /// New Stripe purchases begin billing immediately.
+  static const int trialDays = 0;
+
+  /// Advertise an offer only when checkout grants it and eligibility is known.
+  static bool offersTrial(bool? eligible) => trialDays > 0 && eligible == true;
+
+  /// Reassurance line under the button. A trial changes when billing starts.
+  /// Verbatim from chessever.com/premium.
+  static String premiumAssuranceLabel({required bool showsTrial}) {
+    return showsTrial && trialDays > 0
+        ? 'Secure checkout · Cancel anytime before day $trialDays'
+        : 'Secure checkout · Cancel anytime · Every device';
+  }
+
+  /// The Monthly column's detail line in the desktop paywall. Same words as
+  /// the website's monthly subtext.
+  static String monthlyPlanDetail({required bool showsTrial}) {
+    return showsTrial && trialDays > 0
+        ? '$trialDays days free, then billed monthly'
+        : 'Billed monthly';
+  }
+
+  /// The Annual column's detail line in the desktop paywall. Keeps the
+  /// monthly equivalent the dialog has always shown, with the trial prefix
+  /// and the dollars-per-year savings the website quotes.
+  static String annualPlanDetail({
+    required DesktopTierPricing pricing,
+    String currencyCode = 'USD',
+    required bool showsTrial,
   }) {
-    final selected = selectedCountryCode?.trim();
-    if (selected != null && selected.isNotEmpty) return selected;
+    final trialPrefix =
+        showsTrial && trialDays > 0 ? '$trialDays days free, then ' : '';
+    final equivalent =
+        '${formatAmount(pricing.annualMonthlyEquivalent, currencyCode)}'
+        ' a month';
+    if (pricing.annualSavingsAmount <= 0) return '$trialPrefix$equivalent';
+    final savings = formatAmount(pricing.annualSavingsAmount, currencyCode);
+    return '$trialPrefix$equivalent · Save $savings/yr';
+  }
 
-    final platform = platformCountryCode?.trim();
-    if (platform != null && platform.isNotEmpty) return platform;
-
-    final localizations = localizationsCountryCode?.trim();
-    if (localizations != null && localizations.isNotEmpty) {
-      return localizations;
+  /// One-line price subtext for full-width surfaces (Settings /
+  /// subscription view). Verbatim from chessever.com/premium: the annual
+  /// total billed annually with dollars-per-year savings, the trial prefix
+  /// when the user may still be eligible.
+  static String planSubtext({
+    required DesktopTierPricing pricing,
+    required String interval,
+    String currencyCode = 'USD',
+    required bool showsTrial,
+  }) {
+    final trialPrefix =
+        showsTrial && trialDays > 0 ? '$trialDays days free, then ' : '';
+    if (interval == 'year') {
+      final billed =
+          '${formatAmount(pricing.annualAmount, currencyCode)}'
+          ' billed annually';
+      if (pricing.annualSavingsAmount <= 0) return '$trialPrefix$billed';
+      final savings = formatAmount(pricing.annualSavingsAmount, currencyCode);
+      return '$trialPrefix$billed · Save $savings/yr';
     }
+    return showsTrial && trialDays > 0
+        ? '$trialDays days free, then billed monthly'
+        : 'Billed monthly';
+  }
 
-    return null;
+  /// Formats a price the way the paywall quotes it. Pricing is USD-only
+  /// (Stripe converts at checkout); anything else renders as an amount
+  /// followed by its code rather than crashing on an unknown symbol.
+  static String formatAmount(double amount, String currencyCode) {
+    if (currencyCode == 'USD') return formatUsd(amount);
+    final decimals = amount % 1 == 0 ? 0 : 2;
+    return '${amount.toStringAsFixed(decimals)} $currencyCode';
   }
 
   static DesktopTierPricing priceForTier(int tier) {

@@ -6,6 +6,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
     show tournamentDetailAboutScrollByTabIdProvider;
+import 'package:chessever/desktop/services/collections_reader.dart';
+import 'package:chessever/desktop/widgets/collections/collection_reading_views.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
@@ -60,6 +62,7 @@ class TournamentAboutView extends ConsumerWidget {
                 : _EventAboutData.fromAbout(aboutModel, locationService);
         return _AboutContent(
           tabId: tabId,
+          eventId: tournamentId,
           about: about,
           urlLauncher: urlLauncher,
         );
@@ -67,6 +70,7 @@ class TournamentAboutView extends ConsumerWidget {
       loading:
           () => _AboutContent(
             tabId: tabId,
+            eventId: tournamentId,
             about: _EventAboutData.fromEvent(tournament, locationService),
             urlLauncher: urlLauncher,
             loading: true,
@@ -74,6 +78,7 @@ class TournamentAboutView extends ConsumerWidget {
       error:
           (_, __) => _AboutContent(
             tabId: tabId,
+            eventId: tournamentId,
             about: _EventAboutData.fromEvent(tournament, locationService),
             urlLauncher: urlLauncher,
           ),
@@ -227,12 +232,16 @@ class _LocationDisplay {
 class _AboutContent extends ConsumerStatefulWidget {
   const _AboutContent({
     required this.tabId,
+    required this.eventId,
     required this.about,
     required this.urlLauncher,
     this.loading = false,
   });
 
   final String tabId;
+
+  /// The event's group broadcast id: what collections are bound to.
+  final String eventId;
   final _EventAboutData about;
   final UrlLauncherService urlLauncher;
   final bool loading;
@@ -310,6 +319,14 @@ class _AboutContentState extends ConsumerState<_AboutContent> {
                     urlLauncher: widget.urlLauncher,
                   ),
                 ),
+              // The published collections about this event, when there are
+              // any. Drawn at the reading width of a collection's own page.
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: CollectionsBoundToEvent(
+                  anchors: CollectionEventAnchors(groups: [widget.eventId]),
+                ),
+              ),
             ],
           ),
         ),

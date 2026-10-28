@@ -4,6 +4,8 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 
 import 'package:chessever/desktop/services/library_quick_import.dart';
+import 'package:chessever/desktop/services/local_chess_drop_zone.dart'
+    show chessFileDropHolds;
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart'
     show looksLikeLocalChessFile;
 import 'package:chessever/theme/app_theme.dart';
@@ -75,7 +77,15 @@ class _FolderDropTargetState extends State<FolderDropTarget> {
   @override
   Widget build(BuildContext context) {
     final arbiter = LibraryDropArbiterScope.maybeOf(context);
+    return ValueListenableBuilder<int>(
+      valueListenable: chessFileDropHolds,
+      builder: (context, holds, _) => _target(arbiter, held: holds > 0),
+    );
+  }
+
+  Widget _target(LibraryDropArbiter? arbiter, {required bool held}) {
     return DropTarget(
+      enable: !held,
       onDragEntered: (_) => setState(() => _hovering = true),
       onDragExited: (_) => setState(() => _hovering = false),
       onDragDone: (details) async {
@@ -98,7 +108,7 @@ class _FolderDropTargetState extends State<FolderDropTarget> {
           _dropInFlight = false;
         }
       },
-      child: _wrap(widget.child),
+      child: held ? widget.child : _wrap(widget.child),
     );
   }
 
