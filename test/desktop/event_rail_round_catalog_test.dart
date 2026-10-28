@@ -78,6 +78,7 @@ void main() {
       final ordered = sortRoundsForDisplay(
         models,
         resolveDate: (model) => model.startsAt,
+        promotionWindow: upcomingRoundPromotionWindow,
         now: now,
       );
 
@@ -105,6 +106,7 @@ void main() {
       final ordered = sortRoundsForDisplay(
         models,
         resolveDate: (model) => model.startsAt,
+        promotionWindow: upcomingRoundPromotionWindow,
         now: now,
       );
 

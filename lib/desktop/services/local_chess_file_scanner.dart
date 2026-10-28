@@ -1,3 +1,4 @@
+import 'converted_database_names.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -101,6 +102,12 @@ String localChessEntryCountLabel(int count) =>
     '$count ${count == 1 ? 'entry' : 'entries'}';
 
 String localChessDatabaseDisplayNameForPath(String path) {
+  final converted = convertedDatabaseOriginalName(path);
+  if (converted != null) {
+    return _shouldPolishLocalDatabaseStem(converted)
+        ? _polishLocalDatabaseStem(converted)
+        : converted;
+  }
   final base = _basename(path);
   final extension = _displayExtensionForBasename(base);
   final stem =
@@ -114,10 +121,12 @@ String localChessDatabaseDisplayNameForPath(String path) {
 /// Cloud database name for a local PGN database: the actual file name with
 /// the trailing `.pgn` removed (`sadler1.pgn` -> `sadler1`). The local display
 /// label may change capitalization, but saving must keep the user's name.
+/// Converted copies use their original database name, not an internal copy ID.
 ///
 /// Saving a local database to the cloud creates a cloud database under this
 /// name, so it must be derived from the file, never from a tab label.
 String localChessDatabaseStemForPath(String path) =>
+    convertedDatabaseOriginalName(path) ??
     localChessDatabaseStemForLabel(_basename(path));
 
 /// Same derivation for a caller that only holds the displayed label.
@@ -152,15 +161,18 @@ String localChessDatabaseDisplayNameForPaths(List<String> paths) {
 class LocalChessSource {
   const LocalChessSource({
     required this.id,
-    required this.label,
+    required String label,
     required this.paths,
     required this.rootPath,
     required this.scannedAt,
     required this.root,
-  });
+  }) : _label = label;
 
   final String id;
-  final String label;
+  final String _label;
+  String get label => paths.length == 1
+      ? convertedDatabaseDisplayLabel(paths.single, _label)
+      : _label;
   final List<String> paths;
   final String rootPath;
   final DateTime scannedAt;
@@ -182,12 +194,24 @@ class LocalChessSource {
 @immutable
 abstract class LocalChessNode {
   const LocalChessNode({
-    required this.name,
+    required String name,
     required this.path,
     required this.relativePath,
-  });
+  }) : _name = name;
 
-  final String name;
+  final String _name;
+  String get name {
+    final node = this;
+    if (node is LocalChessFolderNode) {
+      // A single-file virtual root can carry its child's old file caption.
+      // Physical folder names are otherwise left untouched.
+      if (node.children.length == 1 && node.children.single is LocalChessFileNode) {
+        return convertedDatabaseDisplayLabel(node.children.single.path, _name);
+      }
+      return _name;
+    }
+    return convertedDatabaseDisplayLabel(path, _name);
+  }
   final String path;
   final String relativePath;
 }

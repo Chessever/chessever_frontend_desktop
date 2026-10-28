@@ -3,7 +3,11 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_vi
 typedef RoundDateResolver = DateTime? Function(GamesAppBarModel model);
 typedef RoundHasGames = bool Function(GamesAppBarModel model);
 typedef RoundIsFullyPlayed = bool Function(GamesAppBarModel model);
+typedef RoundHasStartedActivity = bool Function(GamesAppBarModel model);
 
+/// How far ahead the Board event rail lets a scheduled round jump to the top.
+/// The Games tab promotes without a window; see
+/// [pickUpcomingRoundForPromotion].
 const Duration upcomingRoundPromotionWindow = Duration(hours: 2);
 
 List<GamesAppBarModel> sortRoundsForDisplay(
@@ -11,75 +15,45 @@ List<GamesAppBarModel> sortRoundsForDisplay(
   required RoundDateResolver resolveDate,
   RoundHasGames? hasGames,
   RoundIsFullyPlayed? isRoundFullyPlayed,
+  RoundHasStartedActivity? hasStartedActivity,
+  Duration? promotionWindow,
   DateTime? now,
 }) {
   if (models.length <= 1) return List<GamesAppBarModel>.from(models);
 
   final effectiveNow = now ?? DateTime.now();
-  final allHaveStartTimes = models.every((m) => resolveDate(m) != null);
   final useGenericRoundOrder = _shouldUseGenericRoundOrder(models);
-
-  if (!allHaveStartTimes) {
-    final started =
-        models
-            .where((model) => _isStartedRound(model, effectiveNow, resolveDate))
-            .toList()
-          ..sort((a, b) {
-            if (useGenericRoundOrder) {
-              final roundCompare = _compareByGenericRoundNumber(a, b);
-              if (roundCompare != 0) return roundCompare;
-            }
-            return _compareByStart(a, b, false, resolveDate);
-          });
-    final future =
-        models
-            .where(
-              (model) => !_isStartedRound(model, effectiveNow, resolveDate),
-            )
-            .toList()
-          ..sort((a, b) => _compareByStart(a, b, false, resolveDate));
-    final promoted = pickUpcomingRoundForPromotion(
-      models,
-      resolveDate: resolveDate,
-      hasGames: hasGames,
-      isRoundFullyPlayed: isRoundFullyPlayed,
-      now: effectiveNow,
-    );
-    return <GamesAppBarModel>[
-      if (promoted != null) promoted,
-      ...started,
-      ...future.where((round) => round.id != promoted?.id),
-    ];
-  }
+  bool isStarted(GamesAppBarModel model) => _isStartedRound(
+    model,
+    effectiveNow,
+    resolveDate,
+    hasStartedActivity: hasStartedActivity,
+  );
 
   final started =
-      models
-          .where((m) => _isStartedRound(m, effectiveNow, resolveDate))
-          .toList()
-        ..sort((a, b) {
-          if (useGenericRoundOrder) {
-            final roundCompare = _compareByGenericRoundNumber(a, b);
-            if (roundCompare != 0) return roundCompare;
-          }
-          return _compareByStart(a, b, false, resolveDate);
-        });
-
+      models.where(isStarted).toList()..sort((a, b) {
+        if (useGenericRoundOrder) {
+          final roundCompare = _compareByGenericRoundNumber(a, b);
+          if (roundCompare != 0) return roundCompare;
+        }
+        return _compareByStart(a, b, false, resolveDate);
+      });
   final future =
-      models
-          .where((m) => !_isStartedRound(m, effectiveNow, resolveDate))
-          .toList()
+      models.where((model) => !isStarted(model)).toList()
         ..sort((a, b) => _compareByStart(a, b, false, resolveDate));
   final promoted = pickUpcomingRoundForPromotion(
     models,
     resolveDate: resolveDate,
     hasGames: hasGames,
     isRoundFullyPlayed: isRoundFullyPlayed,
+    hasStartedActivity: hasStartedActivity,
+    promotionWindow: promotionWindow,
     now: effectiveNow,
   );
 
   return <GamesAppBarModel>[
     if (promoted != null) promoted,
-    ...started,
+    ...started.where((round) => round.id != promoted?.id),
     ...future.where((round) => round.id != promoted?.id),
   ];
 }
@@ -89,6 +63,7 @@ GamesAppBarModel? pickPreferredRoundForSelection(
   required RoundDateResolver resolveDate,
   RoundHasGames? hasGames,
   RoundIsFullyPlayed? isRoundFullyPlayed,
+  RoundHasStartedActivity? hasStartedActivity,
   DateTime? now,
 }) {
   if (models.isEmpty) return null;
@@ -108,6 +83,20 @@ GamesAppBarModel? pickPreferredRoundForSelection(
     return liveRounds.first;
   }
 
+  // The display order pins this round on top, so selection lands on it too,
+  // with or without start times.
+  final promoted = pickUpcomingRoundForPromotion(
+    models,
+    resolveDate: resolveDate,
+    hasGames: hasGames,
+    isRoundFullyPlayed: isRoundFullyPlayed,
+    hasStartedActivity: hasStartedActivity,
+    now: effectiveNow,
+  );
+  if (promoted != null) {
+    return promoted;
+  }
+
   if (allHaveStartTimes) {
     final startedRounds =
         models
@@ -124,16 +113,7 @@ GamesAppBarModel? pickPreferredRoundForSelection(
             return _compareByStart(a, b, false, resolveDate);
           });
     if (startedRounds.isNotEmpty) {
-      final latestStarted = startedRounds.first;
-      final promoted = pickUpcomingRoundForPromotion(
-        models,
-        resolveDate: resolveDate,
-        hasGames: hasGames,
-        isRoundFullyPlayed: isRoundFullyPlayed,
-        now: effectiveNow,
-      );
-      if (promoted != null) return promoted;
-      return latestStarted;
+      return startedRounds.first;
     }
 
     final upcomingRounds =
@@ -170,11 +150,26 @@ GamesAppBarModel? pickPreferredRoundForSelection(
   return fallback.first;
 }
 
+/// The round pinned above every other one: the next round, as soon as its
+/// boards are published and every round that has started is played out.
+///
+/// There is no start-time window. Rounds set to "start after previous" have
+/// no start time at all (Khelo Chess India 94.0, round 9), and pairings out
+/// the evening before are still the next thing to watch. A live round always
+/// keeps the top slot.
+///
+/// [hasStartedActivity], when the caller has it, decides which rounds have
+/// started: published pairings are not play, whatever the round's date says.
+///
+/// [promotionWindow] restores the old schedule gate for a caller that wants
+/// it (the Board event rail): only a round starting within it is promoted.
 GamesAppBarModel? pickUpcomingRoundForPromotion(
   List<GamesAppBarModel> models, {
   required RoundDateResolver resolveDate,
   RoundHasGames? hasGames,
   RoundIsFullyPlayed? isRoundFullyPlayed,
+  RoundHasStartedActivity? hasStartedActivity,
+  Duration? promotionWindow,
   DateTime? now,
 }) {
   final effectiveNow = now ?? DateTime.now();
@@ -182,34 +177,49 @@ GamesAppBarModel? pickUpcomingRoundForPromotion(
   bool fullyPlayed(GamesAppBarModel model) =>
       isRoundFullyPlayed?.call(model) ??
       model.roundStatus == RoundStatus.completed;
+  bool started(GamesAppBarModel model) =>
+      hasStartedActivity != null
+          ? hasStartedActivity(model)
+          : _isStartedRound(model, effectiveNow, resolveDate);
+  bool insideWindow(GamesAppBarModel model) {
+    if (promotionWindow == null) return true;
+    final startsAt = resolveDate(model);
+    if (startsAt == null) return false;
+    final untilStart = startsAt.difference(effectiveNow);
+    return untilStart >= Duration.zero && untilStart <= promotionWindow;
+  }
+
+  // A live round owns the top slot even when every board loaded for it
+  // already reports a result, or none is loaded yet.
+  if (models.any((model) => model.roundStatus == RoundStatus.live)) {
+    return null;
+  }
 
   final startedRounds = models.where(
-    (model) =>
-        include(model) && _isStartedRound(model, effectiveNow, resolveDate),
+    (model) => include(model) && started(model),
   );
   if (startedRounds.isEmpty || !startedRounds.every(fullyPlayed)) return null;
 
-  final soonUpcoming =
-      models.where((model) {
-          if (!include(model) || model.roundStatus != RoundStatus.upcoming) {
-            return false;
-          }
-          final startsAt = resolveDate(model);
-          if (startsAt == null) return false;
-          final timeUntilStart = startsAt.difference(effectiveNow);
-          return timeUntilStart >= Duration.zero &&
-              timeUntilStart <= upcomingRoundPromotionWindow;
-        }).toList()
+  final nextRounds =
+      models
+          .where(
+            (model) => include(model) && !started(model) && insideWindow(model),
+          )
+          .toList()
         ..sort((a, b) => _compareByStart(a, b, true, resolveDate));
 
-  return soonUpcoming.isEmpty ? null : soonUpcoming.first;
+  return nextRounds.isEmpty ? null : nextRounds.first;
 }
 
 bool _isStartedRound(
   GamesAppBarModel model,
   DateTime now,
-  RoundDateResolver resolveDate,
-) {
+  RoundDateResolver resolveDate, {
+  RoundHasStartedActivity? hasStartedActivity,
+}) {
+  if (hasStartedActivity?.call(model) ?? false) {
+    return true;
+  }
   if (model.roundStatus == RoundStatus.live ||
       model.roundStatus == RoundStatus.ongoing ||
       model.roundStatus == RoundStatus.completed) {
@@ -231,7 +241,7 @@ int _compareByStart(
 
   int compare;
   if (aStart == null && bStart == null) {
-    compare = a.name.compareTo(b.name);
+    compare = _compareByGenericRoundNumber(a, b, ascending: true);
   } else if (aStart == null) {
     compare = 1;
   } else if (bStart == null) {
@@ -239,7 +249,7 @@ int _compareByStart(
   } else {
     compare = aStart.compareTo(bStart);
     if (compare == 0) {
-      compare = a.name.compareTo(b.name);
+      compare = _compareByGenericRoundNumber(a, b, ascending: true);
     }
   }
 
@@ -254,14 +264,19 @@ bool _shouldUseGenericRoundOrder(List<GamesAppBarModel> models) {
   return models.every((model) => _genericRoundNumber(model.name) != null);
 }
 
-int _compareByGenericRoundNumber(GamesAppBarModel a, GamesAppBarModel b) {
+int _compareByGenericRoundNumber(
+  GamesAppBarModel a,
+  GamesAppBarModel b, {
+  bool ascending = false,
+}) {
   final aNumber = _genericRoundNumber(a.name);
   final bNumber = _genericRoundNumber(b.name);
   if (aNumber == null && bNumber == null) return a.name.compareTo(b.name);
   if (aNumber == null) return 1;
   if (bNumber == null) return -1;
 
-  final numberCompare = bNumber.compareTo(aNumber);
+  final numberCompare =
+      ascending ? aNumber.compareTo(bNumber) : bNumber.compareTo(aNumber);
   if (numberCompare != 0) return numberCompare;
   return a.name.compareTo(b.name);
 }

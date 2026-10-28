@@ -6,7 +6,8 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
+
+import 'package:chessever/desktop/services/auth/desktop_auth_browser.dart';
 
 /// Google OAuth 2.0 "loopback IP" flow for desktop apps.
 ///
@@ -15,9 +16,10 @@ import 'package:url_launcher/url_launcher.dart';
 /// The loopback flow is what Google's own Python / Go desktop SDKs use:
 ///
 /// 1. Bind an `HttpServer` to `127.0.0.1:0` (any free port).
-/// 2. Open the user's browser to Google's auth URL with
-///    `redirect_uri=http://127.0.0.1:<port>` and a PKCE challenge.
-/// 3. Wait for the browser to redirect back with `?code=…`.
+/// 2. Open Google's auth URL with `redirect_uri=http://127.0.0.1:<port>` and
+///    a PKCE challenge, in the user's browser or, in the Mac App Store
+///    edition, an in-app sheet ([DesktopAuthBrowser]).
+/// 3. Wait for the page to redirect back with `?code=…`.
 /// 4. Exchange the code at `https://oauth2.googleapis.com/token` to get an
 ///    `id_token` we can forward to Supabase.
 ///
@@ -94,13 +96,18 @@ class GoogleOAuthLoopback {
     late StreamSubscription<HttpRequest> sub;
     sub = server.listen((request) async {
       final params = request.uri.queryParameters;
-      final responseHtml = _renderResponse(
-        success: params['error'] == null,
-        message: params['error'] ?? 'You can close this window.',
-      );
-      request.response.headers.contentType = ContentType.html;
-      request.response.write(responseHtml);
-      await request.response.close();
+      if (DesktopAuthBrowser.inApp) {
+        await DesktopAuthBrowser.finishInSheet(request.response);
+      } else {
+        final responseHtml = _renderResponse(
+          success: params['error'] == null,
+          message: params['error'] ?? 'You can close this window.',
+        );
+        request.response.headers.contentType = ContentType.html;
+        request.response.write(responseHtml);
+        await request.response.close();
+      }
+      if (codeCompleter.isCompleted) return;
 
       final returnedState = params['state'];
       if (returnedState != state) {
@@ -118,21 +125,31 @@ class GoogleOAuthLoopback {
       await server.close(force: true);
     });
 
-    final launched = await launchUrl(
-      authUri,
-      mode: LaunchMode.externalApplication,
-    );
-    if (!launched) {
-      await server.close(force: true);
-      throw StateError('Failed to open browser for OAuth.');
-    }
+    final String code;
+    var gotCode = false;
+    try {
+      final launched = await DesktopAuthBrowser.open(
+        authUri,
+        onClosedEarly: (error) {
+          if (!codeCompleter.isCompleted) codeCompleter.completeError(error);
+        },
+      );
+      if (!launched) {
+        throw StateError('Failed to open browser for OAuth.');
+      }
 
-    final code = await codeCompleter.future.timeout(
-      const Duration(minutes: 5),
-      onTimeout: () {
-        throw TimeoutException('OAuth flow timed out.');
-      },
-    );
+      code = await codeCompleter.future.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          throw TimeoutException('OAuth flow timed out.');
+        },
+      );
+      gotCode = true;
+    } finally {
+      await sub.cancel();
+      await server.close(force: true);
+      if (!gotCode) await DesktopAuthBrowser.close();
+    }
 
     final cs = clientSecret ?? '';
     // ignore: avoid_print
