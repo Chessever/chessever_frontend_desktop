@@ -1,4 +1,3 @@
-import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:screen_retriever/screen_retriever.dart';
@@ -6,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_window_geometry.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Window-manager bootstrap for desktop platforms.
 ///
@@ -39,7 +39,7 @@ class DesktopWindow {
   static String get windowTitle => DesktopBuildIdentity.current.displayName;
 
   static Future<void> initialize({bool pictureInPicture = false}) async {
-    if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+    if (!(hostIsMacOS || hostIsWindows || hostIsLinux)) {
       return;
     }
     WidgetsFlutterBinding.ensureInitialized();
@@ -71,7 +71,7 @@ class DesktopWindow {
       // PiP becomes truly frameless in the ready callback. Passing a title
       // style here would restore native framing after setAsFrameless().
       titleBarStyle: pictureInPicture ? null : TitleBarStyle.hidden,
-      windowButtonVisibility: pictureInPicture ? false : Platform.isMacOS,
+      windowButtonVisibility: pictureInPicture ? false : hostIsMacOS,
     );
 
     await windowManager.waitUntilReadyToShow(options, () async {
@@ -93,7 +93,7 @@ class DesktopWindow {
         } else {
           await windowManager.setAlignment(Alignment.topRight);
         }
-        if (Platform.isMacOS || Platform.isWindows) {
+        if (hostIsMacOS || hostIsWindows) {
           await windowManager.setMaximizable(false);
         }
       } else if (centeredBounds != null) {

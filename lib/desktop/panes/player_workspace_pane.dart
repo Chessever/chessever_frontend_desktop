@@ -9,6 +9,7 @@ import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -28,6 +29,7 @@ import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_pgn_catalog.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -57,6 +59,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/png_asset.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const _startingFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -4751,6 +4754,14 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
 
   Future<void> _pickFiles() async {
     if (_working) return;
+    if (kIsWeb) {
+      final paths = await pickWebChessFilesIntoAppStorage(
+        dialogTitle: 'Import player PGN',
+        allowedExtensions: localChessPickerExtensions,
+      );
+      if (paths != null) await _importPaths(paths);
+      return;
+    }
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Import player PGN',
       type: FileType.custom,
@@ -4772,6 +4783,11 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
 
   Future<void> _pickFolder() async {
     if (_working) return;
+    if (kIsWeb) {
+      final directory = await pickWebChessFolderIntoAppStorage();
+      if (directory != null) await _importPaths(<String>[directory]);
+      return;
+    }
     final path = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Import player PGN folder',
       lockParentWindow: true,
@@ -5263,9 +5279,9 @@ class _ConfirmRemovePlayerDialog extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              const Text(
-                'This removes the player from the Players workspace and deletes generated PGN files, combined databases, and local cache from this computer.',
-                style: TextStyle(
+              Text(
+                'This removes the player from the Players workspace and deletes generated PGN files, combined databases, and local cache from $hostLocalStorageName.',
+                style: const TextStyle(
                   color: kWhiteColor70,
                   fontSize: 12,
                   height: 1.4,

@@ -1,10 +1,11 @@
-import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Shared desktop replacement for `showModalBottomSheet`.
 ///
@@ -68,7 +69,7 @@ Future<T?> showDesktopModal<T>(
 /// screens conditionally route their bottom sheets through
 /// [showDesktopModal] without breaking the mobile build.
 bool get isDesktopPlatform =>
-    Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+    kIsWeb || hostIsMacOS || hostIsWindows || hostIsLinux;
 
 /// Convenience: behaves like `showModalBottomSheet` on mobile, like
 /// [showDesktopModal] on desktop. Use this from shared screens so a

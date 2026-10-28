@@ -5,7 +5,6 @@ import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
-import 'dart:io' show Platform;
 
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +33,7 @@ import 'package:chessever/desktop/widgets/variation_fork_chooser.dart';
 import 'package:chessever/screens/gamebase/models/move_aggregate.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Per-board-tab active page index for the right-rail Notation / Explorer /
 /// Games tab strip. Survives board-tab switches so the user returns to the
@@ -763,7 +763,7 @@ bool _isRightRailNextTabChord(KeyEvent event) {
   return debugIsRightRailNextTabChord(
     key: event.logicalKey,
     character: event.character,
-    isMac: Platform.isMacOS,
+    isMac: keyboardUsesMacModifiers,
     ctrl: _isControlPressed(),
     alt: _isAltPressed(),
     shift: HardwareKeyboard.instance.isShiftPressed,
@@ -775,7 +775,7 @@ bool _isRightRailPreviousTabChord(KeyEvent event) {
   return debugIsRightRailPreviousTabChord(
     key: event.logicalKey,
     character: event.character,
-    isMac: Platform.isMacOS,
+    isMac: keyboardUsesMacModifiers,
     ctrl: _isControlPressed(),
     alt: _isAltPressed(),
     shift: HardwareKeyboard.instance.isShiftPressed,
@@ -1116,25 +1116,48 @@ class _SegmentBar extends ConsumerWidget {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.only(left: 8),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: _ExplorerNavigationCluster(
-                    canGoBack: canGoBack,
-                    canGoForward: canGoForward,
-                    canStepForward: canStepForward,
-                    onFirstMove: onFirstMove,
-                    onPreviousMove: onPreviousMove,
-                    onNextMove: onNextMove,
-                    onLastMove: onLastMove,
-                    onPreviousGame: onPreviousGame,
-                    onNextGame: onNextGame,
-                    firstMoveShortcutLabel: firstMoveShortcutLabel,
-                    previousMoveShortcutLabel: previousMoveShortcutLabel,
-                    nextMoveShortcutLabel: nextMoveShortcutLabel,
-                    lastMoveShortcutLabel: lastMoveShortcutLabel,
-                    previousGameShortcutLabel: previousGameShortcutLabel,
-                    nextGameShortcutLabel: nextGameShortcutLabel,
-                  ),
+                // A narrow rail drops the least-used jumps instead of letting
+                // the buttons spill over their neighbours: game jumps first,
+                // then first/last move; the remaining back/forward pair
+                // shrinks to fit, and only leaves when even that cannot.
+                // Their keyboard shortcuts keep working.
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = constraints.maxWidth;
+                    if (width < 48) return const SizedBox.shrink();
+                    // Between 48 px and a full pair, the back/forward pair
+                    // shrinks to fit rather than leaving the rail.
+                    final squeezed = width < _clusterWidth(buttons: 2, air: 0);
+                    final hasGameJumps =
+                        onPreviousGame != null || onNextGame != null;
+                    final dropGameJumps =
+                        hasGameJumps && width < _clusterWidth(buttons: 6);
+                    final dropEdgeJumps = width < _clusterWidth(buttons: 4);
+                    final cluster = _ExplorerNavigationCluster(
+                      canGoBack: canGoBack,
+                      canGoForward: canGoForward,
+                      canStepForward: canStepForward,
+                      onFirstMove: dropEdgeJumps ? null : onFirstMove,
+                      onPreviousMove: onPreviousMove,
+                      onNextMove: onNextMove,
+                      onLastMove: dropEdgeJumps ? null : onLastMove,
+                      onPreviousGame: dropGameJumps ? null : onPreviousGame,
+                      onNextGame: dropGameJumps ? null : onNextGame,
+                      firstMoveShortcutLabel: firstMoveShortcutLabel,
+                      previousMoveShortcutLabel: previousMoveShortcutLabel,
+                      nextMoveShortcutLabel: nextMoveShortcutLabel,
+                      lastMoveShortcutLabel: lastMoveShortcutLabel,
+                      previousGameShortcutLabel: previousGameShortcutLabel,
+                      nextGameShortcutLabel: nextGameShortcutLabel,
+                    );
+                    return Align(
+                      alignment: Alignment.center,
+                      child:
+                          squeezed
+                              ? FittedBox(fit: BoxFit.scaleDown, child: cluster)
+                              : cluster,
+                    );
+                  },
                 ),
               ),
             )
@@ -1148,6 +1171,13 @@ class _SegmentBar extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Width the navigation cluster needs for [buttons] 36 px buttons with 4 px
+/// gaps, plus [air] so an optional jump is only added when it will not sit
+/// flush against its neighbours.
+double _clusterWidth({required int buttons, double air = 8}) {
+  return buttons * 36.0 + (buttons - 1) * 4.0 + air;
 }
 
 /// Exposes the actual Explorer navigation controls without remote providers.

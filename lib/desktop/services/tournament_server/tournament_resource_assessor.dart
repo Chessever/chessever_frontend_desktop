@@ -1,14 +1,14 @@
-import 'dart:io';
 
 import 'package:chessever/desktop/services/play/play_models.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 TournamentResourceAssessment assessTournamentResources({
   required int participantCount,
   required Iterable<BotEngineKind> engines,
   int? hostCores,
 }) {
-  final cores = hostCores ?? Platform.numberOfProcessors;
+  final cores = hostCores ?? hostProcessorCount;
   final engineList = engines.isEmpty ? [BotEngineKind.stockfish] : engines;
   final averageCost =
       engineList.map(_engineCost).reduce((a, b) => a + b) / engineList.length;

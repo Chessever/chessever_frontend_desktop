@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
@@ -35,6 +35,7 @@ import 'package:chessever/providers/app_version_provider.dart';
 import 'package:chessever/providers/guest_session_provider.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Desktop preferences pane.
 ///
@@ -220,7 +221,9 @@ class SettingsPane extends HookConsumerWidget {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Account, engine, and window preferences',
+              kIsWeb
+                  ? 'Account, engine, and board preferences'
+                  : 'Account, engine, and window preferences',
               style: TextStyle(color: kWhiteColor70, fontSize: 13),
             ),
             const SizedBox(height: 24),
@@ -244,8 +247,11 @@ class SettingsPane extends HookConsumerWidget {
             const _BotvinnikSection(),
             const _EngineSection(),
             const SizedBox(height: 16),
-            if (!isMacAppStore) const _UpdatesSection(),
-            const SizedBox(height: 16),
+            // The browser always loads the latest build; nothing to update.
+            if (!isMacAppStore && !kIsWeb) ...[
+              const _UpdatesSection(),
+              const SizedBox(height: 16),
+            ],
             const _LegalSection(),
             const SizedBox(height: 16),
             const _PlatformSection(),
@@ -403,14 +409,17 @@ class _AccountSection extends ConsumerWidget {
               style: const TextStyle(color: kWhiteColor70, fontSize: 13),
             ),
             const SizedBox(height: 16),
-            Row(
+            // Wraps to a second line in a narrow window rather than pushing
+            // the Apple button past the card's edge.
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 _PrimaryButton(
                   icon: Icons.account_circle_rounded,
                   label: signingIn ? 'Signing in…' : 'Sign in with Google',
                   onTap: signingIn ? null : onGoogleSignIn,
                 ),
-                const SizedBox(width: 8),
                 _SecondaryButton(
                   label: 'Sign in with Apple',
                   onTap: signingIn ? null : onAppleSignIn,
@@ -625,7 +634,14 @@ class _EngineSection extends HookWidget {
     String statusLabel;
     Color statusColor;
     String description;
-    if (loading) {
+    if (kIsWeb) {
+      // Bundled with the page as a Web Worker; there is no binary to find.
+      statusLabel = 'Built in';
+      statusColor = kGreenColor;
+      description =
+          'Stockfish runs in your browser, in a background worker, so '
+          'analysis never needs an install.';
+    } else if (loading) {
       statusLabel = 'Checking…';
       statusColor = kLightGreyColor;
       description = 'Looking for a Stockfish binary on this machine.';
@@ -842,7 +858,7 @@ class _UpdatesSection extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final development = DesktopBuildIdentity.current.isDevelopment;
-    final supported = !development && (Platform.isMacOS || Platform.isWindows);
+    final supported = !development && (hostIsMacOS || hostIsWindows);
     final update = supported ? ref.watch(desktopUpdateStateProvider) : null;
     final checking = useState<bool>(false);
     final lastCheckedAt = useState<DateTime?>(null);
@@ -1047,15 +1063,19 @@ class _PlatformSection extends ConsumerWidget {
             'App version',
             appVersion == null ? '—' : 'v$appVersion',
           ),
-          _KeyValueRow('Operating System', Platform.operatingSystem),
-          _KeyValueRow(
-            'Number of processors',
-            Platform.numberOfProcessors.toString(),
-          ),
+          _KeyValueRow('Operating System', hostOperatingSystem),
+          if (!kIsWeb)
+            _KeyValueRow(
+              'Number of processors',
+              hostProcessorCount.toString(),
+            ),
           const SizedBox(height: 12),
           const Text(
-            'Window position, sidebar state, and pane sizes are persisted '
-            'in the local SQLite database and restored on next launch.',
+            kIsWeb
+                ? 'Sidebar state and pane sizes are saved in this browser '
+                    'and restored on your next visit.'
+                : 'Window position, sidebar state, and pane sizes are persisted '
+                    'in the local SQLite database and restored on next launch.',
             style: TextStyle(color: kLightGreyColor, fontSize: 11),
           ),
         ],

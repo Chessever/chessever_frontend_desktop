@@ -2089,21 +2089,30 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                               const SizedBox(height: 8),
                               Row(
                                 children: [
-                                  if (t.timeControl.isNotEmpty)
-                                    Flexible(
-                                      child: _TournamentTilePill(
-                                        label: t.timeControl,
-                                        icon: Icons.schedule_rounded,
-                                      ),
+                                  // The pills own all the free width; a
+                                  // Spacer beside a Flexible would take half
+                                  // of it and clip "Rapid" to "Ra…".
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        if (t.timeControl.isNotEmpty)
+                                          Flexible(
+                                            child: _TournamentTilePill(
+                                              label: t.timeControl,
+                                              icon: Icons.schedule_rounded,
+                                            ),
+                                          ),
+                                        if (t.maxAvgElo > 0) ...[
+                                          const SizedBox(width: 8),
+                                          _TournamentTilePill(
+                                            label: 'Avg ${t.maxAvgElo}',
+                                            icon: Icons.leaderboard_rounded,
+                                          ),
+                                        ],
+                                      ],
                                     ),
-                                  if (t.maxAvgElo > 0) ...[
-                                    const SizedBox(width: 8),
-                                    _TournamentTilePill(
-                                      label: 'Avg ${t.maxAvgElo}',
-                                      icon: Icons.leaderboard_rounded,
-                                    ),
-                                  ],
-                                  const Spacer(),
+                                  ),
+                                  const SizedBox(width: 8),
                                   if (widget.loading)
                                     const SizedBox(
                                       width: 14,

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:chessever/desktop/widgets/desktop_game_points.dart';
 
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -845,13 +846,15 @@ class _LiveTopInfoStrip extends StatelessWidget {
 /// supplemental lines sit mirrored — eval at the top, move at the
 /// bottom — and stay clear of the central face-off row.
 class _LiveLastMoveStrip extends StatelessWidget {
-  const _LiveLastMoveStrip({required this.lastMove});
+  const _LiveLastMoveStrip({required this.lastMove, required this.fen});
   final String? lastMove;
+  final String? fen;
 
   @override
   Widget build(BuildContext context) {
-    final move = lastMove?.trim();
-    if (move == null || move.isEmpty) return const SizedBox.shrink();
+    final raw = lastMove?.trim();
+    if (raw == null || raw.isEmpty) return const SizedBox.shrink();
+    final move = _lastMoveNotation(raw, fen);
     return SizedBox(
       height: 12,
       child: Center(
@@ -878,9 +881,43 @@ String? _formatEvalLabel(Pv pv) {
     return '${sign}M${m.abs()}';
   }
   final whiteCp = pv.whitePerspective ? pv.cp : -pv.cp;
-  final sign = whiteCp >= 0 ? '+' : '−';
   final magnitude = (whiteCp.abs() / 100).toStringAsFixed(1);
+  // A few centipawns either way round to an even position, not "−0.0".
+  if (magnitude == '0.0') return '0.0';
+  final sign = whiteCp >= 0 ? '+' : '−';
   return '$sign$magnitude';
+}
+
+/// Readable notation for a live card's last move, which arrives as UCI
+/// ("e1d1"). Only the position after the move is known, so captures are not
+/// marked; the piece, destination, castling, promotion and check are.
+String _lastMoveNotation(String uci, String? fenAfter) {
+  final move = _uciToMove(uci);
+  if (move is! NormalMove || fenAfter == null) return uci;
+  try {
+    final position = Chess.fromSetup(Setup.parseFen(fenAfter));
+    final piece = position.board.pieceAt(move.to);
+    if (piece == null) return uci;
+    final fileDelta = move.to.file - move.from.file;
+    final String body;
+    if (piece.role == Role.king && fileDelta.abs() == 2) {
+      body = fileDelta > 0 ? 'O-O' : 'O-O-O';
+    } else if (move.promotion != null) {
+      body = '${move.to.name}=${move.promotion!.uppercaseLetter}';
+    } else if (piece.role == Role.pawn) {
+      // A pawn only changes file when it captures.
+      body =
+          fileDelta == 0
+              ? move.to.name
+              : '${move.from.name[0]}x${move.to.name}';
+    } else {
+      body = '${piece.role.uppercaseLetter}${move.to.name}';
+    }
+    final suffix = position.isCheckmate ? '#' : (position.isCheck ? '+' : '');
+    return '$body$suffix';
+  } catch (_) {
+    return uci;
+  }
 }
 
 /// Horizontal evaluation bar. Used at the bottom of list-tile board
@@ -1082,7 +1119,10 @@ class _CompactLayoutState extends State<_CompactLayout>
                     bottom: 4,
                     left: 12,
                     right: 12,
-                    child: _LiveLastMoveStrip(lastMove: widget.data.lastMove),
+                    child: _LiveLastMoveStrip(
+                      lastMove: widget.data.lastMove,
+                      fen: widget.data.fen,
+                    ),
                   ),
                 ],
                 // The face-off row hugs the top padding, so a finished tile
@@ -1793,6 +1833,10 @@ class DesktopGameCardsFlow extends StatelessWidget {
     final metrics = metricsFor(layout);
     if (!width.isFinite || width <= 0) return metrics.minCols;
     final raw = (width / metrics.targetWidth).floor();
+    // Too narrow for even two cards in a phone-width browser window: one
+    // full-width card, rather than two too narrow to show the players. The
+    // desktop app keeps at least [DesktopGameCardsFlowMetrics.minCols].
+    if (kIsWeb && raw < 2) return 1;
     return raw.clamp(metrics.minCols, metrics.maxCols).toInt();
   }
 
@@ -1845,8 +1889,7 @@ class DesktopGameCardsFlow extends StatelessWidget {
             layout == DesktopCardLayout.grid ? null : metrics.tileHeight;
         const aspect = 0.95;
 
-        final rawCols = (innerWidth / metrics.targetWidth).floor();
-        final columns = rawCols.clamp(metrics.minCols, metrics.maxCols).toInt();
+        final columns = columnCountForWidth(layout, innerWidth);
         onColumnsResolved?.call(columns);
 
         final delegate =
@@ -1863,6 +1906,47 @@ class DesktopGameCardsFlow extends StatelessWidget {
                   crossAxisSpacing: metrics.spacing,
                   childAspectRatio: aspect,
                 );
+
+        // Embedded grids sit inside an outer scroll view and never scroll
+        // themselves. Plain rows lay out the same cells without a second
+        // viewport and sliver grid per section, which made every section
+        // scrolled into view expensive (web profile: ~10% of a feed scroll).
+        if (embedded) {
+          final spacing = metrics.spacing;
+          final cellWidth =
+              ((innerWidth - spacing * (columns - 1)) / columns)
+                  .clamp(0.0, double.infinity)
+                  .toDouble();
+          final cellHeight = mainAxisExtent ?? cellWidth / aspect;
+          final rows = (itemCount / columns).ceil();
+          return Padding(
+            padding: padding ?? EdgeInsets.zero,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var row = 0; row < rows; row++) ...[
+                  if (row > 0) SizedBox(height: spacing),
+                  SizedBox(
+                    height: cellHeight,
+                    child: Row(
+                      children: [
+                        for (var col = 0; col < columns; col++) ...[
+                          if (col > 0) SizedBox(width: spacing),
+                          Expanded(
+                            child:
+                                row * columns + col < itemCount
+                                    ? itemBuilder(context, row * columns + col)
+                                    : const SizedBox.shrink(),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }
 
         return GridView.builder(
           controller: embedded ? null : scrollController,

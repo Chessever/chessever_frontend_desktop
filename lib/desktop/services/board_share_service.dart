@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -16,6 +17,8 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/text_download.dart';
 
 /// Desktop-native sharing helpers for the board pane.
 ///
@@ -54,6 +57,20 @@ class BoardShareService {
 
   /// Share PNG bytes via the native share sheet.
   static Future<void> sharePngBytes(Uint8List bytes, {String? subject}) async {
+    if (kIsWeb) {
+      // The browser's share sheet takes the bytes; there is no temp file.
+      await Share.shareXFiles(
+        [
+          XFile.fromData(
+            bytes,
+            mimeType: 'image/png',
+            name: 'chessever_position.png',
+          ),
+        ],
+        subject: subject ?? 'ChessEver Position',
+      );
+      return;
+    }
     final tempDir = await getTemporaryDirectory();
     final file = io.File('${tempDir.path}/chessever_share.png');
     await file.writeAsBytes(bytes);
@@ -69,8 +86,13 @@ class BoardShareService {
     Uint8List bytes, {
     String defaultName = 'chessever_position.png',
   }) async {
+    if (kIsWeb) {
+      final name = _ensureExtension(defaultName, 'png');
+      downloadBytesFile(name, bytes, 'image/png');
+      return;
+    }
     String? outputPath;
-    if (io.Platform.isMacOS || io.Platform.isWindows || io.Platform.isLinux) {
+    if (hostIsMacOS || hostIsWindows || hostIsLinux) {
       outputPath = await FilePicker.platform.saveFile(
         dialogTitle: 'Save Position Image',
         fileName: defaultName,
@@ -95,7 +117,8 @@ class BoardShareService {
 
   /// Copy PNG bytes to the system clipboard.
   static Future<void> copyPngBytesToClipboard(Uint8List bytes) async {
-    if (io.Platform.isLinux) {
+    if (kIsWeb) return copyPngToClipboard(bytes);
+    if (hostIsLinux) {
       await _copyPngBytesToLinuxClipboard(bytes);
       return;
     }
@@ -146,7 +169,7 @@ class BoardShareService {
     String defaultName = 'chessever_game.gif',
   }) async {
     String? outputPath;
-    if (io.Platform.isMacOS || io.Platform.isWindows || io.Platform.isLinux) {
+    if (hostIsMacOS || hostIsWindows || hostIsLinux) {
       outputPath = await FilePicker.platform.saveFile(
         dialogTitle: 'Save Game GIF',
         fileName: defaultName,

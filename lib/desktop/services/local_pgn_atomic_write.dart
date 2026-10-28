@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path/path.dart' as p;
 
 /// Replaces a local PGN through a sibling temporary file after confirming that
@@ -19,10 +20,12 @@ Future<bool> writeLocalPgnAtomically({
     );
   }
 
+  // `pid` throws in a browser, where the one tab is the only writer.
+  final owner = kIsWeb ? 0 : pid;
   final temp = File(
     p.join(
       file.parent.path,
-      '.${p.basename(file.path)}.chessever-$pid-${DateTime.now().microsecondsSinceEpoch}.tmp',
+      '.${p.basename(file.path)}.chessever-$owner-${DateTime.now().microsecondsSinceEpoch}.tmp',
     ),
   );
   try {

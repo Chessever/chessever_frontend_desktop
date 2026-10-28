@@ -1,6 +1,6 @@
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Result of a purchase attempt
 class PurchaseAttemptResult {
@@ -137,7 +137,7 @@ class RevenueCatService {
   Future<void> Function()? onAppResumeCallback;
 
   static bool get _isDesktop =>
-      !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+      !kIsWeb && (hostIsMacOS || hostIsWindows || hostIsLinux);
 
   Future<void> logIn(String userId) async {}
 

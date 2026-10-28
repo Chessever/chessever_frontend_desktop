@@ -128,7 +128,13 @@ On demand — read `docs/agents/definition-of-done.md` before working on this ar
 ## 10. Anti-patterns (don't do these)
 
 - ❌ Reimplementing the chess board, eval bar, or PV list because it "looks mobile-y." Resize and reuse. (Game cards in `desktop_game_card.dart` are NOT covered by this rule — redesign them however reads best on desktop.)
-- ❌ Adding `if (kIsWeb)` branches. We are not shipping web.
+- ❌ Adding `if (kIsWeb)` branches for features. The browser build at
+  app.chessever.com (`lib/web/`, `scripts/build_web.sh`, `scripts/deploy_web.sh`)
+  runs this shell as Wasm with desktop-only features (local engines, local
+  library, windows, updater) unavailable. Keep it compiling: ask
+  `lib/utils/host_platform.dart` (`hostIsMacOS`, …) instead of `dart:io`'s
+  `Platform`, which throws in the browser, and import FFI packages through
+  `lib/web/shims/`.
 - ❌ Stuffing desktop-only logic into existing screen files. Add a desktop wrapper instead.
 - ❌ Deleting a feature because the desktop equivalent is hard. File a tracked TODO and move on.
 - ❌ Output the loop's completion promise when it isn't true. The promise text is in the loop config; only emit it when §9 is fully satisfied.

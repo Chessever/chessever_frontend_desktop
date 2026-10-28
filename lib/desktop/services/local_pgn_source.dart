@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'pgn_record_boundaries.dart';

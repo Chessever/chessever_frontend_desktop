@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
@@ -14,6 +14,7 @@ import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
+import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
@@ -38,6 +39,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
     show GameStatus;
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Chrome-style tab bar that sits between the top bar and the content area.
 ///
@@ -83,6 +85,65 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
   double? _tabStripListWidth;
   bool? _tabStripFillsRest;
   Map<String, double>? _tabStripWidths;
+
+  // Scrolls the strip when its tabs need more room than it has: the wheel
+  // moves it sideways, and the active tab is kept in view.
+  final ScrollController _tabScroll = ScrollController();
+  String? _revealedActiveId;
+
+  @override
+  void dispose() {
+    _tabScroll.dispose();
+    super.dispose();
+  }
+
+  /// Scrolls the strip so [activeId]'s chip is fully visible.
+  void _revealActiveTab(
+    List<DesktopTab> tabs,
+    String? activeId,
+    Map<String, double> widths,
+  ) {
+    if (activeId == null || !_tabScroll.hasClients) return;
+    var start = 6.0;
+    for (final tab in tabs) {
+      if (tab.id == activeId) break;
+      start += widths[tab.id] ?? 0;
+    }
+    final end = start + (widths[activeId] ?? 0);
+    final position = _tabScroll.position;
+    final viewStart = position.pixels;
+    final viewEnd = viewStart + position.viewportDimension;
+    double? target;
+    if (start < viewStart) {
+      target = start - 6;
+    } else if (end > viewEnd) {
+      target = end + 6 - position.viewportDimension;
+    }
+    if (target == null) return;
+    unawaited(
+      _tabScroll.animateTo(
+        target.clamp(position.minScrollExtent, position.maxScrollExtent),
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+      ),
+    );
+  }
+
+  void _onStripPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_tabScroll.hasClients) return;
+    final delta = event.scrollDelta;
+    // A trackpad's sideways swipe already scrolls the list; turn a plain
+    // vertical wheel into the same sideways motion.
+    if (delta.dy.abs() <= delta.dx.abs()) return;
+    final position = _tabScroll.position;
+    if (position.maxScrollExtent <= 0) return;
+    _tabScroll.jumpTo(
+      (position.pixels + delta.dy).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      ),
+    );
+  }
 
   Future<void> _closeTabWithUnsavedAnalysisGuard(String tabId) async {
     if (boardTabHasUnsavedAnalysis(tabId: tabId, read: ref.read)) {
@@ -166,6 +227,14 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                         desiredListWidth,
                       );
                       final fillsRest = listWidth < constraints.maxWidth;
+                      if (_revealedActiveId != state.activeId) {
+                        _revealedActiveId = state.activeId;
+                        final tabs = state.tabs;
+                        final activeId = state.activeId;
+                        WidgetsBinding.instance.addPostFrameCallback(
+                          (_) => _revealActiveTab(tabs, activeId, widths),
+                        );
+                      }
                       // Window-resize frames re-run this builder even when
                       // every chip keeps its width. Returning the identical
                       // strip lets Flutter skip rebuilding the list and every
@@ -191,70 +260,74 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                         children: [
                           SizedBox(
                             width: listWidth,
-                            child: ReorderableListView.builder(
-                              scrollDirection: Axis.horizontal,
-                              buildDefaultDragHandles: false,
-                              padding: const EdgeInsets.only(left: 6, right: 6),
-                              proxyDecorator: (child, index, animation) {
-                                // While being dragged, the proxy gets a slight scale +
-                                // raised shadow so the user feels the lift.
-                                return AnimatedBuilder(
-                                  animation: animation,
-                                  builder: (context, _) {
-                                    final t = Curves.easeOut.transform(
-                                      animation.value,
-                                    );
-                                    return Material(
-                                      color: Colors.transparent,
-                                      elevation: 6 * t,
-                                      shadowColor: Colors.black.withValues(
-                                        alpha: 0.4,
+                            child: Listener(
+                              onPointerSignal: _onStripPointerSignal,
+                              child: ReorderableListView.builder(
+                                scrollController: _tabScroll,
+                                scrollDirection: Axis.horizontal,
+                                buildDefaultDragHandles: false,
+                                padding: const EdgeInsets.only(left: 6, right: 6),
+                                proxyDecorator: (child, index, animation) {
+                                  // While being dragged, the proxy gets a slight scale +
+                                  // raised shadow so the user feels the lift.
+                                  return AnimatedBuilder(
+                                    animation: animation,
+                                    builder: (context, _) {
+                                      final t = Curves.easeOut.transform(
+                                        animation.value,
+                                      );
+                                      return Material(
+                                        color: Colors.transparent,
+                                        elevation: 6 * t,
+                                        shadowColor: Colors.black.withValues(
+                                          alpha: 0.4,
+                                        ),
+                                        child: Transform.scale(
+                                          scale: 1 + 0.03 * t,
+                                          filterQuality: FilterQuality.medium,
+                                          child: child,
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
+                                // Keep legacy callback here because desktopTabsProvider.reorder
+                                // still expects Flutter's pre-removal newIndex semantics.
+                                // ignore: deprecated_member_use
+                                onReorder: notifier.reorder,
+                                itemCount: state.tabs.length,
+                                itemBuilder: (context, i) {
+                                  final tab = state.tabs[i];
+                                  // Chrome-style: pointer-down on the chip immediately
+                                  // arms a horizontal drag (`ReorderableDragStartListener`
+                                  // uses ImmediateMultiDragGestureRecognizer). Short
+                                  // taps without movement still bubble through to the
+                                  // chip's GestureDetector so click-to-activate keeps
+                                  // working — only sustained motion past the touch-slop
+                                  // commits to a reorder gesture.
+                                  return SizedBox(
+                                    key: ValueKey(tab.id),
+                                    width: widths[tab.id],
+                                    child: ReorderableDragStartListener(
+                                      index: i,
+                                      child: _TabChip(
+                                        tab: tab,
+                                        active: tab.id == state.activeId,
+                                        onActivate:
+                                            () => notifier.activate(tab.id),
+                                        onClose:
+                                            tab.closable
+                                                ? () => unawaited(
+                                                  _closeTabWithUnsavedAnalysisGuard(
+                                                    tab.id,
+                                                  ),
+                                                )
+                                                : null,
                                       ),
-                                      child: Transform.scale(
-                                        scale: 1 + 0.03 * t,
-                                        filterQuality: FilterQuality.medium,
-                                        child: child,
-                                      ),
-                                    );
-                                  },
-                                );
-                              },
-                              // Keep legacy callback here because desktopTabsProvider.reorder
-                              // still expects Flutter's pre-removal newIndex semantics.
-                              // ignore: deprecated_member_use
-                              onReorder: notifier.reorder,
-                              itemCount: state.tabs.length,
-                              itemBuilder: (context, i) {
-                                final tab = state.tabs[i];
-                                // Chrome-style: pointer-down on the chip immediately
-                                // arms a horizontal drag (`ReorderableDragStartListener`
-                                // uses ImmediateMultiDragGestureRecognizer). Short
-                                // taps without movement still bubble through to the
-                                // chip's GestureDetector so click-to-activate keeps
-                                // working — only sustained motion past the touch-slop
-                                // commits to a reorder gesture.
-                                return SizedBox(
-                                  key: ValueKey(tab.id),
-                                  width: widths[tab.id],
-                                  child: ReorderableDragStartListener(
-                                    index: i,
-                                    child: _TabChip(
-                                      tab: tab,
-                                      active: tab.id == state.activeId,
-                                      onActivate:
-                                          () => notifier.activate(tab.id),
-                                      onClose:
-                                          tab.closable
-                                              ? () => unawaited(
-                                                _closeTabWithUnsavedAnalysisGuard(
-                                                  tab.id,
-                                                ),
-                                              )
-                                              : null,
                                     ),
-                                  ),
-                                );
-                              },
+                                  );
+                                },
+                              ),
                             ),
                           ),
                           if (fillsRest)
@@ -278,7 +351,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                   ),
                 ],
                 const SizedBox(width: 8),
-                if (Platform.isWindows || Platform.isLinux)
+                if (hostIsWindows || hostIsLinux)
                   const SizedBox(width: kDesktopWindowControlsWidth),
               ],
             ),
@@ -552,7 +625,22 @@ class _TabChipState extends ConsumerState<_TabChip>
         myIdx < tabsState.tabs.length - 1 &&
         tabsState.tabs.skip(myIdx + 1).any((t) => t.closable);
     final isBoardTab = widget.tab.kind == TabKind.board;
-    final canMoveToWindow = isBoardTab && widget.tab.closable;
+    // In the browser a game moves to a new browser tab, which only works for
+    // games with a public address.
+    final webArgs =
+        kIsWeb && isBoardTab
+            ? ref.read(boardTabGameArgsByTabIdProvider)[widget.tab.id]
+            : null;
+    final canMoveToWindow =
+        isBoardTab &&
+        widget.tab.closable &&
+        (!kIsWeb ||
+            (webArgs != null &&
+                buildDesktopGameShareUrl(
+                      game: webArgs.sourceGame,
+                      gameId: webArgs.gameId,
+                    ) !=
+                    null));
     final isMuted = ref.read(boardTabSoundMuteProvider).contains(widget.tab.id);
 
     final picked = await showMenu<_TabAction>(
@@ -579,7 +667,10 @@ class _TabChipState extends ConsumerState<_TabChip>
             value: _TabAction.moveToWindow,
             child: _MenuRow(
               icon: Icons.open_in_browser_rounded,
-              label: 'Move tab to new window',
+              label:
+                  kIsWeb
+                      ? 'Move tab to new browser tab'
+                      : 'Move tab to new window',
             ),
           ),
         if (widget.onClose != null)
@@ -697,7 +788,10 @@ class _TabChipState extends ConsumerState<_TabChip>
               }
             },
             onPointerMove: (event) {
-              if (_detachTriggered ||
+              // Tearing a tab off into its own window is a desktop gesture;
+              // in a browser it would only surprise.
+              if (kIsWeb ||
+                  _detachTriggered ||
                   widget.tab.kind != TabKind.board ||
                   (event.buttons & kPrimaryMouseButton) == 0) {
                 return;
@@ -860,6 +954,10 @@ class _GameTabChipContent extends StatelessWidget {
     }
     final parts = n.split(RegExp(r'\s+'));
     if (parts.length == 1) return parts.first;
+    // "Pranesh M": a trailing initial is not a surname.
+    if (RegExp(r'^\p{L}\.?$', unicode: true).hasMatch(parts.last)) {
+      return parts[parts.length - 2];
+    }
     return parts.last;
   }
 

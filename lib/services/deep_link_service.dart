@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:app_links/app_links.dart';
 import 'package:chessever/repository/authentication/auth_repository.dart';
@@ -27,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 List<GamesTourModel> _buildSortedRoundGameModels(List<Games> roundGames) {
   final gameList = roundGames
@@ -135,7 +135,7 @@ class DeepLinkService {
     // On Android, ACTION_VIEW for .pgn is handled by receive_sharing_intent
     // (which also resolves content:// URIs to real file paths), so we skip
     // this branch on Android to avoid double-handling the same file.
-    if (Platform.isIOS && uri.scheme == 'file') {
+    if (hostIsIOS && uri.scheme == 'file') {
       _addBreadcrumb(
         'file uri received',
         data: {'scheme': uri.scheme, 'path': _maskedValue(uri.path)},

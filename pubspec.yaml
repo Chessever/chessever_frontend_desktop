@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 22.17.32+522
+version: 22.17.33+523
 environment:
   sdk: ^3.7.2
 
@@ -30,6 +30,8 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_localizations:
+    sdk: flutter
+  flutter_web_plugins:
     sdk: flutter
 
   #for localization
@@ -194,6 +196,10 @@ dependencies:
   firebase_analytics: ^11.6.0
   pasteboard: ^0.5.0
   purchases_flutter: ^10.16.0
+  sqflite_common_ffi_web: ^1.2.0
+  web: ^1.1.1
+  path_provider_platform_interface: ^2.1.2
+  sqlite3: ^3.3.3
 
 dev_dependencies:
   flutter_test:
@@ -230,6 +236,12 @@ dependency_overrides:
     path: third_party/desktop_updater
   webview_all_wkwebview:
     path: third_party/webview_all_wkwebview
+  # 1.1.31 stops re-setting Path.fillType on every paint, which frees a
+  # native path still in use under the web renderer (skwasm) and crashes the
+  # browser build. It declares xml ^7 only for a dependency refresh;
+  # vector_graphics_compiler still caps xml at 6.6.1.
+  jovial_svg: 1.1.31
+  xml: 6.6.1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

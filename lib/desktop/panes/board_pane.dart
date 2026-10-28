@@ -17,7 +17,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart'
-    show ValueListenable, kDebugMode, listEquals, visibleForTesting;
+    show ValueListenable, kDebugMode, kIsWeb, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:chessever/desktop/widgets/pgn_attribution_editor.dart';
 import 'package:chessever/utils/pgn_time_control.dart';
@@ -154,6 +154,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/web/text_download.dart';
 
 // The corner grip and its drag maths now live with the Play pane's board too.
 // Re-exported so existing board-pane callers and tests keep their entry point.
@@ -731,14 +732,36 @@ class _BoardPaneSplitView extends StatelessWidget {
     if (children.isEmpty) return const SizedBox.shrink();
     if (children.length == 1) return children.single.child;
 
-    return ResizableSplitView(
-      axis: Axis.horizontal,
-      controller: controller,
-      storageKey: storageKey,
-      children: children,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Too narrow for the panes side by side (their minimums alone are
+        // ~660 px), as in a phone-width browser window: stack the board over
+        // the notation and engine, and leave the games list out.
+        if (constraints.maxWidth < _kBoardPaneStackedWidth) {
+          final stacked = [
+            for (final child in children)
+              if (child.label != 'Games') child,
+          ];
+          if (stacked.length == 1) return stacked.single.child;
+          return ResizableSplitView(
+            axis: Axis.vertical,
+            controller: controller,
+            storageKey: storageKey == null ? null : '$storageKey.stacked',
+            children: stacked,
+          );
+        }
+        return ResizableSplitView(
+          axis: Axis.horizontal,
+          controller: controller,
+          storageKey: storageKey,
+          children: children,
+        );
+      },
     );
   }
 }
+
+const double _kBoardPaneStackedWidth = 660;
 
 class _BoardPaneContent extends HookConsumerWidget {
   const _BoardPaneContent({this.tabId});
@@ -3181,6 +3204,19 @@ class _BoardPaneContent extends HookConsumerWidget {
         }
         metadata[ChessGame.metadataIsLiveKey] = false;
         metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
+        // A broadcast PGN can still say "*" after the game has ended; the
+        // board knows the final result, so the save dialog starts there.
+        final knownResult = switch (boardArgs?.sourceGame?.gameStatus) {
+          GameStatus.whiteWins => '1-0',
+          GameStatus.blackWins => '0-1',
+          GameStatus.draw => '1/2-1/2',
+          _ => null,
+        };
+        final savedResult = metadata['Result']?.toString().trim() ?? '';
+        if (knownResult != null &&
+            (savedResult.isEmpty || savedResult == '*')) {
+          metadata['Result'] = knownResult;
+        }
         final eventLabel = headers['Event']?.trim();
         final gameSnapshot = snapshot.copyWith(metadata: metadata);
 
@@ -3280,6 +3316,12 @@ class _BoardPaneContent extends HookConsumerWidget {
         final pgn = exportGameToPgn(edited);
         final headers = pgnHeaders.value;
         final defaultName = _suggestPgnFileName(headers);
+        if (kIsWeb) {
+          downloadTextFile(defaultName, pgn);
+          saveCompletion.commit(pgn);
+          showToast('Downloaded $defaultName');
+          return;
+        }
         final path = await FilePicker.platform.saveFile(
           dialogTitle: 'Save PGN',
           fileName: defaultName,
@@ -3706,29 +3748,23 @@ class _BoardPaneContent extends HookConsumerWidget {
       goLast();
     }
 
-    void navigatePreviousGameManually() {
+    // A collapsed games list (narrow windows start that way) has loaded
+    // nothing; navigateActiveEventGame loads the event's games itself, so
+    // the list stays as the user left it.
+    Future<void> navigateGameManually(int delta) async {
       pauseAutoReplayForManualNavigation();
-      unawaited(
-        navigateActiveEventGame(
-          ref,
-          context: context,
-          delta: -1,
-          liveOnly: pictureInPictureMode,
-        ),
+      await navigateActiveEventGame(
+        ref,
+        context: context,
+        delta: delta,
+        liveOnly: pictureInPictureMode,
       );
     }
 
-    void navigateNextGameManually() {
-      pauseAutoReplayForManualNavigation();
-      unawaited(
-        navigateActiveEventGame(
-          ref,
-          context: context,
-          delta: 1,
-          liveOnly: pictureInPictureMode,
-        ),
-      );
-    }
+    void navigatePreviousGameManually() =>
+        unawaited(navigateGameManually(-1));
+
+    void navigateNextGameManually() => unawaited(navigateGameManually(1));
 
     Future<void> restoreMainWindowFromPictureInPictureAction() async {
       if (!pictureInPictureMode) return;
@@ -4759,6 +4795,9 @@ class _BoardPaneContent extends HookConsumerWidget {
             ref.read(boardFocusModeProvider.notifier).state = false;
             return true;
           }
+          // In a browser Esc means "dismiss", and closing the tab on it is
+          // easy to hit by accident; Alt+W closes a tab there.
+          if (kIsWeb) return false;
           unawaited(closeActiveBoardTab(force: false));
           return true;
       }
@@ -5602,8 +5641,11 @@ class _BoardPaneContent extends HookConsumerWidget {
                         isForegroundTab: isForegroundSurface,
                         autoAnalysisAllowed:
                             allowGameAnalysis && isForegroundSurface,
+                        // A browser cannot float a second window over the
+                        // desktop the way the desktop app does.
                         onPictureInPicture:
-                            boardArgs == null ||
+                            kIsWeb ||
+                                    boardArgs == null ||
                                     (!isLiveGame &&
                                         !currentGameIsInPictureInPicture)
                                 ? null
@@ -9910,106 +9952,119 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           ),
         ),
       ),
-      child: Row(
-        children: [
-          Container(
-            key: const ValueKey<String>('desktop-board-player-avatar'),
-            width: 42,
-            height: 42,
-            padding: const EdgeInsets.all(1),
-            decoration: BoxDecoration(
-              color: kBlack3Color,
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
-            ),
-            child:
-                hasPhoto
-                    ? PlayerInitialsAvatarCompact(
-                      photoUrl: photoUrl,
-                      initials: _playerHeaderInitials(name),
-                      size: 40,
-                      borderRadius: 6,
-                    )
-                    : Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2A2B2F),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        _playerHeaderInitials(name),
-                        style: TextStyle(
-                          color: kWhiteColor.withValues(alpha: 0.78),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.4,
-                        ),
-                      ),
-                    ),
-          ),
-          const SizedBox(width: 8),
-          BackfilledFederationFlag(
-            federation: federation,
-            fideId: fideId,
-            playerName: name,
-            width: 24,
-            height: 17,
-            borderRadius: BorderRadius.circular(2),
-          ),
-          const SizedBox(width: 8),
-          if (resolvedTitle.isNotEmpty) ...[
-            Text(
-              resolvedTitle,
-              style: const TextStyle(
-                color: kPrimaryColor,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 6),
-          ],
-          Expanded(
-            child: Row(
+      // A phone-width browser board has no room for the photo and a name;
+      // the name matters more, so the photo steps aside. The desktop app's
+      // picture-in-picture window opens at 356 px and keeps its photos.
+      child: LayoutBuilder(
+        builder:
+            (context, constraints) => Row(
               children: [
-                Flexible(fit: FlexFit.loose, child: hoverPreview),
-                if (rating > 0) ...[
+                if (!kIsWeb || constraints.maxWidth >= 360) ...[
+                  Container(
+                    key: const ValueKey<String>('desktop-board-player-avatar'),
+                    width: 42,
+                    height: 42,
+                    padding: const EdgeInsets.all(1),
+                    decoration: BoxDecoration(
+                      color: kBlack3Color,
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
+                    ),
+                    child:
+                        hasPhoto
+                            ? PlayerInitialsAvatarCompact(
+                              photoUrl: photoUrl,
+                              initials: _playerHeaderInitials(name),
+                              size: 40,
+                              borderRadius: 6,
+                            )
+                            : Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF2A2B2F),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                _playerHeaderInitials(name),
+                                style: TextStyle(
+                                  color: kWhiteColor.withValues(alpha: 0.78),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ),
+                  ),
                   const SizedBox(width: 8),
+                ],
+                BackfilledFederationFlag(
+                  federation: federation,
+                  fideId: fideId,
+                  playerName: name,
+                  width: 24,
+                  height: 17,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+                const SizedBox(width: 8),
+                if (resolvedTitle.isNotEmpty) ...[
                   Text(
-                    '($rating)',
-                    style: TextStyle(
-                      color: kWhiteColor.withValues(alpha: 0.82),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+                    resolvedTitle,
+                    style: const TextStyle(
+                      color: kPrimaryColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
+                  const SizedBox(width: 6),
+                ],
+                Expanded(
+                  // In a narrow board (a phone-width window) the rating gives way
+                  // first; it used to keep its width while the name got none.
+                  child: LayoutBuilder(
+                    builder:
+                        (context, constraints) => Row(
+                          children: [
+                            Flexible(fit: FlexFit.loose, child: hoverPreview),
+                            if (rating > 0 && constraints.maxWidth >= 150) ...[
+                              const SizedBox(width: 8),
+                              Text(
+                                '($rating)',
+                                style: TextStyle(
+                                  color: kWhiteColor.withValues(alpha: 0.82),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  fontFeatures: const [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                  ),
+                ),
+                if (useLiveClock && activeGameId != null)
+                  _LiveBoardPlayerClock(
+                    gameId: activeGameId!,
+                    sourceGame: sourceGame,
+                    isWhite: isWhite,
+                    isToMove: isToMove,
+                    result: result,
+                    fallbackText: clockText ?? '',
+                  )
+                else if (hasUsableClockDisplay(clockText) || result != null) ...[
+                  const SizedBox(width: 10),
+                  _PlayerClock(
+                    text: clockText ?? '',
+                    isToMove: isToMove,
+                    result: result,
+                    customPoints: boardPlayerAwardedPoints(isWhite: isWhite, sourceGame: sourceGame, args: boardArgs),
+                  ),
+                ],
+                if (trailingControl != null) ...[
+                  const SizedBox(width: 8),
+                  trailingControl!,
                 ],
               ],
             ),
-          ),
-          if (useLiveClock && activeGameId != null)
-            _LiveBoardPlayerClock(
-              gameId: activeGameId!,
-              sourceGame: sourceGame,
-              isWhite: isWhite,
-              isToMove: isToMove,
-              result: result,
-              fallbackText: clockText ?? '',
-            )
-          else if (hasUsableClockDisplay(clockText) || result != null) ...[
-            const SizedBox(width: 10),
-            _PlayerClock(
-              text: clockText ?? '',
-              isToMove: isToMove,
-              result: result,
-              customPoints: boardPlayerAwardedPoints(isWhite: isWhite, sourceGame: sourceGame, args: boardArgs),
-            ),
-          ],
-          if (trailingControl != null) ...[
-            const SizedBox(width: 8),
-            trailingControl!,
-          ],
-        ],
       ),
     );
 

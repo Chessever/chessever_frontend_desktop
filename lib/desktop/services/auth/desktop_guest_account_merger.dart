@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/auth/guest_account_merge.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Reads and writes one account's mergeable rows.
 abstract interface class GuestAccountMergeGateway {
@@ -335,7 +336,7 @@ class FileGuestMergePendingStore implements GuestMergePendingStore {
   Future<File> _file() async {
     final base = await _directory();
     return File(
-      '${base.path}${Platform.pathSeparator}guest_merge_pending_v1.json',
+      '${base.path}${hostPathSeparator}guest_merge_pending_v1.json',
     );
   }
 

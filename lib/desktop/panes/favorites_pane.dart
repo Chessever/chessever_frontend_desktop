@@ -191,7 +191,7 @@ class _FavoritePlayersListTab extends HookConsumerWidget {
                           : 'No players match your filter',
                   message:
                       q.isEmpty
-                          ? 'Tap the heart on any player to follow them.'
+                          ? 'Click the heart on any player to follow them.'
                           : 'Try another name.',
                 );
               }

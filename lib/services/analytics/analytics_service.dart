@@ -11,6 +11,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../repository/authentication/model/app_user.dart';
 import 'package:chessever/desktop/services/windows_analytics_transport.dart';
 import 'package:chessever/services/appsflyer_service.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Centralized analytics facade to keep event names/metadata consistent.
 class AnalyticsService {
@@ -42,7 +43,7 @@ class AnalyticsService {
   Future<void> _initialize() async {
     _baseEventProperties = await _buildBaseEventProperties();
     _firebaseAnalytics = _createFirebaseAnalytics();
-    if (Platform.isWindows) {
+    if (hostIsWindows) {
       _windowsAnalytics = WindowsAnalyticsTransport();
       await _windowsAnalytics!.initialize();
     }
@@ -203,7 +204,7 @@ class AnalyticsService {
 
   bool get _isFirebaseAnalyticsSupported {
     if (kIsWeb) return true;
-    return Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
+    return hostIsAndroid || hostIsIOS || hostIsMacOS;
   }
 
   Future<void> _logFirebaseEvent(

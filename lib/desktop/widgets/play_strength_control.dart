@@ -127,18 +127,54 @@ class _ModeGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final options = playStrengthOptionsFor(engine);
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final option in options)
-          _ModeChip(
-            option: option,
-            selected: option.value == selectedValue,
-            onPress: () => onChanged(option.value),
-            compact: compact,
-          ),
-      ],
+    Widget chip(PlayStrengthOption option) => _ModeChip(
+      option: option,
+      selected: option.value == selectedValue,
+      onPress: () => onChanged(option.value),
+      compact: compact,
+    );
+    const spacing = 8.0;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!constraints.hasBoundedWidth) {
+          return Wrap(
+            spacing: spacing,
+            runSpacing: spacing,
+            children: [for (final option in options) chip(option)],
+          );
+        }
+        // Equal columns, so every row lines up with the one above instead of
+        // each chip taking its own content width.
+        final minCell = compact ? 126.0 : 156.0;
+        final fit = ((constraints.maxWidth + spacing) / (minCell + spacing))
+            .floor();
+        final columns = fit.clamp(1, options.length.clamp(1, 3)).toInt();
+        final rows = (options.length / columns).ceil();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var row = 0; row < rows; row++) ...[
+              if (row > 0) const SizedBox(height: spacing),
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var col = 0; col < columns; col++) ...[
+                      if (col > 0) const SizedBox(width: spacing),
+                      Expanded(
+                        child:
+                            row * columns + col < options.length
+                                ? chip(options[row * columns + col])
+                                : const SizedBox.shrink(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -191,7 +227,7 @@ class _ModeChip extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   option.description,
-                  maxLines: compact ? 1 : 2,
+                  maxLines: compact ? 1 : 3,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: kSecondaryTextColor,

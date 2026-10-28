@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -16,6 +17,23 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 
 final _desktopNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Desktop text falls back to the OS UI font (SF on macOS, Segoe on Windows).
+/// A browser has no such font to draw with, so the web build uses Inter, the
+/// SF-like face forui already bundles for the desktop chrome.
+final ThemeData _appTheme =
+    kIsWeb
+        ? AppTheme.darkTheme.copyWith(
+          textTheme: AppTheme.darkTheme.textTheme.apply(
+            fontFamily: _webFontFamily,
+          ),
+          primaryTextTheme: AppTheme.darkTheme.primaryTextTheme.apply(
+            fontFamily: _webFontFamily,
+          ),
+        )
+        : AppTheme.darkTheme;
+
+const String _webFontFamily = 'packages/forui/Inter';
 
 /// Root navigator of the desktop app. Services without a widget context
 /// (the deep link router) use it to present dialogs and toasts.
@@ -63,8 +81,8 @@ class _DesktopAppState extends ConsumerState<DesktopApp> {
     return MaterialApp(
       title: DesktopBuildIdentity.current.displayName,
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
-      darkTheme: AppTheme.darkTheme,
+      theme: _appTheme,
+      darkTheme: _appTheme,
       themeMode: ThemeMode.dark,
       navigatorKey: _desktopNavigatorKey,
       navigatorObservers: [

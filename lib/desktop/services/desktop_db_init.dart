@@ -1,6 +1,6 @@
-import 'dart:io';
 
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// Initializes sqflite for desktop platforms (macOS + Windows).
 ///
@@ -12,7 +12,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 /// Call this once during startup, before any `AppDatabase.instance.database`
 /// access. It is a no-op on mobile.
 void initializeDesktopDatabaseFactory() {
-  if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+  if (!(hostIsMacOS || hostIsWindows || hostIsLinux)) {
     return;
   }
   sqfliteFfiInit();

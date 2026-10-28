@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'cbh_dart_conversion.dart';
 import 'cbv_archive_reader.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 /// The application installs a navigator-backed consent handler. Non-UI callers
 /// cannot silently convert a source or register the original binary database.
@@ -69,7 +70,7 @@ class CbhConversionService {
   );
 
   static bool get isAvailable =>
-      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+      hostIsMacOS || hostIsWindows || hostIsLinux;
 
   Future<void> cancel() async {
     _cancelled = true;

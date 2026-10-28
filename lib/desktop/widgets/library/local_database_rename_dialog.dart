@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 import 'package:forui/forui.dart';
 import 'package:path/path.dart' as p;
@@ -76,7 +77,9 @@ class _LocalDatabaseRenameDialogState extends State<LocalDatabaseRenameDialog> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Changes the PGN filename. Original ChessBase files stay unchanged.',
+              kIsWeb
+                  ? 'Changes the PGN filename.'
+                  : 'Changes the PGN filename. Original ChessBase files stay unchanged.',
             ),
             const SizedBox(height: 16),
             FTextField(

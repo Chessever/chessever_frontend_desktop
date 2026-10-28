@@ -277,6 +277,9 @@ class _ProfileCard extends ConsumerStatefulWidget {
 
 class _ProfileCardState extends ConsumerState<_ProfileCard> {
   late final TextEditingController _name;
+  // Focused explicitly when Edit opens: `autofocus` lost to the pane's own
+  // keyboard-scroll focus, so typing went nowhere.
+  final FocusNode _nameFocus = FocusNode(debugLabel: 'play-profile-name');
   bool _editing = false;
   bool _saving = false;
 
@@ -299,7 +302,15 @@ class _ProfileCardState extends ConsumerState<_ProfileCard> {
   @override
   void dispose() {
     _name.dispose();
+    _nameFocus.dispose();
     super.dispose();
+  }
+
+  void _startEditing() {
+    setState(() => _editing = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _editing) _nameFocus.requestFocus();
+    });
   }
 
   @override
@@ -326,6 +337,7 @@ class _ProfileCardState extends ConsumerState<_ProfileCard> {
                     if (_editing)
                       FTextField(
                         controller: _name,
+                        focusNode: _nameFocus,
                         hint: 'Display name',
                         autofocus: true,
                         inputFormatters: [LengthLimitingTextInputFormatter(42)],
@@ -342,16 +354,21 @@ class _ProfileCardState extends ConsumerState<_ProfileCard> {
                           letterSpacing: -0.2,
                         ),
                       ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'ChessEver Player',
-                      style: TextStyle(
-                        color: _accentFor(p.headlineTimeControl),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.8,
+                    // The default display name is this same tag line; one
+                    // copy is enough.
+                    if (_editing ||
+                        p.displayName.trim() != 'ChessEver Player') ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'ChessEver Player',
+                        style: TextStyle(
+                          color: _accentFor(p.headlineTimeControl),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -386,7 +403,7 @@ class _ProfileCardState extends ConsumerState<_ProfileCard> {
                   child: FButton(
                     style: playSecondaryActionButtonStyle(),
                     prefix: const Icon(Icons.edit_outlined, size: 16),
-                    onPress: () => setState(() => _editing = true),
+                    onPress: _startEditing,
                     child: const Text('Edit'),
                   ),
                 ),
@@ -2062,6 +2079,8 @@ class _AchievementsBody extends ConsumerWidget {
             );
           },
         ),
+        // Lets the last row scroll fully clear of the pane's bottom edge.
+        const SliverToBoxAdapter(child: SizedBox(height: 32)),
       ],
     );
   }

@@ -34,7 +34,7 @@ library;
 
 import 'dart:io';
 
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/resqlite.dart' as resqlite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 

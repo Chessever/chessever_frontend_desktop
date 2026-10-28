@@ -16,6 +16,9 @@ import 'package:chessever/desktop/services/engine/uci_engine.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/play/engine_catalog.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
+import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/web_engine_process_stub.dart'
+    if (dart.library.js_interop) 'package:chessever/web/web_engine_process.dart';
 
 /// One-step bot readiness state for the Play setup screen.
 enum EngineInstallStatus {
@@ -89,10 +92,14 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
         EngineInstallState(
           kind: kind,
           status:
-              kEngineCatalog[kind]?.artifactForHost() == null &&
+              kIsWeb
+                  ? _webInstallStatus(kind)
+                  : kEngineCatalog[kind]?.artifactForHost() == null &&
                       kind != BotEngineKind.stockfish
                   ? EngineInstallStatus.unsupported
                   : EngineInstallStatus.notInstalled,
+          binaryPath: kIsWeb ? _webEnginePath(kind) : null,
+          progress: kIsWeb && _webEnginePath(kind) != null ? 1.0 : 0.0,
         ),
       ) {
     unawaited(_seed());
@@ -101,7 +108,24 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
   final BotEngineKind kind;
   HttpClient? _client;
 
+  /// The browser build ships Stockfish (a Web Worker); Leela and Maia need
+  /// native binaries and stay unavailable there.
+  static EngineInstallStatus _webInstallStatus(BotEngineKind kind) =>
+      _webEnginePath(kind) == null
+          ? EngineInstallStatus.unsupported
+          : EngineInstallStatus.installed;
+
+  /// Stockfish runs in a Web Worker; Maia's ONNX model loads straight from
+  /// maiachess.com (it allows any origin, and at 46 MB exceeds what the app
+  /// itself can host). Leela needs a native binary.
+  static String? _webEnginePath(BotEngineKind kind) => switch (kind) {
+    BotEngineKind.stockfish => kWebStockfishEnginePath,
+    BotEngineKind.maia => kEngineCatalog[kind]?.artifacts.first.url,
+    BotEngineKind.leela => null,
+  };
+
   Future<void> _seed() async {
+    if (kIsWeb) return;
     if (isMacAppStore) {
       final path = switch (kind) {
         BotEngineKind.stockfish => macAppStoreBundledPath(
@@ -289,7 +313,7 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
       default:
         throw const FormatException('Could not prepare bot package.');
     }
-    if (!Platform.isWindows) {
+    if (!hostIsWindows) {
       await Process.run('chmod', ['+x', outPath]);
     }
     return outPath;
@@ -331,7 +355,7 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
       targetDir.path,
       ..._normalizeArchivePath(executable.name).split('/'),
     ]);
-    if (!Platform.isWindows) {
+    if (!hostIsWindows) {
       await Process.run('chmod', ['+x', executablePath]);
     }
     return executablePath;

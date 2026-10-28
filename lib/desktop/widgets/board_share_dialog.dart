@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -23,6 +24,8 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
 import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/text_download.dart';
 
 const _defaultBoardShareShowEvalBar = false;
 
@@ -291,7 +294,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       setState(() => _gifProgressLabel = 'Loading GIF preview…');
       final temporaryDirectory = await getTemporaryDirectory();
       final temporaryPath =
-          '${temporaryDirectory.path}${io.Platform.pathSeparator}'
+          '${temporaryDirectory.path}$hostPathSeparator'
           'chessever_gif_preview_${DateTime.now().microsecondsSinceEpoch}.gif';
       await service.downloadToFile(
         jobId: completed.id,
@@ -329,6 +332,19 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   Future<void> _saveGeneratedGif() async {
     final generatedGifPath = _generatedGifPath;
     if (generatedGifPath == null) return;
+
+    if (kIsWeb) {
+      // The browser's download stands in for the desktop save dialog.
+      try {
+        final bytes = await io.File(generatedGifPath).readAsBytes();
+        downloadBytesFile(_defaultExportName('gif'), bytes, 'image/gif');
+        _showToast('GIF downloaded', isError: false);
+      } catch (error) {
+        debugPrint('Failed to download generated GIF: $error');
+        _showToast('Failed to download GIF', isError: true);
+      }
+      return;
+    }
 
     final outputPath = await BoardShareService.chooseGifSavePath(
       defaultName: _defaultExportName('gif'),
@@ -862,7 +878,7 @@ class BoardShareActionDescriptor {
 @visibleForTesting
 List<BoardShareActionDescriptor> boardShareActionDescriptors({
   required VoidCallback copyImage,
-  required VoidCallback generateGif,
+  required VoidCallback? generateGif,
   required VoidCallback downloadImage,
   required VoidCallback? copyPgn,
 }) {
@@ -872,11 +888,12 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
       label: 'Copy Image',
       onTap: copyImage,
     ),
-    BoardShareActionDescriptor(
-      icon: Icons.gif_box_outlined,
-      label: 'Generate GIF',
-      onTap: generateGif,
-    ),
+    if (generateGif != null)
+      BoardShareActionDescriptor(
+        icon: Icons.gif_box_outlined,
+        label: 'Generate GIF',
+        onTap: generateGif,
+      ),
     BoardShareActionDescriptor(
       icon: Icons.download_rounded,
       label: 'Download PNG',

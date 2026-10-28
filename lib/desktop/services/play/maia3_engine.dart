@@ -1,8 +1,11 @@
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
+import 'package:chessever/web/onnx_runtime.dart';
 
 /// Local Maia 3 ONNX runner.
 ///
@@ -10,21 +13,28 @@ import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 /// network used by maiachess.com; this adapter gives the Play pane the same
 /// local, offline move generation path as the web worker.
 class Maia3LocalEngine {
-  Maia3LocalEngine._(this._session);
+  Maia3LocalEngine._(this._session, this._webSession);
 
-  final OrtSession _session;
+  final OrtSession? _session;
+  final WebOnnxSession? _webSession;
   final Random _random = Random();
 
   static Future<Maia3LocalEngine> load(String modelPath) async {
+    if (kIsWeb) {
+      return Maia3LocalEngine._(null, await WebOnnxSession.create(modelPath));
+    }
     final runtime = OnnxRuntime();
     final session = await runtime.createSession(
       modelPath,
       options: OrtSessionOptions(intraOpNumThreads: 1, interOpNumThreads: 1),
     );
-    return Maia3LocalEngine._(session);
+    return Maia3LocalEngine._(session, null);
   }
 
-  Future<void> dispose() => _session.close();
+  Future<void> dispose() async {
+    await _session?.close();
+    await _webSession?.release();
+  }
 
   Future<String?> pickMove({
     required String fen,
@@ -41,24 +51,39 @@ class Maia3LocalEngine {
     final legalIndices = _legalMoveIndices(position);
     if (legalIndices.isEmpty) return null;
 
+    final tokens = _boardTokens(modelFen);
+    final self = Float32List.fromList([_clampMaiaElo(eloSelf)]);
+    final oppo = Float32List.fromList([_clampMaiaElo(eloOpponent)]);
+    final List<dynamic> logits;
+    final web = _webSession;
+    if (web != null) {
+      logits = await web.run({
+        'tokens': (tokens, [1, 64, 12]),
+        'elo_self': (self, [1]),
+        'elo_oppo': (oppo, [1]),
+      }, 'logits_move');
+    } else {
+      logits = await _nativeMoveLogits(tokens, self, oppo);
+    }
+    final chosen = _chooseMoveIndex(logits, legalIndices, sample: sample);
+    final modelMove = _moveFromMaia3Index(chosen);
+    return mirrored ? _mirrorMove(modelMove) : modelMove;
+  }
+
+  Future<List<dynamic>> _nativeMoveLogits(
+    Float32List tokens,
+    Float32List eloSelf,
+    Float32List eloOpponent,
+  ) async {
     final inputs = <String, OrtValue>{
-      'tokens': await OrtValue.fromList(_boardTokens(modelFen), [1, 64, 12]),
-      'elo_self': await OrtValue.fromList(
-        Float32List.fromList([_clampMaiaElo(eloSelf)]),
-        [1],
-      ),
-      'elo_oppo': await OrtValue.fromList(
-        Float32List.fromList([_clampMaiaElo(eloOpponent)]),
-        [1],
-      ),
+      'tokens': await OrtValue.fromList(tokens, [1, 64, 12]),
+      'elo_self': await OrtValue.fromList(eloSelf, [1]),
+      'elo_oppo': await OrtValue.fromList(eloOpponent, [1]),
     };
     Map<String, OrtValue>? outputs;
     try {
-      outputs = await _session.run(inputs);
-      final logits = await outputs['logits_move']!.asFlattenedList();
-      final chosen = _chooseMoveIndex(logits, legalIndices, sample: sample);
-      final modelMove = _moveFromMaia3Index(chosen);
-      return mirrored ? _mirrorMove(modelMove) : modelMove;
+      outputs = await _session!.run(inputs);
+      return await outputs['logits_move']!.asFlattenedList();
     } finally {
       for (final input in inputs.values) {
         await input.dispose();

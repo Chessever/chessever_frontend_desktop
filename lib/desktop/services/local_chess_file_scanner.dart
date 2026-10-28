@@ -4,14 +4,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'pgn_record_boundaries.dart';
 import 'local_pgn_position.dart';
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:libcompress/libcompress.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/resqlite.dart' as resqlite;
 
 import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 
@@ -26,6 +26,7 @@ import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/utils/local_pgn_metadata.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const localChessSupportedExtensions = <String>{
   '.pgn',
@@ -2583,7 +2584,7 @@ bool _compactPgnIsOnline(Map<String, String> metadata, String path) {
 
 String _compactPgnDatabaseId(String path) {
   final normalized = p.normalize(path.trim());
-  return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  return hostIsWindows ? normalized.toLowerCase() : normalized;
 }
 
 void _publishCompactPgnGameIndex({
@@ -4435,7 +4436,7 @@ List<String> dedupeLocalChessInputPaths(
 }
 
 String localChessInputPathKey(String path, {bool? windows}) {
-  final isWindows = windows ?? Platform.isWindows;
+  final isWindows = windows ?? hostIsWindows;
   if (isWindows) {
     return p.Context(style: p.Style.windows).normalize(path).toLowerCase();
   }
@@ -4444,11 +4445,11 @@ String localChessInputPathKey(String path, {bool? windows}) {
 
 bool _samePath(String a, String b) {
   if (a.contains('::') || b.contains('::')) {
-    return Platform.isWindows
+    return hostIsWindows
         ? localChessInputPathKey(a) == localChessInputPathKey(b)
         : a == b;
   }
-  if (Platform.isWindows) {
+  if (hostIsWindows) {
     return localChessInputPathKey(a) == localChessInputPathKey(b);
   }
   return p.normalize(a) == p.normalize(b);

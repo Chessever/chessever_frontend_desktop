@@ -554,14 +554,23 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             const SizedBox(width: 8),
           ],
           Expanded(
-            child: Text(
-              'Stockfish',
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: engineOn ? kWhiteColor : kWhiteColor70,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
+            // A clipped "St…" reads as broken; in a narrow rail the score and
+            // controls say enough, so the name steps aside instead.
+            child: LayoutBuilder(
+              builder:
+                  (context, constraints) =>
+                      constraints.maxWidth < 64
+                          ? const SizedBox.shrink()
+                          : Text(
+                            'Stockfish',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: engineOn ? kWhiteColor : kWhiteColor70,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
             ),
           ),
           if (engineActive) ...[
@@ -2117,7 +2126,9 @@ class _DepthChip extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          color: kLightGreyColor.withValues(alpha: isEvaluating ? 0.9 : 0.65),
+          // Readable on the chip (about 1.9:1 before); still a step below
+          // the score beside it.
+          color: isEvaluating ? kWhiteColor70 : kLightGreyColor,
           fontSize: 10,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.4,

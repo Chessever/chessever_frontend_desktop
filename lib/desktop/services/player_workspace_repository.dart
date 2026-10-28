@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
+import 'package:chessever/web/shims/isolate.dart';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -24,6 +24,7 @@ import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/utils/eco_openings.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const String _workspaceStorageKey = 'desktop_player_workspace_v1';
 const String _httpUserAgent =
@@ -2166,7 +2167,7 @@ List<String>? _generatedWorkspaceRelativeParts({
 bool _samePath(String a, String b) {
   final normalizedA = p.normalize(a);
   final normalizedB = p.normalize(b);
-  if (Platform.isWindows) {
+  if (hostIsWindows) {
     return normalizedA.toLowerCase() == normalizedB.toLowerCase();
   }
   return normalizedA == normalizedB;

@@ -1,10 +1,13 @@
 import 'dart:async';
+
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/mac_sandbox_file_picker.dart';
+import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// Wraps a child widget with a drag-drop overlay for chess files/folders.
@@ -59,10 +62,15 @@ class _LocalChessDropZoneState extends State<LocalChessDropZone> {
       onDragDone: (details) async {
         if (_dropInFlight) return;
         setState(() => _hovering = false);
-        await MacSandboxFilePicker.retain(details.files.map((file) => file.path));
-        final paths = await localChessDropPaths(
-          details.files.map((x) => x.path),
-        );
+        final List<String> paths;
+        if (kIsWeb) {
+          paths = await copyDroppedChessFilesIntoAppStorage(details.files);
+        } else {
+          await MacSandboxFilePicker.retain(
+            details.files.map((file) => file.path),
+          );
+          paths = await localChessDropPaths(details.files.map((x) => x.path));
+        }
         if (paths.isEmpty) return;
         _dropInFlight = true;
         try {

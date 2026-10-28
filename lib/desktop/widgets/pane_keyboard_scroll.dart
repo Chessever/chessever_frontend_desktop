@@ -269,6 +269,14 @@ class _PaneKeyboardScrollState extends State<PaneKeyboardScroll> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    // A chord (Cmd/Ctrl+Up/Down switches games on a board) belongs to the
+    // shortcut it names, not to plain scrolling.
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isMetaPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed) {
+      return KeyEventResult.ignored;
+    }
     final key = event.logicalKey;
     final isPageDown = key == LogicalKeyboardKey.pageDown;
     final isPageUp = key == LogicalKeyboardKey.pageUp;
