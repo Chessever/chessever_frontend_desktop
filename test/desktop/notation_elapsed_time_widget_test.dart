@@ -98,9 +98,31 @@ void main() {
         ),
         findsNothing,
       );
-      expect(find.text('0:59'), findsNothing);
       expect(find.text('0s'), findsNothing);
+      // Without a usable elapsed time the remaining clock still shows.
+      expect(find.text('0:59'), findsOneWidget);
+      expect(find.text('0:58'), findsOneWidget);
     });
+    testWidgets(
+      '${mode.name} remaining-clock fallback keeps the red under-30s cue',
+      (tester) async {
+        await showGame(
+          tester,
+          ChessGame.fromPgn(
+            'scramble',
+            '1. e4 {[%clk 0:00:45]} e5 {[%clk 0:00:25]} *',
+          ),
+          mode,
+        );
+        expect(
+          tester.widget<Text>(find.text('0:45')).style!.color,
+          isNot(kRedColor),
+        );
+        final low = tester.widget<Text>(find.text('0:25')).style!;
+        expect(low.color, kRedColor);
+        expect(low.fontWeight, FontWeight.w700);
+      },
+    );
     testWidgets(
       '${mode.name} elapsed time is neutral, not a red low-clock warning',
       (tester) async {
