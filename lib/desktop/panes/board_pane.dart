@@ -3073,6 +3073,19 @@ class _BoardPaneContent extends HookConsumerWidget {
         }
         metadata[ChessGame.metadataIsLiveKey] = false;
         metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
+        // A broadcast PGN can still say "*" after the game has ended; the
+        // board knows the final result, so the save dialog starts there.
+        final knownResult = switch (boardArgs?.sourceGame?.gameStatus) {
+          GameStatus.whiteWins => '1-0',
+          GameStatus.blackWins => '0-1',
+          GameStatus.draw => '1/2-1/2',
+          _ => null,
+        };
+        final savedResult = metadata['Result']?.toString().trim() ?? '';
+        if (knownResult != null &&
+            (savedResult.isEmpty || savedResult == '*')) {
+          metadata['Result'] = knownResult;
+        }
         final eventLabel = headers['Event']?.trim();
         final gameSnapshot = snapshot.copyWith(metadata: metadata);
 
@@ -4648,6 +4661,9 @@ class _BoardPaneContent extends HookConsumerWidget {
             ref.read(boardFocusModeProvider.notifier).state = false;
             return true;
           }
+          // In a browser Esc means "dismiss", and closing the tab on it is
+          // easy to hit by accident; Alt+W closes a tab there.
+          if (kIsWeb) return false;
           unawaited(closeActiveBoardTab(force: false));
           return true;
       }

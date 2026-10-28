@@ -577,9 +577,12 @@ class DesktopShell extends HookConsumerWidget {
             // maps `closeWindow` (BoardActionKey) to Esc — that mapping is
             // applied later in this builder so the board's path takes
             // precedence when a board tab is active. Both paths route to
-            // the same `desktopTabsProvider.close(activeTabId)` call.
-            const SingleActivator(LogicalKeyboardKey.escape):
-                const _CloseTabIntent(),
+            // the same `desktopTabsProvider.close(activeTabId)` call. Not in
+            // a browser, where Esc means "dismiss" (it closed a profile tab
+            // mid-edit); Alt+W closes a tab there.
+            if (!kIsWeb)
+              const SingleActivator(LogicalKeyboardKey.escape):
+                  const _CloseTabIntent(),
             const SingleActivator(LogicalKeyboardKey.keyT, meta: true):
                 const _NewTabIntent(),
             const SingleActivator(LogicalKeyboardKey.keyB, meta: true):

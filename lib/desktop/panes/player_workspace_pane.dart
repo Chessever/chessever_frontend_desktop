@@ -59,6 +59,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/png_asset.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/utils/host_platform.dart';
 
 const _startingFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -5278,9 +5279,9 @@ class _ConfirmRemovePlayerDialog extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              const Text(
-                'This removes the player from the Players workspace and deletes generated PGN files, combined databases, and local cache from this computer.',
-                style: TextStyle(
+              Text(
+                'This removes the player from the Players workspace and deletes generated PGN files, combined databases, and local cache from $hostLocalStorageName.',
+                style: const TextStyle(
                   color: kWhiteColor70,
                   fontSize: 12,
                   height: 1.4,

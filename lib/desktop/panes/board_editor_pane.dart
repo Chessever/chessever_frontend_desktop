@@ -1926,7 +1926,7 @@ class _PositionMetadataFieldsState extends State<_PositionMetadataFields> {
               child: FTextField(
                 controller: _lastPawnMoveController,
                 label: const Text('Last pawn move'),
-                hint: 'ed',
+                hint: 'e.g. e5',
                 onChange: (raw) {
                   final error = _validateLastPawnMove(raw);
                   setState(() => _lastPawnMoveError = error);
@@ -2798,10 +2798,17 @@ class _RailPalettePiece extends StatelessWidget {
           style: _pieceButtonStyle(selected: isSelected),
           onPress: onTap,
           mainAxisSize: MainAxisSize.min,
-          child: SizedBox(
+          // A light square behind every piece, as on the board: black
+          // pieces drawn straight on the dark tile were near invisible.
+          child: Container(
             width: extent,
             height: extent,
-            child: Center(child: pieceWidget),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: kBoardLightGrey,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: pieceWidget,
           ),
         ),
       ),
