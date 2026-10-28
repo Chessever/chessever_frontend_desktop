@@ -15,18 +15,31 @@ class FormattedEngineReading {
 }
 
 /// Retain a complete formatted MultiPV reading until every replacement row is
-/// ready. Only the newest target/request can publish; score-only updates reuse
-/// SAN when their full move set still matches the displayed reading.
+/// ready. Score-only updates reuse SAN when their full move set still matches
+/// the displayed or converting reading.
+///
+/// On one target, conversion is latest-wins coalescing: a batch already
+/// converting is allowed to publish, and only the newest move set that arrived
+/// meanwhile is converted next. Restarting on every move change starved the
+/// display while the engine kept refining its lines. A change of target (or
+/// [clear]) still discards every older result.
 class EngineFormattedDisplay extends ChangeNotifier {
   EngineFormattedDisplay({required this.formatSan});
 
   final Future<List<String>> Function(Map<String, String>) formatSan;
   FormattedEngineReading? _snapshot;
   String? _target;
+  // Newest move set waiting for conversion, with its latest score/depth.
   BoardEvalState? _pending;
   String? _pendingKey;
+  // The batch being converted, with its latest score/depth.
+  BoardEvalState? _converting;
+  String? _convertingKey;
+  int? _activeConversion;
+  int _conversionSerial = 0;
+  // Bumped by a target change, clear or dispose: older work never publishes.
+  int _epoch = 0;
   Timer? _timer;
-  int _generation = 0;
   bool _disposed = false;
 
   FormattedEngineReading? get snapshot => _snapshot;
@@ -58,27 +71,29 @@ class EngineFormattedDisplay extends ChangeNotifier {
         if (!identical(shown.state, current)) {
           _snapshot = FormattedEngineReading(target, current, shown.sanLines);
         }
-        if (_pendingKey != null) _invalidatePending();
-      } else if (_pendingKey == key) {
+        // The visible set is the newest again; older conversions must not
+        // replace it.
+        _dropPending();
+        _abandonConversion();
+      } else if (key == _convertingKey) {
+        // Same moves as the batch in progress: it publishes with this score.
+        _converting = current;
+        _dropPending();
+      } else if (key == _pendingKey) {
         // The captured moves are unchanged, so their latest score/depth can be
         // paired with the same worker output rather than restarting conversion.
         _pending = current;
       } else {
         // Coalesce to the latest moves without resetting the original window:
         // continuous engine info must not postpone conversion indefinitely.
-        _generation++;
         _pendingKey = key;
         _pending = current;
-        _timer ??= Timer(const Duration(milliseconds: 120), () {
-          _timer = null;
-          final source = _pending;
-          final pendingKey = _pendingKey;
-          final pendingTarget = _target;
-          if (source == null || pendingKey == null || pendingTarget == null) {
-            return;
-          }
-          unawaited(_format(pendingTarget, pendingKey, _generation, source));
-        });
+        if (_activeConversion == null) {
+          _timer ??= Timer(const Duration(milliseconds: 120), () {
+            _timer = null;
+            _startPending();
+          });
+        }
       }
     }
     // Never let an unformatted incoming score/depth get ahead of visible SAN.
@@ -88,17 +103,39 @@ class EngineFormattedDisplay extends ChangeNotifier {
   bool isCurrent(String target, BoardEvalState current) =>
       _snapshot?.fen == target && identical(_snapshot?.state, current);
 
+  void _startPending() {
+    final target = _target;
+    final key = _pendingKey;
+    final source = _pending;
+    if (_disposed ||
+        _activeConversion != null ||
+        target == null ||
+        key == null ||
+        source == null) {
+      return;
+    }
+    _timer?.cancel();
+    _timer = null;
+    _pending = null;
+    _pendingKey = null;
+    _converting = source;
+    _convertingKey = key;
+    final serial = ++_conversionSerial;
+    _activeConversion = serial;
+    unawaited(_format(target, serial, _epoch, source));
+  }
+
   Future<void> _format(
     String target,
-    String key,
-    int generation,
+    int serial,
+    int epoch,
     BoardEvalState source,
   ) async {
     bool current() =>
         !_disposed &&
-        generation == _generation &&
+        epoch == _epoch &&
         target == _target &&
-        key == _pendingKey;
+        serial == _activeConversion;
     try {
       final labels = await Future.wait(
         source.pvs.map((pv) => formatSan({'fen': target, 'moves': pv.moves})),
@@ -108,33 +145,42 @@ class EngineFormattedDisplay extends ChangeNotifier {
       if (labels.any((row) => row.isEmpty || row.any(rawUci.hasMatch))) {
         return;
       }
-      final state = _pending!;
       _snapshot = FormattedEngineReading(
         target,
-        state,
+        _converting!,
         List<List<String>>.unmodifiable(
           labels.map((row) => List<String>.unmodifiable(row)),
         ),
       );
-      _pending = null;
-      _pendingKey = null;
       notifyListeners();
     } catch (_) {
       // A failed row cannot replace the complete display with a partial set.
     } finally {
       if (current()) {
-        _pending = null;
-        _pendingKey = null;
+        _abandonConversion();
+        // Latest wins: whatever queued during this batch converts next.
+        _startPending();
       }
     }
   }
 
-  void _invalidatePending() {
-    _generation++;
+  void _dropPending() {
     _timer?.cancel();
     _timer = null;
     _pending = null;
     _pendingKey = null;
+  }
+
+  void _abandonConversion() {
+    _activeConversion = null;
+    _converting = null;
+    _convertingKey = null;
+  }
+
+  void _invalidatePending() {
+    _epoch++;
+    _dropPending();
+    _abandonConversion();
   }
 
   void clear() {

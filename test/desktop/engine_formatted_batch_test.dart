@@ -47,6 +47,10 @@ class _Worker {
 }
 
 class _Harness {
+  _Harness({this.formatDelay});
+
+  /// When set, SAN conversion completes on its own after this delay.
+  final Duration? formatDelay;
   final target = ValueNotifier(_a);
   final gameId = ValueNotifier('same-game');
   final evals = <String, _ManualEval>{};
@@ -83,7 +87,7 @@ class _Harness {
                             reportController: controller,
                             onPlayUci: played.add,
                             pvPlayOwner: id,
-                            pvSanFormatter: worker.call,
+                            pvSanFormatter: _formatter,
                           ),
                     ),
               ),
@@ -96,6 +100,16 @@ class _Harness {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 1));
     await tester.pump();
+  }
+
+  Future<List<String>> _formatter(Map<String, String> input) {
+    final delay = formatDelay;
+    if (delay == null) return worker.call(input);
+    worker.requests.add(input);
+    return Future<List<String>>.delayed(
+      delay,
+      () => formatEnginePvSanLine(input),
+    );
   }
 
   Future<void> firstReading(WidgetTester tester) async {
@@ -350,6 +364,102 @@ void main() {
       );
       expect(h.played, ['e7e5']);
       await h.dispose(tester);
+    },
+  );
+
+  testWidgets(
+    'a batch converting when moves change still publishes, then only the '
+    'newest set converts',
+    (tester) async {
+      final h = _Harness();
+      await h.mount(tester);
+      await h.firstReading(tester);
+      BoardEvalState changed(String moves, double score) => _first.copyWith(
+        pvs: [
+          BoardPv(evaluation: score, mate: null, moves: moves),
+          ..._first.pvs.skip(1),
+        ],
+      );
+      h.evals[_a]!.emit(changed('e2e4 c7c5', .50));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 121));
+      expect(h.worker.results, hasLength(6));
+      expect(h.worker.requests[3]['moves'], 'e2e4 c7c5');
+
+      // Two newer sets arrive while c5 is still converting.
+      h.evals[_a]!.emit(changed('e2e4 e7e6', .55));
+      await tester.pump(const Duration(milliseconds: 80));
+      h.evals[_a]!.emit(changed('e2e4 d7d6', .60));
+      await tester.pump(const Duration(milliseconds: 80));
+
+      for (var i = 3; i < 6; i++) {
+        h.worker.complete(i);
+      }
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('+0.50'), findsNWidgets(2));
+      expect(find.text('+0.31'), findsNothing);
+
+      // Latest wins: the intermediate e6 set is never converted.
+      await tester.pump(const Duration(milliseconds: 121));
+      expect(h.worker.results, hasLength(9));
+      expect(h.worker.requests[6]['moves'], 'e2e4 d7d6');
+      expect(
+        h.worker.requests.map((r) => r['moves']),
+        isNot(contains('e2e4 e7e6')),
+      );
+      for (var i = 6; i < 9; i++) {
+        h.worker.complete(i);
+      }
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('+0.60'), findsNWidgets(2));
+      expect(find.text('+0.50'), findsNothing);
+      await h.dispose(tester);
+    },
+  );
+
+  testWidgets(
+    'moves changing every 80 ms on a new position still replace the old '
+    'lines with a 50 ms formatter',
+    (tester) async {
+      final h = _Harness(formatDelay: const Duration(milliseconds: 50));
+      await h.mount(tester);
+      h.evals[_a]!.emit(_first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('1.e4', findRichText: true), findsOneWidget);
+
+      await h.retarget(tester, _b);
+      const replies = [
+        'e7e5', 'c7c5', 'e7e6', 'd7d6', 'd7d5', 'g8f6', 'b8c6', 'g7g6', //
+        'c7c6', 'b7b6', 'a7a6', 'h7h6', 'f7f5', 'b8a6', 'g8h6', 'a7a5', //
+        'h7h5', 'f7f6', 'b7b5', 'g7g5',
+      ];
+      // The provider publishes a new top line at its 80 ms rate for 3.2 s.
+      for (var i = 0; i < 40; i++) {
+        final follow = i.isEven ? 'g1f3' : 'b1c3';
+        h.evals[_b]!.emit(
+          _second.copyWith(
+            pvs: [
+              BoardPv(
+                evaluation: .42,
+                mate: null,
+                moves: '${replies[i % replies.length]} $follow',
+              ),
+              ..._second.pvs.skip(1),
+            ],
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+
+      expect(find.text('1.e4', findRichText: true), findsNothing);
+      expect(find.text('+0.31'), findsNothing);
+      expect(find.text('+0.42'), findsNWidgets(2));
+      await tester.pump(const Duration(milliseconds: 300));
+      await h.dispose(tester);
+      await tester.pump(const Duration(milliseconds: 300));
     },
   );
 }
