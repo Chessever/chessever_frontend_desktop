@@ -104,7 +104,9 @@ String localChessEntryCountLabel(int count) =>
 String localChessDatabaseDisplayNameForPath(String path) {
   final converted = convertedDatabaseOriginalName(path);
   if (converted != null) {
-    return _shouldPolishLocalDatabaseStem(converted) ? _polishLocalDatabaseStem(converted) : converted;
+    return _shouldPolishLocalDatabaseStem(converted)
+        ? _polishLocalDatabaseStem(converted)
+        : converted;
   }
   final base = _basename(path);
   final extension = _displayExtensionForBasename(base);

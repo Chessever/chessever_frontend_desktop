@@ -116,8 +116,12 @@ void main() {
   test(
     'ordinary names and genuine year or numeric suffixes are not stripped',
     () {
-      for (final root in ['/ordinary', r'C:\ordinary']) {
-        final context = root.startsWith('C:') ? p.windows : p.posix;
+      // Paths are split by the host's rules, so each host checks its own
+      // style; the Windows runner covers drive-letter paths.
+      final context = p.context;
+      for (final root in [
+        context.style == p.Style.windows ? r'C:\ordinary' : '/ordinary',
+      ]) {
         for (final name in [
           'World Championship 2026.pgn',
           'FIDE-1700000000000000.pgn',

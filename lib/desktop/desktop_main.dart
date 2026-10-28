@@ -1,11 +1,11 @@
 // Release-mode startup logging is intentional here — these are the only
 // signals users see when something goes wrong before the window appears.
 // ignore_for_file: avoid_print
-import 'services/converted_database_names.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:chessever/desktop/services/converted_database_names.dart';
 import 'package:chessever/desktop/services/desktop_sentry_filter.dart';
 import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
