@@ -9810,107 +9810,119 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           ),
         ),
       ),
-      child: Row(
-        children: [
-          Container(
-            key: const ValueKey<String>('desktop-board-player-avatar'),
-            width: 42,
-            height: 42,
-            padding: const EdgeInsets.all(1),
-            decoration: BoxDecoration(
-              color: kBlack3Color,
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
-            ),
-            child:
-                hasPhoto
-                    ? PlayerInitialsAvatarCompact(
-                      photoUrl: photoUrl,
-                      initials: _playerHeaderInitials(name),
-                      size: 40,
-                      borderRadius: 6,
-                    )
-                    : Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2A2B2F),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        _playerHeaderInitials(name),
-                        style: TextStyle(
-                          color: kWhiteColor.withValues(alpha: 0.78),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.4,
-                        ),
-                      ),
-                    ),
-          ),
-          const SizedBox(width: 8),
-          BackfilledFederationFlag(
-            federation: federation,
-            fideId: fideId,
-            playerName: name,
-            width: 24,
-            height: 17,
-            borderRadius: BorderRadius.circular(2),
-          ),
-          const SizedBox(width: 8),
-          if (resolvedTitle.isNotEmpty) ...[
-            Text(
-              resolvedTitle,
-              style: const TextStyle(
-                color: kPrimaryColor,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 6),
-          ],
-          Expanded(
-            child: Row(
+      // A phone-width board has no room for the photo and a name; the name
+      // matters more, so the photo steps aside.
+      child: LayoutBuilder(
+        builder:
+            (context, constraints) => Row(
               children: [
-                Flexible(fit: FlexFit.loose, child: hoverPreview),
-                if (rating > 0) ...[
+                if (constraints.maxWidth >= 360) ...[
+                  Container(
+                    key: const ValueKey<String>('desktop-board-player-avatar'),
+                    width: 42,
+                    height: 42,
+                    padding: const EdgeInsets.all(1),
+                    decoration: BoxDecoration(
+                      color: kBlack3Color,
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
+                    ),
+                    child:
+                        hasPhoto
+                            ? PlayerInitialsAvatarCompact(
+                              photoUrl: photoUrl,
+                              initials: _playerHeaderInitials(name),
+                              size: 40,
+                              borderRadius: 6,
+                            )
+                            : Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF2A2B2F),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                _playerHeaderInitials(name),
+                                style: TextStyle(
+                                  color: kWhiteColor.withValues(alpha: 0.78),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ),
+                  ),
                   const SizedBox(width: 8),
+                ],
+                BackfilledFederationFlag(
+                  federation: federation,
+                  fideId: fideId,
+                  playerName: name,
+                  width: 24,
+                  height: 17,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+                const SizedBox(width: 8),
+                if (resolvedTitle.isNotEmpty) ...[
                   Text(
-                    '($rating)',
-                    style: TextStyle(
-                      color: kWhiteColor.withValues(alpha: 0.82),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+                    resolvedTitle,
+                    style: const TextStyle(
+                      color: kPrimaryColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
+                  const SizedBox(width: 6),
+                ],
+                Expanded(
+                  // In a narrow board (a phone-width window) the rating gives way
+                  // first; it used to keep its width while the name got none.
+                  child: LayoutBuilder(
+                    builder:
+                        (context, constraints) => Row(
+                          children: [
+                            Flexible(fit: FlexFit.loose, child: hoverPreview),
+                            if (rating > 0 && constraints.maxWidth >= 150) ...[
+                              const SizedBox(width: 8),
+                              Text(
+                                '($rating)',
+                                style: TextStyle(
+                                  color: kWhiteColor.withValues(alpha: 0.82),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  fontFeatures: const [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                  ),
+                ),
+                if (useLiveClock && activeGameId != null)
+                  _LiveBoardPlayerClock(
+                    gameId: activeGameId!,
+                    sourceGame: sourceGame,
+                    isWhite: isWhite,
+                    isToMove: isToMove,
+                    result: result,
+                    fallbackText: clockText ?? '',
+                  )
+                else if ((clockText != null && clockText!.trim().isNotEmpty) ||
+                    result != null) ...[
+                  const SizedBox(width: 10),
+                  _PlayerClock(
+                    text: clockText ?? '',
+                    isToMove: isToMove,
+                    result: result,
+                    customPoints: boardPlayerAwardedPoints(isWhite: isWhite, sourceGame: sourceGame, args: boardArgs),
+                  ),
+                ],
+                if (trailingControl != null) ...[
+                  const SizedBox(width: 8),
+                  trailingControl!,
                 ],
               ],
             ),
-          ),
-          if (useLiveClock && activeGameId != null)
-            _LiveBoardPlayerClock(
-              gameId: activeGameId!,
-              sourceGame: sourceGame,
-              isWhite: isWhite,
-              isToMove: isToMove,
-              result: result,
-              fallbackText: clockText ?? '',
-            )
-          else if ((clockText != null && clockText!.trim().isNotEmpty) ||
-              result != null) ...[
-            const SizedBox(width: 10),
-            _PlayerClock(
-              text: clockText ?? '',
-              isToMove: isToMove,
-              result: result,
-              customPoints: boardPlayerAwardedPoints(isWhite: isWhite, sourceGame: sourceGame, args: boardArgs),
-            ),
-          ],
-          if (trailingControl != null) ...[
-            const SizedBox(width: 8),
-            trailingControl!,
-          ],
-        ],
       ),
     );
 
