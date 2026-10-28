@@ -11108,6 +11108,23 @@ class _TwicTableHeader extends StatelessWidget {
       ),
       textAlign: alignEnd ? TextAlign.right : TextAlign.left,
     );
+    if (!showDate) {
+      // Phone width: rows stack white over black.
+      return Container(
+        padding: _kPreviewTableCellPadding,
+        color: kBlack3Color.withValues(alpha: 0.4),
+        child: Row(
+          children: [
+            Expanded(child: label('Players')),
+            const SizedBox(width: _kPreviewColGap),
+            SizedBox(
+              width: _kPreviewColResult,
+              child: Center(child: label('Result')),
+            ),
+          ],
+        ),
+      );
+    }
     return Container(
       padding: _kPreviewTableCellPadding,
       color: kBlack3Color.withValues(alpha: 0.4),
@@ -11216,7 +11233,57 @@ class _TwicTableRowState extends State<_TwicTableRow>
                 hovered: _hovered,
               ),
               padding: _kPreviewTableCellPadding,
-              child: Row(
+              child:
+                  widget.showDate
+                      ? _wideRow(game, result, eco, dateLabel)
+                      : _stackedRow(game, result),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Phone width: white over black, result on the right, so both names
+  /// get the row's full width instead of a column each.
+  Widget _stackedRow(GamesTourModel game, String result) {
+    final white = game.whitePlayer;
+    final black = game.blackPlayer;
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _PlayerCell(
+                name: white.name,
+                federation: white.federation,
+                title: white.title,
+                rating: white.rating > 0 ? white.rating.toString() : '',
+              ),
+              _PlayerCell(
+                name: black.name,
+                federation: black.federation,
+                title: black.title,
+                rating: black.rating > 0 ? black.rating.toString() : '',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: _kPreviewColGap),
+        SizedBox(width: _kPreviewColResult, child: _ResultPill(result: result)),
+      ],
+    );
+  }
+
+  Widget _wideRow(
+    GamesTourModel game,
+    String result,
+    String eco,
+    String dateLabel,
+  ) {
+    return Row(
                 children: [
                   Expanded(
                     flex: _kPreviewColWhite,
@@ -11303,11 +11370,6 @@ class _TwicTableRowState extends State<_TwicTableRow>
                       ),
                     ),
                 ],
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
