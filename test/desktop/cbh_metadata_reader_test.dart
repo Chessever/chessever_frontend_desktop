@@ -14,7 +14,7 @@ void main() {
     index[2] = 0x2c;
     index[4] = 0x2e;
     index[5] = 1;
-    index[9] = 1;
+    index[9] = index.length ~/ 46; // Header count includes its own record.
     index[50] = 26;
     final cbh = File(p.join(root.path, 'sample.cbh'));
     await cbh.writeAsBytes(index);

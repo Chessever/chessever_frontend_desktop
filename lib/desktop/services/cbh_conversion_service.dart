@@ -1,3 +1,4 @@
+import 'converted_database_names.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -118,6 +119,7 @@ class CbhConversionService {
                 'Converted Databases',
               ),
             );
+        registerConvertedDatabaseDirectory(root.path);
         try {
           var indexPath = source;
           if (p.extension(source).toLowerCase() == '.cbv') {
@@ -139,6 +141,16 @@ class CbhConversionService {
             final count = conversion.preservedAnnotationRecords;
             _preservationSummary =
                 '$count ${count == 1 ? 'record has' : 'records have'} ChessBase annotations retained exactly in PGN headers. Some annotation types are not displayed.';
+          }
+          if (conversion.normalizedMetadataRecords != 0) {
+            final count = conversion.normalizedMetadataRecords;
+            final detail =
+                '$count ${count == 1 ? 'record contains' : 'records contain'} '
+                'metadata tabs displayed as spaces; original metadata bytes are retained in PGN headers.';
+            _preservationSummary = [
+              if (_preservationSummary != null) _preservationSummary!,
+              detail,
+            ].join('\n');
           }
           if (_cancelled) {
             await copy.delete();

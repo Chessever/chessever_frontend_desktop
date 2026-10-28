@@ -268,6 +268,13 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
         WebKitWebViewControllerCreationParams(
           allowsInlineMediaPlayback: true,
           mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+          // WKWebView ships with the HTML Fullscreen API off, which hides
+          // YouTube's fullscreen control and leaves Twitch's inert. With it
+          // on (our patched copy of the plugin), the player's own control
+          // works and WebKit presents the video in its own full-screen
+          // window; nothing of ours is drawn there and the player never
+          // leaves its mount.
+          elementFullscreenEnabled: true,
         ),
       );
     }
