@@ -723,14 +723,36 @@ class _BoardPaneSplitView extends StatelessWidget {
     if (children.isEmpty) return const SizedBox.shrink();
     if (children.length == 1) return children.single.child;
 
-    return ResizableSplitView(
-      axis: Axis.horizontal,
-      controller: controller,
-      storageKey: storageKey,
-      children: children,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Too narrow for the panes side by side (their minimums alone are
+        // ~660 px), as in a phone-width browser window: stack the board over
+        // the notation and engine, and leave the games list out.
+        if (constraints.maxWidth < _kBoardPaneStackedWidth) {
+          final stacked = [
+            for (final child in children)
+              if (child.label != 'Games') child,
+          ];
+          if (stacked.length == 1) return stacked.single.child;
+          return ResizableSplitView(
+            axis: Axis.vertical,
+            controller: controller,
+            storageKey: storageKey == null ? null : '$storageKey.stacked',
+            children: stacked,
+          );
+        }
+        return ResizableSplitView(
+          axis: Axis.horizontal,
+          controller: controller,
+          storageKey: storageKey,
+          children: children,
+        );
+      },
     );
   }
 }
+
+const double _kBoardPaneStackedWidth = 660;
 
 class _BoardPaneContent extends HookConsumerWidget {
   const _BoardPaneContent({this.tabId});
