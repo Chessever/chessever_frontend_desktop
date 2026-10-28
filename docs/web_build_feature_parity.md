@@ -24,6 +24,7 @@ still need a manual pass.
 | Picture-in-picture, tear-off tabs | Not available | Hidden on the web |
 | Edit a PGN file in place | Chrome, Edge, Opera | Import keeps a File System Access handle; saved changes are written back to the user's file (`lib/web/linked_files_web.dart`). Firefox and Safari edit an imported copy; Export saves it |
 | Show in folder, auto-update, window position | Not applicable | Hidden on the web |
+| Google and Apple sign-in | Same tab | Supabase-hosted OAuth redirecting back to the page (PKCE) instead of the loopback server; a pending guest merge waits in IndexedDB (`AppDatabaseGuestMergePendingStore`). The origin must be on the Supabase Auth redirect list |
 | Addresses and history | chessever.com paths | `lib/web/web_url_sync.dart` owns the address bar and Back/Forward; Flutter's URL strategy is off |
 
 ## Packages weighed (pub.dev, 2026-10-28)

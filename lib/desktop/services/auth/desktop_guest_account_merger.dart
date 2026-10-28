@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/auth/guest_account_merge.dart';
+import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/host_platform.dart';
 
 /// Reads and writes one account's mergeable rows.
@@ -361,4 +362,26 @@ class FileGuestMergePendingStore implements GuestMergePendingStore {
     final file = await _file();
     if (await file.exists()) await file.delete();
   }
+}
+
+/// Browser variant of [FileGuestMergePendingStore]. A browser tab has no
+/// application support directory, and localStorage caps out at a few
+/// megabytes, so the snapshot goes to the app's SQLite store, which the
+/// browser build keeps in IndexedDB. Sign-in in the browser leaves the page
+/// and comes back, so this store is what carries the guest's data across.
+class AppDatabaseGuestMergePendingStore implements GuestMergePendingStore {
+  static const _key = 'guest_merge_pending_v1';
+
+  @override
+  Future<GuestAccountSnapshot?> read() async {
+    final raw = await AppDatabase.instance.getString(_key);
+    return GuestAccountSnapshot.tryDecode(raw);
+  }
+
+  @override
+  Future<void> write(GuestAccountSnapshot snapshot) =>
+      AppDatabase.instance.setString(_key, snapshot.encode());
+
+  @override
+  Future<void> clear() => AppDatabase.instance.remove(_key);
 }

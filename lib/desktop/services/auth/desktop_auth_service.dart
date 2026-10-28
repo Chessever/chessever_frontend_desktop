@@ -29,6 +29,7 @@ class DesktopAuthService {
   /// Throws [StateError] if `GOOGLE_DESKTOP_CLIENT_ID` is not configured —
   /// that's a setup problem, not a recoverable runtime error.
   Future<Session?> signInWithGoogle() async {
+    if (kIsWeb) return _signInWithRedirect(OAuthProvider.google);
     final clientId = DesktopEnv.maybeGet('GOOGLE_DESKTOP_CLIENT_ID');
     if (clientId == null || clientId.isEmpty) {
       final legacyClientId = DesktopEnv.maybeGet('GOOGLE_WEB_CLIENT_ID');
@@ -100,6 +101,9 @@ class DesktopAuthService {
   /// callback. Our direct-download Developer ID release path cannot rely on
   /// that entitlement, and Windows has no native Apple sheet at all.
   Future<Session?> signInWithApple() async {
+    if (kIsWeb) {
+      return _signInWithRedirect(OAuthProvider.apple, scopes: 'name email');
+    }
     if (isMacAppStore) return _signInWithAppleNatively();
     if (kDebugMode) {
       // ignore: avoid_print
@@ -118,6 +122,33 @@ class DesktopAuthService {
       return session;
     } catch (e, st) {
       ErrorReporter.report(e, stackTrace: st, tag: 'auth.supabase_apple');
+      rethrow;
+    }
+  }
+
+  /// Browser sign-in: Supabase-hosted OAuth in the same tab. A tab cannot
+  /// run the loopback server, so the page leaves for the provider and comes
+  /// back to this origin with a PKCE code, which `Supabase.initialize`
+  /// exchanges for a session on the next load. This returns `null`; the
+  /// guest gate replays a pending guest merge once the permanent account
+  /// appears. The origin must be on the Supabase Auth redirect list.
+  Future<Session?> _signInWithRedirect(
+    OAuthProvider provider, {
+    String? scopes,
+  }) async {
+    try {
+      await Supabase.instance.client.auth.signInWithOAuth(
+        provider,
+        redirectTo: '${Uri.base.origin}/',
+        scopes: scopes,
+      );
+      return null;
+    } catch (e, st) {
+      ErrorReporter.report(
+        e,
+        stackTrace: st,
+        tag: 'auth.web_${provider.name}',
+      );
       rethrow;
     }
   }

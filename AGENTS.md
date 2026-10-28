@@ -281,6 +281,13 @@ path.
 | Signing | `Release.entitlements`, Developer ID | `AppStore.entitlements` (+ `AppStoreHelper.entitlements` for helpers) and the store provisioning profile |
 | Feedback, analytics | Screenshot on by default | Screenshot off by default, feedback needs a session, ad consent denied |
 
+The browser build at app.chessever.com (`lib/web/`) is a third distribution
+of the same shell, gated by `kIsWeb`. Its sign-in is Supabase-hosted OAuth
+that redirects back to the page (PKCE), because a tab cannot run the loopback
+server. It has no desktop updater. `docs/web_build_feature_parity.md` lists
+what else differs. Put a `kIsWeb` check before an `isMacAppStore` one, so
+native builds take the same branch as before.
+
 When a change touches sign-in, billing or the paywall, updates, engine paths,
 file access, entitlements, feedback or analytics:
 
