@@ -10997,66 +10997,73 @@ class _TwicGamesTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final itemCount = state.games.length + (state.hasMore ? 1 : 0);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-      child: Container(
-        decoration: BoxDecoration(
-          color: kBlack2Color,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: kDividerColor),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final showDetails =
-                constraints.maxWidth >= _kPreviewDetailColumnsMinWidth;
-            final showDate =
-                constraints.maxWidth >= _kPreviewDateColumnMinWidth;
-            return Column(
-          children: [
-            _TwicTableHeader(showDetails: showDetails, showDate: showDate),
-            const Divider(height: 1, color: kDividerColor),
-            Expanded(
-              child: ListView.builder(
-                controller: scrollController,
-                physics: const DesktopScrollPhysics(),
-                padding: EdgeInsets.zero,
-                itemCount: itemCount,
-                itemBuilder: (context, i) {
-                  if (i >= state.games.length) {
-                    return SizedBox(
-                      height: _kDatabaseWorkspaceTwicRowExtent + 16,
-                      child: const _TwicLoadingMoreRow(),
-                    );
-                  }
-                  final game = state.games[i];
-                  return SizedBox(
-                    height: _kDatabaseWorkspaceTwicRowExtent,
-                    child: _TwicTableRow(
-                      game: game,
-                      showDetails: showDetails,
-                      showDate: showDate,
-                      selected:
-                          (selectedGameIds?.contains(game.gameId) ?? false) ||
-                          game.gameId == selectedGameId,
-                      onRangeSelect:
-                          onRangeSelect == null
-                              ? null
-                              : () => onRangeSelect!(i),
-                      onTap: () => onTapGame(game),
-                      onDoubleTap: () => (onOpenGame ?? onTapGame)(game),
-                      onContextMenu:
-                          (position) => onContextMenuGame(game, position),
+    return LayoutBuilder(
+      // A phone-width table needs its gutter for the player names.
+      builder:
+          (context, outer) => Padding(
+            padding:
+                outer.maxWidth < 400
+                    ? const EdgeInsets.fromLTRB(6, 4, 6, 8)
+                    : const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Container(
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kDividerColor),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final showDetails =
+                      constraints.maxWidth >= _kPreviewDetailColumnsMinWidth;
+                  final showDate =
+                      constraints.maxWidth >= _kPreviewDateColumnMinWidth;
+                  return Column(
+                children: [
+                  _TwicTableHeader(showDetails: showDetails, showDate: showDate),
+                  const Divider(height: 1, color: kDividerColor),
+                  Expanded(
+                    child: ListView.builder(
+                      controller: scrollController,
+                      physics: const DesktopScrollPhysics(),
+                      padding: EdgeInsets.zero,
+                      itemCount: itemCount,
+                      itemBuilder: (context, i) {
+                        if (i >= state.games.length) {
+                          return SizedBox(
+                            height: _kDatabaseWorkspaceTwicRowExtent + 16,
+                            child: const _TwicLoadingMoreRow(),
+                          );
+                        }
+                        final game = state.games[i];
+                        return SizedBox(
+                          height: _kDatabaseWorkspaceTwicRowExtent,
+                          child: _TwicTableRow(
+                            game: game,
+                            showDetails: showDetails,
+                            showDate: showDate,
+                            selected:
+                                (selectedGameIds?.contains(game.gameId) ?? false) ||
+                                game.gameId == selectedGameId,
+                            onRangeSelect:
+                                onRangeSelect == null
+                                    ? null
+                                    : () => onRangeSelect!(i),
+                            onTap: () => onTapGame(game),
+                            onDoubleTap: () => (onOpenGame ?? onTapGame)(game),
+                            onContextMenu:
+                                (position) => onContextMenuGame(game, position),
+                          ),
+                        );
+                      },
                     ),
+                  ),
+                ],
                   );
                 },
               ),
             ),
-          ],
-            );
-          },
-        ),
-      ),
+          ),
     );
   }
 }
