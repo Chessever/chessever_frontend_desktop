@@ -801,27 +801,28 @@ Future<_MountedBoard> _pumpBoard(
       'board_nr': 1,
     }),
   );
-  final args = live
-      ? BoardTabGameArgs(
-    gameId: _liveGameId,
-    pgn: _livePgn,
-    label: 'White 1 - Black 1',
-    whiteName: 'White 1',
-    blackName: 'Black 1',
-    tournamentTitle: 'Titled Tuesday',
-    fenSeed: _liveFen,
-    sourceGame: source,
-    viewSource: ChessboardView.forYou,
-    eventGames: [TournamentGameSummary.fromGamesTourModel(source)],
-    gameListSelectedId: _liveGameId,
-  )
-      // A finished analysis tab: nothing re-seeds it after a restore.
-      : const BoardTabGameArgs(
-    pgn: _finishedPgn,
-    label: 'White 1 - Black 1',
-    whiteName: 'White 1',
-    blackName: 'Black 1',
-  );
+  final args =
+      live
+          ? BoardTabGameArgs(
+            gameId: _liveGameId,
+            pgn: _livePgn,
+            label: 'White 1 - Black 1',
+            whiteName: 'White 1',
+            blackName: 'Black 1',
+            tournamentTitle: 'Titled Tuesday',
+            fenSeed: _liveFen,
+            sourceGame: source,
+            viewSource: ChessboardView.forYou,
+            eventGames: [TournamentGameSummary.fromGamesTourModel(source)],
+            gameListSelectedId: _liveGameId,
+          )
+          // A finished analysis tab: nothing re-seeds it after a restore.
+          : const BoardTabGameArgs(
+            pgn: _finishedPgn,
+            label: 'White 1 - Black 1',
+            whiteName: 'White 1',
+            blackName: 'Black 1',
+          );
   final showPane = ValueNotifier<bool>(true);
   addTearDown(showPane.dispose);
 
