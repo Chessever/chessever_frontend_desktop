@@ -1380,10 +1380,10 @@ LichessJudgement? lichessJudgementForReportMove({
 /// decided-outcome amnesty and Missed Win layered on top of it.
 ///
 /// The port remains the source of thresholds and severity. The one deliberate
-/// product overlay is that a mover who remains at 77 or higher, or at 23 or
-/// lower, on the report's winning-chance scale receives no negative symbol.
-/// Those bounds map roughly to ±3.3 and keep conversion noise silent on either
-/// side without weakening judgments that change the outcome.
+/// product overlay is that a mover who remains at 77 or higher, or at the
+/// losing-side ceiling corresponding to -2.90 pawns or lower, receives no
+/// negative symbol. The winning-side bound stays roughly +3.3; the losing-side
+/// bound is independent, keeping further deterioration silent once already lost.
 GameMoveClassification? _missedOrLoss({
   required int index,
   required ChessGame game,
@@ -1572,11 +1572,13 @@ const double kRoutinePraiseMinWinGainPp = 10;
 /// +7, +4 and +3.3 as the same won outcome for negative-symbol purposes.
 const double kDecisiveWinNoErrorFloorPp = 77;
 
-/// Mover-relative mirror of [kDecisiveWinNoErrorFloorPp]. A move that remains
-/// below this ceiling stays decisively lost and receives no evaluation-based
-/// negative symbol merely for shortening the conversion to mate.
-const double kDecisiveLossNoErrorCeilingPp =
-    100 - kDecisiveWinNoErrorFloorPp;
+/// Mover-relative losing-side ceiling, independently tuned to -2.90 pawns.
+/// A move at or below -2.90 before and after receives no negative symbol,
+/// including when a numeric losing evaluation becomes forced mate. Keep the
+/// winning-side floor unchanged.
+final double kDecisiveLossNoErrorCeilingPp = gameReportWinPercentage(
+  const GameReportLine(moves: [], depth: 0, centipawns: -290),
+);
 
 /// Minimum MultiPV gap (played vs next-best, mover pp) for non-unique best.
 const double kBrilliantMinAlternativeGapPp = 8;

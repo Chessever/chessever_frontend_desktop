@@ -26,6 +26,9 @@ if (profile['Entitlements'].get('com.apple.application-identifier') !=
         'N8J7TUZMYR.com.chessever.desktop' or
         profile.get('ProvisionedDevices') or profile.get('ProvisionsAllDevices')):
     raise SystemExit('Expected the production ChessEver Mac App Store profile.')
+# App Review requires the native Sign in with Apple sheet in this edition.
+if 'Default' not in profile['Entitlements'].get('com.apple.developer.applesignin', []):
+    raise SystemExit('The store profile must grant Sign in with Apple.')
 PY
 
 unlock_release_keychain() {
@@ -40,22 +43,30 @@ mkdir -p "$STORE_OUTPUT"
 STORE_OUTPUT="$(cd "$STORE_OUTPUT" && pwd)"
 python3 scripts/prepare_mac_app_store_engines.py "$STORE_OUTPUT/engines"
 
-flutter build macos --release --config-only \
+# Use Flutter's standard universal release pipeline, including its matching
+# OBJROOT/SYMROOT and generic macOS destination. Keep signing separate below.
+export FLUTTER_XCODE_CODE_SIGNING_ALLOWED=NO
+export FLUTTER_XCODE_CHESSEVER_APP_STORE=YES
+export FLUTTER_XCODE_CODE_SIGN_ENTITLEMENTS=Runner/AppStore.entitlements
+export FLUTTER_XCODE_ARCHS='arm64 x86_64'
+export FLUTTER_XCODE_ONLY_ACTIVE_ARCH=NO
+flutter build macos --release \
   --dart-define-from-file="$STORE_PUBLIC_CONFIG" \
   --dart-define=MAC_APP_STORE=true \
   --dart-define=CHESSEVER_SINGLE_INSTANCE_PORT=47684
-xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
-  -configuration Release -derivedDataPath "$STORE_OUTPUT/DerivedData" \
-  CODE_SIGNING_ALLOWED=NO CHESSEVER_APP_STORE=YES \
-  CODE_SIGN_ENTITLEMENTS=Runner/AppStore.entitlements \
-  ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO build
 
 APP="$STORE_OUTPUT/ChessEver.app"
 if [ -e "$APP" ]; then
   echo "Existing $APP must be moved aside before building another candidate." >&2
   exit 1
 fi
-ditto "$STORE_OUTPUT/DerivedData/Build/Products/Release/chessever.app" "$APP"
+ditto "$REPO_ROOT/build/macos/Build/Products/Release/chessever.app" "$APP"
+# An App Store package must run on both supported Mac architectures.
+for binary in "$APP/Contents/MacOS/chessever" \
+  "$APP/Contents/Frameworks/App.framework/App" \
+  "$APP/Contents/Frameworks/FlutterMacOS.framework/FlutterMacOS"; do
+  lipo -verify_arch arm64 x86_64 "$binary"
+done
 mkdir -p "$APP/Contents/Helpers" "$APP/Contents/Resources/Engines"
 cp "$STORE_OUTPUT/engines/stockfish" "$APP/Contents/Helpers/stockfish"
 cp "$STORE_OUTPUT/engines/lc0" "$APP/Contents/Helpers/lc0"

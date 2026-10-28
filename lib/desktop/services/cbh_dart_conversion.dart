@@ -1,3 +1,4 @@
+import 'converted_database_names.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -24,8 +25,10 @@ final class CbhDartConversion {
   final bool Function()? isCancelled;
   final void Function(int done, int total)? onProgress;
   int preservedAnnotationRecords = 0;
+  int normalizedMetadataRecords = 0;
 
   Future<File> convert(String sourcePath) async {
+    normalizedMetadataRecords = 0;
     _checkCancellation();
     final files = await CbhIndexReader.open(sourcePath);
     if (files.records.isEmpty) {
@@ -72,6 +75,7 @@ final class CbhDartConversion {
       gameText.write('\n\n');
       onProgress?.call(record.ordinal + 1, files.records.length);
     }
+    normalizedMetadataRecords = metadata.normalizedWhitespaceRecords;
     _checkCancellation();
     final finalHashes = await _hashes(files);
     for (final extension in CbhIndexReader.extensions) {
@@ -95,7 +99,9 @@ final class CbhDartConversion {
           'Converted PGN destination already exists.',
         );
       }
-      return await temporary.rename(published.path);
+      final result = await temporary.rename(published.path);
+      registerConvertedDatabaseName(result.path, stem);
+      return result;
     } finally {
       if (await temporary.exists()) await temporary.delete();
     }
