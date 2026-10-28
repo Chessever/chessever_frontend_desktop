@@ -179,6 +179,102 @@ void main() {
     });
   });
 
+  group('losing-side cutoff is -2.90 independently of winning side', () {
+    test('winning floor remains 77 percent', () {
+      expect(kDecisiveWinNoErrorFloorPp, 77);
+      expect(kDecisiveLossNoErrorCeilingPp, gameReportWinPercentage(_cp(-290)));
+    });
+
+    for (final cp in [290, 291, 330]) {
+      test('White at -$cp into mate receives no error', () {
+        expect(
+          _classify(
+            _crushingWhite,
+            playedUci: 'g2a2',
+            engineBest: 'g2g7',
+            before: _cp(-cp),
+            after: _mate(-3),
+            beforeWin: gameReportWinPercentage(_cp(-cp)),
+            afterWin: 0,
+          ),
+          isNull,
+        );
+      });
+      test('Black at -$cp into mate receives no error', () {
+        expect(
+          _classify(
+            _hopelessBlack,
+            playedUci: 'g7g5',
+            engineBest: 'h7h6',
+            before: _cp(cp),
+            after: _mate(3),
+            beforeWin: gameReportWinPercentage(_cp(cp)),
+            afterWin: 100,
+          ),
+          isNull,
+        );
+      });
+      test('White at -$cp dropping to -9 receives no error', () {
+        expect(
+          _classify(
+            _crushingWhite,
+            playedUci: 'g2a2',
+            engineBest: 'g2g7',
+            before: _cp(-cp),
+            after: _cp(-900),
+            beforeWin: gameReportWinPercentage(_cp(-cp)),
+            afterWin: gameReportWinPercentage(_cp(-900)),
+          ),
+          isNull,
+        );
+      });
+    }
+    for (final cp in [289, 271, 0]) {
+      test('White at -$cp into mate still receives a blunder', () {
+        expect(
+          _classify(
+            _crushingWhite,
+            playedUci: 'g2a2',
+            engineBest: 'g2g7',
+            before: _cp(-cp),
+            after: _mate(-3),
+            beforeWin: gameReportWinPercentage(_cp(-cp)),
+            afterWin: 0,
+          ),
+          GameMoveClassification.blunder,
+        );
+      });
+      test('Black at -$cp into mate still receives a blunder', () {
+        expect(
+          _classify(
+            _hopelessBlack,
+            playedUci: 'g7g5',
+            engineBest: 'h7h6',
+            before: _cp(cp),
+            after: _mate(3),
+            beforeWin: gameReportWinPercentage(_cp(cp)),
+            afterWin: 100,
+          ),
+          GameMoveClassification.blunder,
+        );
+      });
+    }
+    test('giving up mate for +2.90 is not covered by winning-side amnesty', () {
+      expect(
+        _classify(
+          _crushingWhite,
+          playedUci: 'g2a2',
+          engineBest: 'g2g7',
+          before: _mate(7),
+          after: _cp(290),
+          beforeWin: 100,
+          afterWin: gameReportWinPercentage(_cp(290)),
+        ),
+        GameMoveClassification.blunder,
+      );
+    });
+  });
+
   group('a changed result is punished in full', () {
     test('giving up a forced mate below the decisive floor is a Blunder', () {
       expect(

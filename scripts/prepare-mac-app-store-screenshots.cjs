@@ -62,7 +62,9 @@ async function main() {
   const cleanDir = path.join(output, 'clean');
   await fs.mkdir(storeDir, { recursive: true });
   await fs.mkdir(cleanDir, { recursive: true });
-  const brand = await textImage('ChessEver for Mac', 30, '#a2a6a8', 'Medium');
+  // Brand only: App Review rejects Apple trademarks such as "for Mac" in
+  // listing images and the app name (guideline 5.2.5).
+  const brand = await textImage('ChessEver', 30, '#a2a6a8', 'Medium');
   const manifest = [];
   for (const slide of slides) {
     const source = path.join(output, 'raw', slide.file);

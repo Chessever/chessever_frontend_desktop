@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
+import 'package:chessever/desktop/services/auth/desktop_auth_browser.dart';
 import 'package:chessever/desktop/services/desktop_sentry_filter.dart';
 
 SentryEvent _eventFor(Object error) => SentryEvent(throwable: error);
@@ -20,6 +21,10 @@ void main() {
       shouldDropDesktopSentryEvent(
         _eventFor(TimeoutException('OAuth flow timed out.')),
       ),
+      isTrue,
+    );
+    expect(
+      shouldDropDesktopSentryEvent(_eventFor(const DesktopSignInCancelled())),
       isTrue,
     );
     expect(

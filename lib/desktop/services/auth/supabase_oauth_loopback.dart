@@ -2,15 +2,17 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
+
+import 'package:chessever/desktop/services/auth/desktop_auth_browser.dart';
 
 /// Browser-based Supabase OAuth flow for desktop providers.
 ///
 /// This is deliberately provider-agnostic, but it is primarily used for Apple
-/// on desktop builds. Native Sign in with Apple requires Apple platform
-/// capabilities, and Windows has no native Apple sheet, so desktop Apple auth
+/// on the website builds. Native Sign in with Apple requires Apple platform
+/// capabilities, and Windows has no native Apple sheet, so their Apple auth
 /// goes through Supabase's hosted OAuth provider and returns to a loopback
-/// callback just like the Google flow.
+/// callback just like the Google flow. The Mac App Store edition uses the
+/// native sheet instead (`DesktopAuthService.signInWithApple`).
 class SupabaseOAuthLoopback {
   SupabaseOAuthLoopback({
     required this.provider,
@@ -49,20 +51,24 @@ class SupabaseOAuthLoopback {
         return;
       }
 
-      final success = params['error'] == null;
-      request.response.headers.contentType = ContentType.html;
-      request.response.write(
-        _renderResponse(
-          success: success,
-          message:
-              success
-                  ? 'You can close this window.'
-                  : (params['error_description'] ??
-                      params['error'] ??
-                      'OAuth failed.'),
-        ),
-      );
-      await request.response.close();
+      if (DesktopAuthBrowser.inApp) {
+        await DesktopAuthBrowser.finishInSheet(request.response);
+      } else {
+        final success = params['error'] == null;
+        request.response.headers.contentType = ContentType.html;
+        request.response.write(
+          _renderResponse(
+            success: success,
+            message:
+                success
+                    ? 'You can close this window.'
+                    : (params['error_description'] ??
+                        params['error'] ??
+                        'OAuth failed.'),
+          ),
+        );
+        await request.response.close();
+      }
 
       if (codeCompleter.isCompleted) return;
 
@@ -81,6 +87,7 @@ class SupabaseOAuthLoopback {
       await closeServer();
     });
 
+    var gotCode = false;
     try {
       final response = await supabase.auth.getOAuthSignInUrl(
         provider: provider,
@@ -89,9 +96,11 @@ class SupabaseOAuthLoopback {
         queryParams: queryParams,
       );
 
-      final launched = await launchUrl(
+      final launched = await DesktopAuthBrowser.open(
         Uri.parse(response.url),
-        mode: LaunchMode.externalApplication,
+        onClosedEarly: (error) {
+          if (!codeCompleter.isCompleted) codeCompleter.completeError(error);
+        },
       );
       if (!launched) {
         throw DesktopOAuthException(
@@ -109,12 +118,14 @@ class SupabaseOAuthLoopback {
           );
         },
       );
+      gotCode = true;
 
       final sessionResponse = await supabase.auth.exchangeCodeForSession(code);
       return sessionResponse.session;
     } finally {
       await sub.cancel();
       await closeServer();
+      if (!gotCode) await DesktopAuthBrowser.close();
     }
   }
 

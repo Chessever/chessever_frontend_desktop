@@ -8398,7 +8398,7 @@ String? _firstClockDisplay(
 ) {
   for (final value in [first, second, third, fallback]) {
     final trimmed = value?.trim();
-    if (trimmed != null && trimmed.isNotEmpty) return trimmed;
+    if (hasUsableClockDisplay(trimmed)) return trimmed;
   }
   return null;
 }
@@ -8689,13 +8689,13 @@ class _BoardArea extends ConsumerWidget {
       whiteClock,
       pgn('WhiteTimeDisplay'),
       sourceGame?.whiteTimeDisplay,
-      focusMode ? '--:--' : null,
+      null,
     );
     final blackClockDisplay = _firstClockDisplay(
       blackClock,
       pgn('BlackTimeDisplay'),
       sourceGame?.blackTimeDisplay,
-      focusMode ? '--:--' : null,
+      null,
     );
     final hasPlayerInfo =
         whiteName.isNotEmpty ||
@@ -9878,8 +9878,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
               result: result,
               fallbackText: clockText ?? '',
             )
-          else if ((clockText != null && clockText!.trim().isNotEmpty) ||
-              result != null) ...[
+          else if (hasUsableClockDisplay(clockText) || result != null) ...[
             const SizedBox(width: 10),
             _PlayerClock(
               text: clockText ?? '',
@@ -10618,7 +10617,11 @@ class _LiveBoardPlayerClock extends ConsumerWidget {
         _LivePlayerClockSnapshot.fromGame(sourceGame, isWhite: isWhite);
     final liveClockSeconds = liveSnapshot?.seconds;
     final liveLastMoveTime = liveSnapshot?.lastMoveTime;
-    if (liveClockSeconds == null && liveLastMoveTime == null) {
+    final hasRecordedLiveClock =
+        liveClockSeconds != null && liveClockSeconds >= 0;
+    if (!hasRecordedLiveClock &&
+        !hasUsableClockDisplay(fallbackText) &&
+        result == null) {
       return const SizedBox.shrink();
     }
     return Row(
@@ -10629,9 +10632,10 @@ class _LiveBoardPlayerClock extends ConsumerWidget {
           text: fallbackText,
           isToMove: isToMove,
           result: result,
-          liveClockSeconds: liveClockSeconds,
-          liveLastMoveTime: liveLastMoveTime,
-          liveCountdownActive: isToMove && liveLastMoveTime != null,
+          liveClockSeconds: hasRecordedLiveClock ? liveClockSeconds : null,
+          liveLastMoveTime: hasRecordedLiveClock ? liveLastMoveTime : null,
+          liveCountdownActive:
+              hasRecordedLiveClock && isToMove && liveLastMoveTime != null,
         ),
       ],
     );
@@ -10709,16 +10713,21 @@ class _PlayerClock extends StatelessWidget {
   Widget build(BuildContext context) {
     // The static fallback string also decides whether the badge renders at
     // all (an empty PGN clock with no live snapshot hides it).
-    final hasLive = liveClockSeconds != null || liveLastMoveTime != null;
+    // A move timestamp alone is not a clock reading. Keep a recorded zero,
+    // but never invent 00:00 or display missing-clock sentinels.
+    final hasLive = liveClockSeconds != null && liveClockSeconds! >= 0;
     final fallbackText =
         hasLive
-            ? formatClockDisplayFromSeconds(liveClockSeconds ?? 0)
-            : formatPgnClockForDisplay(text);
+            ? formatClockDisplayFromSeconds(liveClockSeconds!)
+            : hasUsableClockDisplay(text)
+            ? formatPgnClockForDisplay(text)
+            : '';
     if (fallbackText.isEmpty && result == null) {
       return const SizedBox.shrink();
     }
 
-    final countdownActive = liveCountdownActive && liveLastMoveTime != null;
+    final countdownActive =
+        hasLive && liveCountdownActive && liveLastMoveTime != null;
 
     return SingleMotionBuilder(
       value: isToMove && result == null ? 1.0 : 0.0,
