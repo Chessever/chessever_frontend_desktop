@@ -301,15 +301,20 @@ GamesTourModel? selectFreshestBoardLiveBase({
   return selectFreshestNavigationGame(current: currentBase, incoming: argsSeed);
 }
 
+/// [heldPositionReset] marks a packet whose incomplete reset the merge held
+/// back. Its candidate equals [current], but it must still be confirmed
+/// exactly: accepting it as a no-op would skip that read, and the raw row
+/// would reach the board tree unconfirmed.
 @visibleForTesting
 bool shouldAcceptFocusedLiveCandidate({
   required GamesTourModel current,
   required GamesTourModel incoming,
   required bool serverConfirmedRegression,
+  bool heldPositionReset = false,
 }) {
   return serverConfirmedRegression ||
-      current == incoming ||
-      shouldReplaceBaseGame(current, incoming);
+      (!heldPositionReset &&
+          (current == incoming || shouldReplaceBaseGame(current, incoming)));
 }
 
 @immutable
@@ -1693,6 +1698,7 @@ class _BoardPaneContent extends HookConsumerWidget {
               : mergeLiveGameUpdateWithBase(
                 baseGame: sourceGame,
                 update: update,
+                serverConfirmed: serverConfirmedRegression,
               );
       GamesTourModel? mergedGame;
       var acceptedWholeRow = true;
@@ -1707,6 +1713,12 @@ class _BoardPaneContent extends HookConsumerWidget {
           current: sourceGame!,
           incoming: mergedCandidate,
           serverConfirmedRegression: serverConfirmedRegression,
+          heldPositionReset:
+              !serverConfirmedRegression &&
+              liveUpdateHoldsPlayedPosition(
+                baseGame: sourceGame,
+                update: update,
+              ),
         )) {
           acceptedWholeRow = false;
           // Position freshness and metadata freshness are independent. The

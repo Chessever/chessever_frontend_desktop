@@ -2356,6 +2356,27 @@ Future<GamesTourModel> hydrateTournamentGameForBoardOpen({
   }
 }
 
+/// Picks the shared base after the opened Board's one-shot `games` row read.
+///
+/// That read is the same exact row read the live confirmation performs. When
+/// nothing moved the base while it was in flight, the row is the canonical
+/// current state, so it may also apply a reset that a live packet alone could
+/// not. A base that changed meanwhile keeps the ordinary freshness rules.
+@visibleForTesting
+GamesTourModel selectRefreshedLiveBase({
+  required GamesTourModel? baseBeforeRead,
+  required GamesTourModel? currentBase,
+  required GamesTourModel fetched,
+}) {
+  return shouldReplaceBaseGame(
+        currentBase,
+        fetched,
+        serverConfirmed: currentBase == baseBeforeRead,
+      )
+      ? fetched
+      : (currentBase ?? fetched);
+}
+
 void _seedBaseGameIfFresher(ProviderContainer container, GamesTourModel game) {
   final gameId = game.gameId.trim();
   if (gameId.isEmpty) return;
@@ -2424,6 +2445,7 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
   if (gameId.isEmpty || openedGame.gameStatus.isFinished) return;
 
   try {
+    final baseBeforeRead = container.read(baseGameProvider(gameId));
     final latestRow = await gameRepo.getGameWithPGN(gameId);
     final fetched = _withFreshestFen(GamesTourModel.fromGame(latestRow));
 
@@ -2432,10 +2454,11 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
     // from whichever is fresher so we neither show a stale position/clock nor
     // clobber fresher realtime data already in flight on another channel.
     final currentBase = container.read(baseGameProvider(gameId));
-    final latestGame =
-        shouldReplaceBaseGame(currentBase, fetched)
-            ? fetched
-            : (currentBase ?? fetched);
+    final latestGame = selectRefreshedLiveBase(
+      baseBeforeRead: baseBeforeRead,
+      currentBase: currentBase,
+      fetched: fetched,
+    );
 
     if (currentBase != latestGame) {
       container.read(baseGameProvider(gameId).notifier).state = latestGame;
