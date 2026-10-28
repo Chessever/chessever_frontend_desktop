@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:chessever/desktop/services/engine/complete_pv_batch.dart';
+import 'package:chessever/desktop/services/engine/legal_root_moves.dart';
 import 'dart:ffi';
 import 'dart:io' show Platform;
 import 'dart:isolate';
@@ -249,6 +250,7 @@ class StockfishSingleton {
     bool allowCache = true,
     String? ownerId, // Owner ID for per-provider job isolation
     bool completePvBatches = false,
+    bool infiniteSearch = false,
     bool Function()? isRequestCurrent,
   }) async {
     if (_isLocalEngineUnavailable || isRequestCurrent?.call() == false) {
@@ -265,12 +267,21 @@ class StockfishSingleton {
       throw ArgumentError('Invalid FEN string: $fen');
     }
 
+    // A complete batch can only contain real legal root choices. The
+    // dartchess source-square map includes immobile pieces and is not a count.
+    if (completePvBatches) {
+      final available = legalStockfishRootMoveCount(fen);
+      if (available > 0 && available < multiPV) multiPV = available;
+    }
+
     // Create cache key including side to move for perspective-aware caching
     // Cache key is FEN-based only - same position = same eval regardless of requester
     final fenParts = fen.split(' ');
     final sideToMove = fenParts.length > 1 ? fenParts[1] : 'w';
     final searchMode =
-        searchDuration != null
+        infiniteSearch
+            ? 'infinite'
+            : searchDuration != null
             ? 'time_${searchDuration.inMilliseconds}'
             : 'depth_$depth';
     final cacheKey = '${fen}_${searchMode}_pv${multiPV}_$sideToMove';
@@ -431,6 +442,7 @@ class StockfishSingleton {
       allowCache: allowCache,
       ownerId: ownerId,
       completePvBatches: completePvBatches,
+      infiniteSearch: infiniteSearch,
       isRequestCurrent: isRequestCurrent,
     );
 
@@ -758,9 +770,12 @@ class StockfishSingleton {
     final depth = job.depth;
     final searchDuration = job.searchDuration;
     final maxDepth = job.maxDepth;
+    final infiniteSearch = job.infiniteSearch;
     final multiPV = job.multiPV;
     final onDepthUpdate = job.onDepthUpdate;
     final completer = job.completer;
+    ValueListenable<StockfishState>? watchedEngineState;
+    VoidCallback? engineStateListener;
 
     try {
       // Ensure engine is ready and reset for fresh search
@@ -796,6 +811,7 @@ class StockfishSingleton {
       int knodes = 0;
       int finalDepth = 0;
       bool evaluationComplete = false;
+      var searchFailed = false;
       int lastPvUpdateDepthReported = 0;
       String lastPvSnapshotSignature = '';
       DateTime?
@@ -803,10 +819,29 @@ class StockfishSingleton {
 
       final isDynamicSearch = searchDuration != null;
       debugPrint(
-        '🔍 STOCKFISH: Analyzing $fen ${isDynamicSearch ? "(dynamic ${searchDuration.inSeconds}s)" : "(depth $depth)"}',
+        '🔍 STOCKFISH: Analyzing $fen ${infiniteSearch
+            ? "(infinite)"
+            : isDynamicSearch
+            ? "(dynamic ${searchDuration.inSeconds}s)"
+            : "(depth $depth)"}',
       );
 
-      _currentSubscription = _engine!.stdout.listen((line) {
+      void failClosedEngine() {
+        if (_currentJob != job || completer.isCompleted) return;
+        searchFailed = true;
+        _searchHasStarted = false;
+        completer.complete(_cancelledEval(fen, requestedMultiPv: multiPV));
+      }
+
+      watchedEngineState = _engine!.state;
+      engineStateListener = () {
+        final value = watchedEngineState!.value;
+        if (value == StockfishState.error || value == StockfishState.disposed) {
+          failClosedEngine();
+        }
+      };
+      watchedEngineState.addListener(engineStateListener);
+      void handleEngineLine(String line) {
         // Check if this is still the current job
         if (_currentJob != job ||
             completer.isCompleted ||
@@ -1008,7 +1043,13 @@ class StockfishSingleton {
             _currentSubscription = null;
           }
         }
-      });
+      }
+
+      _currentSubscription = _engine!.stdout.listen(
+        handleEngineLine,
+        onError: (Object error, StackTrace stack) => failClosedEngine(),
+        onDone: failClosedEngine,
+      );
 
       try {
         // PERFORMANCE FIX: Removed 'ucinewgame' - it clears hash before EVERY position
@@ -1026,7 +1067,10 @@ class StockfishSingleton {
         _engine!.stdin = 'setoption name MultiPV value $multiPV';
         _engine!.stdin = 'position fen $fen';
 
-        if (isDynamicSearch) {
+        if (infiniteSearch) {
+          debugPrint('   → Sending: MultiPV $multiPV, infinite');
+          _engine!.stdin = 'go infinite';
+        } else if (isDynamicSearch) {
           final moveTimeMs = searchDuration.inMilliseconds;
           debugPrint(
             '   → Sending: MultiPV $multiPV, movetime ${moveTimeMs}ms${maxDepth != null ? ", depth $maxDepth" : ""}',
@@ -1072,7 +1116,6 @@ class StockfishSingleton {
 
       // Also add a stall detection mechanism
       Timer? stallDetector;
-      var searchFailed = false;
 
       // At high depths with multiPV, a single depth level can take 5-10+ seconds
       // with no intermediate output. Scale the stall threshold accordingly.
@@ -1080,71 +1123,76 @@ class StockfishSingleton {
         milliseconds: depth <= 20 ? 1200 : (depth <= 40 ? 3500 : 8000),
       );
 
-      stallDetector = Timer.periodic(const Duration(milliseconds: 500), (_) {
-        if (_currentJob != job || completer.isCompleted) return;
-        if (lastInfoReceived != null) {
-          final timeSinceLastInfo = DateTime.now().difference(
-            lastInfoReceived!,
-          );
-          if (timeSinceLastInfo > stallThreshold) {
-            debugPrint(
-              '⚠️ STOCKFISH STALL DETECTED: No response for ${timeSinceLastInfo.inSeconds}s',
+      // A quiet/deep infinite search is not a stalled finite request.
+      if (!infiniteSearch) {
+        stallDetector = Timer.periodic(const Duration(milliseconds: 500), (_) {
+          if (_currentJob != job || completer.isCompleted) return;
+          if (lastInfoReceived != null) {
+            final timeSinceLastInfo = DateTime.now().difference(
+              lastInfoReceived!,
             );
-            stallDetector?.cancel();
-
-            // Force completion with current best results
-            if (!completer.isCompleted) {
-              searchFailed = true;
-              completer.complete(
-                _cancelledEval(fen, requestedMultiPv: multiPV),
+            if (timeSinceLastInfo > stallThreshold) {
+              debugPrint(
+                '⚠️ STOCKFISH STALL DETECTED: No response for ${timeSinceLastInfo.inSeconds}s',
               );
-              debugPrint('⚠️ STOCKFISH: Forced completion due to stall');
+              stallDetector?.cancel();
 
-              // Try to reset the engine
-              try {
-                _engine?.stdin = 'stop';
-              } catch (_) {}
+              // Force completion with current best results
+              if (!completer.isCompleted) {
+                searchFailed = true;
+                completer.complete(
+                  _cancelledEval(fen, requestedMultiPv: multiPV),
+                );
+                debugPrint('⚠️ STOCKFISH: Forced completion due to stall');
+
+                // Try to reset the engine
+                try {
+                  _engine?.stdin = 'stop';
+                } catch (_) {}
+              }
             }
           }
-        }
-      });
+        });
+      }
 
       // Wait for the completer with timeout
       try {
-        await completer.future.timeout(
-          safetyTimeout,
-          onTimeout: () async {
-            if (_currentJob != job) return completer.future;
-            searchFailed = true;
-            debugPrint(
-              '⚠️ STOCKFISH TIMEOUT: Evaluation took too long (${safetyTimeout.inSeconds}s)',
-            );
-            stallDetector?.cancel();
+        await (infiniteSearch
+            ? completer.future
+            : completer.future.timeout(
+              safetyTimeout,
+              onTimeout: () async {
+                if (_currentJob != job) return completer.future;
+                searchFailed = true;
+                debugPrint(
+                  '⚠️ STOCKFISH TIMEOUT: Evaluation took too long (${safetyTimeout.inSeconds}s)',
+                );
+                stallDetector?.cancel();
 
-            // A timed-out search is not authoritative, even with partial PVs.
-            final result = _cancelledEval(fen, requestedMultiPv: multiPV);
+                // A timed-out search is not authoritative, even with partial PVs.
+                final result = _cancelledEval(fen, requestedMultiPv: multiPV);
 
-            // Try to stop the engine
-            try {
-              _engine?.stdin = 'stop';
-            } catch (_) {}
+                // Try to stop the engine
+                try {
+                  _engine?.stdin = 'stop';
+                } catch (_) {}
 
-            if (!completer.isCompleted) {
-              completer.complete(
-                _cancelledEval(fen, requestedMultiPv: multiPV),
-              );
-              final sub = _currentSubscription;
-              _currentSubscription = null;
-              if (sub != null) {
-                unawaited(sub.cancel());
-              }
-            }
-            return result;
-          },
-        );
+                if (!completer.isCompleted) {
+                  completer.complete(
+                    _cancelledEval(fen, requestedMultiPv: multiPV),
+                  );
+                  final sub = _currentSubscription;
+                  _currentSubscription = null;
+                  if (sub != null) {
+                    unawaited(sub.cancel());
+                  }
+                }
+                return result;
+              },
+            ));
         if (searchFailed) throw StateError("Stockfish search timed out");
       } finally {
-        stallDetector.cancel();
+        stallDetector?.cancel();
       }
     } catch (e, st) {
       debugPrint('❌ STOCKFISH: Failed to process job for $fen: $e');
@@ -1157,6 +1205,9 @@ class StockfishSingleton {
         completer.complete(_cancelledEval(fen, requestedMultiPv: job.multiPV));
       }
       rethrow;
+    } finally {
+      final listener = engineStateListener;
+      if (listener != null) watchedEngineState?.removeListener(listener);
     }
   }
 
@@ -1931,6 +1982,7 @@ class _EvalJob {
     this.allowCache = true,
     this.ownerId,
     this.completePvBatches = false,
+    this.infiniteSearch = false,
     this.isRequestCurrent,
   });
 
@@ -1949,5 +2001,6 @@ class _EvalJob {
   final bool allowCache;
   final String? ownerId; // Owner ID for per-provider job isolation
   final bool completePvBatches;
+  final bool infiniteSearch;
   final bool Function()? isRequestCurrent;
 }
