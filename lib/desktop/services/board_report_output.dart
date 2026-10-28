@@ -160,6 +160,15 @@ ChessGame rebaseBoardAfterSavedSnapshot({
       metadata[entry.key] = entry.value;
     }
   }
+  // These optional headers can be explicitly cleared in the save editor.
+  // Omitted runtime-only keys must still survive. A later user edit wins.
+  for (final tag in const ['Annotator', 'WhiteTeam', 'BlackTeam', 'Source']) {
+    if (before.metadata.containsKey(tag) &&
+        !saved.metadata.containsKey(tag) &&
+        equality.equals(before.metadata[tag], current.metadata[tag])) {
+      metadata.remove(tag);
+    }
+  }
   return current.copyWith(
     mainline: moves,
     metadata: metadata,

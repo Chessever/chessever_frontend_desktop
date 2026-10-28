@@ -7,6 +7,7 @@ import '../../state/active_board_game.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/widgets/pgn_attribution_editor.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -474,6 +475,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   // make sense for bulk imports.
   late bool _showGameDetails;
   late final bool _supportsMetadataEdit;
+  PgnAttributionController? _attributionCtrl;
   TextEditingController? _whiteSurnameCtrl;
   TextEditingController? _whiteFirstNameCtrl;
   TextEditingController? _blackSurnameCtrl;
@@ -519,6 +521,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   }
 
   void _seedMetadataControllers(Map<String, dynamic> metadata) {
+    _attributionCtrl = PgnAttributionController(metadata);
     final whiteParts = splitPlayerName(metadata['White']?.toString());
     final blackParts = splitPlayerName(metadata['Black']?.toString());
     _whiteSurnameCtrl = TextEditingController(text: whiteParts.surname);
@@ -562,6 +565,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   @override
   void dispose() {
     _newDatabaseNameCtrl?.dispose();
+    _attributionCtrl?.dispose();
     _whiteSurnameCtrl?.dispose();
     _whiteFirstNameCtrl?.dispose();
     _blackSurnameCtrl?.dispose();
@@ -608,7 +612,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       month: _monthCtrl!.text,
       day: _dayCtrl!.text,
     );
-    return [source.copyWith(metadata: merged)];
+    return [source.copyWith(metadata: _attributionCtrl!.applyTo(merged))];
   }
 
   void _fillTodayDate() {
@@ -2016,6 +2020,11 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                         (_isSaving || _isUpdatingOriginal)
                             ? null
                             : _fillTodayDate,
+                  ),
+                  const SizedBox(height: 12),
+                  PgnAttributionEditor(
+                    controller: _attributionCtrl!,
+                    enabled: !_isSaving && !_isUpdatingOriginal,
                   ),
                 ],
               ),
