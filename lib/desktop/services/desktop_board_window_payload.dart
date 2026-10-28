@@ -4,6 +4,8 @@ import '../state/local_board_games.dart';
 import 'package:chessever/utils/awarded_points.dart';
 
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart'
+    show boardSessionUserGame;
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
@@ -78,7 +80,9 @@ class DesktopBoardWindowPayload {
     required BoardPaneSession session,
     required BoardTabLibrarySaveOrigin? attachedOrigin,
   }) {
-    final pgn = exportGameToPgn(session.game);
+    // The child window has no NAG overlay of its own, so it gets the marks.
+    final game = boardSessionUserGame(session);
+    final pgn = exportGameToPgn(game);
     return DesktopBoardWindowPayload.fromTab(
       tab,
       boardArgs: openingArgs?.copyWith(
@@ -91,12 +95,14 @@ class DesktopBoardWindowPayload {
       ),
       metadata: {
         'boardSession': {
-          'game': session.game.toJson(),
+          'game': game.toJson(),
           'pointer': session.pointer,
           'headers': session.pgnHeaders,
           'flipped': session.flipped,
           'loadedFrom': session.loadedFrom,
           'lastAppliedPgn': session.lastAppliedPgn,
+          'lastSavedAnalysisPgn': session.lastSavedAnalysisPgn,
+          'lastBroadcastPgn': session.lastBroadcastPgn,
           'lastAppliedGameId': session.lastAppliedGameId,
           'lastAppliedInitialFenKey': session.lastAppliedInitialFenKey,
           'dirty': session.dirtySinceLoad,
@@ -128,6 +134,8 @@ class DesktopBoardWindowPayload {
             flipped: data['flipped'] == true,
             loadedFrom: data['loadedFrom'] as String?,
             lastAppliedPgn: data['lastAppliedPgn'] as String?,
+            lastSavedAnalysisPgn: data['lastSavedAnalysisPgn'] as String?,
+            lastBroadcastPgn: data['lastBroadcastPgn'] as String?,
             lastAppliedGameId: data['lastAppliedGameId'] as String?,
             lastAppliedInitialFenKey:
                 data['lastAppliedInitialFenKey'] as String?,
