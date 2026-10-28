@@ -11,14 +11,28 @@ List<String> sourceCreditDirectives(Iterable<String>? comments) => [
       if (match.group(1)!.trim().isNotEmpty) match.group(0)!,
 ];
 
+final _insertedPliesField = RegExp(r'(^|\|)plies=(\d+)(?=\||$)');
+
 /// The number of inserted plies, when a structured credit proves its span.
 int? insertedSourceCreditPlies(String directive) {
   final label = pgnSourceCreditDirective.firstMatch(directive)?.group(1);
   if (label == null) return null;
-  final match = RegExp(r'(?:^|\|)plies=(\d+)(?:\||$)').firstMatch(label);
-  final count = int.tryParse(match?.group(1) ?? '');
+  final match = _insertedPliesField.firstMatch(label);
+  final count = int.tryParse(match?.group(2) ?? '');
   return count != null && count > 0 ? count : null;
 }
+
+/// [directive] with its proven inserted span rewritten to [plies]; every
+/// other field stays as written.
+String withInsertedSourceCreditPlies(String directive, int plies) =>
+    directive.replaceFirstMapped(pgnSourceCreditDirective, (match) {
+      final label = match.group(1)!;
+      final rewritten = label.replaceFirstMapped(
+        _insertedPliesField,
+        (field) => '${field.group(1)}plies=$plies',
+      );
+      return match.group(0)!.replaceFirst(label, rewritten);
+    });
 
 /// Shared readable credit for inline notation and foreign PGN. Legacy labels
 /// stay intact; decode only the known structured vocabulary.

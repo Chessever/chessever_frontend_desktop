@@ -755,13 +755,22 @@ class ChessGameNavigator extends StateNotifier<ChessGameNavigatorState> {
           for (var i = keepLength; i < line.length; i++) {
             final credits = sourceCreditDirectives(line[i].comments);
             if (credits.isEmpty) continue;
-            final owned = credits.where((credit) {
+            final owned = <String>[];
+            for (final credit in credits) {
               final plies = insertedSourceCreditPlies(credit);
               // A variation itself supplies the legacy credit's line scope.
               // Mainline credits require an explicit inserted-span proof.
-              if (plies == null) return targetPointer.length > 1;
-              return trimIndex >= i - plies + 1;
-            }).toList(growable: false);
+              if (plies == null) {
+                if (targetPointer.length > 1) owned.add(credit);
+                continue;
+              }
+              // Re-count the span to the inserted plies this trim keeps, so
+              // a later trim cannot stretch it back over original moves.
+              final keptPlies = trimIndex - (i - plies + 1) + 1;
+              if (keptPlies > 0) {
+                owned.add(withInsertedSourceCreditPlies(credit, keptPlies));
+              }
+            }
             if (owned.isNotEmpty) {
               kept[kept.length - 1] = kept.last.copyWith(
                 comments: [...?kept.last.comments, ...owned],

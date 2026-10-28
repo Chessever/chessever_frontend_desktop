@@ -2224,6 +2224,18 @@ class _InlineNotationBlock extends StatelessWidget {
         }
       }
 
+      final sourceLabel = _sourceLabelFromComments(move.comments);
+      if (sourceLabel != null) {
+        // Credit is the readable tail of its owning move/branch, not a pill.
+        // A real TextSpan wraps fully and keeps the closing bracket after it.
+        // It precedes this move's sub-variations so it never reads as part
+        // of their block.
+        spans.add(TextSpan(
+          text: '${sourceCreditText(sourceLabel)} ',
+          style: commentStyle,
+        ));
+      }
+
       final vars = move.variations;
       if (vars != null && vars.isNotEmpty) {
         // Variations slot directly into the parent run as a WidgetSpan,
@@ -2296,16 +2308,6 @@ class _InlineNotationBlock extends StatelessWidget {
             ),
           );
         }
-      }
-
-      final sourceLabel = _sourceLabelFromComments(move.comments);
-      if (sourceLabel != null) {
-        // Credit is the readable tail of its owning move/branch, not a pill.
-        // A real TextSpan wraps fully and keeps the closing bracket after it.
-        spans.add(TextSpan(
-          text: '${sourceCreditText(sourceLabel)} ',
-          style: commentStyle,
-        ));
       }
 
       ply += 1;

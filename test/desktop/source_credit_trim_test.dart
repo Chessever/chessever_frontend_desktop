@@ -148,6 +148,45 @@ void main() {
     },
   );
 
+  group('a relocated span credit counts only the inserted plies it kept', () {
+    // Plies 0-4 are the original game; 5-8 were inserted with this credit.
+    const owner = '[%src white=Inserted|plies=4|event=Club]';
+    ChessGame inserted() => ChessGame.fromPgn(
+      'mainline-insert',
+      '[Event "Original"]\n\n'
+          '1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O {$owner} *',
+    );
+
+    for (final (trimIndex, keptPlies) in [(7, 3), (6, 2), (5, 1), (4, 0)]) {
+      test('trim to ply $trimIndex', () {
+        final nav = ChessGameNavigator(inserted());
+        nav.deleteContinuationAfterPointer([trimIndex]);
+        expect(nav.state.game.mainline, hasLength(trimIndex + 1));
+        expect(
+          sourceCreditDirectives(nav.state.game.mainline.last.comments),
+          keptPlies == 0
+              ? isEmpty
+              : ['[%src white=Inserted|plies=$keptPlies|event=Club]'],
+        );
+        nav.dispose();
+      });
+    }
+
+    test('a second trim before the run does not credit original moves', () {
+      final nav = ChessGameNavigator(inserted());
+      nav.deleteContinuationAfterPointer(const [6]);
+      nav.deleteContinuationAfterPointer(const [3]);
+      expect(
+        nav.state.game.mainline.map((move) => move.san),
+        ['e4', 'e5', 'Nf3', 'Nc6'],
+      );
+      for (final move in nav.state.game.mainline) {
+        expect(sourceCreditDirectives(move.comments), isEmpty);
+      }
+      nav.dispose();
+    });
+  });
+
   test(
     'retained move annotations and child branches survive source transfer and repeated trim',
     () {
