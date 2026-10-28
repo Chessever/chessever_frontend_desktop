@@ -3853,6 +3853,12 @@ TournamentGameSummary _mergeFreshEventGameSummary(
     hasPgn: fresh.hasPgn || current.hasPgn,
     tourId: fresh.tourId.isNotEmpty ? fresh.tourId : current.tourId,
     tourSlug: fresh.tourSlug.isNotEmpty ? fresh.tourSlug : current.tourSlug,
+    timeControlText: (fresh.timeControlText?.trim().isNotEmpty ?? false)
+        ? fresh.timeControlText
+        : fresh.id == current.id &&
+              (fresh.tourId.isEmpty || fresh.tourId == current.tourId)
+        ? current.timeControlText
+        : null,
     whiteFederation:
         fresh.whiteFederation.isNotEmpty
             ? fresh.whiteFederation
@@ -5284,8 +5290,9 @@ Future<bool> _confirmReplaceActiveBoardGameIfNeeded({
   // a no-op unless the caller explicitly asked for a new tab.
   if (selectedId == nextGame.id) return false;
 
-  final session = ref.read(boardPaneSessionByTabIdProvider)[activeTabId];
-  if (!boardSessionHasUnsavedAnalysis(session)) return true;
+  if (!boardTabHasUnsavedAnalysis(tabId: activeTabId, read: ref.read)) {
+    return true;
+  }
 
   if (context == null || !context.mounted) return false;
   if (_eventGameReplacementConfirmationOpen) return false;

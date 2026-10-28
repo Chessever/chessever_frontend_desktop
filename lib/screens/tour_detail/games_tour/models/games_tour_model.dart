@@ -665,6 +665,7 @@ class GamesTourModel {
         other.eco == eco &&
         other.openingName == openingName &&
         other.timeControl == timeControl &&
+        other.timeControlText == timeControlText &&
         other.avgElo == avgElo &&
         other.isOnline == isOnline &&
         other.sourceGameId == sourceGameId;
@@ -701,6 +702,7 @@ class GamesTourModel {
       eco,
       openingName,
       timeControl,
+      timeControlText,
       avgElo,
       isOnline,
       sourceGameId,

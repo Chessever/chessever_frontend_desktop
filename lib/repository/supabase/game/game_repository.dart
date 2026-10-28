@@ -853,7 +853,11 @@ class GameRepository extends BaseRepository {
   Future<Games> getGameWithPGN(String gameId) async {
     return handleApiCall(() async {
       final response =
-          await supabase.from('games').select().eq('id', gameId).single();
+          await supabase
+              .from('games')
+              .select('*,tours!games_tour_id_fkey(tc:info->>tc)')
+              .eq('id', gameId)
+              .single();
 
       return Games.fromJson(response);
     });

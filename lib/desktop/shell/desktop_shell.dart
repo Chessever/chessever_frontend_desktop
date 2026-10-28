@@ -437,8 +437,7 @@ class DesktopShell extends HookConsumerWidget {
           Future<void> closeActiveTabWithUnsavedAnalysisGuard() async {
             final id = ref.read(desktopTabsProvider).activeId;
             if (id == null) return;
-            final session = ref.read(boardPaneSessionByTabIdProvider)[id];
-            if (boardSessionHasUnsavedAnalysis(session)) {
+            if (boardTabHasUnsavedAnalysis(tabId: id, read: ref.read)) {
               if (closeConfirmationOpen.value) return;
               closeConfirmationOpen.value = true;
               final confirmed = await confirmDiscardBoardAnalysis(

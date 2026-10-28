@@ -13,6 +13,7 @@ import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
+import 'package:chessever/desktop/utils/notation_move_timing.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
@@ -21,6 +22,7 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart';
 import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
+import 'package:chessever/screens/chessboard/utils/pgn_source_credit.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -59,12 +61,14 @@ typedef _TranspositionIndex = Map<String, List<ChessMovePointer>>;
 class _NotationPositionMarkers extends InheritedWidget {
   const _NotationPositionMarkers({
     required this.positionArrowKeys,
+    required this.timings,
     required this.transpositions,
     required this.onJump,
     required super.child,
   });
 
   final Set<String> positionArrowKeys;
+  final NotationMoveTimingIndex timings;
   final _TranspositionIndex transpositions;
   final ValueChanged<ChessMovePointer> onJump;
 
@@ -73,7 +77,8 @@ class _NotationPositionMarkers extends InheritedWidget {
 
   @override
   bool updateShouldNotify(covariant _NotationPositionMarkers oldWidget) {
-    return positionArrowKeys != oldWidget.positionArrowKeys ||
+    return timings != oldWidget.timings ||
+        positionArrowKeys != oldWidget.positionArrowKeys ||
         transpositions != oldWidget.transpositions ||
         onJump != oldWidget.onJump;
   }
@@ -361,6 +366,9 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   String? _indexedStartingFen;
   String? _indexedSignature;
   _TranspositionIndex _cachedTranspositions = const {};
+  ChessGame? _timingGame;
+  String? _timingControl;
+  NotationMoveTimingIndex? _cachedTimings;
 
   @override
   void initState() {
@@ -582,6 +590,12 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   @override
   Widget build(BuildContext context) {
     final mainline = widget.game.mainline;
+    final timeControl = widget.game.metadata['TimeControl']?.toString();
+    if (!identical(_timingGame, widget.game) || _timingControl != timeControl) {
+      _timingGame = widget.game;
+      _timingControl = timeControl;
+      _cachedTimings = NotationMoveTimingIndex.fromGame(widget.game);
+    }
     // Variations open expanded by default. Only a caller that passes
     // finite auto-collapse thresholds opts into folding on open.
     final autoCollapseDepth = widget.autoCollapseDepth;
@@ -638,6 +652,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
 
     return _NotationPositionMarkers(
       positionArrowKeys: widget.positionArrowKeys,
+      timings: _cachedTimings!,
       transpositions: transpositions,
       onJump: widget.onJump,
       child: CallbackShortcuts(
@@ -2215,33 +2230,24 @@ class _InlineNotationBlock extends StatelessWidget {
         ),
       );
 
-      final sourceLabel = _sourceLabelFromComments(move.comments);
-      if (sourceLabel != null) {
-        // `_InlineSourceMetadata` renders either the richer reference-style
-        // game footer banner (when the label parses as players+result+date)
-        // or a typographic pill fallback (for short labels). Either way it
-        // surfaces a standalone Text widget so `find.text(sourceLabel)`
-        // still hits the source label the tests assert on.
-        spans.add(
-          WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: _InlineSourceMetadata(
-                depth: depth,
-                sourceLabel: sourceLabel,
-              ),
-            ),
-          ),
-        );
-      }
-
       if (!annotationsHidden) {
         for (final comment in _cleanPgnComments(move.comments)) {
           // Bare text — flows with the move stream and breaks at word
           // boundaries when the column wraps, instead of forcing its own row.
           spans.add(TextSpan(text: '$comment ', style: commentStyle));
         }
+      }
+
+      final sourceLabel = _sourceLabelFromComments(move.comments);
+      if (sourceLabel != null) {
+        // Credit is the readable tail of its owning move/branch, not a pill.
+        // A real TextSpan wraps fully and keeps the closing bracket after it.
+        // It precedes this move's sub-variations so it never reads as part
+        // of their block.
+        spans.add(TextSpan(
+          text: '${sourceCreditText(sourceLabel)} ',
+          style: commentStyle,
+        ));
       }
 
       final vars = move.variations;
@@ -2865,160 +2871,36 @@ class _InlineMove extends StatelessWidget {
   }
 }
 
-class _InlineSourceMetadata extends StatelessWidget {
-  const _InlineSourceMetadata({required this.depth, required this.sourceLabel});
 
-  final int depth;
-  final String sourceLabel;
 
-  @override
-  Widget build(BuildContext context) {
-    final meta = _tryParseGameSourceMetadata(sourceLabel);
-    if (meta != null) {
-      return _InlineGameSourceBanner(metadata: meta, depth: depth);
-    }
-    return _SourceMetadataPill(
-      sourceLabel: sourceLabel,
-      depth: depth,
-      inline: true,
-    );
-  }
-}
 
-/// Inline reference-style game footer rendered at the end of an inserted
-/// continuation: `1–0 (38) Sindarov, J (2776) − Gukesh, D (2732) Warsaw 2026`.
-///
-/// Stays on the same Wrap-row as the trailing moves so it reads as the
-/// natural tail of the run. The result and Elo numbers use tabular
-/// figures to keep digit columns even when re-rendered.
-class _InlineGameSourceBanner extends StatelessWidget {
-  const _InlineGameSourceBanner({required this.metadata, required this.depth});
-
-  final _GameSourceMetadata metadata;
-  final int depth;
-
-  @override
-  Widget build(BuildContext context) {
-    final result = metadata.resultChip;
-    final resultTint = _resultChipTint(result);
-    final baseColor =
-        depth == 0 ? kWhiteColor.withValues(alpha: 0.85) : kWhiteColor70;
-    final dimColor = depth == 0 ? kWhiteColor70 : kLightGreyColor;
-    final spans = <InlineSpan>[];
-
-    void addText(String text, {required TextStyle style}) {
-      spans.add(TextSpan(text: text, style: style));
-    }
-
-    final baseStyle = TextStyle(
-      color: baseColor,
-      fontSize: depth == 0 ? 12.4 : 11.2,
-      height: 1.25,
-      fontWeight: FontWeight.w500,
-      letterSpacing: 0.05,
-      fontFeatures: const [FontFeature.tabularFigures()],
-    );
-    final dimStyle = baseStyle.copyWith(color: dimColor);
-    final boldStyle = baseStyle.copyWith(
-      color: depth == 0 ? kWhiteColor : kWhiteColor70,
-      fontWeight: FontWeight.w700,
-    );
-    final venueStyle = baseStyle.copyWith(
-      color: dimColor,
-      fontStyle: FontStyle.italic,
-    );
-
-    if (result != null) {
-      spans.add(
-        WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: _ResultBadge(label: result, tint: resultTint, compact: true),
-        ),
-      );
-    }
-    if (metadata.plies != null) {
-      if (spans.isNotEmpty) addText(' ', style: dimStyle);
-      addText('(${metadata.plies})', style: dimStyle);
-    }
-
-    void addPlayer(String? name, int? elo, String? title) {
-      if (name == null) return;
-      if (spans.isNotEmpty) addText('  ', style: baseStyle);
-      if (title != null && title.isNotEmpty) {
-        addText(
-          '$title ',
-          style: dimStyle.copyWith(fontWeight: FontWeight.w700),
-        );
-      }
-      addText(name, style: boldStyle);
-      if (elo != null) {
-        addText(' ', style: baseStyle);
-        addText('($elo)', style: dimStyle);
-      }
-    }
-
-    final hasWhite = metadata.whiteName != null;
-    final hasBlack = metadata.blackName != null;
-    addPlayer(metadata.whiteName, metadata.whiteElo, metadata.whiteTitle);
-    if (hasWhite && hasBlack) {
-      addText('  − ', style: dimStyle);
-    }
-    addPlayer(metadata.blackName, metadata.blackElo, metadata.blackTitle);
-
-    final venue = <String>[
-      if (metadata.event != null) metadata.event!,
-      if (metadata.site != null && metadata.site != metadata.event)
-        metadata.site!,
-      if (metadata.round != null) 'R${metadata.round}',
-      if (metadata.year != null) metadata.year!,
-    ];
-    if (venue.isNotEmpty) {
-      if (spans.isNotEmpty) addText('  ', style: baseStyle);
-      addText(venue.join(' · '), style: venueStyle);
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(left: 6, right: 2),
-      child: Text.rich(
-        TextSpan(children: spans),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-  }
-}
-
-/// Compact result pill used inline next to the inserted line and inside the
-/// ladder source card. Mirrors the larger `_GameResultRow` chip so the eye
-/// links the inline footer to the terminal banner at the bottom of the line.
+/// Result badge inside a ladder source card; inline credits use plain text.
 class _ResultBadge extends StatelessWidget {
   const _ResultBadge({
     required this.label,
     required this.tint,
-    this.compact = false,
   });
 
   final String label;
   final Color tint;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: compact ? 7 : 10,
-        vertical: compact ? 2 : 4,
+        horizontal: 10,
+        vertical: 4,
       ),
       decoration: BoxDecoration(
         color: tint.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(compact ? 4 : 5),
+        borderRadius: BorderRadius.circular(5),
         border: Border.all(color: tint.withValues(alpha: 0.55), width: 1),
       ),
       child: Text(
         label,
         style: TextStyle(
           color: tint,
-          fontSize: compact ? 11 : 13,
+          fontSize: 13,
           fontWeight: FontWeight.w800,
           letterSpacing: 0.5,
           height: 1.0,
@@ -3033,12 +2915,10 @@ class _SourceMetadataPill extends StatelessWidget {
   const _SourceMetadataPill({
     required this.sourceLabel,
     required this.depth,
-    this.inline = false,
   });
 
   final String sourceLabel;
   final int depth;
-  final bool inline;
 
   @override
   Widget build(BuildContext context) {
@@ -3048,14 +2928,14 @@ class _SourceMetadataPill extends StatelessWidget {
             : _depthBaseColor(depth).withValues(alpha: 0.95);
     final display = _sourceMetadataDisplay(sourceLabel);
     return ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: inline ? 320 : 460),
+      constraints: BoxConstraints(maxWidth: 460),
       child: Container(
         padding: EdgeInsets.symmetric(
-          horizontal: inline ? 7 : 8,
-          vertical: inline ? 3 : 4,
+          horizontal: 8,
+          vertical: 4,
         ),
         decoration: BoxDecoration(
-          color: accent.withValues(alpha: inline ? 0.10 : 0.08),
+          color: accent.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(5),
           border: Border.all(color: accent.withValues(alpha: 0.22)),
         ),
@@ -3064,7 +2944,7 @@ class _SourceMetadataPill extends StatelessWidget {
           children: [
             Icon(
               Icons.article_outlined,
-              size: inline ? 12 : 13,
+              size: 13,
               color: accent.withValues(alpha: 0.95),
             ),
             const SizedBox(width: 5),
@@ -3075,7 +2955,7 @@ class _SourceMetadataPill extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: kWhiteColor.withValues(alpha: 0.82),
-                  fontSize: inline ? 10.8 : 11.4,
+                  fontSize: 11.4,
                   height: 1.05,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.05,
@@ -3511,8 +3391,8 @@ class _LadderChip extends StatefulWidget {
   /// matching the reference hierarchy.
   final bool mainlineDominant;
 
-  /// Compact `M:SS` derived from a `[%clk]` PGN extension. Null hides the
-  /// trailing clock pill. Only mainline moves currently carry this.
+  /// Compact `M:SS` from a `[%clk]` PGN extension, shown only when the move
+  /// has no elapsed time. Null hides the clock pill.
   final String? clockText;
 
   /// Total seconds remaining at the clock annotation; used to colour
@@ -3777,6 +3657,8 @@ class _LadderChipState extends State<_LadderChip>
   @override
   Widget build(BuildContext context) {
     final isVariation = widget.depth > 0;
+    final timing = _NotationPositionMarkers.maybeOf(context)?.timings.at(widget.pointer);
+    final elapsedLabel = timing?.label;
     final fg =
         widget.selected
             ? kBackgroundColor
@@ -3891,7 +3773,9 @@ class _LadderChipState extends State<_LadderChip>
     );
     final transpositionCount = transpositionPointers?.length ?? 0;
 
-    final clockText = widget.clockText;
+    // Timing is presentation-only; stored remaining clocks stay unchanged.
+    // Elapsed time leads; the remaining clock shows only when it is unknown.
+    final clockText = elapsedLabel == null ? widget.clockText : null;
     final children = <Widget>[
       if (widget.compact) sanText else Flexible(child: sanText),
       if (classificationType != null) ...[
@@ -3942,7 +3826,14 @@ class _LadderChipState extends State<_LadderChip>
           ),
         ),
       ],
-      if (clockText != null) ...[
+      if (elapsedLabel != null) ...[
+        const SizedBox(width: 6),
+        _ElapsedTimeBadge(
+          text: elapsedLabel,
+          selected: widget.selected,
+          tooltip: timing!.tooltip,
+        ),
+      ] else if (clockText != null) ...[
         const SizedBox(width: 6),
         _ClockBadge(
           text: clockText,
@@ -4284,9 +4175,9 @@ class _MoveCommentEditorState extends State<_MoveCommentEditor> {
 }
 
 /// Tiny `M:SS` pill rendered to the right of a move chip when the PGN
-/// supplied a `[%clk]` extension. Inverts color when the chip is selected
-/// so it stays readable on the cyan active background. Goes red under
-/// 30s remaining as a time-pressure cue chess masters scan for.
+/// supplied a `[%clk]` extension but no elapsed time. Inverts color when the
+/// chip is selected so it stays readable on the cyan active background. Goes
+/// red under 30s remaining as a time-pressure cue chess masters scan for.
 class _ClockBadge extends StatelessWidget {
   const _ClockBadge({
     required this.text,
@@ -4318,6 +4209,33 @@ class _ClockBadge extends StatelessWidget {
         height: 1.0,
         letterSpacing: -0.2,
         fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+  }
+}
+
+/// Neutral elapsed label: a quick move must never look like a low clock.
+class _ElapsedTimeBadge extends StatelessWidget {
+  const _ElapsedTimeBadge({required this.text, required this.selected, required this.tooltip});
+
+  final String text;
+  final bool selected;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return DesktopTooltip(
+      message: tooltip,
+      child: Text(
+        text,
+        style: TextStyle(
+          color: selected ? kBackgroundColor.withValues(alpha: 0.85) : const Color(0xFF8E8E93),
+          fontSize: 10,
+          fontWeight: FontWeight.w500,
+          height: 1.0,
+          letterSpacing: -0.2,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
       ),
     );
   }
@@ -4509,6 +4427,8 @@ String _branchLabel(int variationIndex) {
   }
   return '${variationIndex - 51}';
 }
+
+// Elapsed-time formatting lives in notation_move_timing.dart.
 
 /// Compact clock display from `[%clk H:MM:SS]`: drops leading zero hour,
 /// shows `M:SS` under a minute. Returns null when input is null/empty.
@@ -4818,7 +4738,7 @@ String _sourceMetadataDisplay(String sourceLabel) {
 
 String? _firstPgnComment(List<String>? comments) => firstPgnComment(comments);
 
-final _sourceDirectiveRegex = RegExp(r'\[%src\s+([^\]]+)\]');
+final _sourceDirectiveRegex = pgnSourceCreditDirective;
 
 /// Structured game-header payload encoded by the explorer/games-table when
 /// it inserts a continuation into the active board. Carries the data needed

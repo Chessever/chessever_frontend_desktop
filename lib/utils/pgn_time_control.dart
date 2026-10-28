@@ -84,6 +84,39 @@ String? pgnTimeControlField(String? rawText) {
   return periods.map((period) => period.format()).join(':');
 }
 
+/// Enrich a parsed PGN only from the tournament's detailed time-control text.
+/// Keep an imported machine field (including seconds-based `60+2`) verbatim.
+/// A speed category is presentation metadata, never an elapsed-time input.
+void enrichPgnTimeControlMetadata(
+  Map<String, dynamic> metadata, {
+  String? timeControlText,
+  String? category,
+}) {
+  if (isValidPgnTimeControl(metadata['TimeControl']?.toString())) return;
+  // The human-text parser models conventional periods and Fischer increment.
+  // Do not silently reinterpret delay, byo-yomi or unequal-side controls, but
+  // still fall back to the speed category below.
+  final field =
+      _unsupportedDetailedControl.hasMatch(timeControlText ?? '')
+          ? null
+          : pgnTimeControlField(timeControlText);
+  if (field != null) {
+    final speed = category ?? metadata['TimeControl']?.toString();
+    if (speed != null && speed.isNotEmpty && speed != '?' &&
+        (metadata['TcCategory'] == null || metadata['TcCategory'].toString().isEmpty)) {
+      metadata['TcCategory'] = speed;
+    }
+    metadata['TimeControl'] = field;
+  } else if (metadata['TimeControl'] == null || metadata['TimeControl'] == '?') {
+    metadata['TimeControl'] = category;
+  }
+}
+
+final _unsupportedDetailedControl = RegExp(
+  r'\b(delay|bronstein|hourglass|sandclock|byo[-\s]?yomi|overtime|white|black|armageddon|vs)\b',
+  caseSensitive: false,
+);
+
 /// `5+3` / `90+30` written by a human, where the base is *minutes*.
 ///
 /// Bounded so a real PGN field is not mangled: `300+3` is a properly written

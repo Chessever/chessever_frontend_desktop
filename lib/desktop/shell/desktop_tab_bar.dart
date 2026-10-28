@@ -17,7 +17,6 @@ import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
-import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -147,8 +146,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
   }
 
   Future<void> _closeTabWithUnsavedAnalysisGuard(String tabId) async {
-    final session = ref.read(boardPaneSessionByTabIdProvider)[tabId];
-    if (boardSessionHasUnsavedAnalysis(session)) {
+    if (boardTabHasUnsavedAnalysis(tabId: tabId, read: ref.read)) {
       if (_closeConfirmationOpen) return;
       _closeConfirmationOpen = true;
       final confirmed = await confirmDiscardBoardAnalysis(
