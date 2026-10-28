@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:chessever/desktop/services/converted_database_names.dart';
 import 'package:chessever/desktop/services/desktop_sentry_filter.dart';
 import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
@@ -275,6 +276,7 @@ Future<void> _desktopBoot({
 
   WidgetsFlutterBinding.ensureInitialized();
   print('[desktop] flutter binding ready');
+  await initializeConvertedDatabaseNames();
 
   // Keep first paint and the established remote search path untouched. The
   // reviewed Memorial JSON is parsed once in a worker isolate after first

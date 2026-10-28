@@ -36,7 +36,7 @@ void main() {
   test('rejects an index with a stale declared record count', () async {
     final index = await _writeDatabase(root);
     final bytes = await index.readAsBytes();
-    bytes[9] = 2;
+    bytes[9] = 1; // Deliberately omit the header from the declared count.
     await index.writeAsBytes(bytes);
 
     await expectLater(
@@ -73,7 +73,7 @@ Future<File> _writeDatabase(Directory root) async {
   index[2] = 0x2c;
   index[4] = 0x2e;
   index[5] = 1;
-  index[9] = 1;
+  index[9] = index.length ~/ 46; // Header count includes its own record.
   index[46 + 4] = 26;
   index[46 + 24] = 0x0f;
   index[46 + 25] = 0xc0;
