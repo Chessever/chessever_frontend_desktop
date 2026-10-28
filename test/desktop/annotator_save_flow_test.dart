@@ -88,6 +88,12 @@ Future<void> openSave(
   await tester.pumpAndSettle();
 }
 
+// forui 0.16's FTextField inside a dialog route trips Flutter's semantics
+// assert (`node.isMergedIntoParent`) under test, so the tests that open those
+// fields run with semantics off, as in library_book_dialog_test. That assert
+// also aborts the frame before inactive elements are unmounted, which is what
+// made a later tap report "Looking up a deactivated widget's ancestor"; with
+// the frame completing, collapsing a section with a focused field is clean.
 void main() {
   Future<void> setField(WidgetTester tester, String tag, String value) async {
     final input = find.descendant(
@@ -224,6 +230,7 @@ void main() {
 
   testWidgets(
     'update action receives edited and explicitly cleared headers even after both sections collapse',
+    semanticsEnabled: false,
     (tester) async {
       ChessGame? saved;
       await openSave(tester, onUpdate: (value) => saved = value);
@@ -236,12 +243,22 @@ void main() {
       await setField(tester, 'WhiteTeam', 'New white club');
       await setField(tester, 'BlackTeam', '');
       await setField(tester, 'Source', 'New source');
+      // The section collapses while one of its fields still has focus.
+      final sourceField = tester.state<EditableTextState>(
+        find.descendant(
+          of: find.byKey(const ValueKey('pgn-Source')),
+          matching: find.byType(EditableText),
+        ),
+      );
+      expect(sourceField.widget.focusNode.hasFocus, isTrue);
       await tester.ensureVisible(find.text('Annotator and teams'));
       await tester.tap(find.text('Annotator and teams'));
       await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('pgn-Source')), findsNothing);
       await tester.ensureVisible(find.text('GAME DETAILS'));
       await tester.tap(find.text('GAME DETAILS'));
       await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
       await tester.tap(find.text('Update existing game'));
       await tester.pumpAndSettle();
       expect(saved, isNotNull);
@@ -271,6 +288,7 @@ void main() {
   for (final confirm in [false, true]) {
     testWidgets(
       'PGN file metadata dialog ${confirm ? "confirms" : "cancels"} without mutating the input',
+      semanticsEnabled: false,
       (tester) async {
         final original = ChessGame.fromPgn('fixture', importedPgn);
         final before = exportGameToPgn(original);
@@ -330,6 +348,7 @@ void main() {
 
   testWidgets(
     'single-game save exposes a collapsed attribution section with imported values',
+    semanticsEnabled: false,
     (tester) async {
       await openSave(tester);
       await tester.tap(find.text('GAME DETAILS'));
