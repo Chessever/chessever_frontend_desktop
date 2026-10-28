@@ -111,12 +111,6 @@ bool shouldInitiallyExpandTournamentRound({
   required String? topRoundId,
 }) => roundId == topRoundId;
 
-const int _kTournamentCardStockfishGameLimit = 24;
-
-@visibleForTesting
-bool shouldAllowTournamentCardStockfishFallback(int tournamentGameCount) =>
-    tournamentGameCount <= _kTournamentCardStockfishGameLimit;
-
 /// Orders match sections by elimination stage, then by pairing start time with
 /// the latest pairing first. Some feeds number matches in their slug
 /// (`quarterfinals-match-3-4`); treating that match number as a round number
@@ -547,21 +541,26 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       }
     }
     // The list order is the source of truth: started rounds first in descending
-    // order, then future rounds in descending order. A future round is promoted
-    // only when every started board is finished and it begins within two hours.
+    // order, then future rounds in descending order. The next round goes on
+    // top as soon as its boards are out and every started board is finished,
+    // however far off its start time is, or if it has none at all.
+    bool hasRoundGames(GamesAppBarModel model) =>
+        (grouped.gamesByRound[model.id] ?? const <GamesTourModel>[]).isNotEmpty;
     final displayRounds = sortRoundsForDisplay(
       grouped.filteredRounds,
       resolveDate: (model) => model.startsAt,
-      hasGames:
-          (model) =>
-              (grouped.gamesByRound[model.id] ?? const <GamesTourModel>[])
-                  .isNotEmpty,
+      hasGames: hasRoundGames,
       isRoundFullyPlayed: (model) {
         final games =
             grouped.gamesByRound[model.id] ?? const <GamesTourModel>[];
         return games.isNotEmpty &&
             games.every((game) => game.gameStatus.isFinished);
       },
+      // A round holding only published pairings has not started.
+      hasStartedActivity:
+          (model) =>
+              !grouped.upcomingPairingRoundIds.contains(model.id) &&
+              hasRoundGames(model),
     );
     final topRoundId = displayRounds.isEmpty ? null : displayRounds.first.id;
     final tournamentScopeId = 'tournament:${widget.tournamentId}';
@@ -1319,10 +1318,11 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
                 roundNameById: roundNameById,
                 streamingEnabled:
                     streamingEnabled && !game.gameStatus.isFinished,
-                allowStockfishFallback:
-                    shouldAllowTournamentCardStockfishFallback(
-                      eventGames.length,
-                    ),
+                // No event-size cap: only mounted (on-screen) cards evaluate,
+                // fallback pauses while the grid scrolls, and the engine caps
+                // its own low-priority backlog. Capping by event size left
+                // every board without an eval in large team events.
+                allowStockfishFallback: true,
               ),
             ),
           );
@@ -2356,6 +2356,27 @@ Future<GamesTourModel> hydrateTournamentGameForBoardOpen({
   }
 }
 
+/// Picks the shared base after the opened Board's one-shot `games` row read.
+///
+/// That read is the same exact row read the live confirmation performs. When
+/// nothing moved the base while it was in flight, the row is the canonical
+/// current state, so it may also apply a reset that a live packet alone could
+/// not. A base that changed meanwhile keeps the ordinary freshness rules.
+@visibleForTesting
+GamesTourModel selectRefreshedLiveBase({
+  required GamesTourModel? baseBeforeRead,
+  required GamesTourModel? currentBase,
+  required GamesTourModel fetched,
+}) {
+  return shouldReplaceBaseGame(
+        currentBase,
+        fetched,
+        serverConfirmed: currentBase == baseBeforeRead,
+      )
+      ? fetched
+      : (currentBase ?? fetched);
+}
+
 void _seedBaseGameIfFresher(ProviderContainer container, GamesTourModel game) {
   final gameId = game.gameId.trim();
   if (gameId.isEmpty) return;
@@ -2424,6 +2445,7 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
   if (gameId.isEmpty || openedGame.gameStatus.isFinished) return;
 
   try {
+    final baseBeforeRead = container.read(baseGameProvider(gameId));
     final latestRow = await gameRepo.getGameWithPGN(gameId);
     final fetched = _withFreshestFen(GamesTourModel.fromGame(latestRow));
 
@@ -2432,10 +2454,11 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
     // from whichever is fresher so we neither show a stale position/clock nor
     // clobber fresher realtime data already in flight on another channel.
     final currentBase = container.read(baseGameProvider(gameId));
-    final positionWinner =
-        shouldReplaceBaseGame(currentBase, fetched)
-            ? fetched
-            : (currentBase ?? fetched);
+    final positionWinner = selectRefreshedLiveBase(
+      baseBeforeRead: baseBeforeRead,
+      currentBase: currentBase,
+      fetched: fetched,
+    );
     final latestGame = retainMissingGameTimeControl(
       selected: positionWinner,
       alternate: identical(positionWinner, fetched)

@@ -8,6 +8,10 @@ final class CbhMetadataReader {
   CbhMetadataReader(this.files);
 
   final CbhFileSet files;
+  final _metadataWhitespaceRecords = <int>{};
+
+  /// Game records with readable TAB-to-space normalization, counted once each.
+  int get normalizedWhitespaceRecords => _metadataWhitespaceRecords.length;
 
   Future<CbhGameMetadata> read(CbhIndexRecord record) async {
     if (record.guidingText) {
@@ -15,6 +19,7 @@ final class CbhMetadataReader {
         'Guiding text has a separate record layout.',
       );
     }
+    final recordNumber = record.ordinal + 1;
     final white = await _readFixed(files.file('.cbp'), record.whitePlayer, 67);
     final black = await _readFixed(files.file('.cbp'), record.blackPlayer, 67);
     final event = await _readFixed(files.file('.cbt'), record.tournament, 99);
@@ -30,14 +35,20 @@ final class CbhMetadataReader {
       eventRecord: event,
       annotatorRecord: annotator,
       sourceRecord: source,
-      white: _name(white),
-      black: _name(black),
-      event: _text(event, 9, 40),
-      site: _text(event, 49, 30),
+      white: _name(white, recordNumber, 'White'),
+      black: _name(black, recordNumber, 'Black'),
+      event: _text(event, 9, 40, recordNumber, 'Event name (.cbt)'),
+      site: _text(event, 49, 30, recordNumber, 'Event site (.cbt)'),
       eventDate: _date(event, 79),
-      annotator: _text(annotator, 9, 45),
-      sourceTitle: _text(source, 9, 25),
-      sourcePublisher: _text(source, 34, 16),
+      annotator: _text(annotator, 9, 45, recordNumber, 'Annotator (.cbc)'),
+      sourceTitle: _text(source, 9, 25, recordNumber, 'Source title (.cbs)'),
+      sourcePublisher: _text(
+        source,
+        34,
+        16,
+        recordNumber,
+        'Source publisher (.cbs)',
+      ),
       sourceDate: _date(source, 50),
       sourceVersionDate: _date(source, 54),
       sourceVersion: source[58],
@@ -67,23 +78,37 @@ final class CbhMetadataReader {
     }
   }
 
-  static String _name(List<int> bytes) {
-    final last = _text(bytes, 9, 30);
-    final first = _text(bytes, 39, 20);
+  String _name(List<int> bytes, int recordNumber, String side) {
+    final last = _text(bytes, 9, 30, recordNumber, '$side surname (.cbp)');
+    final first = _text(bytes, 39, 20, recordNumber, '$side given name (.cbp)');
     if (first.isEmpty) return last;
     if (last.isEmpty) return first;
     return '$last, $first';
   }
 
-  static String _text(List<int> bytes, int start, int width) {
+  String _text(
+    List<int> bytes,
+    int start,
+    int width,
+    int recordNumber,
+    String field,
+  ) {
     final end = bytes.indexOf(0, start);
     final actualEnd = end >= start && end < start + width ? end : start + width;
     final value = StringBuffer();
     for (var i = start; i < actualEnd; i++) {
       final byte = bytes[i];
+      if (byte == 0x09) {
+        _metadataWhitespaceRecords.add(recordNumber);
+        // PGN tag text uses a printable space. The unmodified source record
+        // remains available in CbhGameMetadata and its raw PGN archive tag.
+        value.write(' ');
+        continue;
+      }
       if (byte < 0x20) {
-        throw const CbhFormatException(
-          'Unsupported control byte in CBH metadata.',
+        throw CbhFormatException(
+          'Record $recordNumber: Unsupported control byte '
+          '0x${byte.toRadixString(16).padLeft(2, '0')} in $field.',
         );
       }
       if (byte < 0x80 || byte >= 0xa0) {
@@ -92,7 +117,8 @@ final class CbhMetadataReader {
         final mapped = _windows1252[byte - 0x80];
         if (mapped == 0) {
           throw CbhFormatException(
-            'Unsupported text byte 0x${byte.toRadixString(16).padLeft(2, '0')}.',
+            'Record $recordNumber: Unsupported text byte '
+            '0x${byte.toRadixString(16).padLeft(2, '0')} in $field.',
           );
         }
         value.writeCharCode(mapped);

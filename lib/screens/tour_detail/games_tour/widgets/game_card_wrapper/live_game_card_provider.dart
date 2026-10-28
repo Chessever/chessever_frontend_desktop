@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:chessever/utils/awarded_points.dart';
 
 import 'package:collection/collection.dart';
+import 'package:dartchess/dartchess.dart' show Chess, PgnGame;
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
@@ -366,20 +367,30 @@ GamesTourModel? _watchMergedLiveGame({
 }) {
   final baseGame = _watchBaseGame(ref, params.gameId, mode);
   if (baseGame == null) return null;
+  // Keeps the confirmed-reset record alive for seeding while a card watches.
+  ref.watch(_confirmedResetSupersededProvider(params.gameId));
   final arrival = _watchLiveUpdate(ref, _resolveLiveWatchParams(params), mode);
   if (arrival == null) return baseGame;
 
-  final mergedGame = _mergeLiveUpdate(
+  final merge = _mergeLiveUpdateDetailed(
     baseGame: baseGame,
     update: arrival.update,
     mode: mode,
   );
+  final mergedGame = merge.game;
+  // A held reset merges back to the retained position, so it can look like
+  // an unchanged snapshot. It is a backward candidate and needs the exact
+  // read below, otherwise a genuine reset could never be applied.
+  final heldPlayedPosition = merge.heldPlayedPosition;
   // A stream snapshot commonly equals the retained seed (initial select,
   // rebuild after write-back, or reconnect). Equality is not a regression and
   // must stay on the zero-REST fast path.
-  if (!_hasLiveFieldChanges(baseGame, mergedGame)) return baseGame;
+  if (!heldPlayedPosition && !_hasLiveFieldChanges(baseGame, mergedGame)) {
+    return baseGame;
+  }
 
-  final canUseWholeRow = shouldReplaceBaseGame(baseGame, mergedGame);
+  final canUseWholeRow =
+      !heldPlayedPosition && shouldReplaceBaseGame(baseGame, mergedGame);
   LiveGameRegressionConfirmationKey? confirmedRegressionKey;
   late final GamesTourModel displayedGame;
   if (canUseWholeRow) {
@@ -408,6 +419,7 @@ GamesTourModel? _watchMergedLiveGame({
         baseGame: baseGame,
         update: confirmedUpdate,
         mode: mode,
+        serverConfirmed: true,
       );
       confirmedRegressionKey = confirmationKey;
     } else {
@@ -640,15 +652,36 @@ bool _canRepresentLiveGame(GamesTourModel game) {
 /// call this helper so the board, side rails, and any still-mounted game cards
 /// share one coherent latest PGN/FEN/clock/status snapshot instead of each
 /// surface carrying its own stale copy of the row.
+///
+/// Pass [serverConfirmed] only for a row from an exact server read that
+/// confirmed a rejected candidate. Such a row is canonical, so an incomplete
+/// reset in it clears the played position instead of being held back.
 GamesTourModel mergeLiveGameUpdateWithBase({
   required GamesTourModel baseGame,
   required LiveGameUpdate update,
+  bool serverConfirmed = false,
 }) {
   return _mergeLiveUpdate(
     baseGame: baseGame,
     update: update,
     mode: _LiveGameMergeMode.full,
+    serverConfirmed: serverConfirmed,
   );
+}
+
+/// Whether merging [update] onto [baseGame] holds back an incomplete reset of
+/// a played position. The merge then equals the retained game, so callers
+/// must route [update] through exact-row confirmation rather than treat it as
+/// an unchanged snapshot.
+bool liveUpdateHoldsPlayedPosition({
+  required GamesTourModel baseGame,
+  required LiveGameUpdate update,
+}) {
+  return _mergeLiveUpdateDetailed(
+    baseGame: baseGame,
+    update: update,
+    mode: _LiveGameMergeMode.full,
+  ).heldPlayedPosition;
 }
 
 /// Whether [incoming] should replace the stored base-game snapshot for a game,
@@ -662,8 +695,20 @@ GamesTourModel mergeLiveGameUpdateWithBase({
 /// second channel can arrive out of order), so an unguarded write regressed the
 /// card and the board to a stale position/clock. Routing those writes through
 /// this predicate keeps the shared snapshot monotonically fresh.
-bool shouldReplaceBaseGame(GamesTourModel? current, GamesTourModel incoming) =>
-    _shouldUseIncomingGame(current, incoming, allowEqualFreshnessUpdate: true);
+///
+/// [serverConfirmed] marks [incoming] as an exact `games` row read that no
+/// other write overtook. Only then may an incomplete reset clear a played
+/// position; every other freshness rule still applies.
+bool shouldReplaceBaseGame(
+  GamesTourModel? current,
+  GamesTourModel incoming, {
+  bool serverConfirmed = false,
+}) => _shouldUseIncomingGame(
+  current,
+  incoming,
+  allowEqualFreshnessUpdate: true,
+  serverConfirmed: serverConfirmed,
+);
 
 /// Selects the game snapshot to hand to a newly opened board.
 ///
@@ -706,6 +751,19 @@ GamesTourModel _mergeLiveUpdate({
   required GamesTourModel baseGame,
   required LiveGameUpdate update,
   required _LiveGameMergeMode mode,
+  bool serverConfirmed = false,
+}) => _mergeLiveUpdateDetailed(
+  baseGame: baseGame,
+  update: update,
+  mode: mode,
+  serverConfirmed: serverConfirmed,
+).game;
+
+({GamesTourModel game, bool heldPlayedPosition}) _mergeLiveUpdateDetailed({
+  required GamesTourModel baseGame,
+  required LiveGameUpdate update,
+  required _LiveGameMergeMode mode,
+  bool serverConfirmed = false,
 }) {
   final includePosition =
       mode == _LiveGameMergeMode.full ||
@@ -721,89 +779,146 @@ GamesTourModel _mergeLiveUpdate({
     authoritativeFullRow: authoritativeFullRow,
   );
 
-  final mergedPgn =
-      includePosition
-          ? (authoritativeFullRow ? update.pgn : update.pgn ?? baseGame.pgn)
-          : baseGame.pgn;
-  final mergedLastMove =
-      includePosition
-          ? (authoritativeFullRow
-              ? update.lastMove
-              : update.lastMove ?? baseGame.lastMove)
-          : baseGame.lastMove;
-  final mergedStatus =
-      includePosition || mode == _LiveGameMergeMode.clock
-          ? _parseGameStatus(update.status, baseGame.gameStatus)
-          : baseGame.gameStatus;
-  final mergedFen =
-      includePosition
-          ? resolveFreshestGameFen(
-            fen: authoritativeFullRow ? update.fen : update.fen ?? baseGame.fen,
-            pgn: mergedPgn,
-            lastMove: mergedLastMove,
-          )
-          : baseGame.fen;
+  final mergedPgn = includePosition
+      ? (authoritativeFullRow ? update.pgn : update.pgn ?? baseGame.pgn)
+      : baseGame.pgn;
+  final mergedLastMove = includePosition
+      ? (authoritativeFullRow
+            ? update.lastMove
+            : update.lastMove ?? baseGame.lastMove)
+      : baseGame.lastMove;
+  final mergedStatus = includePosition || mode == _LiveGameMergeMode.clock
+      ? _parseGameStatus(update.status, baseGame.gameStatus)
+      : baseGame.gameStatus;
+  final mergedFen = includePosition
+      ? resolveFreshestGameFen(
+          fen: authoritativeFullRow ? update.fen : update.fen ?? baseGame.fen,
+          pgn: mergedPgn,
+          lastMove: mergedLastMove,
+        )
+      : baseGame.fen;
 
-  final normalizedWhiteClock =
-      includeClock
-          ? (authoritativeFullRow
-              ? update.lastClockWhite?.round()
-              : GamesTourModel.normalizeClockSeconds(
+  // A full row is authoritative for metadata, but an absent/placeholder
+  // position cannot prove that a played broadcast was intentionally reset.
+  // Keep its entire position tuple, including the clock anchor and the clock
+  // values measured from it, until an exact server read confirms the reset.
+  // This shared boundary also protects focused Boards.
+  final retainPlayedPosition =
+      !serverConfirmed &&
+      includePosition &&
+      _isIncompletePositionReset(baseGame, mergedPgn, mergedFen);
+  final includeRowClock = includeClock && !retainPlayedPosition;
+
+  final normalizedWhiteClock = includeRowClock
+      ? (authoritativeFullRow
+            ? update.lastClockWhite?.round()
+            : GamesTourModel.normalizeClockSeconds(
                 clockSeconds: update.lastClockWhite?.round(),
                 clockCentiseconds: baseGame.whiteClockCentiseconds,
               ))
-          : baseGame.whiteClockSeconds;
-  final normalizedBlackClock =
-      includeClock
-          ? (authoritativeFullRow
-              ? update.lastClockBlack?.round()
-              : GamesTourModel.normalizeClockSeconds(
+      : baseGame.whiteClockSeconds;
+  final normalizedBlackClock = includeRowClock
+      ? (authoritativeFullRow
+            ? update.lastClockBlack?.round()
+            : GamesTourModel.normalizeClockSeconds(
                 clockSeconds: update.lastClockBlack?.round(),
                 clockCentiseconds: baseGame.blackClockCentiseconds,
               ))
-          : baseGame.blackClockSeconds;
-  final mergedLastMoveTime =
-      includePosition
-          ? (update.lastMoveTime == null
-              ? (authoritativeFullRow ? null : baseGame.lastMoveTime)
-              : DateTime.tryParse(update.lastMoveTime!))
-          : baseGame.lastMoveTime;
+      : baseGame.blackClockSeconds;
+  final mergedLastMoveTime = includePosition
+      ? (update.lastMoveTime == null
+            ? (authoritativeFullRow ? null : baseGame.lastMoveTime)
+            : DateTime.tryParse(update.lastMoveTime!))
+      : baseGame.lastMoveTime;
 
-  return baseGame.copyWith(
+  final game = baseGame.copyWith(
     whitePlayer: livePlayers?.white ?? baseGame.whitePlayer,
     blackPlayer: livePlayers?.black ?? baseGame.blackPlayer,
-    whiteClockCentiseconds:
-        includeClock
-            ? (authoritativeFullRow
-                ? livePlayers?.whiteClockCentiseconds ?? 0
-                : livePlayers?.whiteClockCentiseconds ??
+    whiteClockCentiseconds: includeRowClock
+        ? (authoritativeFullRow
+              ? livePlayers?.whiteClockCentiseconds ?? 0
+              : livePlayers?.whiteClockCentiseconds ??
                     baseGame.whiteClockCentiseconds)
-            : baseGame.whiteClockCentiseconds,
-    blackClockCentiseconds:
-        includeClock
-            ? (authoritativeFullRow
-                ? livePlayers?.blackClockCentiseconds ?? 0
-                : livePlayers?.blackClockCentiseconds ??
+        : baseGame.whiteClockCentiseconds,
+    blackClockCentiseconds: includeRowClock
+        ? (authoritativeFullRow
+              ? livePlayers?.blackClockCentiseconds ?? 0
+              : livePlayers?.blackClockCentiseconds ??
                     baseGame.blackClockCentiseconds)
-            : baseGame.blackClockCentiseconds,
-    pgn: mergedPgn,
-    clearPgn: includePosition && authoritativeFullRow && mergedPgn == null,
-    fen: mergedFen,
-    clearFen: includePosition && authoritativeFullRow && mergedFen == null,
-    lastMove: mergedLastMove,
+        : baseGame.blackClockCentiseconds,
+    pgn: retainPlayedPosition ? baseGame.pgn : mergedPgn,
+    clearPgn:
+        !retainPlayedPosition &&
+        includePosition &&
+        authoritativeFullRow &&
+        mergedPgn == null,
+    fen: retainPlayedPosition ? baseGame.fen : mergedFen,
+    clearFen:
+        !retainPlayedPosition &&
+        includePosition &&
+        authoritativeFullRow &&
+        mergedFen == null,
+    lastMove: retainPlayedPosition ? baseGame.lastMove : mergedLastMove,
     clearLastMove:
-        includePosition && authoritativeFullRow && mergedLastMove == null,
-    lastMoveTime: mergedLastMoveTime,
+        !retainPlayedPosition &&
+        includePosition &&
+        authoritativeFullRow &&
+        mergedLastMove == null,
+    lastMoveTime: retainPlayedPosition
+        ? baseGame.lastMoveTime
+        : mergedLastMoveTime,
     clearLastMoveTime:
-        includePosition && authoritativeFullRow && mergedLastMoveTime == null,
+        !retainPlayedPosition &&
+        includePosition &&
+        authoritativeFullRow &&
+        mergedLastMoveTime == null,
     whiteClockSeconds: normalizedWhiteClock,
     clearWhiteClockSeconds:
-        includeClock && authoritativeFullRow && normalizedWhiteClock == null,
+        includeRowClock && authoritativeFullRow && normalizedWhiteClock == null,
     blackClockSeconds: normalizedBlackClock,
     clearBlackClockSeconds:
-        includeClock && authoritativeFullRow && normalizedBlackClock == null,
+        includeRowClock && authoritativeFullRow && normalizedBlackClock == null,
     gameStatus: mergedStatus,
   );
+  return (game: game, heldPlayedPosition: retainPlayedPosition);
+}
+
+bool _isIncompletePositionReset(
+  GamesTourModel current,
+  String? incomingPgn,
+  String? incomingFen,
+) {
+  final retainedFen = resolveFreshestGameFen(
+    fen: current.fen,
+    pgn: current.pgn,
+    lastMove: current.lastMove,
+  );
+  if (!isValidGameFen(retainedFen)) return false;
+  final initial = _fenPositionKey(Chess.initial.fen);
+  final hasPlayedPosition =
+      (_knownPly(current) ?? 0) > 0 || _fenPositionKey(retainedFen!) != initial;
+  if (!hasPlayedPosition) return false;
+  if (resolveFinalPositionFromPgn(incomingPgn) != null) return false;
+  if (isValidGameFen(incomingFen) && _fenPositionKey(incomingFen!) != initial) {
+    return false;
+  }
+  // Explicit setup PGNs are a coherent source position even at ply zero.
+  // A bare `*`, missing row fields or an implicit starting-FEN fallback are
+  // not equivalent to this deliberate reset contract.
+  if (incomingPgn != null && isValidGameFen(incomingFen)) {
+    try {
+      final parsed = PgnGame.parsePgn(incomingPgn);
+      final setupFen = parsed.headers['FEN'];
+      if (parsed.headers['SetUp'] == '1' &&
+          isValidGameFen(setupFen) &&
+          _fenPositionKey(setupFen!) == _fenPositionKey(incomingFen!)) {
+        return false;
+      }
+    } catch (_) {
+      // Malformed source text cannot erase the retained playable position.
+    }
+  }
+  return true;
 }
 
 GameStatus _parseGameStatus(String? status, GameStatus fallback) {
@@ -931,24 +1046,7 @@ GamesTourModel watchLiveGame(
   LiveGamesBatchKey? batchKey,
   bool streamEnabled = true,
 }) {
-  final controller = ref.read(baseGameProvider(game.gameId).notifier);
-  final current = controller.state;
-  if (_shouldUseIncomingGame(current, game, allowEqualFreshnessUpdate: false)) {
-    Future.microtask(() {
-      if (!ref.context.mounted) return;
-      try {
-        if (_shouldUseIncomingGame(
-          controller.state,
-          game,
-          allowEqualFreshnessUpdate: false,
-        )) {
-          controller.state = game;
-        }
-      } on StateError {
-        // The card can be disposed while navigation is in flight.
-      }
-    });
-  }
+  _ensureBaseGame(ref, game);
   final params = _liveWatchParamsForGame(
     game: game,
     batchKey: batchKey,
@@ -961,7 +1059,14 @@ GamesTourModel watchLiveGame(
   // Subscribe to the card's own visible content instead; `read` still returns
   // the newest value whenever that content really changed.
   ref.watch(provider.select(liveGameCardContentKey));
-  return ref.read(provider) ?? game;
+  final liveGame = ref.read(provider);
+  // Seed publication is deferred out of build. Paint the coherent finished
+  // parent row immediately instead of flashing the retained starting board,
+  // unless the server already confirmed that this position was reset.
+  return _canRecoverFinishedPosition(liveGame, game) &&
+          !_isSupersededByConfirmedReset(ref, game)
+      ? game
+      : liveGame ?? game;
 }
 
 /// Everything a tournament card renders. Kept beside the card providers so a
@@ -1076,20 +1181,22 @@ void _ensureBaseGame(WidgetRef ref, GamesTourModel game) {
   final controller = ref.read(baseGameProvider(game.gameId).notifier);
   final current = controller.state;
   if (!_shouldUseIncomingGame(
-    current,
-    game,
-    allowEqualFreshnessUpdate: false,
-  )) {
+        current,
+        game,
+        allowEqualFreshnessUpdate: false,
+      ) ||
+      _isSupersededByConfirmedReset(ref, game)) {
     return;
   }
   Future.microtask(() {
     if (!ref.context.mounted) return;
     try {
       if (_shouldUseIncomingGame(
-        controller.state,
-        game,
-        allowEqualFreshnessUpdate: false,
-      )) {
+            controller.state,
+            game,
+            allowEqualFreshnessUpdate: false,
+          ) &&
+          !_isSupersededByConfirmedReset(ref, game)) {
         controller.state = game;
       }
     } on StateError {
@@ -1097,6 +1204,35 @@ void _ensureBaseGame(WidgetRef ref, GamesTourModel game) {
     }
   });
 }
+
+/// The played game an exact server read confirmed was reset, per game id.
+///
+/// A list row fetched before the reset still carries that position, and it
+/// looks fresher than a reset without a move time. Seeding it would undo the
+/// confirmed reset, and the still-current reset packet would then ask for
+/// another exact read, so seeding skips exactly that position. Live card
+/// providers keep the record alive while they observe the game.
+final _confirmedResetSupersededProvider = StateProvider.autoDispose
+    .family<GamesTourModel?, String>((ref, gameId) => null);
+
+bool _isSupersededByConfirmedReset(WidgetRef ref, GamesTourModel game) {
+  final superseded = ref.read(_confirmedResetSupersededProvider(game.gameId));
+  if (superseded == null) return false;
+  final supersededKey = _resolvedPositionKey(superseded);
+  return supersededKey != null && supersededKey == _resolvedPositionKey(game);
+}
+
+String? _resolvedPositionKey(GamesTourModel game) {
+  final fen = resolveFreshestGameFen(
+    fen: game.fen,
+    pgn: game.pgn,
+    lastMove: game.lastMove,
+  );
+  return isValidGameFen(fen) ? _fenPositionKey(fen!) : null;
+}
+
+String _fenPositionKey(String fen) =>
+    fen.trim().split(RegExp(r'\s+')).take(4).join(' ');
 
 void _storeLatestBaseGame(
   Ref ref,
@@ -1111,6 +1247,13 @@ void _storeLatestBaseGame(
   // controller.state still gives us the commit-time snapshot needed for the
   // late-confirmation guard.
   final baseGameController = ref.read(baseGameProvider(gameId).notifier);
+  final baseline = confirmedRegressionBaseline;
+  final supersededController =
+      confirmedRegressionKey != null &&
+          baseline != null &&
+          _isIncompletePositionReset(baseline, game.pgn, game.fen)
+      ? ref.read(_confirmedResetSupersededProvider(gameId).notifier)
+      : null;
   Future.microtask(() {
     try {
       final current = baseGameController.state;
@@ -1125,6 +1268,11 @@ void _storeLatestBaseGame(
                 game,
                 allowEqualFreshnessUpdate: true,
               ))) {
+        // Record the cleared position before publishing the reset, so the
+        // card rebuild that follows cannot seed it straight back.
+        if (confirmedRegressionStillCurrent) {
+          supersededController?.state = baseline;
+        }
         baseGameController.state = game;
       }
     } on StateError {
@@ -1133,13 +1281,54 @@ void _storeLatestBaseGame(
   });
 }
 
+bool _canRecoverFinishedPosition(
+  GamesTourModel? current,
+  GamesTourModel incoming,
+) {
+  if (current == null ||
+      current.gameId != incoming.gameId ||
+      current.source != incoming.source ||
+      !incoming.gameStatus.isFinished ||
+      !_isIncompletePositionReset(incoming, current.pgn, current.fen)) {
+    return false;
+  }
+
+  // A summary can restore a finished board without carrying its PGN. Require
+  // real played-position evidence, not just an inflated FEN move counter.
+  final position = resolveFreshestGameFen(
+    fen: incoming.fen,
+    pgn: incoming.pgn,
+    lastMove: incoming.lastMove,
+  );
+  return isValidGameFen(position) &&
+      (resolveFinalPositionFromPgn(incoming.pgn) != null ||
+          position!.split(' ').first != Chess.initial.fen.split(' ').first);
+}
+
 bool _shouldUseIncomingGame(
   GamesTourModel? current,
   GamesTourModel incoming, {
   required bool allowEqualFreshnessUpdate,
+  bool serverConfirmed = false,
 }) {
   if (current == null) return true;
   if (current == incoming) return false;
+  // Finished cards intentionally have no live channel. A retained placeholder
+  // must not outrank their complete parent row merely by its metadata time.
+  if (_canRecoverFinishedPosition(current, incoming)) return true;
+  if (_isIncompletePositionReset(current, incoming.pgn, incoming.fen)) {
+    // Only an exact server read may clear a played position.
+    return serverConfirmed;
+  }
+
+  // A refreshed timestamp is not proof that a played position is newer.
+  // Reconnects/partial source resets must take the exact-confirmation path
+  // before they can replace a retained game, just like older-time takebacks.
+  final currentPly = _knownPly(current);
+  final incomingPly = _knownPly(incoming);
+  if (currentPly != null && (incomingPly == null || incomingPly < currentPly)) {
+    return false;
+  }
 
   final currentTime = current.lastMoveTime;
   final incomingTime = incoming.lastMoveTime;
@@ -1183,8 +1372,6 @@ bool _shouldUseIncomingGame(
     return _clockChangesAreMonotonic(current, incoming);
   }
 
-  final currentPly = _knownPly(current);
-  final incomingPly = _knownPly(incoming);
   if (currentPly != null && incomingPly != null) {
     if (incomingPly < currentPly) return false;
     if (incomingPly > currentPly) return true;

@@ -4131,8 +4131,9 @@ List<_EventRoundGroup> _buildRoundGroups(
   // Use the same ordering as the mobile Games tab for every visible round,
   // including rounds whose pairings were published before play begins. This
   // keeps the active/latest round first and prevents advance pairings from
-  // displacing it. The shared sorter promotes only the next round when it is
-  // inside the configured promotion window and all started rounds are done.
+  // displacing it. The rail keeps the schedule gate the Games tab dropped: the
+  // next round moves up only inside the promotion window, once all started
+  // rounds are done, so it never folds away the round of the open game early.
   // Rounds the catalog knows about but that have no rows yet still get a
   // heading. Without this the rail only showed rounds whose games happened to
   // be loaded, so rounds appeared (and the list re-ordered) as rows streamed in.
@@ -4152,6 +4153,7 @@ List<_EventRoundGroup> _buildRoundGroups(
   final sortedModels = sortRoundsForDisplay(
     models,
     resolveDate: (model) => model.startsAt,
+    promotionWindow: upcomingRoundPromotionWindow,
     isRoundFullyPlayed: (model) {
       final group = groupsById[model.id];
       return group != null &&

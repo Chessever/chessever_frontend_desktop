@@ -1285,12 +1285,41 @@ class _GamesAppBarNotifier
     }
   }
 
-  Map<String, bool> _buildRoundCompletion(List<GamesAppBarModel> models) {
+  /// Per round: whether every board is decided, and whether any board has
+  /// moved or been decided. Published pairings alone are not play, so a round
+  /// that holds only pairings stays the next round (see
+  /// [pickUpcomingRoundForPromotion]) whatever its date says.
+  _RoundProgress _buildRoundProgress(List<GamesAppBarModel> models) {
     final isKnockout =
         tourId != null
             ? ref.read(knockoutTournamentStateProvider(tourId!)).isKnockout
             : false;
+    final boardStates = _buildRoundBoardStates(models, isKnockout: isKnockout);
+    bool isComplete(GamesAppBarModel model) {
+      final boards = boardStates[model.id] ?? const <_RoundBoardState>[];
+      if (boards.isEmpty) {
+        return !isKnockout && model.roundStatus == RoundStatus.completed;
+      }
+      return boards.every((board) => board.finished);
+    }
 
+    return (
+      completion: <String, bool>{
+        for (final model in models) model.id: isComplete(model),
+      },
+      activity: <String, bool>{
+        for (final model in models)
+          model.id: (boardStates[model.id] ?? const <_RoundBoardState>[]).any(
+            (board) => board.finished || board.moved,
+          ),
+      },
+    );
+  }
+
+  Map<String, List<_RoundBoardState>> _buildRoundBoardStates(
+    List<GamesAppBarModel> models, {
+    required bool isKnockout,
+  }) {
     if (isKnockout && tourId != null) {
       final games =
           ref.read(gamesTourScreenProvider).valueOrNull?.gamesTourModels ??
@@ -1302,20 +1331,19 @@ class _GamesAppBarNotifier
               ?.tours
               .map((tour) => tour.tour.id) ??
           const <String>[];
-      return <String, bool>{
+      return <String, List<_RoundBoardState>>{
         for (final model in models)
-          model.id: () {
-            final roundGames = itemsForTournamentDisplayRound<GamesTourModel>(
+          model.id: [
+            for (final game in itemsForTournamentDisplayRound<GamesTourModel>(
               round: model,
               selectedTourId: tourId!,
               knownTourIds: knownTourIds,
               selectedTourItems: games,
               sourceRoundIdOf: (game) => game.roundId,
               siblingTourItems: _readTourGameModels,
-            );
-            return roundGames.isNotEmpty &&
-                roundGames.every((game) => game.gameStatus.isFinished);
-          }(),
+            ))
+              _RoundBoardState.of(game.gameStatus, game.lastMove),
+          ],
       };
     }
 
@@ -1324,34 +1352,29 @@ class _GamesAppBarNotifier
             ? null
             : ref.read(gamesTourProvider(tourId!)).valueOrNull;
     if (rawGames != null) {
-      return <String, bool>{
+      return <String, List<_RoundBoardState>>{
         for (final model in models)
-          model.id: () {
-            final roundGames = rawGames.where(
-              (game) => game.roundId == model.id,
-            );
-            if (roundGames.isEmpty) {
-              return model.roundStatus == RoundStatus.completed;
-            }
-            return roundGames.every(
-              (game) => GameStatus.fromString(game.status).isFinished,
-            );
-          }(),
+          model.id: [
+            for (final game in rawGames)
+              if (game.roundId == model.id)
+                _RoundBoardState.of(
+                  GameStatus.fromString(game.status),
+                  game.lastMove,
+                ),
+          ],
       };
     }
 
     final games =
         ref.read(gamesTourScreenProvider).valueOrNull?.gamesTourModels ??
         const <GamesTourModel>[];
-    return <String, bool>{
+    return <String, List<_RoundBoardState>>{
       for (final model in models)
-        model.id: () {
-          final roundGames = games.where((game) => game.roundId == model.id);
-          if (roundGames.isEmpty) {
-            return model.roundStatus == RoundStatus.completed;
-          }
-          return roundGames.every((game) => game.gameStatus.isFinished);
-        }(),
+        model.id: [
+          for (final game in games)
+            if (game.roundId == model.id)
+              _RoundBoardState.of(game.gameStatus, game.lastMove),
+        ],
     };
   }
 
@@ -1424,23 +1447,25 @@ class _GamesAppBarNotifier
     List<GamesAppBarModel> models,
     Map<String, int> counts,
   ) {
-    final completion = _buildRoundCompletion(models);
+    final progress = _buildRoundProgress(models);
     return pickPreferredRoundForSelection(
       models,
       resolveDate: _roundEventDateTime,
       hasGames: (model) => _hasGames(model.id, counts),
-      isRoundFullyPlayed: (model) => completion[model.id] ?? false,
+      isRoundFullyPlayed: (model) => progress.completion[model.id] ?? false,
+      hasStartedActivity: (model) => progress.activity[model.id] ?? false,
     );
   }
 
   void _sortRounds(List<GamesAppBarModel> models) {
     final counts = _buildRoundGameCounts();
-    final completion = _buildRoundCompletion(models);
+    final progress = _buildRoundProgress(models);
     final sorted = sortRoundsForDisplay(
       models,
       resolveDate: _roundEventDateTime,
       hasGames: (model) => _hasGames(model.id, counts),
-      isRoundFullyPlayed: (model) => completion[model.id] ?? false,
+      isRoundFullyPlayed: (model) => progress.completion[model.id] ?? false,
+      hasStartedActivity: (model) => progress.activity[model.id] ?? false,
     );
     models
       ..clear()
@@ -1585,30 +1610,46 @@ class _GamesAppBarNotifier
       return;
     }
 
+    // The next round, once every started round is played out and its boards
+    // are published, sits on top of the list; land on it whether or not the
+    // rounds carry start times ("start after previous" rounds have none).
     final allHaveStartTimes = models.every(
       (m) => _roundEventDateTime(m) != null,
     );
-    if (allHaveStartTimes) {
-      final completion = _buildRoundCompletion(models);
-      final preconfiguredFocus = pickPreferredRoundForSelection(
-        models,
-        resolveDate: _roundEventDateTime,
-        hasGames: (model) => _hasGames(model.id, counts),
-        isRoundFullyPlayed: (model) => completion[model.id] ?? false,
+    final progress = _buildRoundProgress(models);
+    bool hasGames(GamesAppBarModel model) => _hasGames(model.id, counts);
+    bool isRoundFullyPlayed(GamesAppBarModel model) =>
+        progress.completion[model.id] ?? false;
+    bool hasStartedActivity(GamesAppBarModel model) =>
+        progress.activity[model.id] ?? false;
+    final preconfiguredFocus =
+        allHaveStartTimes
+            ? pickPreferredRoundForSelection(
+              models,
+              resolveDate: _roundEventDateTime,
+              hasGames: hasGames,
+              isRoundFullyPlayed: isRoundFullyPlayed,
+              hasStartedActivity: hasStartedActivity,
+            )
+            : pickUpcomingRoundForPromotion(
+              models,
+              resolveDate: _roundEventDateTime,
+              hasGames: hasGames,
+              isRoundFullyPlayed: isRoundFullyPlayed,
+              hasStartedActivity: hasStartedActivity,
+            );
+    if (preconfiguredFocus != null) {
+      state = AsyncValue.data(
+        GamesAppBarViewModel(
+          gamesAppBarModels: models,
+          selectedId: preconfiguredFocus.id,
+          userSelectedId: false,
+        ),
       );
-      if (preconfiguredFocus != null) {
-        state = AsyncValue.data(
-          GamesAppBarViewModel(
-            gamesAppBarModels: models,
-            selectedId: preconfiguredFocus.id,
-            userSelectedId: false,
-          ),
-        );
-        if (scrollSelection) {
-          _scrollToRound(preconfiguredFocus.id);
-        }
-        return;
+      if (scrollSelection) {
+        _scrollToRound(preconfiguredFocus.id);
       }
+      return;
     }
 
     // 3) Try to get the latest round by last move activity
@@ -1935,6 +1976,22 @@ int _compareStageRanks(int? a, int? b) {
   if (a == null) return 1;
   if (b == null) return -1;
   return a.compareTo(b);
+}
+
+typedef _RoundProgress =
+    ({Map<String, bool> completion, Map<String, bool> activity});
+
+class _RoundBoardState {
+  const _RoundBoardState({required this.finished, required this.moved});
+
+  factory _RoundBoardState.of(GameStatus status, String? lastMove) =>
+      _RoundBoardState(
+        finished: status.isFinished,
+        moved: lastMove?.trim().isNotEmpty ?? false,
+      );
+
+  final bool finished;
+  final bool moved;
 }
 
 class _RoundSortMeta {
