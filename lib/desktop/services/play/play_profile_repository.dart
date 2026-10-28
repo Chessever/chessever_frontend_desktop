@@ -662,9 +662,9 @@ class PlayProfileRepository {
       'play_profile/history_${tc.wire}.json';
 
   Future<PlayUserProfile?> _readLocalProfile() async {
-    final text = await _store.read(_profilePath);
-    if (text == null) return null;
     try {
+      final text = await _store.read(_profilePath);
+      if (text == null) return null;
       final json = jsonDecode(text) as Map<String, dynamic>;
       return PlayUserProfile.fromJson(json);
     } catch (_) {
@@ -680,9 +680,9 @@ class PlayProfileRepository {
   }
 
   Future<List<PlayGameRecord>> _readLocalGames({required int limit}) async {
-    final text = await _store.read(_gamesPath);
-    if (text == null) return const <PlayGameRecord>[];
     try {
+      final text = await _store.read(_gamesPath);
+      if (text == null) return const <PlayGameRecord>[];
       final json = jsonDecode(text) as List<dynamic>;
       final games =
           json
@@ -720,9 +720,9 @@ class PlayProfileRepository {
   }
 
   Future<List<PlayRatingPoint>> _readLocalHistory(RatedTimeControl tc) async {
-    final text = await _store.read(_historyPath(tc));
-    if (text == null) return const <PlayRatingPoint>[];
     try {
+      final text = await _store.read(_historyPath(tc));
+      if (text == null) return const <PlayRatingPoint>[];
       final raw = jsonDecode(text) as List<dynamic>;
       final points =
           raw

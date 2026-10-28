@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:chessever/desktop/widgets/desktop_game_points.dart';
 
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -1832,9 +1833,10 @@ class DesktopGameCardsFlow extends StatelessWidget {
     final metrics = metricsFor(layout);
     if (!width.isFinite || width <= 0) return metrics.minCols;
     final raw = (width / metrics.targetWidth).floor();
-    // Too narrow for even two cards (a phone-width browser window): one
-    // full-width card, rather than two too narrow to show the players.
-    if (raw < 2) return 1;
+    // Too narrow for even two cards in a phone-width browser window: one
+    // full-width card, rather than two too narrow to show the players. The
+    // desktop app keeps at least [DesktopGameCardsFlowMetrics.minCols].
+    if (kIsWeb && raw < 2) return 1;
     return raw.clamp(metrics.minCols, metrics.maxCols).toInt();
   }
 
@@ -1887,8 +1889,7 @@ class DesktopGameCardsFlow extends StatelessWidget {
             layout == DesktopCardLayout.grid ? null : metrics.tileHeight;
         const aspect = 0.95;
 
-        final rawCols = (innerWidth / metrics.targetWidth).floor();
-        final columns = rawCols.clamp(metrics.minCols, metrics.maxCols).toInt();
+        final columns = columnCountForWidth(layout, innerWidth);
         onColumnsResolved?.call(columns);
 
         final delegate =

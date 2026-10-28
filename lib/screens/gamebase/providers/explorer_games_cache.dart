@@ -240,7 +240,7 @@ class FileExplorerGamesDiskStore implements ExplorerGamesDiskStore {
   }
 
   File _file(Directory dir, String name) =>
-      File('${dir.path}${hostPathSeparator}$name');
+      File('${dir.path}$hostPathSeparator$name');
 
   Future<String?> _readOwnerMarker(Directory dir) async {
     final ownerFile = _file(dir, _ownerFileName);

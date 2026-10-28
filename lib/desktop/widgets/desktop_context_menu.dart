@@ -5,6 +5,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -76,6 +77,9 @@ Future<T?> showDesktopContextMenu<T>({
   final overlay = Overlay.of(context);
   final completer = Completer<T?>();
   late final OverlayEntry entry;
+  // The menu takes focus, and its overlay sits outside the shell's Actions
+  // ancestor. Capture global search here so Cmd/Ctrl+F still opens it.
+  final search = Actions.maybeFind<DesktopGlobalSearchIntent>(context);
 
   entry = OverlayEntry(
     builder:
@@ -83,6 +87,17 @@ Future<T?> showDesktopContextMenu<T>({
           position: position,
           entries: entries,
           width: width,
+          onGlobalSearch:
+              search == null
+                  ? null
+                  : () {
+                    if (context.mounted) {
+                      Actions.invoke(
+                        context,
+                        const DesktopGlobalSearchIntent(),
+                      );
+                    }
+                  },
           onDismissed: (value) {
             entry.remove();
             if (!completer.isCompleted) completer.complete(value);
@@ -100,12 +115,14 @@ class _DesktopContextMenuOverlay<T> extends StatefulWidget {
     required this.entries,
     required this.width,
     required this.onDismissed,
+    this.onGlobalSearch,
   });
 
   final Offset position;
   final List<DesktopContextMenuEntry<T>> entries;
   final double width;
   final ValueChanged<T?> onDismissed;
+  final VoidCallback? onGlobalSearch;
 
   @override
   State<_DesktopContextMenuOverlay<T>> createState() =>
@@ -130,14 +147,31 @@ class _DesktopContextMenuOverlayState<T>
   bool _closing = false;
   T? _result;
 
+  // `autofocus` cannot take focus here: the shell's own autofocus node
+  // already holds it, and this overlay is not in its scope. Request it once
+  // the menu is on screen, and hand it back when the menu goes.
+  final FocusNode _focusNode = FocusNode(debugLabel: 'desktop-context-menu');
+  FocusNode? _previousFocus;
+
   @override
   void initState() {
     super.initState();
+    _previousFocus = FocusManager.instance.primaryFocus;
     unawaited(_controller.animateWith(SpringSimulation(_spring, 0, 1, 0)));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_closing) _focusNode.requestFocus();
+    });
   }
 
   @override
   void dispose() {
+    // Only if the menu still has it: a dialog opened by the chosen item
+    // keeps its own focus.
+    final previous = _previousFocus;
+    if (_focusNode.hasFocus && previous != null && previous.context != null) {
+      previous.requestFocus();
+    }
+    _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -178,13 +212,23 @@ class _DesktopContextMenuOverlayState<T>
 
     // The menu takes focus so Esc closes it, rather than reaching the
     // shell's Esc binding underneath, which would close the tab and leave
-    // this overlay drawn over the next one.
+    // this overlay drawn over the next one. Global search is forwarded to
+    // the shell, which this overlay is not inside.
     return Focus(
-      autofocus: true,
+      focusNode: _focusNode,
       onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.escape) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (event.logicalKey == LogicalKeyboardKey.escape) {
           unawaited(_dismiss());
+          return KeyEventResult.handled;
+        }
+        final onGlobalSearch = widget.onGlobalSearch;
+        if (onGlobalSearch != null &&
+            event.logicalKey == LogicalKeyboardKey.keyF &&
+            (HardwareKeyboard.instance.isMetaPressed ||
+                HardwareKeyboard.instance.isControlPressed)) {
+          unawaited(_dismiss());
+          onGlobalSearch();
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;

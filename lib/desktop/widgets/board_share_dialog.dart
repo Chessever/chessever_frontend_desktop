@@ -294,7 +294,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       setState(() => _gifProgressLabel = 'Loading GIF preview…');
       final temporaryDirectory = await getTemporaryDirectory();
       final temporaryPath =
-          '${temporaryDirectory.path}${hostPathSeparator}'
+          '${temporaryDirectory.path}$hostPathSeparator'
           'chessever_gif_preview_${DateTime.now().microsecondsSinceEpoch}.gif';
       await service.downloadToFile(
         jobId: completed.id,
