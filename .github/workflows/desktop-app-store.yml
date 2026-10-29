@@ -169,7 +169,7 @@ jobs:
         run: |
           umask 077
           mkdir -p "$RUNNER_TEMP/store-profiles"
-          app-store-connect profiles get WR4MCF5FY6 \
+          app-store-connect profiles get 3XGBPXS7KL \
             --profiles-dir "$RUNNER_TEMP/store-profiles" --save
           profile="$(find "$RUNNER_TEMP/store-profiles" -type f -name '*.provisionprofile')"
           test -n "$profile"
