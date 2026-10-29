@@ -14,6 +14,8 @@
 /// app asserts about itself. See docs/broadcast_video_embed_compliance.md.
 library;
 
+import 'package:chessever/utils/analysis_video_order.dart';
+
 import 'dart:convert';
 
 import 'package:country_picker/country_picker.dart' show CountryService;
@@ -183,6 +185,11 @@ class BroadcastVideoStream {
     required this.sourceId,
     required this.url,
     this.countryCode,
+    this.authorName,
+    this.authorId,
+    this.followed = false,
+    this.publishedAt,
+    this.authorAvatarUrl,
     this.language,
     this.platforms,
     this.publication,
@@ -199,6 +206,16 @@ class BroadcastVideoStream {
   /// camera detection all read this first, matching mobile
   /// `inferredLanguage` and the web's `primaryLanguage`.
   final String? language;
+  final String? authorName, authorAvatarUrl, authorId, publishedAt;
+  final bool followed;
+  AnalysisVideoRank get analysisRank => (
+    followed: followed,
+    language: language,
+    publishedAt: publishedAt,
+    label: label,
+    id: id,
+  );
+  bool get isAnalysis => authorName != null;
 
   /// When set, only these spectator surfaces may show the stream.
   final Set<BroadcastVideoClientPlatform>? platforms;
@@ -224,6 +241,11 @@ class BroadcastVideoStream {
       sourceId: sourceId,
       url: url,
       countryCode: countryCode ?? this.countryCode,
+      authorName: authorName,
+      authorId: authorId,
+      followed: followed,
+      publishedAt: publishedAt,
+      authorAvatarUrl: authorAvatarUrl,
       language: language ?? this.language,
       platforms: platforms ?? this.platforms,
       publication: publication ?? this.publication,
@@ -293,6 +315,17 @@ class BroadcastVideoStream {
       platforms: platforms,
       provider: provider,
       sourceId: sourceId,
+      authorId: value['kind']=='analysis' && value['authorId'] is String ? value['authorId'] as String : null,
+      followed: value['followed'] == true,
+      publishedAt: value['kind']=='analysis' && value['publishedAt'] is String ? value['publishedAt'] as String : null,
+      authorName:
+          value['kind'] == 'analysis' && value['authorName'] is String
+              ? value['authorName'] as String
+              : null,
+      authorAvatarUrl:
+          value['authorAvatarUrl'] is String
+              ? value['authorAvatarUrl'] as String
+              : null,
       url: url,
       publication: BroadcastVideoPublication.fromJson(value['publication']),
       audience: BroadcastVideoAudience.fromJson(value['audience']),
@@ -677,6 +710,14 @@ bool _containsWord(String haystack, String needle) {
 }
 
 BroadcastStreamLanguage broadcastStreamLanguage(BroadcastVideoStream stream) {
+  if (stream.isAnalysis)
+    {
+    return BroadcastStreamLanguage(
+      code: 'analysis-${stream.id}',
+      label: stream.authorName!,
+      countryCode: null,
+    );
+    }
   const unknown = BroadcastStreamLanguage(
     code: 'und',
     label: 'Language unknown',

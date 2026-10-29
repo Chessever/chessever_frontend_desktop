@@ -1,3 +1,8 @@
+import 'desktop_toast.dart';
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/utils/analysis_video_order.dart';
+import 'package:chessever/providers/game_video_sources_provider.dart';
+import 'package:chessever/utils/youtube_video.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -37,6 +42,9 @@ class BroadcastVideoPanel extends ConsumerStatefulWidget {
   const BroadcastVideoPanel({
     super.key,
     required this.tourId,
+    this.gameId = '',
+    this.gamePgn,
+    this.completed = false,
     required this.tournamentStorageId,
     this.roundId,
     this.active = true,
@@ -44,6 +52,9 @@ class BroadcastVideoPanel extends ConsumerStatefulWidget {
 
   /// Tournament that owns the game on the board.
   final String tourId;
+  final String gameId;
+  final String? gamePgn;
+  final bool completed;
 
   /// Whether the owning Board tab is the foreground surface. Inactive tabs
   /// keep rendering the player in place (the tab stack hides them) for a
@@ -77,6 +88,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   /// unreachable, route missing): show the external link instead of a
   /// broken frame.
   bool _frameFailed = false;
+  bool _analysisRequested = false;
 
   /// A failed frame (site unreachable, page not deployed yet) retries on its
   /// own a few times with growing pauses, and at once from the row's Retry
@@ -121,6 +133,15 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   void _cancelStopGrace() {
     _stopTimer?.cancel();
     _stopTimer = null;
+  }
+
+  @override
+  void didUpdateWidget(covariant BroadcastVideoPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.gameId != widget.gameId &&
+        (_loadedEmbedUrl?.contains('/embed/analysis-video') ?? false)) {
+      _stopPlaybackNow();
+    }
   }
 
   void _stopPlaybackNow() {
@@ -429,6 +450,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
             visible: true,
           ),
         );
+    if (stream.isAnalysis) return;
     final languageGroupKey = broadcastVideoLanguageGroupKey(stream);
     unawaited(
       ref
@@ -482,6 +504,40 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   void _togglePin(String streamId) {
+    final raw =
+        ref
+            .read(
+              gameVideoSourcesProvider((
+                gameId: widget.gameId,
+                pgn: widget.gamePgn,
+              )),
+            )
+            .valueOrNull
+            ?.where((s) => s['id'] == streamId)
+            .firstOrNull;
+    if (raw?['authorId'] is String) {
+      unawaited(
+        ref
+            .read(gamebaseRepositoryProvider)
+            .followGameVideoAuthor(
+              raw!['authorId'] as String,
+              raw['followed'] != true,
+            )
+            .then((_) {
+              ref.invalidate(gameVideoSourcesProvider);
+            })
+            .catchError((Object _) {
+              if (mounted) {
+                showDesktopToast(
+                  context,
+                  'Could not update the author follow. Please try again.',
+                  error: true,
+                );
+              }
+            }),
+      );
+      return;
+    }
     unawaited(
       ref
           .read(broadcastVideoPinsProvider(widget.tournamentStorageId).notifier)
@@ -513,19 +569,62 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     // return that skipped the watch used to drop the listener, refetch on
     // return, and blank the player because `data` looked empty.
     final windowVisible = ref.watch(liveGameStreamingLifecycleProvider);
-    final streamsState = ref.watch(broadcastVideoStreamsProvider(_scope));
+    final streamsState =
+        widget.tourId.isEmpty
+            ? const AsyncValue<ResolvedBroadcastVideoStreams>.data(
+              ResolvedBroadcastVideoStreams.empty,
+            )
+            : ref.watch(broadcastVideoStreamsProvider(_scope));
+    if (widget.active) _analysisRequested = true;
+    final analyses = ref.watch(
+      gameVideoSourcesProvider((
+        gameId: _analysisRequested ? widget.gameId : '',
+        pgn: _analysisRequested ? widget.gamePgn : null,
+      )),
+    );
+    final analysisStreams =
+        analyses.isLoading
+            ? <BroadcastVideoStream>[]
+            : [
+              for (final raw
+                  in analyses.valueOrNull ?? const <Map<String, dynamic>>[])
+                if (BroadcastVideoStream.fromJson(raw)
+                    case final BroadcastVideoStream stream)
+                  stream,
+            ];
     final languageState = ref.watch(broadcastVideoLanguageProvider);
     final preferences =
         ref.watch(broadcastVideoSessionPreferencesProvider)[_storageKey] ??
         const BroadcastVideoPreference();
-    final data = streamsState.valueOrNull;
+    final broadcast = streamsState.valueOrNull;
+    analysisStreams.sort(
+      (a, b) => compareAnalysisVideoRanks(
+        a.analysisRank,
+        b.analysisRank,
+        languageState.valueOrNull,
+      ),
+    );
+    final data =
+        broadcast == null && analysisStreams.isEmpty
+            ? null
+            : ResolvedBroadcastVideoStreams(
+              streams:
+                  widget.completed
+                      ? [...analysisStreams, ...?broadcast?.streams]
+                      : [...?broadcast?.streams, ...analysisStreams],
+              source: broadcast?.source,
+            );
     final streams = _desktopStreams(data);
     final selected =
         data == null
             ? null
             : resolveBroadcastVideoSelection(
               streams,
-              selectedId: preferences.selectedId,
+              selectedId:
+                  preferences.selectedId ??
+                  (widget.completed && analysisStreams.isNotEmpty
+                      ? analysisStreams.first.id
+                      : null),
               language:
                   languageState.isLoading ? null : languageState.valueOrNull,
               countryCode: preferences.countryCode,
@@ -702,7 +801,13 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     }
     final provider = stream?.provider;
     final embedPage =
-        stream == null || source == null
+        stream?.isAnalysis == true
+            ? Uri.parse('$broadcastWatchOrigin/embed/analysis-video').replace(
+              queryParameters: {
+                'url': YoutubeVideo.parse(stream!.url).url.toString(),
+              },
+            )
+            : stream == null || source == null
             ? null
             : broadcastVideoEmbedPageUri(
               scope: source.scope,

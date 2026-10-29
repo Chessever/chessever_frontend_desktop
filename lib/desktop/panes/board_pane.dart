@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/library/game_video_submission.dart';
 import 'dart:async';
 import 'dart:convert';
 import '../state/event_player_board_games.dart';
@@ -5130,6 +5131,18 @@ class _BoardPaneContent extends HookConsumerWidget {
             !pictureInPictureMode &&
             (isLiveGame || currentGameIsInPictureInPicture),
         pictureInPictureSelected: currentGameIsInPictureInPicture,
+        onAttachVideo:
+            () => unawaited(
+              showGameVideoSubmission(
+                context,
+                gameId:
+                    boardArgs?.gameListSelectedId ??
+                    boardArgs?.gameId ??
+                    activeGameId ??
+                    '',
+                pgn: exportGameToPgn(chessGame.value),
+              ),
+            ),
         onCopyPgn: copyPgnAction,
         onCopyFen: copyFenAction,
         onSavePgn: savePgnAction,
@@ -5181,26 +5194,36 @@ class _BoardPaneContent extends HookConsumerWidget {
               onPlayFromHere: openPlayFromHereDialog,
             );
 
-    // Live-stream panel context: only Board tabs opened from a tournament
-    // game row carry the tour/round identity the broadcast API resolves.
-    // Detached PGN imports, library analyses and scratch boards get nothing.
+    // Broadcasts resolve from an event; author analyses can belong to any game.
+    // An empty source list leaves no video UI on a detached board.
     final broadcastSourceGame = boardArgs?.sourceGame;
     final broadcastTourId = (broadcastSourceGame?.tourId ?? '').trim();
     final broadcastRoundId = (broadcastSourceGame?.roundId ?? '').trim();
     final broadcastEventId = (boardArgs?.eventBroadcastId ?? '').trim();
-    final broadcastVideoPanel = broadcastTourId.isEmpty
-        ? null
-        : BroadcastVideoPanel(
-            key: ValueKey<String>(
-              'broadcast-video:${activeTabId ?? ''}:$broadcastTourId:$broadcastRoundId',
-            ),
-            tourId: broadcastTourId,
-            roundId: broadcastRoundId.isEmpty ? null : broadcastRoundId,
-            tournamentStorageId: broadcastEventId.isEmpty
-                ? broadcastTourId
-                : broadcastEventId,
-            active: isForegroundSurface,
-          );
+    final broadcastVideoPanel = BroadcastVideoPanel(
+      key: ValueKey<String>(
+        'broadcast-video:${activeTabId ?? ''}:$broadcastTourId:$broadcastRoundId',
+      ),
+      tourId: broadcastTourId,
+      gameId: boardArgs?.gameListSelectedId ?? boardArgs?.gameId ?? '',
+      completed:const {'1-0','0-1','1/2-1/2'}.contains(pgnHeaders.value['Result']),
+      gamePgn:
+          broadcastSourceGame != null && pgnHeaders.value['Result'] == '*'
+              ? null
+              : boardArgs?.pgn.trim().isNotEmpty == true
+              ? boardArgs!.pgn
+              : lastAppliedGameId.value == (boardArgs?.gameId ?? activeGameId)
+              ? lastAppliedPgn.value
+              : null,
+      roundId: broadcastRoundId.isEmpty ? null : broadcastRoundId,
+      tournamentStorageId:
+          broadcastEventId.isEmpty
+              ? (broadcastTourId.isEmpty
+                  ? 'analysis:${activeTabId ?? ''}'
+                  : broadcastTourId)
+              : broadcastEventId,
+      active: isForegroundSurface,
+    );
 
     final boardSplitIndex = showGameRail ? 1 : 0;
     // 13" MacBooks (1280–1366 logical) and other small laptops can't
@@ -5463,7 +5486,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                     key: rightRailAnalysisKey,
                     child: Column(
                       children: [
-                        if (broadcastVideoPanel != null) broadcastVideoPanel,
+                        broadcastVideoPanel,
                         Expanded(
                     // Notation is the pass-through child: an autoplay step
                     // rebuilds the explorer, games table and engine panel,

@@ -6,6 +6,7 @@ import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 
 enum _BoardContextAction {
   share,
+  attachVideo,
   flipBoard,
   pictureInPicture,
   toggleBoardFocus,
@@ -35,6 +36,7 @@ Future<void> showBoardContextMenu(
   required VoidCallback onOpenPositionSetup,
   required bool canCopyOrSavePgn,
   required bool boardFocusMode,
+  VoidCallback? onAttachVideo,
   VoidCallback? onClearAnalysis,
   VoidCallback? onOpenPictureInPicture,
   bool showPictureInPictureAction = false,
@@ -86,6 +88,12 @@ Future<void> showBoardContextMenu(
                   : Icons.fullscreen_rounded,
           label: boardFocusMode ? 'Exit board focus' : 'Board focus',
           shortcut: hintFor(BoardActionKey.toggleBoardFocus),
+        ),
+      if (onAttachVideo != null)
+        const DesktopContextMenuItem(
+          value: _BoardContextAction.attachVideo,
+          icon: Icons.video_library_outlined,
+          label: 'Attach analysis video',
         ),
       const DesktopContextMenuDivider(),
       DesktopContextMenuItem(
@@ -156,6 +164,8 @@ Future<void> showBoardContextMenu(
       onOpenPictureInPicture?.call();
     case _BoardContextAction.toggleBoardFocus:
       onToggleBoardFocus();
+    case _BoardContextAction.attachVideo:
+      onAttachVideo?.call();
     case _BoardContextAction.copyPgn:
       onCopyPgn();
     case _BoardContextAction.copyFen:

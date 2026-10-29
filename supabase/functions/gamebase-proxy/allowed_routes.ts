@@ -86,6 +86,13 @@ const allowedRoutes: AllowedRoute[] = [
     member: true,
   })),
 
+  { method: "POST", pattern: /^\/api\/collections\/game-videos$/, viewer: true },
+  { method: "POST", pattern: /^\/api\/collections\/videos$/, member: true },
+  { method: "GET", pattern: /^\/api\/collections\/videos\/mine$/, member: true },
+  { method: "PUT", pattern: /^\/api\/collections\/videos\/[a-f0-9-]{36}$/, member: true },
+  { method: "PUT", pattern: /^\/api\/collections\/video-authors\/follow$/, member: true },
+
+
   // Published collections, as readers browse them: only the routes the app
   // calls. Read-only apart from the two engagement counters. The catalog and
   // the books bound to an event are the same for everyone; they come first so

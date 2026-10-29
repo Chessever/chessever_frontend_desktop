@@ -1,3 +1,4 @@
+import 'package:chessever/widgets/player_initials_avatar.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -64,12 +65,21 @@ class BroadcastVideoToolbar extends StatelessWidget {
                               ? 0
                               : ((constraints.maxWidth + gap) / (slot + gap))
                                   .floor();
-                      final groups = toolbarBroadcastVideoGroups(
+                      final grouped = toolbarBroadcastVideoGroups(
                         streams,
                         pins,
                         capacity,
                         selectedId: selectedId,
                       );
+                      final groups = [...grouped]..sort((a, b) {
+                        if (a.streams.first.isAnalysis ||
+                            b.streams.first.isAnalysis) {
+                          return streams
+                              .indexOf(a.streams.first)
+                              .compareTo(streams.indexOf(b.streams.first));
+                        }
+                        return grouped.indexOf(a).compareTo(grouped.indexOf(b));
+                      });
                       return SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         clipBehavior: Clip.hardEdge,
@@ -390,6 +400,23 @@ class _StreamMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final stream = group.streams.first;
+    if (stream.isAnalysis) {
+      return PlayerInitialsAvatar(
+        photoUrl: stream.authorAvatarUrl,
+        initials:
+            stream.authorName!
+                .trim()
+                .split(RegExp(r'\s+'))
+                .where((s) => s.isNotEmpty)
+                .take(2)
+                .map((s) => s.characters.first)
+                .join()
+                .toUpperCase(),
+        size: 22,
+        isCircular: true,
+      );
+    }
     switch (group.kind) {
       case BroadcastToolbarVideoKind.fide:
         return ClipOval(
@@ -617,7 +644,7 @@ class _PinMenuButtonState extends State<_PinMenuButton>
               for (final stream in entries)
                 _MenuRow(
                   label:
-                      '${widget.pins.contains(stream.id) ? 'Unpin' : 'Pin'} · ${broadcastToolbarStreamName(stream)}',
+                      '${stream.isAnalysis ? (stream.followed ? 'Unfollow author' : 'Follow author') : (widget.pins.contains(stream.id) ? 'Unpin' : 'Pin')} · ${broadcastToolbarStreamName(stream)}',
                   selected: widget.pins.contains(stream.id),
                   onTap: () {
                     _controller.hide();

@@ -760,7 +760,11 @@ class CollectionPlayerSide {
 /// present when the request asked for `include=pgn`.
 @immutable
 class CollectionGameCard {
+  final String? videoUrl;
+  final String? videoKey;
   const CollectionGameCard({
+    this.videoUrl,
+    this.videoKey,
     required this.id,
     required this.white,
     required this.black,
@@ -841,6 +845,8 @@ class CollectionGameCard {
 
     final pgn = json['pgn'];
     return CollectionGameCard(
+      videoUrl: _nullableString(json['videoUrl']),
+      videoKey: _nullableString(json['videoKey']),
       id: _string(json['id']),
       sectionId: _nullableString(json['sectionId']),
       orderIndex: _int(json['orderIndex']),

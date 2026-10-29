@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'library_game_videos.dart';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -127,6 +128,8 @@ class LibraryBookDialog extends ConsumerStatefulWidget {
 }
 
 class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
+  Map<String, String>? _gameVideos;
+  Map<String, String>? _gameVideoLanguages;
   final _form = GlobalKey<FormState>();
   final _fields = {for (final f in _Field.values) f: TextEditingController()};
   final _focus = {for (final f in _Field.values) f: FocusNode()};
@@ -262,6 +265,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
 
   void _setPublication(LibraryBookPublication value) {
     final m = value.metadata;
+    _gameVideos = m.gameVideos == null ? null : Map.of(m.gameVideos!);
+    _gameVideoLanguages =
+        m.gameVideoLanguages == null ? null : Map.of(m.gameVideoLanguages!);
     final values = {
       _Field.title: m.title,
       _Field.subtitle: m.subtitle,
@@ -362,6 +368,9 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
 
   Future<void> _stashDraft() async {
     final values = <String, Object>{
+      if (_gameVideos != null) 'gameVideos': _gameVideos!,
+      if (_gameVideoLanguages != null)
+        'gameVideoLanguages': _gameVideoLanguages!,
       for (final f in _Field.values) f.name: _text(f),
     };
     // The draft remembers which side of the Me / Someone-else choice the work
@@ -405,6 +414,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
       draft = null;
     }
     if (draft == null || !mounted) return;
+    // Video edits are restored with the rest of this publication draft.
+
     final values = {
       for (final f in _Field.values)
         if (draft[f.name] is String) f: draft[f.name] as String,
@@ -435,6 +446,11 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             ]
             : null;
     final differs =
+        (draft['gameVideoLanguages'] is Map &&
+            jsonEncode(draft['gameVideoLanguages']) !=
+                jsonEncode(_gameVideoLanguages)) ||
+        (draft['gameVideos'] is Map &&
+            jsonEncode(draft['gameVideos']) != jsonEncode(_gameVideos)) ||
         draftCredit != _credit ||
         (draftCoAuthors != null &&
             !listEquals(draftCoAuthors, _metadata.coAuthors)) ||
@@ -452,8 +468,17 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
         for (final e in values.entries) {
           _write(e.key, e.value);
         }
+        if (draft!['gameVideoLanguages'] is Map) {
+          _gameVideoLanguages = Map<String, String>.from(
+            draft['gameVideoLanguages'] as Map,
+          );
+        }
+        final draftGameVideos = draft['gameVideos'];
+        if (draftGameVideos is Map) {
+          _gameVideos = Map<String, String>.from(draftGameVideos);
+        }
         _credit = draftCredit;
-        _authorUserId = draft!['authorUserId'] as String?;
+        _authorUserId = draft['authorUserId'] as String?;
         _authorAuthProject = draft['authorAuthProject'] as String?;
         _authorLinkedName = _authorHasLink ? _authorTerm : '';
         if (draftCoAuthors != null) {
@@ -597,6 +622,8 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
     final saved = _publication?.metadata;
     return LibraryBookMetadata(
       title: _text(_Field.title).trim(),
+      gameVideos: _gameVideos,
+      gameVideoLanguages: _gameVideoLanguages,
       subtitle: _text(_Field.subtitle).trim(),
       author: _text(_Field.author).trim(),
       about: _text(_Field.about).trim(),
@@ -2413,6 +2440,26 @@ class _LibraryBookDialogState extends ConsumerState<LibraryBookDialog> {
             counter: true,
           ),
           _authorSection(stage),
+          LibraryGameVideos(
+            folderId: widget.folder.id,
+            value: _gameVideos ?? const {},
+            languages: _gameVideoLanguages ?? const {},
+            onLanguagesChanged: (value) {
+              setState(() {
+                _gameVideoLanguages = value;
+                _dirty = true;
+              });
+            },
+            enabled: !_busy && !_frozen(stage),
+            onChanged: (value) {
+              setState(() {
+                _gameVideos = value;
+                _dirty = true;
+              });
+              _scheduleStash();
+            },
+          ),
+
           _field(
             _Field.authorAbout,
             stage: stage,
