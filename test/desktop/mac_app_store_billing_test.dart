@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 
@@ -38,10 +40,136 @@ EntitlementInfo premium({
 );
 
 void main() {
-  test('lifetime does not renew and expired payment failures are not grace', () {
-    expect(EntitlementSnapshot.fromJson({'is_premium': true, 'interval': 'lifetime'}).willRenew, isFalse);
-    expect(EntitlementSnapshot.fromJson({'is_premium': false, 'status': 'past_due'}).inBillingGracePeriod, isFalse);
+  group('post-transaction server reconciliation', () {
+    const inactive = EntitlementSnapshot(isActive: false);
+    const active = EntitlementSnapshot(isActive: true, provider: 'apple');
+
+    test('a successful purchase waits through backend/webhook lag', () async {
+      var requests = 0;
+      final pauses = <Duration>[];
+      final result = await MacAppStoreBilling.reconcileTransaction(
+        backend: () async => ++requests < 3 ? inactive : active,
+        isCurrentAccount: () => true,
+        expectActive: true,
+        pause: (duration) async => pauses.add(duration),
+      );
+      expect(result, same(active));
+      expect(requests, 3);
+      expect(pauses, [const Duration(seconds: 2), const Duration(seconds: 2)]);
+    });
+
+    test(
+      'a backend revocation remains inactive after bounded retries',
+      () async {
+        var requests = 0;
+        final result = await MacAppStoreBilling.reconcileTransaction(
+          backend: () async {
+            requests++;
+            return inactive;
+          },
+          isCurrentAccount: () => true,
+          expectActive: true,
+          pause: (_) async {},
+        );
+        expect(result, same(inactive));
+        expect(requests, 6);
+      },
+    );
+
+    test(
+      'restore without active store access still checks shared membership once',
+      () async {
+        var requests = 0;
+        final result = await MacAppStoreBilling.reconcileTransaction(
+          backend: () async {
+            requests++;
+            return inactive;
+          },
+          isCurrentAccount: () => true,
+          expectActive: false,
+          pause: (_) => throw StateError('must not poll'),
+        );
+        expect(result, same(inactive));
+        expect(requests, 1);
+      },
+    );
+
+    test('an auth rejection stops polling without SDK fallback', () async {
+      var requests = 0;
+      await expectLater(
+        MacAppStoreBilling.reconcileTransaction(
+          backend: () async {
+            requests++;
+            throw const DesktopBillingAuthException('expired');
+          },
+          isCurrentAccount: () => true,
+          expectActive: true,
+          pause: (_) => throw StateError('must not poll'),
+        ),
+        throwsA(isA<DesktopBillingAuthException>()),
+      );
+      expect(requests, 1);
+    });
+
+    test(
+      'a changed account never receives a completed store reconciliation',
+      () async {
+        var current = true;
+        final pending = Completer<EntitlementSnapshot?>();
+        final result = MacAppStoreBilling.reconcileTransaction(
+          backend: () => pending.future,
+          isCurrentAccount: () => current,
+          expectActive: true,
+          pause: (_) async {},
+        );
+        final assertion = expectLater(result, throwsStateError);
+        current = false;
+        pending.complete(active);
+        await assertion;
+      },
+    );
+
+    test(
+      'an account change during backoff prevents the next request',
+      () async {
+        var current = true;
+        var requests = 0;
+        await expectLater(
+          MacAppStoreBilling.reconcileTransaction(
+            backend: () async {
+              requests++;
+              return inactive;
+            },
+            isCurrentAccount: () => current,
+            expectActive: true,
+            pause: (_) async => current = false,
+          ),
+          throwsStateError,
+        );
+        expect(requests, 1);
+      },
+    );
   });
+
+  test(
+    'lifetime does not renew and expired payment failures are not grace',
+    () {
+      expect(
+        EntitlementSnapshot.fromJson({
+          'is_premium': true,
+          'interval': 'lifetime',
+        }).willRenew,
+        isFalse,
+      );
+      expect(
+        EntitlementSnapshot.fromJson({
+          'is_premium': false,
+          'status': 'past_due',
+        }).inBillingGracePeriod,
+        isFalse,
+      );
+    },
+  );
   test('a rejected sign-in cannot fall back to cached store access', () async {
     expect(
       MacAppStoreBilling.resolveEntitlement(

@@ -151,6 +151,7 @@ Future<ProviderContainer> _pumpDock(
         (ref) => BotvinnikChatController(
           backend: backend,
           quota: _ContainerQuotaSink(ref),
+          aiConsentGranted: () async => true,
           locale: () => 'en',
           clientContext:
               () => const ChatClientContext(

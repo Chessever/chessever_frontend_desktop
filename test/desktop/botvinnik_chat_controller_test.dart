@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/desktop/state/botvinnik_chat.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -44,6 +46,8 @@ class _FakeBackend implements BotvinnikChatBackend {
   int createCalls = 0;
   bool failMessages = false;
   _StreamFactory? streamFor;
+  Future<ChatConversation> Function()? createFor;
+  Future<List<ChatMessage>> Function(String)? messagesFor;
 
   void store(String conversationId, String question, String answer) {
     final list = serverMessages.putIfAbsent(conversationId, () => []);
@@ -62,6 +66,7 @@ class _FakeBackend implements BotvinnikChatBackend {
   @override
   Future<List<ChatMessage>> messages(String conversationId) async {
     messagesCalls++;
+    if (messagesFor != null) return messagesFor!(conversationId);
     if (failMessages) throw Exception('offline');
     return List.of(serverMessages[conversationId] ?? const <ChatMessage>[]);
   }
@@ -72,6 +77,7 @@ class _FakeBackend implements BotvinnikChatBackend {
     String? title,
   }) async {
     createCalls++;
+    if (createFor != null) return createFor!();
     final conversation = ChatConversation(
       id: 'conv-$createCalls',
       title: title ?? 'New chat',
@@ -139,10 +145,15 @@ class _FakeQuota implements BotvinnikQuotaSink {
   Future<void> refresh() async => refreshes++;
 }
 
-BotvinnikChatController _controller(_FakeBackend backend, _FakeQuota quota) {
+BotvinnikChatController _controller(
+  _FakeBackend backend,
+  _FakeQuota quota, {
+  Future<bool> Function()? aiConsentGranted,
+}) {
   return BotvinnikChatController(
     backend: backend,
     quota: quota,
+    aiConsentGranted: aiConsentGranted ?? () async => true,
     locale: () => 'en',
     clientContext:
         () => const ChatClientContext(
@@ -154,6 +165,154 @@ BotvinnikChatController _controller(_FakeBackend backend, _FakeQuota quota) {
 }
 
 void main() {
+  test(
+    'no consent means no conversation or message, including suggestions',
+    () async {
+      final backend = _FakeBackend();
+      final controller = _controller(
+        backend,
+        _FakeQuota(ChatQuotaStatus.fromJson(_openFixture)),
+        aiConsentGranted: () async => false,
+      );
+      addTearDown(controller.dispose);
+      controller.draft.text = 'A private question';
+      expect(await controller.send(), BotvinnikSendResult.consentRequired);
+      expect(controller.draft.text, 'A private question');
+      expect(
+        await controller.sendSuggestion('A suggested question'),
+        BotvinnikSendResult.consentRequired,
+      );
+      expect(backend.createCalls, 0);
+      expect(backend.sendCalls, 0);
+    },
+  );
+
+  test('withdrawing consent blocks later sends', () async {
+    var granted = true;
+    final backend = _FakeBackend();
+    final controller = _controller(
+      backend,
+      _FakeQuota(ChatQuotaStatus.fromJson(_openFixture)),
+      aiConsentGranted: () async => granted,
+    );
+    addTearDown(controller.dispose);
+    controller.draft.text = 'First question';
+    expect(await controller.send(), BotvinnikSendResult.sent);
+    final calls = backend.sendCalls;
+    granted = false;
+    controller.draft.text = 'Second question';
+    expect(await controller.send(), BotvinnikSendResult.consentRequired);
+    expect(backend.sendCalls, calls);
+  });
+
+  test('an account change while checking permission cannot send', () async {
+    final permission = Completer<bool>();
+    final backend = _FakeBackend();
+    final controller = _controller(
+      backend,
+      _FakeQuota(ChatQuotaStatus.fromJson(_openFixture)),
+      aiConsentGranted: () => permission.future,
+    );
+    addTearDown(controller.dispose);
+    controller.draft.text = 'Private question';
+    final pending = controller.send();
+    backend.hasPermanentSession = false;
+    await controller.handleAccountChanged();
+    permission.complete(true);
+    expect(await pending, BotvinnikSendResult.ignored);
+    expect(backend.createCalls, 0);
+    expect(backend.sendCalls, 0);
+  });
+
+  test('signing out removes the old account draft', () async {
+    final backend = _FakeBackend();
+    final controller = _controller(backend, _FakeQuota());
+    addTearDown(controller.dispose);
+    controller.draft.text = 'Account A unsent private draft';
+    backend.hasPermanentSession = false;
+    await controller.handleAccountChanged(clearDraft: true);
+    expect(controller.draft.text, isEmpty);
+    expect(controller.state.messages, isEmpty);
+  });
+
+  test(
+    'a late conversation creation cannot send under another account',
+    () async {
+      final created = Completer<ChatConversation>();
+      final backend = _FakeBackend()..createFor = () => created.future;
+      final controller = _controller(backend, _FakeQuota());
+      addTearDown(controller.dispose);
+      controller.draft.text = 'Account A private question';
+      final pending = controller.send();
+      await pumpEventQueue();
+      expect(backend.createCalls, 1);
+      await controller.handleAccountChanged();
+      controller.draft.text = 'Account B draft';
+      created.complete(
+        ChatConversation(
+          id: 'a',
+          title: 'Private',
+          locale: 'en',
+          updatedAt: DateTime.utc(2026, 10, 29),
+        ),
+      );
+      expect(await pending, BotvinnikSendResult.ignored);
+      expect(backend.sendCalls, 0);
+      expect(controller.state.messages, isEmpty);
+      expect(controller.draft.text, 'Account B draft');
+    },
+  );
+
+  test('account changes cancel an old stream and ignore its events', () async {
+    var cancelled = false;
+    final stream = StreamController<ChatStreamEvent>(
+      onCancel: () => cancelled = true,
+    );
+    addTearDown(stream.close);
+    final backend = _FakeBackend()..streamFor = (_, _) => stream.stream;
+    final controller = _controller(backend, _FakeQuota());
+    addTearDown(controller.dispose);
+    controller.draft.text = 'Account A private question';
+    final pending = controller.send();
+    await pumpEventQueue();
+    expect(backend.sendCalls, 1);
+    backend.serverConversations.clear();
+    await controller.handleAccountChanged();
+    controller.draft.text = 'Account B draft';
+    stream.add(const ChatStreamEvent('delta', {'text': 'Account A answer'}));
+    expect(await pending, BotvinnikSendResult.ignored);
+    expect(cancelled, isTrue);
+    expect(controller.state.messages, isEmpty);
+    expect(controller.state.interrupted, isNull);
+    expect(controller.draft.text, 'Account B draft');
+  });
+
+  test('late history and errors cannot overwrite another account', () async {
+    for (final fail in [false, true]) {
+      final history = Completer<List<ChatMessage>>();
+      final backend = _FakeBackend()..messagesFor = (_) => history.future;
+      final controller = _controller(backend, _FakeQuota());
+      controller.draft.text = 'Account A private question';
+      final pending = controller.send();
+      await pumpEventQueue();
+      expect(backend.messagesCalls, 1);
+      backend.serverConversations.clear();
+      await controller.handleAccountChanged();
+      controller.draft.text = 'Account B draft';
+      if (fail) {
+        history.completeError(StateError('Account A history failed'));
+      } else {
+        history.complete(const [
+          ChatMessage(id: 'a', role: 'assistant', content: 'Private A'),
+        ]);
+      }
+      expect(await pending, BotvinnikSendResult.ignored);
+      expect(controller.state.messages, isEmpty);
+      expect(controller.state.error, isNull);
+      expect(controller.draft.text, 'Account B draft');
+      controller.dispose();
+    }
+  });
   test('an anonymous session gets the sign-in path, not a request', () async {
     final backend = _FakeBackend(hasPermanentSession: false);
     final controller = _controller(backend, _FakeQuota());

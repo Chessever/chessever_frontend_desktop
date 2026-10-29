@@ -1,2 +1,15 @@
 [functions.gamebase-proxy]
 verify_jwt = false
+
+# These handlers authenticate with getUser, signed Apple payloads, or a
+# dedicated worker secret. Gateway JWT validation cannot validate webhooks.
+[functions.apple-auth-tokens]
+verify_jwt = false
+[functions.delete-account]
+verify_jwt = false
+[functions.apple-auth-revocations]
+verify_jwt = false
+[functions.apple-auth-notifications]
+verify_jwt = false
+[functions.account-data-cleanup]
+verify_jwt = false

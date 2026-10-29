@@ -228,6 +228,27 @@ class DesktopSubscriptionNotifier extends SubscriptionNotifier {
     });
   }
 
+  /// Adopt the shared server's post-purchase confirmation. Supersede any poll
+  /// started before the transaction, so its old inactive response cannot undo
+  /// the newly confirmed membership. Timer refreshes join this reconciliation.
+  Future<EntitlementSnapshot?> refreshAfterStoreTransaction({
+    required String accountId,
+    required Future<EntitlementSnapshot?> Function() reconcile,
+  }) {
+    if (!mounted ||
+        accountId != _accountId ||
+        _deps.currentAccount()?.id != accountId ||
+        _deps.currentAccount()?.isAnonymous != false) {
+      return Future.value();
+    }
+    final generation = ++_generation;
+    final future = _fetch(generation, accountId, true, reconcile: reconcile);
+    _refreshFuture = future;
+    return future.whenComplete(() {
+      if (identical(_refreshFuture, future)) _refreshFuture = null;
+    });
+  }
+
   bool _owns(int generation, String? account) =>
       mounted &&
       generation == _generation &&
@@ -250,8 +271,9 @@ class DesktopSubscriptionNotifier extends SubscriptionNotifier {
   Future<EntitlementSnapshot?> _fetch(
     int generation,
     String? account,
-    bool forceSessionRefresh,
-  ) async {
+    bool forceSessionRefresh, {
+    Future<EntitlementSnapshot?> Function()? reconcile,
+  }) async {
     if (!_owns(generation, account)) return null;
     if (account == null) {
       // Signed out: a known, entitlement-free guest. Not an error.
@@ -267,9 +289,9 @@ class DesktopSubscriptionNotifier extends SubscriptionNotifier {
       state = state.copyWith(isLoading: true);
     }
     try {
-      final ent = await _deps.fetchEntitlement(
-        forceSessionRefresh: forceSessionRefresh,
-      );
+      final ent =
+          await (reconcile?.call() ??
+              _deps.fetchEntitlement(forceSessionRefresh: forceSessionRefresh));
       if (!_owns(generation, account)) return null;
       if (ent == null) {
         await _publishUnverified(

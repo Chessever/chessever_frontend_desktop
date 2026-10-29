@@ -34,6 +34,13 @@ class MacAppStoreSubmitTest(unittest.TestCase):
         self.assertEqual(args[args.index('--release-type') + 1], 'MANUAL')
         self.assertNotIn('--cancel-previous-submissions', args)
         self.assertEqual(args[args.index('--replace-pending') + 1], 'false')
+        self.assertEqual(args[args.index('--prepare-only') + 1], 'false')
+
+    def test_prepare_only_is_explicit_and_manual(self):
+        result, args = self.run_submit(PREPARE_REVIEW_ONLY='true')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(args[args.index('--prepare-only') + 1], 'true')
+        self.assertEqual(args[args.index('--release-type') + 1], 'MANUAL')
 
     def test_pending_review_replacement_is_explicit(self):
         result, args = self.run_submit(REPLACE_PENDING_REVIEW='true')
@@ -51,6 +58,8 @@ class MacAppStoreSubmitTest(unittest.TestCase):
     def test_wrong_branch_and_invalid_options_never_call_cli(self):
         for options in ({'RELEASE_REF': 'refs/heads/dev'},
                         {'SUBMIT_REVIEW': 'false', 'REPLACE_PENDING_REVIEW': 'true'},
+                        {'SUBMIT_REVIEW': 'false', 'PREPARE_REVIEW_ONLY': 'true'},
+                        {'PREPARE_REVIEW_ONLY': 'invalid'},
                         {'SUBMIT_REVIEW': 'invalid'}):
             with self.subTest(options=options):
                 result, args = self.run_submit(**options)

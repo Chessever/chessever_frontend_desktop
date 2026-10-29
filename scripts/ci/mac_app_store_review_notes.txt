@@ -1,0 +1,13 @@
+ChessEver review instructions
+
+Sign-in: choose Sign in with Apple to open the native Apple authorization sheet inside ChessEver. Google sign-in opens an in-app ASWebAuthenticationSession sheet. Neither sign-in flow intentionally opens the default browser. You can browse as a guest; sign in to a permanent ChessEver account before purchasing or restoring a subscription.
+
+Premium: open Settings > ChessEver Premium, select Monthly or Annual, then choose Subscribe with Apple. The paywall offers monthly and annual auto-renewable App Store subscriptions, with Apple's localized billed prices and periods, Restore purchases, Manage subscriptions, Privacy policy and Terms of Use. Purchases use Apple's payment sheet through RevenueCat. This edition does not offer Stripe checkout. The Premium subscription group and both plans accompany the app review when their metadata has not yet been approved.
+
+Account deletion: guests and permanent accounts can open Settings > Account > Delete account. The confirmation explains that account deletion does not cancel an Apple subscription and provides subscription management. New native Apple sign-ins capture the authorization code for server-side exchange and encrypted token storage. Account deletion queues Apple token revocation on the server; server notifications and native credential checks handle later authorization changes. Previously linked Apple accounts without stored tokens receive Apple Account disconnection instructions. No automatic revocation is claimed for those older accounts.
+
+Botvinnik: before sending a conversation, message or suggestion, the app asks for explicit permission to share messages, history and relevant chess context with Cloudflare Workers AI and TinyFish. Settings > Botvinnik > AI data sharing withdraws permission for future sharing.
+
+Sandbox and network entitlements: com.apple.security.network.client enables outgoing service requests. com.apple.security.network.server is used only for listeners bound to IPv4 loopback (127.0.0.1): Google OAuth receives its callback on a temporary OS-assigned port; release-mode launches also use a local single-instance file-open handoff on port 47683. These listeners do not bind to LAN or public interfaces. Apple sign-in uses the native sheet and does not need the OAuth listener. File access uses user-selected files and security-scoped bookmarks. Chess engines are signed, bundled helpers; this edition does not download or install executable engines.
+
+Updates and release: this edition updates through the App Store. It has no website updater or external payment checkout. Release remains MANUAL after approval.

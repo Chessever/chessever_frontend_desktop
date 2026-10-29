@@ -8,6 +8,7 @@ import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
+import 'package:chessever/desktop/services/billing/mac_app_store_billing.dart';
 import 'package:chessever/desktop/services/desktop_offline_access_cache.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
@@ -170,6 +171,73 @@ void main() {
     backend.requests.first.complete(_active(backend.clock));
     await _settle();
   });
+
+  test(
+    'confirmed Apple purchase unlocks access after webhook lag and supersedes an old inactive poll',
+    () async {
+      start();
+      await _settle();
+      final beforePurchase = backend.requests.first;
+      var reconciliations = 0;
+      final confirmed = _active(backend.clock);
+      final result = await notifier.refreshAfterStoreTransaction(
+        accountId: 'acct-a',
+        reconcile:
+            () => MacAppStoreBilling.reconcileTransaction(
+              backend:
+                  () async =>
+                      ++reconciliations < 3
+                          ? const EntitlementSnapshot(isActive: false)
+                          : confirmed,
+              isCurrentAccount: () => backend.account?.id == 'acct-a',
+              expectActive: true,
+              pause: (_) async {},
+            ),
+      );
+      expect(result, same(confirmed));
+      expect(reconciliations, 3);
+      expect(notifier.state.isSubscribed, isTrue);
+      expect(
+        desktopPremiumAccess(notifier.state, now: backend.clock),
+        DesktopAccess.allowed,
+      );
+      expect(backend.stored.wasActive, isTrue);
+
+      beforePurchase.complete(const EntitlementSnapshot(isActive: false));
+      await _settle();
+      expect(notifier.state.isSubscribed, isTrue);
+      expect(backend.stored.wasActive, isTrue);
+
+      unawaited(notifier.refreshFromBackend());
+      await _settle();
+      backend.requests.last.complete(
+        const EntitlementSnapshot(isActive: false),
+      );
+      await _settle();
+      expect(notifier.state.isSubscribed, isFalse);
+      expect(backend.stored.wasActive, isFalse);
+    },
+  );
+
+  test(
+    'Apple reconciliation cannot grant another account or write its offline record',
+    () async {
+      start();
+      await _settle();
+      final pending = Completer<EntitlementSnapshot?>();
+      final result = notifier.refreshAfterStoreTransaction(
+        accountId: 'acct-a',
+        reconcile: () => pending.future,
+      );
+      backend.switchTo(_b);
+      await _settle();
+      pending.complete(_active(backend.clock));
+      expect(await result, isNull);
+      expect(notifier.state.isSubscribed, isFalse);
+      expect(backend.recordedAccounts, isEmpty);
+      expect(notifier.entitlementSnapshot.accountId, 'acct-b');
+    },
+  );
 
   test('a verified member keeps Premium through a network failure', () async {
     backend.stored = backend.verifiedFor('acct-a');

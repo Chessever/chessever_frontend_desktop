@@ -7,6 +7,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/chat/botvinnik_provider.dart';
+import 'package:chessever/chat/ai_sharing_consent.dart';
 import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/chat/chat_references.dart';
 import 'package:chessever/providers/auth_state_provider.dart';
@@ -163,6 +164,7 @@ enum BotvinnikSendResult {
   sent,
   ignored,
   signInRequired,
+  consentRequired,
   exhausted,
   upgradeRequired,
 
@@ -252,16 +254,26 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
     required BotvinnikQuotaSink quota,
     String Function()? locale,
     ChatClientContext Function()? clientContext,
+    Future<bool> Function()? aiConsentGranted,
   }) : _backend = backend,
        _quota = quota,
        _locale = locale ?? _defaultChatLocale,
        _clientContext = clientContext,
+       _aiConsentGranted = aiConsentGranted ?? _currentAccountAiConsent,
        super(const BotvinnikChatState());
 
   final BotvinnikChatBackend _backend;
   final BotvinnikQuotaSink _quota;
   final String Function() _locale;
   final ChatClientContext Function()? _clientContext;
+  final Future<bool> Function() _aiConsentGranted;
+
+  static Future<bool> _currentAccountAiConsent() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    return user != null &&
+        !user.isAnonymous &&
+        await AiSharingConsent.instance.isGranted(user.id);
+  }
 
   /// The composer draft. Owned here, not by the widget, so it is never lost.
   final TextEditingController draft = TextEditingController();
@@ -270,6 +282,21 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
   String? _buildNumber;
   bool _clientMetadataRequested = false;
   int _loadGeneration = 0;
+  int _accountGeneration = 0;
+  StreamIterator<ChatStreamEvent>? _activeSend;
+
+  bool _isCurrentSend(int generation) =>
+      mounted &&
+      generation == _accountGeneration &&
+      _backend.hasPermanentSession;
+
+  void _cancelActiveSend() {
+    final pending = _activeSend;
+    _activeSend = null;
+    if (pending != null) {
+      unawaited(pending.cancel().then<void>((_) {}, onError: (Object _) {}));
+    }
+  }
 
   bool get hasPermanentSession => _backend.hasPermanentSession;
 
@@ -334,10 +361,14 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
 
   /// Account changed (sign in, sign out, guest upgrade). History belongs to
   /// the previous account and is dropped; the draft is kept on purpose.
-  Future<void> handleAccountChanged() async {
+  Future<void> handleAccountChanged({bool clearDraft = false}) async {
     _loadGeneration++;
+    final generation = ++_accountGeneration;
+    _cancelActiveSend();
+    if (clearDraft) draft.clear();
     state = BotvinnikChatState(screenContext: state.screenContext);
     await _quota.refresh();
+    if (!mounted || generation != _accountGeneration) return;
     if (_backend.hasPermanentSession) await load();
   }
 
@@ -378,11 +409,12 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
 
   Future<void> delete(ChatConversation conversation) async {
     if (state.sending) return;
+    final generation = _accountGeneration;
     try {
       if (!conversation.isDraft) {
         await _backend.deleteConversation(conversation.id);
       }
-      if (!mounted) return;
+      if (!_isCurrentSend(generation)) return;
       final remaining =
           state.conversations
               .where((item) => item.id != conversation.id)
@@ -402,7 +434,9 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
         }
       }
     } on Object catch (error) {
-      if (mounted) state = state.copyWith(error: _messageFor(error));
+      if (_isCurrentSend(generation)) {
+        state = state.copyWith(error: _messageFor(error));
+      }
     }
   }
 
@@ -420,14 +454,23 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
     var selected = state.selected;
     final content = draft.text.trim();
     if (content.isEmpty || state.sending) return BotvinnikSendResult.ignored;
+    final generation = _accountGeneration;
+    final consent = await _aiConsentGranted();
+    if (!mounted || generation != _accountGeneration || state.sending) {
+      return BotvinnikSendResult.ignored;
+    }
+    if (!_backend.hasPermanentSession) {
+      return BotvinnikSendResult.signInRequired;
+    }
+    if (!consent) return BotvinnikSendResult.consentRequired;
     selected ??= ChatConversation.draft(locale: _locale());
 
     final interrupted = state.interrupted;
     if (interrupted != null) {
       // Reconcile before resending: an earlier stream broke after the request
       // left the client, so the server may already hold that question.
-      final settled = await _reconcileInterrupted(interrupted);
-      if (!mounted) return BotvinnikSendResult.ignored;
+      final settled = await _reconcileInterrupted(interrupted, generation);
+      if (!_isCurrentSend(generation)) return BotvinnikSendResult.ignored;
       if (settled == null) return BotvinnikSendResult.failed;
       if (settled == ChatReconcileOutcome.alreadyDelivered &&
           interrupted.content.trim() == content) {
@@ -464,6 +507,7 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
     var receivedEvent = false;
     var streamCompleted = false;
     var conversationId = selected.id;
+    StreamIterator<ChatStreamEvent>? iterator;
     try {
       if (selected.isDraft) {
         final draftId = selected.id;
@@ -472,7 +516,7 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
           title: chatTitleFromQuestion(content),
         );
         conversationId = persisted.id;
-        if (!mounted) return BotvinnikSendResult.ignored;
+        if (!_isCurrentSend(generation)) return BotvinnikSendResult.ignored;
         state = state.copyWith(
           selected: persisted,
           conversations: [
@@ -484,27 +528,32 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
         );
       }
       requestLeftClient = true;
-      await for (final event in _backend.send(
-        conversationId: conversationId,
-        content: content,
-        locale: _locale(),
-        timezone: DateTime.now().timeZoneName,
-        clientContext: _buildClientContext(),
-        screenContext: state.screenContext,
-      )) {
-        if (!mounted) return BotvinnikSendResult.ignored;
+      iterator = StreamIterator(
+        _backend.send(
+          conversationId: conversationId,
+          content: content,
+          locale: _locale(),
+          timezone: DateTime.now().timeZoneName,
+          clientContext: _buildClientContext(),
+          screenContext: state.screenContext,
+        ),
+      );
+      _activeSend = iterator;
+      while (await iterator.moveNext()) {
+        if (!_isCurrentSend(generation)) return BotvinnikSendResult.ignored;
         receivedEvent = true;
-        _applyStreamEvent(conversationId, content, event);
+        _applyStreamEvent(conversationId, content, iterator.current);
       }
+      if (!_isCurrentSend(generation)) return BotvinnikSendResult.ignored;
       streamCompleted = true;
       // Reconcile after the stream closes: persisted ids unlock feedback and
       // the stored text replaces whatever the stream delivered.
       final refreshed = await _backend.messages(conversationId);
-      if (!mounted) return BotvinnikSendResult.ignored;
+      if (!_isCurrentSend(generation)) return BotvinnikSendResult.ignored;
       state = state.copyWith(messages: refreshed, sending: false);
       return BotvinnikSendResult.sent;
     } on ChatApiException catch (error) {
-      if (!mounted) return BotvinnikSendResult.ignored;
+      if (!_isCurrentSend(generation)) return BotvinnikSendResult.ignored;
       if (streamCompleted) return _afterRefreshFailed(error.message);
       final rejectedBeforeStream = error.statusCode != null && !receivedEvent;
       if (error.quota != null) {
@@ -526,6 +575,7 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
         return BotvinnikSendResult.failed;
       }
       return _afterInterruptedStream(
+        generation: generation,
         conversationId: conversationId,
         content: content,
         knownIds: knownIds,
@@ -533,7 +583,7 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
         message: error.message,
       );
     } on Object catch (error) {
-      if (!mounted) return BotvinnikSendResult.ignored;
+      if (!_isCurrentSend(generation)) return BotvinnikSendResult.ignored;
       if (streamCompleted) return _afterRefreshFailed(_messageFor(error));
       if (!requestLeftClient) {
         _restoreDraft(content, localUser.id, localAssistant.id);
@@ -541,12 +591,22 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
         return BotvinnikSendResult.failed;
       }
       return _afterInterruptedStream(
+        generation: generation,
         conversationId: conversationId,
         content: content,
         knownIds: knownIds,
         localIds: {localUser.id, localAssistant.id},
         message: _messageFor(error),
       );
+    } finally {
+      if (identical(_activeSend, iterator)) _activeSend = null;
+      if (iterator != null) {
+        try {
+          await iterator.cancel();
+        } on Object catch (_) {
+          // Account changes can already have cancelled the old request.
+        }
+      }
     }
   }
 
@@ -568,6 +628,7 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
   }
 
   Future<void> setFeedback(ChatMessage message, String feedback) async {
+    final generation = _accountGeneration;
     final selected = state.selected;
     if (selected == null ||
         message.id.startsWith('local-') ||
@@ -586,7 +647,9 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
         messageId: message.id,
         feedback: nextFeedback,
       );
-      if (!mounted || state.selected?.id != selected.id) return;
+      if (!_isCurrentSend(generation) || state.selected?.id != selected.id) {
+        return;
+      }
       state = state.copyWith(
         messages: [
           for (final item in state.messages)
@@ -594,13 +657,15 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
         ],
       );
     } on Object catch (error) {
-      if (!mounted || state.selected?.id != selected.id) return;
+      if (!_isCurrentSend(generation) || state.selected?.id != selected.id) {
+        return;
+      }
       state = state.copyWith(
         error: _messageFor(error),
         messages: _replaceFeedback(message.id, previousFeedback),
       );
     } finally {
-      if (mounted) {
+      if (_isCurrentSend(generation)) {
         state = state.copyWith(
           feedbackPending: {...state.feedbackPending}..remove(message.id),
         );
@@ -614,6 +679,7 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
   ];
 
   Future<BotvinnikSendResult> _afterInterruptedStream({
+    required int generation,
     required String conversationId,
     required String content,
     required Set<String> knownIds,
@@ -626,8 +692,8 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
       knownMessageIds: knownIds,
     );
     state = state.copyWith(interrupted: interrupted, sending: false);
-    final outcome = await _reconcileInterrupted(interrupted);
-    if (!mounted) return BotvinnikSendResult.ignored;
+    final outcome = await _reconcileInterrupted(interrupted, generation);
+    if (!_isCurrentSend(generation)) return BotvinnikSendResult.ignored;
     if (outcome == ChatReconcileOutcome.alreadyDelivered) {
       state = state.copyWith(error: message);
       return BotvinnikSendResult.reconciled;
@@ -654,12 +720,13 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
   /// when the history request itself failed.
   Future<ChatReconcileOutcome?> _reconcileInterrupted(
     BotvinnikInterruptedSend interrupted,
+    int generation,
   ) async {
     try {
       final serverMessages = await _backend.messages(
         interrupted.conversationId,
       );
-      if (!mounted) return null;
+      if (!_isCurrentSend(generation)) return null;
       final outcome = chatReconcilePendingSend(
         serverMessages: serverMessages,
         pendingContent: interrupted.content,
@@ -673,7 +740,9 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
       );
       return outcome;
     } on Object catch (error) {
-      if (mounted) state = state.copyWith(error: _messageFor(error));
+      if (_isCurrentSend(generation)) {
+        state = state.copyWith(error: _messageFor(error));
+      }
       return null;
     }
   }
@@ -810,6 +879,8 @@ class BotvinnikChatController extends StateNotifier<BotvinnikChatState> {
 
   @override
   void dispose() {
+    _accountGeneration++;
+    _cancelActiveSend();
     draft.dispose();
     super.dispose();
   }
@@ -831,7 +902,16 @@ final botvinnikChatControllerProvider =
         final changed =
             previous?.id != next?.id ||
             previous?.isAnonymous != next?.isAnonymous;
-        if (changed) unawaited(controller.handleAccountChanged());
+        if (changed) {
+          unawaited(
+            controller.handleAccountChanged(
+              clearDraft:
+                  previous != null &&
+                  previous.id != next?.id &&
+                  (next == null || !previous.isAnonymous),
+            ),
+          );
+        }
       });
       return controller;
     });

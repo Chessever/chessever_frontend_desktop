@@ -6,7 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       submit_review:
-        description: Submit for App Review with MANUAL release (unchecked uploads to App Store Connect only)
+        description: Prepare or submit App Review with MANUAL release (unchecked uploads only)
+        type: boolean
+        default: true
+      prepare_review_only:
+        description: Prepare the complete review draft without submitting (required first-subscription handoff)
         type: boolean
         default: true
       replace_pending_review:
@@ -100,6 +104,17 @@ jobs:
           flutter pub get
           (cd macos && pod install)
 
+      - name: Read-only App Store metadata preflight
+        if: inputs.submit_review
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        # Source version/build are read from pubspec. A stale selected build is
+        # reported and is replaced only after the matching package is VALID.
+        run: python scripts/ci/mac_app_store_preflight.py --phase before-upload
+
       - name: Prepare public client configuration
         # This allowlist contains public native-client settings only. Store,
         # signing, R2 and notification credentials never enter Dart defines.
@@ -170,15 +185,18 @@ jobs:
       - name: Upload and optionally submit for manual release
         timeout-minutes: 30
         env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           RELEASE_REF: ${{ github.ref }}
           SUBMIT_REVIEW: ${{ inputs.submit_review }}
           REPLACE_PENDING_REVIEW: ${{ inputs.replace_pending_review }}
+          PREPARE_REVIEW_ONLY: ${{ inputs.submit_review && inputs.prepare_review_only }}
           APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
         run: bash scripts/ci/mac_app_store_submit.sh
 
       - name: Keep the signed installer
+        if: always() && hashFiles('build/mac-app-store/ChessEver-Mac-App-Store.pkg') != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mac-app-store-pkg

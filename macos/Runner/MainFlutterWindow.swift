@@ -22,12 +22,18 @@ class MainFlutterWindow: NSWindow {
     DesktopWebAuthBridge.shared.attach(
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
+    DesktopAppleCredentialBridge.shared.attach(
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { controller in
       RegisterGeneratedPlugins(registry: controller)
       DesktopSandboxFileAccess.shared.attach(
         binaryMessenger: controller.engine.binaryMessenger
       )
       DesktopWebAuthBridge.shared.attach(
+        binaryMessenger: controller.engine.binaryMessenger
+      )
+      DesktopAppleCredentialBridge.shared.attach(
         binaryMessenger: controller.engine.binaryMessenger
       )
     }

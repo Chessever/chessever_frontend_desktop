@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -79,6 +81,75 @@ class MacAppStoreBilling {
 
   Future<CustomerInfo> restore() =>
       _forAccount(Purchases.restorePurchases, requirePermanentAccount: true);
+
+  /// Reconcile the just-completed store transaction with the shared authority.
+  /// The endpoint already refreshes RevenueCat for inactive/store accounts.
+  /// A fresh SDK result only tells us to wait for propagation; it cannot
+  /// override a backend revocation or grant persistent offline access itself.
+  Future<EntitlementSnapshot?> reconcileStoreTransaction({
+    required String accountId,
+    required bool expectActive,
+  }) {
+    if (!isMacAppStore) {
+      return Future.error(StateError('Apple billing is unavailable here.'));
+    }
+    return reconcileTransaction(
+      backend: () => DesktopBillingService.instance.currentEntitlement(),
+      isCurrentAccount:
+          () =>
+              Supabase.instance.client.auth.currentUser?.id == accountId &&
+              Supabase.instance.client.auth.currentUser?.isAnonymous == false,
+      expectActive: expectActive,
+    );
+  }
+
+  /// Bounded post-transaction polling, independent of cached SDK customer info.
+  /// Identity is checked before and after every network request and pause.
+  static Future<EntitlementSnapshot?> reconcileTransaction({
+    required Future<EntitlementSnapshot?> Function() backend,
+    required bool Function() isCurrentAccount,
+    required bool expectActive,
+    Future<void> Function(Duration)? pause,
+  }) async {
+    final elapsed = Stopwatch()..start();
+    const budget = Duration(seconds: 30);
+    EntitlementSnapshot? latest;
+    Object? lastError;
+    StackTrace? lastStack;
+    void checkIdentity() {
+      if (!isCurrentAccount()) {
+        throw StateError('Your account changed. Please try again.');
+      }
+    }
+
+    final attempts = expectActive ? 6 : 1;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      checkIdentity();
+      final remaining = budget - elapsed.elapsed;
+      if (remaining <= Duration.zero) break;
+      try {
+        latest = await backend().timeout(remaining);
+        lastError = null;
+      } on DesktopBillingAuthException {
+        rethrow;
+      } catch (error, stack) {
+        lastError = error;
+        lastStack = stack;
+      }
+      checkIdentity();
+      if (latest?.isActive == true || !expectActive) break;
+      if (attempt + 1 == attempts ||
+          budget - elapsed.elapsed <= const Duration(seconds: 2)) {
+        break;
+      }
+      await (pause ?? Future<void>.delayed)(const Duration(seconds: 2));
+    }
+    checkIdentity();
+    if (lastError != null) {
+      Error.throwWithStackTrace(lastError, lastStack!);
+    }
+    return latest;
+  }
 
   Future<EntitlementSnapshot?> currentEntitlement({
     bool forceSessionRefresh = false,

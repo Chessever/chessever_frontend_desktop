@@ -39,9 +39,12 @@ class _MacAppStorePlansState extends ConsumerState<MacAppStorePlans> {
   }
 
   Future<void> _run({Package? package}) async {
+    if (_busy) return;
     if (!await ensureDesktopPermanentAccountForPurchase(context)) return;
-    if (!mounted) return;
-    widget.onAccountBound?.call(Supabase.instance.client.auth.currentUser?.id);
+    if (!mounted || _busy) return;
+    final accountId = Supabase.instance.client.auth.currentUser?.id;
+    if (accountId == null) return;
+    widget.onAccountBound?.call(accountId);
     setState(() {
       _busy = true;
       _message = null;
@@ -51,14 +54,24 @@ class _MacAppStorePlansState extends ConsumerState<MacAppStorePlans> {
           package == null
               ? await MacAppStoreBilling.instance.restore()
               : await MacAppStoreBilling.instance.purchase(package);
-      await DesktopSubscriptionNotifier.current?.refreshFromBackend(
-        forceSessionRefresh: true,
-      );
+      final storeActive = MacAppStoreBilling.snapshotFrom(info).isActive;
+      final confirmed = await DesktopSubscriptionNotifier.current
+          ?.refreshAfterStoreTransaction(
+            accountId: accountId,
+            reconcile:
+                () => MacAppStoreBilling.instance.reconcileStoreTransaction(
+                  accountId: accountId,
+                  expectActive: storeActive,
+                ),
+          );
+      if (Supabase.instance.client.auth.currentUser?.id != accountId) return;
       if (mounted) {
         setState(() {
           _message =
-              MacAppStoreBilling.snapshotFrom(info).isActive
+              confirmed?.isActive == true
                   ? 'Premium is active on your ChessEver account.'
+                  : storeActive
+                  ? 'Your purchase has not been confirmed for this ChessEver account. Use Restore purchases to check again.'
                   : package == null
                   ? 'No active purchases were found for this Apple Account.'
                   : 'Your purchase is pending. Premium will appear when approved.';
@@ -66,7 +79,9 @@ class _MacAppStorePlansState extends ConsumerState<MacAppStorePlans> {
       }
     } on PlatformException catch (error) {
       final code = PurchasesErrorHelper.getErrorCode(error);
-      if (mounted && code != PurchasesErrorCode.purchaseCancelledError) {
+      if (mounted &&
+          Supabase.instance.client.auth.currentUser?.id == accountId &&
+          code != PurchasesErrorCode.purchaseCancelledError) {
         setState(
           () =>
               _message =
@@ -76,7 +91,8 @@ class _MacAppStorePlansState extends ConsumerState<MacAppStorePlans> {
         );
       }
     } catch (_) {
-      if (mounted) {
+      if (mounted &&
+          Supabase.instance.client.auth.currentUser?.id == accountId) {
         setState(
           () =>
               _message =
@@ -202,10 +218,7 @@ class _MacAppStorePlansState extends ConsumerState<MacAppStorePlans> {
                 DesktopDialogButton(
                   label: 'Privacy policy',
                   tone: DesktopDialogButtonTone.ghost,
-                  onPress:
-                      () => _open(
-                        'https://sites.google.com/view/chessever-privacy-policy/ana-sayfa',
-                      ),
+                  onPress: () => _open('https://chessever.com/privacy-policy'),
                 ),
                 DesktopDialogButton(
                   label: 'Terms of use',

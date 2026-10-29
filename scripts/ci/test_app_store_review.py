@@ -102,6 +102,13 @@ class AppReviewFlowTest(unittest.TestCase):
         self.assertNotIn('--app-store', api.commands[0])
         self.assertIn('--skip-package-upload', api.commands[1])
 
+    def test_rejected_editable_version_advances_without_cancelling_review(self):
+        api = AppleFixture(version(state='REJECTED'), platform='MAC_OS')
+        self.run_flow(api)
+        writes = [method for method, _, _ in api.requests if method != 'GET']
+        self.assertEqual(writes, ['PATCH'])
+        self.assertEqual(api.rows[0]['attributes']['versionString'], '37.1.1')
+
     def test_invalid_new_binary_preserves_the_existing_approval(self):
         api = AppleFixture(version(), processing='INVALID')
         with self.assertRaisesRegex(ReviewError, 'invalid'):

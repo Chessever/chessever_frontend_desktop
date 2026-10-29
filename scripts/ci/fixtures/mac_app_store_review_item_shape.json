@@ -1,0 +1,137 @@
+{
+  "provenance": {
+    "source": "Operator-provided included GET shape, 2026-10-29",
+    "anonymization": "Resource and item identifiers replaced; relationship keys, null targets, types, ordering and states retained.",
+    "envelope": "Standard attributes.state and relationships.<name>.data envelopes restored around the flattened safe capture; not a raw HTTP recording."
+  },
+  "expanded": {
+    "data": [
+      {
+        "type": "reviewSubmissionItems",
+        "id": "fixture-review-item-1",
+        "attributes": {
+          "state": "READY_FOR_REVIEW"
+        },
+        "relationships": {
+          "subscriptionVersion": {
+            "data": null
+          },
+          "appStoreVersion": {
+            "data": null
+          },
+          "subscriptionGroupVersion": {
+            "data": {
+              "type": "subscriptionGroupVersions",
+              "id": "fixture-subscriptionGroupVersions-1"
+            }
+          }
+        }
+      },
+      {
+        "type": "reviewSubmissionItems",
+        "id": "fixture-review-item-2",
+        "attributes": {
+          "state": "READY_FOR_REVIEW"
+        },
+        "relationships": {
+          "subscriptionVersion": {
+            "data": {
+              "type": "subscriptionVersions",
+              "id": "fixture-subscriptionVersions-1"
+            }
+          },
+          "appStoreVersion": {
+            "data": null
+          },
+          "subscriptionGroupVersion": {
+            "data": null
+          }
+        }
+      },
+      {
+        "type": "reviewSubmissionItems",
+        "id": "fixture-review-item-3",
+        "attributes": {
+          "state": "READY_FOR_REVIEW"
+        },
+        "relationships": {
+          "subscriptionVersion": {
+            "data": {
+              "type": "subscriptionVersions",
+              "id": "fixture-subscriptionVersions-2"
+            }
+          },
+          "appStoreVersion": {
+            "data": null
+          },
+          "subscriptionGroupVersion": {
+            "data": null
+          }
+        }
+      },
+      {
+        "type": "reviewSubmissionItems",
+        "id": "fixture-review-item-4",
+        "attributes": {
+          "state": "REJECTED"
+        },
+        "relationships": {
+          "subscriptionVersion": {
+            "data": null
+          },
+          "appStoreVersion": {
+            "data": {
+              "type": "appStoreVersions",
+              "id": "fixture-appStoreVersions-1"
+            }
+          },
+          "subscriptionGroupVersion": {
+            "data": null
+          }
+        }
+      }
+    ]
+  },
+  "unexpanded": {
+    "data": [
+      {
+        "type": "reviewSubmissionItems",
+        "id": "fixture-review-item-1",
+        "attributes": {
+          "state": "READY_FOR_REVIEW"
+        },
+        "relationships": {}
+      },
+      {
+        "type": "reviewSubmissionItems",
+        "id": "fixture-review-item-2",
+        "attributes": {
+          "state": "READY_FOR_REVIEW"
+        },
+        "relationships": {}
+      },
+      {
+        "type": "reviewSubmissionItems",
+        "id": "fixture-review-item-3",
+        "attributes": {
+          "state": "READY_FOR_REVIEW"
+        },
+        "relationships": {}
+      },
+      {
+        "type": "reviewSubmissionItems",
+        "id": "fixture-review-item-4",
+        "attributes": {
+          "state": "REJECTED"
+        },
+        "relationships": {}
+      }
+    ]
+  },
+  "includedTypes": [
+    "subscriptionGroupVersions",
+    "appStoreVersions",
+    "subscriptionVersions",
+    "subscriptionVersions"
+  ]
+}

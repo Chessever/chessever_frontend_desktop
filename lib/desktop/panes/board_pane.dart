@@ -5328,97 +5328,101 @@ class _BoardPaneContent extends HookConsumerWidget {
                         child: ValueListenableBuilder<int>(
                           valueListenable: explorerPreviewLineStep,
                           builder: (context, previewStep, _) {
-                          final view = boardViewAt(previewStep);
-                          final boardPosition = view.position;
-                          return _BoardArea(
-                          tabId: activeTabId ?? 'board-default',
-                          boardRenderKey: boardRenderKey,
-                          shareCaptureKey: boardShareCaptureKey,
-                          fen: boardPosition.fen,
-                          analysisFen: view.evalTarget.fen,
-                          threatMode: view.evalTarget.isThreatProbe,
-                          flipped: flipped.value,
-                          sideToMove: boardPosition.turn,
-                          playerSide: boardPlayerSide,
-                          validMoves: validMovesFor(boardPosition),
-                          isCheck: boardPosition.isCheck,
-                          lastMove: view.lastMove,
-                          onMove: onMove,
-                          promotionMove: promotionMove.value,
-                          onPromotionSelection: onPromotionSelection,
-                          pgnHeaders: pgnHeaders.value,
-                          pgnShapes:
-                              showBoardMoveDecorations
-                                  ? pgnShapes
-                                  : const <cg.Shape>[],
-                          onGraphicCommentaryChanged:
-                              showBoardMoveDecorations
-                                  ? (shapes) => setMoveGraphicCommentary(
-                                    pointer.value,
-                                    shapes,
-                                  )
-                                  : null,
-                          whiteClock: whiteClockRaw,
-                          blackClock: blackClockRaw,
-                          boardAnnotation:
-                              showBoardMoveDecorations ? boardAnnotation : null,
-                          boardAnnotationGlyph:
-                              showBoardMoveDecorations
-                                  ? boardAnnotationGlyph
-                                  : null,
-                          boardAnnotationSquare:
-                              showBoardMoveDecorations
-                                  ? boardAnnotationSquare
-                                  : null,
-                          gameEnding:
-                              showBoardMoveDecorations ? gameEnding : null,
-                          showFinishedResult: showFinishedResult,
-                          onWheelStep: stepNotationHorizontally,
-                          isLiveAtTip: isLiveAtTip,
-                          isForegroundTab: isForegroundTab,
-                          activeGameId: activeGameId,
-                          boardArgs: boardArgs,
-                          sourceGame: boardArgs?.sourceGame,
-                          viewSource:
-                              boardArgs?.viewSource ?? ChessboardView.tour,
-                          focusMode: boardFocusMode,
-                          pictureInPicture: pictureInPictureMode,
-                          onPreviousGame: navigatePreviousGameManually,
-                          onRestoreMainWindow:
-                              () => unawaited(
-                                restoreMainWindowFromPictureInPictureAction(),
-                              ),
-                          onDismissPictureInPicture:
-                              () => unawaited(dismissPictureInPictureAction()),
-                          onNextGame: navigateNextGameManually,
+                            final view = boardViewAt(previewStep);
+                            final boardPosition = view.position;
+                            return _BoardArea(
+                              tabId: activeTabId ?? 'board-default',
+                              boardRenderKey: boardRenderKey,
+                              shareCaptureKey: boardShareCaptureKey,
+                              fen: boardPosition.fen,
+                              analysisFen: view.evalTarget.fen,
+                              threatMode: view.evalTarget.isThreatProbe,
+                              flipped: flipped.value,
+                              sideToMove: boardPosition.turn,
+                              playerSide: boardPlayerSide,
+                              validMoves: validMovesFor(boardPosition),
+                              isCheck: boardPosition.isCheck,
+                              lastMove: view.lastMove,
+                              onMove: onMove,
+                              promotionMove: promotionMove.value,
+                              onPromotionSelection: onPromotionSelection,
+                              pgnHeaders: pgnHeaders.value,
+                              pgnShapes:
+                                  showBoardMoveDecorations
+                                      ? pgnShapes
+                                      : const <cg.Shape>[],
+                              onGraphicCommentaryChanged:
+                                  showBoardMoveDecorations
+                                      ? (shapes) => setMoveGraphicCommentary(
+                                        pointer.value,
+                                        shapes,
+                                      )
+                                      : null,
+                              whiteClock: whiteClockRaw,
+                              blackClock: blackClockRaw,
+                              boardAnnotation:
+                                  showBoardMoveDecorations
+                                      ? boardAnnotation
+                                      : null,
+                              boardAnnotationGlyph:
+                                  showBoardMoveDecorations
+                                      ? boardAnnotationGlyph
+                                      : null,
+                              boardAnnotationSquare:
+                                  showBoardMoveDecorations
+                                      ? boardAnnotationSquare
+                                      : null,
+                              gameEnding:
+                                  showBoardMoveDecorations ? gameEnding : null,
+                              showFinishedResult: showFinishedResult,
+                              onWheelStep: stepNotationHorizontally,
+                              isLiveAtTip: isLiveAtTip,
+                              isForegroundTab: isForegroundTab,
+                              activeGameId: activeGameId,
+                              boardArgs: boardArgs,
+                              sourceGame: boardArgs?.sourceGame,
+                              viewSource:
+                                  boardArgs?.viewSource ?? ChessboardView.tour,
+                              focusMode: boardFocusMode,
+                              pictureInPicture: pictureInPictureMode,
+                              onPreviousGame: navigatePreviousGameManually,
+                              onRestoreMainWindow:
+                                  () => unawaited(
+                                    restoreMainWindowFromPictureInPictureAction(),
+                                  ),
+                              onDismissPictureInPicture:
+                                  () => unawaited(
+                                    dismissPictureInPictureAction(),
+                                  ),
+                              onNextGame: navigateNextGameManually,
 
-                          boardSizePreference: boardSizePreference,
-                          onBoardSizeChanged: (size) {
-                            setBoardSizePreference(size);
-                            final settings =
-                                ref
-                                    .read(engineSettingsProviderNew)
-                                    .valueOrNull ??
-                                const EngineSettings();
-                            final evalBarReservation =
-                                shouldShowDesktopBoardEvalBar(settings)
-                                    ? _BoardArea.evalBarReservation
-                                    : 0.0;
-                            final targetColumnSize =
-                                size + evalBarReservation + 48;
-                            mainSplitController.setSize(
-                              boardSplitIndex,
-                              targetColumnSize,
+                              boardSizePreference: boardSizePreference,
+                              onBoardSizeChanged: (size) {
+                                setBoardSizePreference(size);
+                                final settings =
+                                    ref
+                                        .read(engineSettingsProviderNew)
+                                        .valueOrNull ??
+                                    const EngineSettings();
+                                final evalBarReservation =
+                                    shouldShowDesktopBoardEvalBar(settings)
+                                        ? _BoardArea.evalBarReservation
+                                        : 0.0;
+                                final targetColumnSize =
+                                    size + evalBarReservation + 48;
+                                mainSplitController.setSize(
+                                  boardSplitIndex,
+                                  targetColumnSize,
+                                );
+                              },
+                              onBoardSizeReset: () {
+                                setBoardSizePreference(null);
+                              },
+                              onBoardSizeChangeEnd: () {
+                                persistBoardSizePreference();
+                              },
+                              suppressEngineAnalysis: !runLiveBoardAnalysis,
                             );
-                          },
-                          onBoardSizeReset: () {
-                            setBoardSizePreference(null);
-                          },
-                          onBoardSizeChangeEnd: () {
-                            persistBoardSizePreference();
-                          },
-                          suppressEngineAnalysis: !runLiveBoardAnalysis,
-                          );
                           },
                         ),
                       ),
@@ -5488,203 +5492,231 @@ class _BoardPaneContent extends HookConsumerWidget {
                       children: [
                         broadcastVideoPanel,
                         Expanded(
-                    // Notation is the pass-through child: an autoplay step
-                    // rebuilds the explorer, games table and engine panel,
-                    // which follow the previewed position, but reuses the
-                    // notation ladder as-is.
-                    child: ValueListenableBuilder<int>(
-                    valueListenable: explorerPreviewLineStep,
-                    child: NotationExportScope(
-                        allowPgnCopy: !collectionGame,
-                        child: buildNotationLadder(
-                          scrollController: notationScrollController,
-                          activePointer: pointer.value,
-                          onJump: jumpToPointer,
-                          layoutModeController: notationLayoutController,
+                          // Notation is the pass-through child: an autoplay step
+                          // rebuilds the explorer, games table and engine panel,
+                          // which follow the previewed position, but reuses the
+                          // notation ladder as-is.
+                          child: ValueListenableBuilder<int>(
+                            valueListenable: explorerPreviewLineStep,
+                            child: NotationExportScope(
+                              allowPgnCopy: !collectionGame,
+                              child: buildNotationLadder(
+                                scrollController: notationScrollController,
+                                activePointer: pointer.value,
+                                onJump: jumpToPointer,
+                                layoutModeController: notationLayoutController,
+                              ),
+                            ),
+                            builder: (context, previewStep, notationChild) {
+                              final view = boardViewAt(previewStep);
+                              final activeEvalTarget = view.evalTarget;
+                              final boardPosition = view.position;
+                              return NotationOpeningPanel(
+                                tabId: activeTabId,
+                                explorerScope: boardExplorerScope,
+                                localOpeningTreeIndex:
+                                    boardArgs?.localOpeningTreeIndex,
+                                localOpeningTreeTitle:
+                                    boardArgs?.localOpeningTreeTitle ?? '',
+                                enableLocalOpeningTreePicker:
+                                    boardArgs?.enableLocalOpeningTreePicker ??
+                                    false,
+                                hideLocalOpeningTreePicker:
+                                    boardArgs?.hideLocalOpeningTreePicker ??
+                                    false,
+                                notationChild: notationChild!,
+                                currentFen: position.fen,
+                                startingFen: chessGame.value.startingFen,
+                                lineUcis: lineUcis,
+                                previewLineStep: previewStep,
+                                previewLineAutoplay:
+                                    explorerPreviewLineAutoplay.value,
+                                positionAutoplaying: autoReplay.value,
+                                onPlayUciMove:
+                                    (uci) =>
+                                        playUci(uci, requestPaneFocus: false),
+                                onPlayEngineMove: playTopEngineMoveAction,
+                                onPlayUciLine: playUciLine,
+                                onPreviewUciMove: (uci) {
+                                  explorerPreviewLine.value = const <String>[];
+                                  explorerPreviewLineStep.value = 0;
+                                  explorerPreviewLineAutoplay.value = true;
+                                  explorerPreviewSoundKey.value = null;
+                                  explorerPreviewUci.value = uci;
+                                },
+                                onPreviewUciLine: (
+                                  ucis, {
+                                  autoplay = true,
+                                  step,
+                                }) {
+                                  final nextLine = List<String>.unmodifiable(
+                                    ucis
+                                        .map((uci) => uci.trim().toLowerCase())
+                                        .where((uci) => uci.isNotEmpty),
+                                  );
+                                  final nextStep =
+                                      (step ?? 0)
+                                          .clamp(
+                                            0,
+                                            ucis.isEmpty ? 0 : ucis.length - 1,
+                                          )
+                                          .toInt();
+                                  // Arrowing across the moves of the game row already
+                                  // previewed only moves the step, so it stays off the
+                                  // pane-wide rebuild path like autoplay does.
+                                  if (!autoplay &&
+                                      !explorerPreviewLineAutoplay.value &&
+                                      explorerPreviewUci.value == null &&
+                                      nextLine.isNotEmpty &&
+                                      nextStep !=
+                                          explorerPreviewLineStep.value &&
+                                      listEquals(
+                                        explorerPreviewLine.value,
+                                        nextLine,
+                                      )) {
+                                    explorerPreviewSoundKey.value = null;
+                                    explorerPreviewLineStep.value = nextStep;
+                                    return;
+                                  }
+                                  explorerPreviewUci.value = null;
+                                  explorerPreviewLineStep.value = nextStep;
+                                  explorerPreviewLineAutoplay.value = autoplay;
+                                  explorerPreviewSoundKey.value = null;
+                                  explorerPreviewLine.value = nextLine;
+                                },
+                                onClearPreviewUciMove: () {
+                                  explorerPreviewUci.value = null;
+                                  explorerPreviewLine.value = const <String>[];
+                                  explorerPreviewLineStep.value = 0;
+                                  explorerPreviewLineAutoplay.value = true;
+                                  explorerPreviewSoundKey.value = null;
+                                },
+                                onNotationVertical: goNotationLine,
+                                onNotationStep: stepNotationHorizontally,
+                                onNotationJumpToHead: goFirst,
+                                onNotationJumpToTip: goLast,
+                                canGoBack: canBack,
+                                canGoForward: canForward,
+                                canStepForward: canStepForward,
+                                onFirstMove: goFirstManually,
+                                onPreviousMove: goPrevManually,
+                                onNextMove: () => unawaited(goNextManually()),
+                                onLastMove: goLastManually,
+                                onPreviousGame: navigatePreviousGameManually,
+                                onNextGame: navigateNextGameManually,
+                                openExplorerShortcutLabel: shortcutLabelFor(
+                                  BoardActionKey.openExplorer,
+                                ),
+                                firstMoveShortcutLabel: shortcutLabelFor(
+                                  BoardActionKey.firstMove,
+                                ),
+                                previousMoveShortcutLabel: shortcutLabelFor(
+                                  BoardActionKey.prevMove,
+                                ),
+                                nextMoveShortcutLabel: shortcutLabelFor(
+                                  BoardActionKey.nextMove,
+                                ),
+                                lastMoveShortcutLabel: shortcutLabelFor(
+                                  BoardActionKey.lastMove,
+                                ),
+                                previousGameShortcutLabel: shortcutLabelFor(
+                                  BoardActionKey.prevGame,
+                                ),
+                                nextGameShortcutLabel: shortcutLabelFor(
+                                  BoardActionKey.nextGame,
+                                ),
+                                reportSelected: gameReportVisible,
+                                reportEnabled: true,
+                                showReport: allowGameAnalysis,
+                                onToggleReport: () {
+                                  if (!allowGameAnalysis) return;
+                                  reportRevealState.value =
+                                      reportRevealState.value
+                                          .activate(currentReportRevealKey)
+                                          .toggle();
+                                  reportRevealRevision.value++;
+                                },
+                                trailingActions: boardActionCluster,
+                                showEngine: ref.watch(
+                                  engineSettingsProviderNew.select(
+                                    (s) =>
+                                        s.valueOrNull?.showEngineAnalysis ??
+                                        const EngineSettings()
+                                            .showEngineAnalysis,
+                                  ),
+                                ),
+                                onRestoreEngine:
+                                    () => ref
+                                        .read(
+                                          engineSettingsProviderNew.notifier,
+                                        )
+                                        .toggleEngineAnalysis(true),
+                                enginePanel: EnginePanel(
+                                  fen: activeEvalTarget.fen,
+                                  sideToMove:
+                                      activeEvalTarget.isThreatProbe
+                                          ? (boardPosition.turn == Side.white
+                                              ? 'b'
+                                              : 'w')
+                                          : (boardPosition.turn == Side.white
+                                              ? 'w'
+                                              : 'b'),
+                                  onPlayUci:
+                                      activeEvalTarget.canPlayPv
+                                          ? playUci
+                                          : null,
+                                  pvPlayOwner: (activeTabId, chessGame.value),
+                                  game: chessGame.value,
+                                  headers: pgnHeaders.value,
+                                  activePly:
+                                      pointer.value.length == 1
+                                          ? pointer.value.first + 1
+                                          : cursor,
+                                  onJumpToPly: (ply) {
+                                    jumpToPointer(
+                                      ply <= 0 ? const <int>[] : <int>[ply - 1],
+                                    );
+                                  },
+                                  onReportChanged: (report) {
+                                    gameReport.value = report;
+                                  },
+                                  reportResetRevision:
+                                      reportResetRevision.value,
+                                  reportRevealRevision:
+                                      reportRevealRevision.value,
+                                  onReportRunningChanged: (running) {
+                                    if (!context.mounted) return;
+                                    if (reportRunning.value != running) {
+                                      reportRunning.value = running;
+                                    }
+                                  },
+                                  reportVisible: gameReportVisible,
+                                  isForegroundTab: isForegroundSurface,
+                                  autoAnalysisAllowed:
+                                      allowGameAnalysis && isForegroundSurface,
+                                  // A browser cannot float a second window over the
+                                  // desktop the way the desktop app does.
+                                  onPictureInPicture:
+                                      kIsWeb ||
+                                              boardArgs == null ||
+                                              (!isLiveGame &&
+                                                  !currentGameIsInPictureInPicture)
+                                          ? null
+                                          : () => unawaited(
+                                            openPictureInPictureAction(),
+                                          ),
+                                  pictureInPictureSelected:
+                                      currentGameIsInPictureInPicture,
+                                  headerTrailing: _BoardMoreActionsButton(
+                                    onPressed: openBoardContextMenu,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                         ),
-                      ),
-                    builder: (context, previewStep, notationChild) {
-                    final view = boardViewAt(previewStep);
-                    final activeEvalTarget = view.evalTarget;
-                    final boardPosition = view.position;
-                    return NotationOpeningPanel(
-                      tabId: activeTabId,
-                      explorerScope: boardExplorerScope,
-                      localOpeningTreeIndex: boardArgs?.localOpeningTreeIndex,
-                      localOpeningTreeTitle:
-                          boardArgs?.localOpeningTreeTitle ?? '',
-                      enableLocalOpeningTreePicker:
-                          boardArgs?.enableLocalOpeningTreePicker ?? false,
-                      hideLocalOpeningTreePicker:
-                          boardArgs?.hideLocalOpeningTreePicker ?? false,
-                      notationChild: notationChild!,
-                      currentFen: position.fen,
-                      startingFen: chessGame.value.startingFen,
-                      lineUcis: lineUcis,
-                      previewLineStep: previewStep,
-                      previewLineAutoplay: explorerPreviewLineAutoplay.value,
-                      positionAutoplaying: autoReplay.value,
-                      onPlayUciMove:
-                          (uci) => playUci(uci, requestPaneFocus: false),
-                      onPlayEngineMove: playTopEngineMoveAction,
-                      onPlayUciLine: playUciLine,
-                      onPreviewUciMove: (uci) {
-                        explorerPreviewLine.value = const <String>[];
-                        explorerPreviewLineStep.value = 0;
-                        explorerPreviewLineAutoplay.value = true;
-                        explorerPreviewSoundKey.value = null;
-                        explorerPreviewUci.value = uci;
-                      },
-                      onPreviewUciLine: (ucis, {autoplay = true, step}) {
-                        final nextLine = List<String>.unmodifiable(
-                          ucis
-                              .map((uci) => uci.trim().toLowerCase())
-                              .where((uci) => uci.isNotEmpty),
-                        );
-                        final nextStep =
-                            (step ?? 0)
-                                .clamp(0, ucis.isEmpty ? 0 : ucis.length - 1)
-                                .toInt();
-                        // Arrowing across the moves of the game row already
-                        // previewed only moves the step, so it stays off the
-                        // pane-wide rebuild path like autoplay does.
-                        if (!autoplay &&
-                            !explorerPreviewLineAutoplay.value &&
-                            explorerPreviewUci.value == null &&
-                            nextLine.isNotEmpty &&
-                            nextStep != explorerPreviewLineStep.value &&
-                            listEquals(explorerPreviewLine.value, nextLine)) {
-                          explorerPreviewSoundKey.value = null;
-                          explorerPreviewLineStep.value = nextStep;
-                          return;
-                        }
-                        explorerPreviewUci.value = null;
-                        explorerPreviewLineStep.value = nextStep;
-                        explorerPreviewLineAutoplay.value = autoplay;
-                        explorerPreviewSoundKey.value = null;
-                        explorerPreviewLine.value = nextLine;
-                      },
-                      onClearPreviewUciMove: () {
-                        explorerPreviewUci.value = null;
-                        explorerPreviewLine.value = const <String>[];
-                        explorerPreviewLineStep.value = 0;
-                        explorerPreviewLineAutoplay.value = true;
-                        explorerPreviewSoundKey.value = null;
-                      },
-                      onNotationVertical: goNotationLine,
-                      onNotationStep: stepNotationHorizontally,
-                      onNotationJumpToHead: goFirst,
-                      onNotationJumpToTip: goLast,
-                      canGoBack: canBack,
-                      canGoForward: canForward,
-                      canStepForward: canStepForward,
-                      onFirstMove: goFirstManually,
-                      onPreviousMove: goPrevManually,
-                      onNextMove: () => unawaited(goNextManually()),
-                      onLastMove: goLastManually,
-                      onPreviousGame: navigatePreviousGameManually,
-                      onNextGame: navigateNextGameManually,
-                      openExplorerShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.openExplorer,
-                      ),
-                      firstMoveShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.firstMove,
-                      ),
-                      previousMoveShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.prevMove,
-                      ),
-                      nextMoveShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.nextMove,
-                      ),
-                      lastMoveShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.lastMove,
-                      ),
-                      previousGameShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.prevGame,
-                      ),
-                      nextGameShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.nextGame,
-                      ),
-                      reportSelected: gameReportVisible,
-                      reportEnabled: true,
-                      showReport: allowGameAnalysis,
-                      onToggleReport: () {
-                        if (!allowGameAnalysis) return;
-                        reportRevealState.value =
-                            reportRevealState.value
-                                .activate(currentReportRevealKey)
-                                .toggle();
-                        reportRevealRevision.value++;
-                      },
-                      trailingActions: boardActionCluster,
-                      showEngine: ref.watch(
-                        engineSettingsProviderNew.select(
-                          (s) =>
-                              s.valueOrNull?.showEngineAnalysis ??
-                              const EngineSettings().showEngineAnalysis,
-                        ),
-                      ),
-                      onRestoreEngine:
-                          () => ref
-                              .read(engineSettingsProviderNew.notifier)
-                              .toggleEngineAnalysis(true),
-                      enginePanel: EnginePanel(
-                        fen: activeEvalTarget.fen,
-                        sideToMove:
-                            activeEvalTarget.isThreatProbe
-                                ? (boardPosition.turn == Side.white ? 'b' : 'w')
-                                : (boardPosition.turn == Side.white
-                                    ? 'w'
-                                    : 'b'),
-                        onPlayUci: activeEvalTarget.canPlayPv ? playUci : null,
-                        pvPlayOwner: (activeTabId, chessGame.value),
-                        game: chessGame.value,
-                        headers: pgnHeaders.value,
-                        activePly:
-                            pointer.value.length == 1
-                                ? pointer.value.first + 1
-                                : cursor,
-                        onJumpToPly: (ply) {
-                          jumpToPointer(
-                            ply <= 0 ? const <int>[] : <int>[ply - 1],
-                          );
-                        },
-                        onReportChanged: (report) {
-                          gameReport.value = report;
-                        },
-                        reportResetRevision: reportResetRevision.value,
-                        reportRevealRevision: reportRevealRevision.value,
-                        onReportRunningChanged: (running) {
-                          if (!context.mounted) return;
-                          if (reportRunning.value != running) {
-                            reportRunning.value = running;
-                          }
-                        },
-                        reportVisible: gameReportVisible,
-                        isForegroundTab: isForegroundSurface,
-                        autoAnalysisAllowed:
-                            allowGameAnalysis && isForegroundSurface,
-                        // A browser cannot float a second window over the
-                        // desktop the way the desktop app does.
-                        onPictureInPicture:
-                            kIsWeb ||
-                                    boardArgs == null ||
-                                    (!isLiveGame &&
-                                        !currentGameIsInPictureInPicture)
-                                ? null
-                                : () => unawaited(openPictureInPictureAction()),
-                        pictureInPictureSelected:
-                            currentGameIsInPictureInPicture,
-                        headerTrailing: _BoardMoreActionsButton(
-                          onPressed: openBoardContextMenu,
-                        ),
-                      ),
-                    );
-                    },
+                      ],
                     ),
-                  ),
-                ],
-              ),
                   ),
                 ),
             ],
@@ -10236,27 +10268,51 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
       final priorScope = args.eventPlayerScope;
       final scope = EventPlayerBoardScope(
         tourIds: historyKey.tourIds,
-        playerName: name, fideId: fideId,
-        eventTitle: priorScope is EventPlayerBoardScope ? priorScope.eventTitle : args.tournamentTitle,
+        playerName: name,
+        fideId: fideId,
+        eventTitle:
+            priorScope is EventPlayerBoardScope
+                ? priorScope.eventTitle
+                : args.tournamentTitle,
         eventBroadcastId: args.eventBroadcastId,
       );
       final games = eventPlayerBoardGames(scope, previewGames);
       if (!games.any((game) => game.id == selected.id)) return;
       final openContext = ref.context;
-      unawaited(openTournamentGameTab(
-        ref,
-        _gamesTourModelFromSummary(selected, source: sourceGame?.source ?? GameSource.supabase),
-        scope.title,
-        eventGames: [for (final game in games) _gamesTourModelFromSummary(game, source: sourceGame?.source ?? GameSource.supabase)],
-        eventPlayerScope: scope,
-        eventBroadcastId: scope.eventBroadcastId,
-        // A player subset changes the rail, never its source entitlement.
-        accessContext: args.sourceAccessContext,
-        viewSource: ChessboardView.tour,
-        focus: true, reuseExisting: false, replaceActive: false,
-      ).catchError((Object error) {
-        if (openContext.mounted) showDesktopToast(openContext, 'Could not open event games. Please retry.', error: true);
-      }));
+      unawaited(
+        openTournamentGameTab(
+          ref,
+          _gamesTourModelFromSummary(
+            selected,
+            source: sourceGame?.source ?? GameSource.supabase,
+          ),
+          scope.title,
+          eventGames: [
+            for (final game in games)
+              _gamesTourModelFromSummary(
+                game,
+                source: sourceGame?.source ?? GameSource.supabase,
+              ),
+          ],
+          eventPlayerScope: scope,
+          eventBroadcastId: scope.eventBroadcastId,
+          // A player subset changes the rail, never its source entitlement.
+          accessContext: args.sourceAccessContext,
+          viewSource: ChessboardView.tour,
+          focus: true,
+          reuseExisting: false,
+          replaceActive: false,
+        ).catchError((Object error) {
+          if (openContext.mounted)
+            {
+            showDesktopToast(
+              openContext,
+              'Could not open event games. Please retry.',
+              error: true,
+            );
+            }
+        }),
+      );
       return;
     }
     if (args?.databaseGames.isNotEmpty == true) {

@@ -15,6 +15,8 @@ import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/widgets/botvinnik/botvinnik_mark.dart';
 import 'package:chessever/desktop/widgets/botvinnik/botvinnik_sign_in.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_ai_consent_dialog.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_report_dialog.dart';
 import 'package:chessever/desktop/state/botvinnik_chat.dart';
 import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/state/botvinnik_reference_router.dart';
@@ -120,11 +122,22 @@ class _BotvinnikDockState extends ConsumerState<BotvinnikDock> {
     ref.read(botvinnikChatControllerProvider.notifier).sendSuggestion(prompt),
   );
 
+  bool _consentDialogOpen = false;
+
   Future<void> _handleResult(Future<BotvinnikSendResult> pending) async {
     final result = await pending;
     if (!mounted) return;
     if (result == BotvinnikSendResult.signInRequired) {
       await _signIn();
+    } else if (result == BotvinnikSendResult.consentRequired) {
+      if (_consentDialogOpen) return;
+      _consentDialogOpen = true;
+      try {
+        final allowed = await showBotvinnikAiConsent(context);
+        if (mounted && allowed) await _send();
+      } finally {
+        _consentDialogOpen = false;
+      }
     } else if (result == BotvinnikSendResult.reconciled) {
       showDesktopToast(context, 'That question already reached Botvinnik.');
     }
@@ -184,8 +197,7 @@ class _BotvinnikDockState extends ConsumerState<BotvinnikDock> {
     final ValueChanged<String>? onSuggestion =
         switch (botvinnikSuggestionAction(access)) {
           BotvinnikSuggestionAction.send => _sendSuggestion,
-          BotvinnikSuggestionAction.openPlans =>
-            (_) => unawaited(_openPlans()),
+          BotvinnikSuggestionAction.openPlans => (_) => unawaited(_openPlans()),
           BotvinnikSuggestionAction.disabled => null,
         };
 
@@ -873,6 +885,10 @@ class _MessageListState extends ConsumerState<_MessageList> {
                         ? _UserMessage(message: message)
                         : _AssistantMessage(
                           message: message,
+                          // Selection changes before history finishes loading.
+                          // Old messages must not acquire the new chat's IDs.
+                          conversationId:
+                              state.loading ? null : state.selected?.id,
                           streaming: streaming,
                           feedbackPending: state.feedbackPending.contains(
                             message.id,
@@ -951,12 +967,14 @@ class _UserMessage extends StatelessWidget {
 class _AssistantMessage extends ConsumerWidget {
   const _AssistantMessage({
     required this.message,
+    required this.conversationId,
     required this.streaming,
     required this.feedbackPending,
     required this.router,
   });
 
   final ChatMessage message;
+  final String? conversationId;
   final bool streaming;
   final bool feedbackPending;
   final BotvinnikReferenceRouter router;
@@ -969,6 +987,8 @@ class _AssistantMessage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final chat = ref.read(botvinnikChatControllerProvider.notifier);
+    final user = ref.watch(currentUserProvider);
+    final reportConversationId = conversationId;
     final openable = [
       for (final reference in message.references)
         if (router.canOpen(reference)) reference,
@@ -978,7 +998,7 @@ class _AssistantMessage extends ConsumerWidget {
           normalizeChatMarkdown(message.content),
           openable,
         ).markdown;
-    final persisted = !message.id.startsWith('local-');
+    final persisted = message.id.isNotEmpty && !message.id.startsWith('local-');
     final waiting = message.content.isEmpty && streaming;
 
     return Column(
@@ -1066,6 +1086,20 @@ class _AssistantMessage extends ConsumerWidget {
                                   ? null
                                   : () => chat.setFeedback(message, 'dislike'),
                         ),
+                        if (message.role == 'assistant' &&
+                            user != null &&
+                            !user.isAnonymous &&
+                            reportConversationId != null &&
+                            reportConversationId.isNotEmpty &&
+                            !reportConversationId.startsWith('local-'))
+                          BotvinnikReportAction(
+                            key: ValueKey(
+                              'report-${user.id}-$reportConversationId-${message.id}',
+                            ),
+                            accountId: user.id,
+                            conversationId: reportConversationId,
+                            messageId: message.id,
+                          ),
                       ],
                     ],
                   ),

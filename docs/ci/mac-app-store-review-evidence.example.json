@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "version": "REPLACE_WITH_SOURCE_VERSION",
+  "build": "REPLACE_WITH_SOURCE_BUILD",
+  "sourceRevision": "REPLACE_WITH_GIT_REVISION",
+  "sourceFingerprint": "REPLACE_WITH_SOURCE_FINGERPRINT",
+  "testedAt": "REPLACE_WITH_UTC_ISO_TIMESTAMP",
+  "candidate": {
+    "signedPackageSha256": "REPLACE_WITH_TESTED_PACKAGE_SHA256",
+    "signatureVerified": false,
+    "sandboxEntitlementsVerified": false,
+    "storeEditionVerified": false
+  },
+  "checks": {
+    "nativeAppleSignIn": { "passed": false, "proof": "" },
+    "inAppGoogleSignIn": { "passed": false, "proof": "" },
+    "guestDeletion": { "passed": false, "proof": "" },
+    "accountDeletion": { "passed": false, "proof": "" },
+    "aiSharingConsent": { "passed": false, "proof": "" },
+    "monthlySandboxPurchase": { "passed": false, "proof": "" },
+    "annualSandboxPurchase": { "passed": false, "proof": "" },
+    "sandboxRestore": { "passed": false, "proof": "" },
+    "appleTokenCapture": { "passed": false, "proof": "" },
+    "appleRevocation": { "passed": false, "proof": "" },
+    "appleNotification": { "passed": false, "proof": "" },
+    "aiSafety": { "passed": false, "proof": "" },
+    "appPrivacyInventory": { "passed": false, "proof": "" },
+    "subscriptionServerNotifications": { "passed": false, "proof": "" },
+    "deletionOperations": { "passed": false, "proof": "" },
+    "aiReportOperations": { "passed": false, "proof": "" }
+  }
+}

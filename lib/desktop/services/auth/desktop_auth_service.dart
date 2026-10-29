@@ -144,11 +144,7 @@ class DesktopAuthService {
       );
       return null;
     } catch (e, st) {
-      ErrorReporter.report(
-        e,
-        stackTrace: st,
-        tag: 'auth.web_${provider.name}',
-      );
+      ErrorReporter.report(e, stackTrace: st, tag: 'auth.web_${provider.name}');
       rethrow;
     }
   }
@@ -156,6 +152,8 @@ class DesktopAuthService {
   /// The phone's native flow: Apple signs a SHA-256 of a one-time nonce and
   /// Supabase checks the raw nonce against the identity token.
   Future<Session?> _signInWithAppleNatively() async {
+    final auth = Supabase.instance.client.auth;
+    final previousUserId = auth.currentUser?.id;
     final rawNonce = _randomNonce();
     final AuthorizationCredentialAppleID credential;
     try {
@@ -177,13 +175,53 @@ class DesktopAuthService {
       throw StateError('Apple did not return an identity token.');
     }
 
-    final auth = Supabase.instance.client.auth;
+    // Stage auth in memory. The application auth stream must not expose a new
+    // session until the server has durably stored its Apple revocation token.
+    // A failed attempt never changes a returning user's persisted session.
+    final staged = SupabaseClient(
+      DesktopEnv.require('SUPABASE_URL'),
+      DesktopEnv.require('SUPABASE_ANON_KEY'),
+      authOptions: const AuthClientOptions(autoRefreshToken: false),
+    );
+    var adopted = false;
     try {
-      final response = await auth.signInWithIdToken(
+      final response = await staged.auth.signInWithIdToken(
         provider: OAuthProvider.apple,
         idToken: idToken,
         nonce: rawNonce,
       );
+      final session = response.session;
+      if (session == null) {
+        throw StateError('Apple sign-in did not create a session.');
+      }
+      try {
+        final registration = await staged.functions.invoke(
+          'apple-auth-tokens',
+          headers: {'Authorization': 'Bearer ${session.accessToken}'},
+          body: {
+            'authorization_code': credential.authorizationCode,
+            'identity_token': idToken,
+            'nonce': rawNonce,
+          },
+        );
+        if (registration.status != 200 ||
+            registration.data is! Map ||
+            (registration.data as Map)['stored'] != true) {
+          throw StateError('Apple credential storage was not confirmed.');
+        }
+      } catch (_) {
+        // Never attach platform credentials or raw function exceptions to
+        // telemetry: the request contains a one-use code and an identity JWT.
+        throw StateError(
+          'Apple sign-in could not securely save your authorization. '
+          'Please try again.',
+        );
+      }
+      if (auth.currentUser?.id != previousUserId) {
+        throw StateError('The signed-in account changed. Please try again.');
+      }
+      await auth.recoverSession(jsonEncode(session.toJson()));
+      adopted = true;
       // Apple shares the name only on the first authorization.
       final fullName =
           [
@@ -198,9 +236,22 @@ class DesktopAuthService {
         }
       }
       return response.session;
-    } catch (e, st) {
-      ErrorReporter.report(e, stackTrace: st, tag: 'auth.supabase_apple');
+    } catch (_, st) {
+      ErrorReporter.report(
+        StateError('Native Apple sign-in did not complete.'),
+        stackTrace: st,
+        tag: 'auth.supabase_apple',
+      );
       rethrow;
+    } finally {
+      if (!adopted) {
+        try {
+          await staged.auth.signOut(scope: SignOutScope.local);
+        } catch (_) {
+          // The main app session is untouched even if cleanup is offline.
+        }
+      }
+      await staged.dispose();
     }
   }
 

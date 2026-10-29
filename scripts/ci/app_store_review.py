@@ -1,6 +1,6 @@
 """Upload once, replace only explicitly, and verify a MANUAL App Review hold.
 
-Shared verbatim with the desktop repository. Publisher output stays private:
+Publisher output stays private:
 its resource summaries include subscription callback URLs and review details.
 """
 import argparse
@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -160,7 +161,7 @@ def prepare_version(api, app, platform, version, build, replace, sleep):
             raise ReviewError('The target version is not editable.')
         return False
     previous = blockers[0]
-    if not replace:
+    if not replace and not (platform == 'MAC_OS' and state(previous) in EDITABLE):
         raise ReviewError('An unreleased version exists; explicit replacement is required.')
     if version_number(previous['attributes']['versionString']) > version_number(version):
         raise ReviewError('Refusing to replace a newer version.')
@@ -237,6 +238,7 @@ def main():
     parser.add_argument('--release-type', choices=['MANUAL'], required=True)
     parser.add_argument('--notes', type=Path, required=True)
     parser.add_argument('--replace-pending', choices=['true', 'false'], default='false')
+    parser.add_argument('--prepare-only', choices=['true', 'false'], default='false')
     args = parser.parse_args()
     _, bundle, branch = TARGETS[args.platform]
     if (os.environ.get('GITHUB_REF') or os.environ.get('RELEASE_REF')) != branch:
@@ -247,11 +249,21 @@ def main():
     if package.bundle_identifier != bundle or not expected or (
             package.version + '+' + package.version_code != expected.group(1)):
         raise ReviewError('Package identity or version does not match production source.')
-    submit(AppleAPI(), args.platform, args.package, package.version, package.version_code,
-           args.notes, args.replace_pending == 'true')
+    if args.platform == 'MAC_OS':
+        from mac_app_store_preflight import submit_mac
+        submit_mac(AppleAPI(), args.package, package.version, package.version_code,
+                   args.notes, args.replace_pending == 'true', args.prepare_only == 'true')
+    else:
+        if args.prepare_only == 'true':
+            raise ReviewError('Prepare-only is supported for the Mac review draft only.')
+        submit(AppleAPI(), args.platform, args.package, package.version, package.version_code,
+               args.notes, args.replace_pending == 'true')
 
 
 if __name__ == '__main__':
+    # The Mac preparation helper shares these API/error types when this file
+    # is invoked as a script, without loading a second module instance.
+    sys.modules['app_store_review'] = sys.modules[__name__]
     try:
         main()
     except (ReviewError, OSError, ValueError) as error:

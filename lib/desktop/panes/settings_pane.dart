@@ -27,6 +27,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_delete_account_dialog.dart';
+import 'package:chessever/desktop/widgets/botvinnik/botvinnik_ai_consent_dialog.dart';
 import 'package:chessever/desktop/widgets/keyboard_shortcuts_section.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
@@ -244,7 +245,9 @@ class SettingsPane extends HookConsumerWidget {
               const _SubscriptionSection(),
               const SizedBox(height: 16),
             ],
-            const _BotvinnikSection(),
+            _BotvinnikSection(
+              canManageSharing: session.value?.user.isAnonymous == false,
+            ),
             const _EngineSection(),
             const SizedBox(height: 16),
             // The browser always loads the latest build; nothing to update.
@@ -348,10 +351,7 @@ class _AccountSection extends ConsumerWidget {
     final email = user?.email;
     final guestAge =
         isGuest
-            ? ref
-                .watch(guestSessionProvider)
-                .valueOrNull
-                ?.ageAt(DateTime.now())
+            ? ref.watch(guestSessionProvider).valueOrNull?.ageAt(DateTime.now())
             : null;
     return _Card(
       title: 'Account',
@@ -375,24 +375,6 @@ class _AccountSection extends ConsumerWidget {
                   ),
                 ),
                 _SecondaryButton(label: 'Sign out', onTap: onSignOut),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Permanently remove this account and its synced data.',
-                    style: TextStyle(color: kWhiteColor70, fontSize: 12),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                _SecondaryButton(
-                  label: 'Delete account',
-                  onTap: () => unawaited(
-                    showDesktopDeleteAccountDialog(context, email: email),
-                  ),
-                ),
               ],
             ),
           ] else ...[
@@ -433,6 +415,19 @@ class _AccountSection extends ConsumerWidget {
                 style: const TextStyle(color: kRedColor, fontSize: 12),
               ),
             ],
+          ],
+          if (user != null) ...[
+            const SizedBox(height: 16),
+            DesktopDeleteAccountAction(
+              key: const ValueKey('desktop-delete-account-open'),
+              isGuest: isGuest,
+              onPress:
+                  signingIn
+                      ? null
+                      : () => unawaited(
+                        showDesktopDeleteAccountDialog(context, email: email),
+                      ),
+            ),
           ],
         ],
       ),
@@ -1342,7 +1337,8 @@ class _SecondaryButtonState extends State<_SecondaryButton> {
 /// Botvinnik visibility. Hiding it removes the sidebar row, the page launch
 /// buttons and the dock; saved chats are untouched.
 class _BotvinnikSection extends ConsumerWidget {
-  const _BotvinnikSection();
+  const _BotvinnikSection({required this.canManageSharing});
+  final bool canManageSharing;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1358,46 +1354,63 @@ class _BotvinnikSection extends ConsumerWidget {
       child: _Card(
         title: 'Botvinnik',
         icon: Icons.forum_outlined,
-        child: ClickCursor(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => setEnabled(!enabled),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 40),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Show Botvinnik',
-                          style: TextStyle(
-                            color: kWhiteColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClickCursor(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setEnabled(!enabled),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 40),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Show Botvinnik',
+                              style: TextStyle(
+                                color: kWhiteColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'The chess assistant in the sidebar and on event '
+                              'and player pages. Your chats stay saved while it '
+                              'is hidden.',
+                              style: TextStyle(
+                                color: kWhiteColor70,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                         ),
-                        SizedBox(height: 2),
-                        Text(
-                          'The chess assistant in the sidebar and on event '
-                          'and player pages. Your chats stay saved while it '
-                          'is hidden.',
-                          style: TextStyle(color: kWhiteColor70, fontSize: 12),
-                        ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 16),
+                      FTheme(
+                        data: FThemes.zinc.dark,
+                        child: FSwitch(value: enabled, onChange: setEnabled),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 16),
-                  FTheme(
-                    data: FThemes.zinc.dark,
-                    child: FSwitch(value: enabled, onChange: setEnabled),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
+            const SizedBox(height: 12),
+            DesktopDialogButton(
+              label: 'AI data sharing',
+              tone: DesktopDialogButtonTone.ghost,
+              onPress:
+                  canManageSharing
+                      ? () => unawaited(showBotvinnikAiConsent(context))
+                      : null,
+            ),
+          ],
         ),
       ),
     );

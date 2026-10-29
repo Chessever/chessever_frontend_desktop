@@ -136,6 +136,23 @@ store_submit = File.read(File.join(ROOT, 'scripts/ci/mac_app_store_submit.sh'))
 verify(store_submit.include?('--platform MAC_OS --release-type MANUAL') &&
        !store_submit.include?('AFTER_APPROVAL'), 'store review can release automatically')
 puts 'Mac App Store edition, signing separation and manual release verified.'
+store_events = store['on'] || store[true]
+store_inputs = store_events.fetch('workflow_dispatch').fetch('inputs')
+verify(store_inputs.fetch('prepare_review_only').fetch('default') == true,
+       'the first subscription review lost its explicit preparation handoff')
+store_audit = store_steps.index { |step| step['name'] == 'Read-only App Store metadata preflight' }
+store_build_index = store_steps.index { |step| step['name'] == 'Build and sign the universal store edition' }
+verify(!store_audit.nil? && store_audit < store_build_index &&
+       store_steps[store_audit].fetch('run').include?('mac_app_store_preflight.py --phase before-upload'),
+       'store metadata/readiness preflight no longer precedes the build')
+store_upload = store_steps.find { |step| step['name'] == 'Upload and optionally submit for manual release' }
+verify(store_upload.fetch('env').fetch('PREPARE_REVIEW_ONLY') ==
+       '${{ inputs.submit_review && inputs.prepare_review_only }}',
+       'the review preparation choice is not wired to submission')
+verify(store_submit.include?('--prepare-only') &&
+       File.read(File.join(ROOT, 'scripts/ci/app_store_review.py')).include?('submit_mac('),
+       'the Mac lane bypasses the subscription-preserving review path')
+puts 'Mac review metadata/readiness preflight and first-subscription handoff verified.'
 flutter_setup = YAML.load_file(File.join(ROOT, '.github/actions/setup-flutter/action.yaml'))
 flutter_setup.fetch('runs').fetch('steps').each do |step|
   next unless step['uses']

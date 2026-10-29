@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:chessever/chat/ai_sharing_consent.dart';
 
 class ChatApiException implements Exception {
   const ChatApiException(this.message, {this.statusCode, this.quota});
@@ -485,6 +486,47 @@ class ChatApi {
     return ChatMessage.fromJson(json['message'] as Map<String, dynamic>);
   }
 
+  /// Reports one persisted answer using the current session, independently of
+  /// like/dislike feedback, AI sharing consent, and the message allowance.
+  Future<void> reportMessage({
+    required String accountId,
+    required String conversationId,
+    required String messageId,
+  }) async {
+    void checkAccount() {
+      if (Supabase.instance.client.auth.currentUser?.id != accountId) {
+        throw const ChatApiException(
+          'Your account changed. Open the answer again to report it.',
+        );
+      }
+    }
+
+    checkAccount();
+    if (conversationId.isEmpty ||
+        messageId.isEmpty ||
+        conversationId.startsWith('local-') ||
+        messageId.startsWith('local-')) {
+      throw const ChatApiException('Only saved answers can be reported.');
+    }
+    final response = await _client
+        .post(
+          _uri(
+            '/v1/chat/conversations/${Uri.encodeComponent(conversationId)}'
+            '/messages/${Uri.encodeComponent(messageId)}/report',
+          ),
+          // Resolve the token at submission time, never at dialog creation.
+          headers: _headers,
+          body: jsonEncode({'reason': 'other'}),
+        )
+        .timeout(const Duration(seconds: 20));
+    checkAccount();
+    final json = await _json(response);
+    checkAccount();
+    if (json['reported'] != true) {
+      throw const ChatApiException('The report was not confirmed. Try again.');
+    }
+  }
+
   Stream<ChatStreamEvent> send({
     required String conversationId,
     required String content,
@@ -493,6 +535,16 @@ class ChatApi {
     required ChatClientContext clientContext,
     ChatScreenContext? screenContext,
   }) async* {
+    final accountId = Supabase.instance.client.auth.currentUser?.id;
+    if (accountId == null ||
+        !await AiSharingConsent.instance.isGranted(accountId)) {
+      throw const ChatApiException(
+        'Allow AI data sharing before sending a message.',
+      );
+    }
+    if (Supabase.instance.client.auth.currentUser?.id != accountId) {
+      throw const ChatApiException('Your account changed. Please try again.');
+    }
     final request = http.Request(
       'POST',
       _uri('/v1/chat/conversations/$conversationId/messages'),

@@ -41,6 +41,7 @@ import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/mac_sandbox_file_picker.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
+import 'package:chessever/desktop/services/auth/desktop_apple_credential_lifecycle.dart';
 import 'package:chessever/desktop/services/desktop_ui_stall_monitor.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/desktop/services/desktop_updater_startup.dart';
@@ -247,8 +248,8 @@ Future<void> _desktopMainWithSentry({
         options.enableUserInteractionBreadcrumbs = true;
         options.enableAutoSessionTracking = false;
         options.sampleRate = 1.0;
-        options.beforeSend = (event, hint) =>
-            shouldDropDesktopSentryEvent(event) ? null : event;
+        options.beforeSend =
+            (event, hint) => shouldDropDesktopSentryEvent(event) ? null : event;
       },
       appRunner: () => _desktopBootOnce(initialArguments: initialArguments),
     ).timeout(
@@ -333,6 +334,7 @@ Future<void> _desktopBoot({
   // Supabase brings auth and remote data online. If env is missing the shell
   // still renders so we can develop the UI without the backend.
   final supabaseReady = await DesktopSupabaseInit.initialize();
+  if (supabaseReady) DesktopAppleCredentialLifecycle.instance.start();
   print(
     supabaseReady
         ? '[desktop] supabase init done'
@@ -552,6 +554,7 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
         ? '[desktop] board window supabase init done'
         : '[desktop] ⚠️ board window supabase unavailable',
   );
+  if (supabaseReady) DesktopAppleCredentialLifecycle.instance.start();
 
   final container = ProviderContainer(
     overrides: [
