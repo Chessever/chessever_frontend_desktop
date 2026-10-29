@@ -7,7 +7,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/chat/ai_sharing_consent.dart';
 import 'package:chessever/repository/local_storage/local_storage_repository.dart';
-import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/providers/guest_session_provider.dart';
 
 /// Thrown when account deletion fails. [message] is safe to show the user;
@@ -93,7 +92,7 @@ Future<void> clearDesktopDeletedAccountPreferences({
 /// Uses an authenticated server operation, followed by account-scoped cleanup:
 ///  1. best-effort identity-provider sign-out,
 ///  2. `delete-account` (queues Apple/external cleanup before deleting identity),
-///  3. analytics `delete_account`,
+///  3. optional result callback,
 ///  4. remove only preferences belonging to the deleted account,
 ///  5. best-effort local Supabase sign-out.
 ///
@@ -254,15 +253,8 @@ final desktopAccountDeletionProvider = Provider.autoDispose<
         await Supabase.instance.client.auth.signOut(scope: SignOutScope.local);
       }
     },
-    trackResult: ({required bool success, String? reason}) {
-      unawaited(
-        AnalyticsService.instance.trackAuthEvent(
-          action: 'delete_account',
-          success: success,
-          reason: reason,
-        ),
-      );
-    },
+    // An unsuccessful response can still follow a committed remote deletion.
+    // Never identify the account again through deletion analytics.
     reportError:
         (error, stackTrace) => ErrorReporter.report(
           error,

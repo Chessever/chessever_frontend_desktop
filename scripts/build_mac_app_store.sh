@@ -65,7 +65,9 @@ ditto "$REPO_ROOT/build/macos/Build/Products/Release/chessever.app" "$APP"
 for binary in "$APP/Contents/MacOS/chessever" \
   "$APP/Contents/Frameworks/App.framework/App" \
   "$APP/Contents/Frameworks/FlutterMacOS.framework/FlutterMacOS"; do
-  lipo -verify_arch arm64 x86_64 "$binary"
+  for architecture in arm64 x86_64; do
+    lipo "$binary" -verify_arch "$architecture"
+  done
 done
 mkdir -p "$APP/Contents/Helpers" "$APP/Contents/Resources/Engines"
 cp "$STORE_OUTPUT/engines/stockfish" "$APP/Contents/Helpers/stockfish"
