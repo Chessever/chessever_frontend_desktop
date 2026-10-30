@@ -19,7 +19,6 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
-import 'package:chessever/utils/host_platform.dart';
 import 'package:chessever/web/web_file_system.dart';
 import 'package:chessever/web/web_path_provider.dart';
 import 'package:chessever/web/web_url_sync.dart';
@@ -41,7 +40,6 @@ Future<void> runChessEverWeb() async {
 
 Future<void> _boot() async {
   WidgetsFlutterBinding.ensureInitialized();
-  webArrivedOnPage = Uri.base.pathSegments.any((s) => s.isNotEmpty);
   // The app has no Flutter routes to mirror; WebUrlSync owns the address bar
   // and history. Flutter's own strategy would add its sentinel entry and
   // answer Back by itself, fighting the entries WebUrlSync pushes.

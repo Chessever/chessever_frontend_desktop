@@ -94,6 +94,47 @@ void main() {
     expect(shouldFocusDesktopHowToUse(tabs.state), isTrue);
   });
 
+  for (final dismissedVersion in <String?>[null, '20.28.17']) {
+    test(
+      'browser startup keeps Events active with dismissed version $dismissedVersion',
+      () async {
+        final tabs = DesktopTabsNotifier();
+        final eventsTabId = tabs.state.activeId;
+
+        final howToUseTabId = await maybeAutoOpenDesktopHowToUse(
+          tabs: tabs,
+          currentVersion: '20.28.18',
+          loadDismissedVersion: () async => dismissedVersion,
+          isWeb: true,
+        );
+
+        expect(howToUseTabId, isNotNull);
+        expect(tabs.state.activeId, eventsTabId);
+        expect(tabs.state.active?.kind, TabKind.tournaments);
+        expect(tabs.state.active?.title, 'Events');
+        expect(
+          tabs.state.tabs.singleWhere((tab) => tab.id == howToUseTabId).kind,
+          TabKind.howToUse,
+        );
+      },
+    );
+  }
+
+  test('browser startup preserves a direct-link destination', () async {
+    final tabs = DesktopTabsNotifier();
+    final destinationTabId = tabs.open(TabKind.tournamentDetail);
+
+    await maybeAutoOpenDesktopHowToUse(
+      tabs: tabs,
+      currentVersion: '20.28.18',
+      loadDismissedVersion: () async => null,
+      isWeb: true,
+    );
+
+    expect(tabs.state.activeId, destinationTabId);
+    expect(tabs.state.active?.kind, TabKind.tournamentDetail);
+  });
+
   test('startup does not steal focus from an opened destination', () {
     final tabs = DesktopTabsNotifier();
     final libraryTabId = tabs.open(TabKind.library, reuseExisting: false);

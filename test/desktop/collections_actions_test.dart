@@ -321,12 +321,12 @@ void main() {
   });
 
   group('routes', () {
-    test('Collections joins the sidebar without renumbering a shortcut', () {
-      expect(desktopMainRouteShortcutNumber(DesktopPane.collections), 0);
+    test('Collections takes its shortcut from its sidebar position', () {
+      expect(desktopMainRouteShortcutNumber(DesktopPane.collections), 3);
       expect(desktopMainRouteShortcutNumber(DesktopPane.tournaments), 1);
       expect(desktopMainRouteShortcutNumber(DesktopPane.library), 2);
-      expect(desktopMainRouteShortcutNumber(DesktopPane.favorites), 3);
-      expect(desktopMainRouteShortcutNumber(DesktopPane.play), 9);
+      expect(desktopMainRouteShortcutNumber(DesktopPane.favorites), 4);
+      expect(desktopMainRouteShortcutNumber(DesktopPane.play), 0);
       expect(
         desktopMainRoutes
             .map((route) => route.pane)

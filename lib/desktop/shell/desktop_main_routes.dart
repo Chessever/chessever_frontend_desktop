@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -112,16 +111,11 @@ const List<LogicalKeyboardKey> desktopMainRouteShortcutKeys = [
   LogicalKeyboardKey.digit0,
 ];
 
-/// The routes in the order they take the number shortcuts. Collections
-/// joined the sidebar after the first nine had been learned, so it takes the
-/// tenth key (0) instead of renumbering every route below it.
+/// Number shortcuts follow the sidebar from top to bottom. Inbox is an
+/// auxiliary action below the primary routes and has no number shortcut.
 List<DesktopMainRoute> get _routesInShortcutOrder => [
   for (final route in desktopMainRoutes)
-    if (route.pane != DesktopPane.collections &&
-        route.pane != DesktopPane.inbox)
-      route,
-  for (final route in desktopMainRoutes)
-    if (route.pane == DesktopPane.collections) route,
+    if (route.pane != DesktopPane.inbox) route,
 ];
 
 String desktopPrimaryShortcutLabel(String key, {bool? isMacOS}) {

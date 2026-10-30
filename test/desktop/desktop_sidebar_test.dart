@@ -73,45 +73,33 @@ void main() {
   });
 
   test('primary sidebar route shortcuts follow the visual route order', () {
-    expect(
-      debugDesktopSidebarShortcutForLabel('Events', isMacOS: false),
-      'Ctrl+1',
-    );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Library', isMacOS: false),
-      'Ctrl+2',
-    );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Favorites', isMacOS: false),
-      'Ctrl+3',
-    );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Prepare', isMacOS: false),
-      'Ctrl+4',
-    );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Rankings', isMacOS: false),
-      'Ctrl+5',
-    );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Calendar', isMacOS: false),
-      'Ctrl+6',
-    );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Countrymen', isMacOS: false),
-      'Ctrl+7',
-    );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Board', isMacOS: false),
-      'Ctrl+8',
-    );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Play', isMacOS: false),
-      'Ctrl+9',
-    );
+    const labels = [
+      'Events',
+      'Library',
+      'Collections',
+      'Favorites',
+      'Prepare',
+      'Rankings',
+      'Calendar',
+      'Countrymen',
+      'Board',
+      'Play',
+    ];
+    expect(debugDesktopSidebarLabelsInOrder().take(labels.length), labels);
+    for (var index = 0; index < labels.length; index++) {
+      final digit = (index + 1) % 10;
+      expect(
+        debugDesktopSidebarShortcutForLabel(labels[index], isMacOS: false),
+        'Ctrl+$digit',
+      );
+      expect(
+        debugDesktopSidebarShortcutForLabel(labels[index], isMacOS: true),
+        '⌘$digit',
+      );
+    }
   });
 
-  test('Collections sits under Library and takes 0, renumbering nothing', () {
+  test('Collections sits under Library and takes the third shortcut', () {
     final labels = debugDesktopSidebarLabelsInOrder();
 
     expect(labels[labels.indexOf('Library') + 1], 'Collections');
@@ -121,16 +109,15 @@ void main() {
     );
     expect(
       debugDesktopSidebarShortcutForLabel('Collections', isMacOS: false),
-      'Ctrl+0',
+      'Ctrl+3',
     );
     expect(
       debugDesktopSidebarShortcutForLabel('Collections', isMacOS: true),
-      '⌘0',
+      '⌘3',
     );
-    // The route right after it keeps the number it always had.
     expect(
       debugDesktopSidebarShortcutForLabel('Favorites', isMacOS: false),
-      'Ctrl+3',
+      'Ctrl+4',
     );
   });
 
@@ -145,12 +132,13 @@ void main() {
     );
   });
 
-  test('numbered route bindings include Rankings and shift later routes', () {
+  test('numbered route bindings match the visible sidebar labels', () {
     final bindings = desktopMainRouteShortcutBindings().toList();
 
     expect(bindings.map((binding) => binding.pane), [
       DesktopPane.tournaments,
       DesktopPane.library,
+      DesktopPane.collections,
       DesktopPane.favorites,
       DesktopPane.players,
       DesktopPane.rankings,
@@ -158,7 +146,6 @@ void main() {
       DesktopPane.countrymen,
       DesktopPane.board,
       DesktopPane.play,
-      DesktopPane.collections,
     ]);
     expect(bindings.map((binding) => binding.key), [
       LogicalKeyboardKey.digit1,
@@ -172,6 +159,10 @@ void main() {
       LogicalKeyboardKey.digit9,
       LogicalKeyboardKey.digit0,
     ]);
+    for (var index = 0; index < bindings.length; index++) {
+      final label = debugDesktopSidebarLabelsInOrder()[index];
+      expect(bindings[index].pane, debugDesktopSidebarPaneForLabel(label));
+    }
   });
 
   test('Board Editor is launched from board context, not the sidebar', () {

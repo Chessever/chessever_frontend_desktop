@@ -1,5 +1,5 @@
 import 'package:chessever/desktop/state/desktop_tabs.dart';
-import 'package:chessever/utils/host_platform.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 const desktopHowToUseDismissedVersionKey =
     'desktop_how_to_use_dismissed_version_v1';
@@ -11,16 +11,19 @@ bool shouldOpenDesktopHowToUse({
   return currentVersion.trim().isNotEmpty && dismissedVersion != currentVersion;
 }
 
-bool shouldFocusDesktopHowToUse(DesktopTabsState tabs) {
-  // A web visitor who came for a page's address keeps that page in front.
-  if (webArrivedOnPage) return false;
+bool shouldFocusDesktopHowToUse(DesktopTabsState tabs, {bool isWeb = kIsWeb}) {
+  // Browser startup keeps Events (or the arrival URL's page) in front.
+  if (isWeb) return false;
   return tabs.tabs.length == 1 &&
       tabs.activeId == 'tournaments-default' &&
       tabs.active?.kind == TabKind.tournaments;
 }
 
-String autoOpenDesktopHowToUseTab(DesktopTabsNotifier tabs) {
-  final focus = shouldFocusDesktopHowToUse(tabs.currentState);
+String autoOpenDesktopHowToUseTab(
+  DesktopTabsNotifier tabs, {
+  bool isWeb = kIsWeb,
+}) {
+  final focus = shouldFocusDesktopHowToUse(tabs.currentState, isWeb: isWeb);
   return tabs.open(TabKind.howToUse, focus: focus);
 }
 
@@ -35,6 +38,7 @@ Future<String?> maybeAutoOpenDesktopHowToUse({
   required DesktopTabsNotifier tabs,
   required String currentVersion,
   required Future<String?> Function() loadDismissedVersion,
+  bool isWeb = kIsWeb,
   bool Function()? isStillActive,
   bool Function()? wasDismissed,
 }) async {
@@ -48,7 +52,7 @@ Future<String?> maybeAutoOpenDesktopHowToUse({
         )) {
       return null;
     }
-    return autoOpenDesktopHowToUseTab(tabs);
+    return autoOpenDesktopHowToUseTab(tabs, isWeb: isWeb);
   } catch (_) {
     return null;
   }
