@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
@@ -105,7 +106,9 @@ class DesktopWelcomeScreen extends HookConsumerWidget {
                   iconAsset: SvgAsset.googleColorIcon,
                   label:
                       signingIn.value
-                          ? (DesktopAuthBrowser.inApp
+                          ? (kIsWeb
+                              ? 'Taking you to Google…'
+                              : DesktopAuthBrowser.inApp
                               ? 'Signing in…'
                               : 'Opening browser…')
                           : 'Continue with Google',
@@ -329,7 +332,9 @@ String _friendly(Object error) {
         'OAuth is enabled in Supabase.';
   }
   if (str.contains('TimeoutException') || str.contains('timed out')) {
-    if (DesktopAuthBrowser.inApp) return 'Sign-in timed out. Please try again.';
+    if (kIsWeb || DesktopAuthBrowser.inApp) {
+      return 'Sign-in timed out. Please try again.';
+    }
     return 'Sign-in timed out. Try again — the browser tab may have closed. '
         'For Apple, also check that Supabase allows '
         'http://127.0.0.1:*/auth/callback as a redirect URL.';

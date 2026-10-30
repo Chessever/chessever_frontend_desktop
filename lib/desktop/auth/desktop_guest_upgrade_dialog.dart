@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -278,6 +279,9 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
             const SizedBox(height: 12),
             Text(
               switch ((_busyProvider, DesktopAuthBrowser.inApp)) {
+                (DesktopAccountProvider.google, _) when kIsWeb =>
+                  'Taking you to Google…',
+                (_, _) when kIsWeb => 'Taking you to Apple…',
                 (DesktopAccountProvider.google, false) =>
                   'Finish signing in with Google in your browser.',
                 (DesktopAccountProvider.google, true) =>

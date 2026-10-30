@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
@@ -80,6 +81,9 @@ class DesktopProfileSignIn extends StatelessWidget {
                 child: Text(
                   error ??
                       switch ((busyProvider, DesktopAuthBrowser.inApp)) {
+                        (DesktopAccountProvider.google, _) when kIsWeb =>
+                          'Taking you to Google…',
+                        (_, _) when kIsWeb => 'Taking you to Apple…',
                         (DesktopAccountProvider.google, false) =>
                           'Finish signing in with Google in your browser.',
                         (DesktopAccountProvider.google, true) =>

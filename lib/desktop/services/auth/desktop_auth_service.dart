@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -12,6 +13,7 @@ import 'package:chessever/desktop/services/auth/supabase_oauth_loopback.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
+import 'package:chessever/web/page_restore.dart';
 
 /// Desktop-friendly auth surface used by the shell and panes.
 ///
@@ -29,7 +31,7 @@ class DesktopAuthService {
   /// Throws [StateError] if `GOOGLE_DESKTOP_CLIENT_ID` is not configured —
   /// that's a setup problem, not a recoverable runtime error.
   Future<Session?> signInWithGoogle() async {
-    if (kIsWeb) return _signInWithRedirect(OAuthProvider.google);
+    if (kIsWeb) return signInWithRedirect(OAuthProvider.google);
     final clientId = DesktopEnv.maybeGet('GOOGLE_DESKTOP_CLIENT_ID');
     if (clientId == null || clientId.isEmpty) {
       final legacyClientId = DesktopEnv.maybeGet('GOOGLE_WEB_CLIENT_ID');
@@ -102,7 +104,7 @@ class DesktopAuthService {
   /// that entitlement, and Windows has no native Apple sheet at all.
   Future<Session?> signInWithApple() async {
     if (kIsWeb) {
-      return _signInWithRedirect(OAuthProvider.apple, scopes: 'name email');
+      return signInWithRedirect(OAuthProvider.apple, scopes: 'name email');
     }
     if (isMacAppStore) return _signInWithAppleNatively();
     if (kDebugMode) {
@@ -126,27 +128,55 @@ class DesktopAuthService {
     }
   }
 
+  /// How long a browser tab may take to leave for the provider before the
+  /// sign-in counts as stalled.
+  static const Duration webRedirectTimeout = Duration(seconds: 20);
+
   /// Browser sign-in: Supabase-hosted OAuth in the same tab. A tab cannot
   /// run the loopback server, so the page leaves for the provider and comes
   /// back to this origin with a PKCE code, which `Supabase.initialize`
-  /// exchanges for a session on the next load. This returns `null`; the
-  /// guest gate replays a pending guest merge once the permanent account
-  /// appears. The origin must be on the Supabase Auth redirect list.
-  Future<Session?> _signInWithRedirect(
+  /// exchanges for a session on the next load. The guest gate replays a
+  /// pending guest merge once the permanent account appears. The origin must
+  /// be on the Supabase Auth redirect list.
+  ///
+  /// Never returns a session. `launchUrl` resolves before the navigation
+  /// commits, so returning then would let callers read "still a guest" and
+  /// flash a failure while the provider page loads. The future stays pending
+  /// instead, keeping the caller in its loading state until the tab is gone.
+  /// It only settles if the tab stayed: the user came Back to a cached copy
+  /// ([DesktopSignInCancelled]) or the page never left ([TimeoutException]).
+  @visibleForTesting
+  Future<Session?> signInWithRedirect(
     OAuthProvider provider, {
     String? scopes,
+    String? redirectTo,
+    Future<bool> Function(Duration timeout) awaitRestore = awaitPageRestore,
   }) async {
+    final bool launched;
     try {
-      await Supabase.instance.client.auth.signInWithOAuth(
+      launched = await Supabase.instance.client.auth.signInWithOAuth(
         provider,
-        redirectTo: '${Uri.base.origin}/',
+        redirectTo: redirectTo ?? '${Uri.base.origin}/',
         scopes: scopes,
       );
-      return null;
     } catch (e, st) {
       ErrorReporter.report(e, stackTrace: st, tag: 'auth.web_${provider.name}');
       rethrow;
     }
+    if (!launched) {
+      final error = StateError('Could not open the ${provider.name} sign-in.');
+      ErrorReporter.report(error, tag: 'auth.web_${provider.name}');
+      throw error;
+    }
+    if (await awaitRestore(webRedirectTimeout)) {
+      throw const DesktopSignInCancelled();
+    }
+    final error = TimeoutException(
+      'The ${provider.name} sign-in page did not open.',
+      webRedirectTimeout,
+    );
+    ErrorReporter.report(error, tag: 'auth.web_${provider.name}');
+    throw error;
   }
 
   /// The phone's native flow: Apple signs a SHA-256 of a one-time nonce and

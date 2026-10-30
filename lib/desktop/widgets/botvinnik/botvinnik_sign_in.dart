@@ -92,7 +92,9 @@ class _BotvinnikSignInBodyState extends State<_BotvinnikSignInBody> {
             asset: SvgAsset.googleColorIcon,
             label:
                 _busy == _Provider.google
-                    ? (DesktopAuthBrowser.inApp
+                    ? (kIsWeb
+                        ? 'Taking you to Google'
+                        : DesktopAuthBrowser.inApp
                         ? 'Signing in'
                         : 'Opening browser')
                     : 'Continue with Google',
