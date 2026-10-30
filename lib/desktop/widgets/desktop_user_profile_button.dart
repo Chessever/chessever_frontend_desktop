@@ -105,7 +105,17 @@ class DesktopUserAvatar extends HookConsumerWidget {
         _clean(user?.displayName) ??
         _emailName(user?.email) ??
         'ChessEver Player';
-    final effectiveAvatarUrl = _clean(avatarUrl) ?? _clean(user?.avatarUrl);
+    // Auth re-emits on every token refresh and sign-in step, and the user can
+    // be briefly null in between. Hold the last photo for the same account so
+    // those blips do not swap the photo for initials and fade it back in.
+    final lastAvatar = useRef<(String?, String)?>(null);
+    final resolvedAvatarUrl = _clean(avatarUrl) ?? _clean(user?.avatarUrl);
+    if (resolvedAvatarUrl != null) {
+      lastAvatar.value = (user?.id, resolvedAvatarUrl);
+    } else if (user != null && lastAvatar.value?.$1 != user.id) {
+      lastAvatar.value = null;
+    }
+    final effectiveAvatarUrl = resolvedAvatarUrl ?? lastAvatar.value?.$2;
     final initials = _initials(effectiveName);
     final premium = showPremiumBorder && subscription.isSubscribed;
     final radius = borderRadius ?? size / 2;
@@ -145,6 +155,12 @@ class DesktopUserAvatar extends HookConsumerWidget {
               : CachedNetworkImage(
                 imageUrl: effectiveAvatarUrl,
                 fit: BoxFit.cover,
+                // The browser build has no disk cache, so a re-resolve would
+                // otherwise replay the placeholder and a 500ms fade each time.
+                fadeInDuration: Duration.zero,
+                fadeOutDuration: Duration.zero,
+                placeholderFadeInDuration: Duration.zero,
+                useOldImageOnUrlChange: true,
                 memCacheWidth:
                     (size * MediaQuery.devicePixelRatioOf(context)).round(),
                 memCacheHeight:
@@ -173,7 +189,8 @@ class DesktopUserAvatar extends HookConsumerWidget {
               child: child,
             ),
           ),
-      child: avatar,
+      // Own layer, so the ring's per-frame repaint never repaints the photo.
+      child: RepaintBoundary(child: avatar),
     );
   }
 }
