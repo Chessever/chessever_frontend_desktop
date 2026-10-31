@@ -153,6 +153,8 @@ class _DesktopUpdateChipState extends ConsumerState<DesktopUpdateChip>
   String _label(DesktopUpdateState state) =>
       state.requiresManualDownload
           ? 'Download latest'
+          : DesktopUpdaterService.instance.appliesByReload
+          ? 'New update available'
           : state.version.isEmpty
           ? 'Update'
           : 'Update ${state.version}';
@@ -166,6 +168,7 @@ class _PopoverBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final byReload = DesktopUpdaterService.instance.appliesByReload;
     final notes =
         state.requiresManualDownload
             ? (state.errorMessage ?? '').trim()
@@ -226,6 +229,9 @@ class _PopoverBody extends StatelessWidget {
                     : state.requiresManualDownload
                     ? 'The automatic updater could not complete safely. Open '
                         'the website and download the latest desktop version.'
+                    : byReload
+                    ? 'A new version of ChessEver is live. Reload the page to '
+                        'switch to it.'
                     : 'A new build of ChessEver has been downloaded in the '
                         'background. Click below to install it and restart.',
                 style: const TextStyle(
@@ -247,11 +253,15 @@ class _PopoverBody extends StatelessWidget {
                     prefix: Icon(
                       state.requiresManualDownload
                           ? Icons.open_in_browser_rounded
+                          : byReload
+                          ? Icons.refresh_rounded
                           : Icons.restart_alt_rounded,
                     ),
                     child: Text(
                       state.requiresManualDownload
                           ? 'Open download page'
+                          : byReload
+                          ? 'Reload'
                           : 'Restart & Update',
                     ),
                   ),

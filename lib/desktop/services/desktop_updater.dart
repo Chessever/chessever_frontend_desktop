@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:desktop_updater/desktop_updater.dart' as desktop_updater;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -13,6 +14,8 @@ import 'package:chessever/desktop/services/desktop_update_recovery_marker.dart';
 import 'package:chessever/desktop/services/desktop_updater_state.dart';
 import 'package:chessever/desktop/services/engine/macos_release_arch.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/page_reload.dart';
+import 'package:chessever/web/web_release_watcher.dart';
 
 export 'package:chessever/desktop/services/desktop_updater_state.dart';
 
@@ -71,12 +74,26 @@ class DesktopUpdaterService {
   Timer? _checkTimer;
   Timer? _retryTimer;
   int _retryAttempt = 0;
+  WebReleaseWatcher? _webWatcher;
 
   bool get _isSupported => hostIsMacOS || hostIsWindows;
+
+  /// The browser build (app.chessever.com) has nothing to download: a reload
+  /// runs the live deploy. It only watches for a newer deploy, and applying
+  /// the update reloads the page.
+  bool get appliesByReload => kIsWeb;
 
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
+
+    if (appliesByReload) {
+      // package_info_plus reads version.json over the network on the web,
+      // which describes the live deploy, not necessarily this tab's build.
+      _currentVersion = WebReleaseWatcher.compiledVersion();
+      _startWebWatcher();
+      return;
+    }
 
     try {
       final info = await PackageInfo.fromPlatform();
@@ -89,7 +106,7 @@ class DesktopUpdaterService {
     }
 
     if (!_isSupported) {
-      print('[updater] skip: ${Platform.operatingSystem} not supported');
+      print('[updater] skip: $hostOperatingSystem not supported');
       return;
     }
 
@@ -121,6 +138,10 @@ class DesktopUpdaterService {
 
   /// User-initiated "Check for updates" from Settings.
   Future<void> checkForUpdates() async {
+    if (appliesByReload) {
+      await _webWatcher?.check();
+      return;
+    }
     if (!_isSupported) return;
     if (state.value.requiresManualDownload) {
       await _recoveryMarkerStore.clear();
@@ -141,6 +162,11 @@ class DesktopUpdaterService {
   /// a native helper, quits this process, copies changed files, removes deleted
   /// files, and relaunches the app.
   Future<void> applyUpdate() async {
+    if (appliesByReload) {
+      state.value = state.value.copyInstalling();
+      reloadPage();
+      return;
+    }
     if (!_isSupported) return;
     final stagingPath = _stagingPath;
     if (stagingPath == null || stagingPath.isEmpty) {
@@ -170,6 +196,43 @@ class DesktopUpdaterService {
         manualDownloadUrl: _manualDownloadUrl,
       );
     }
+  }
+
+  void _startWebWatcher() {
+    if (_currentVersion.isEmpty) {
+      print('[updater] web: build carries no version; not watching');
+      return;
+    }
+    final watcher = WebReleaseWatcher(
+      runningVersion: _currentVersion,
+      onNewerRelease: (live) {
+        if (state.value.isReadyToApply && state.value.version == live) return;
+        print('[updater] web: $live is live (running $_currentVersion)');
+        // Always the chip, never the mandatory gate: the "update" is a
+        // reload, so even a major bump costs the user one click.
+        state.value =
+            DesktopUpdateState.available(
+              version: live,
+              releaseNotes: '',
+            ).copyDownloaded();
+      },
+      onCurrent: () {
+        if (state.value.status != DesktopUpdateStatus.idle) {
+          state.value = const DesktopUpdateState.idle();
+        }
+      },
+    );
+    _webWatcher = watcher;
+    unawaited(watcher.check());
+    _checkTimer?.cancel();
+    _checkTimer = Timer.periodic(
+      _checkInterval,
+      (_) => unawaited(watcher.check()),
+    );
+    // A tab left in the background for hours checks the moment it is back.
+    // The binding keeps the listener for the life of the page.
+    AppLifecycleListener(onResume: () => unawaited(watcher.checkIfStale()));
+    print('[updater] web: watching for deploys newer than $_currentVersion');
   }
 
   Future<void> _checkAndDownload({required bool silent}) async {
