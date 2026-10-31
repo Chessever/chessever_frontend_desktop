@@ -119,6 +119,7 @@ import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
+import 'package:chessever/providers/game_video_sources_provider.dart';
 import 'package:chessever/e2e/e2e_ids.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/library/library_repository.dart';
@@ -2467,6 +2468,27 @@ class _BoardPaneContent extends HookConsumerWidget {
     final isLiveGame =
         chessGame.value.metadata[ChessGame.metadataIsLiveKey] == true;
     final isLiveAtTip = isLiveGame && isAtMainlineTip;
+    // A live broadcast is in nobody's collection yet; only staff attach there.
+    // Resolved before the menu opens, so the entry never pops in late.
+    final videoRightGameId =
+        boardArgs?.gameListSelectedId ??
+        boardArgs?.gameId ??
+        activeGameId ??
+        '';
+    final videoRightPgn = useMemoized(
+      () => isLiveGame ? null : exportGameToPgn(chessGame.value),
+      [videoRightGameId, isLiveGame, mainlineLen],
+    );
+    final canAttachVideo =
+        ref
+            .watch(
+              gameVideoAttachRightProvider((
+                gameId: videoRightGameId,
+                pgn: videoRightPgn,
+              )),
+            )
+            .valueOrNull ??
+        false;
     useEffect(() {
       if (isAtMainlineTip && hasUnseenMoves.value) {
         Future.microtask(() {
@@ -5132,17 +5154,15 @@ class _BoardPaneContent extends HookConsumerWidget {
             (isLiveGame || currentGameIsInPictureInPicture),
         pictureInPictureSelected: currentGameIsInPictureInPicture,
         onAttachVideo:
-            () => unawaited(
-              showGameVideoSubmission(
-                context,
-                gameId:
-                    boardArgs?.gameListSelectedId ??
-                    boardArgs?.gameId ??
-                    activeGameId ??
-                    '',
-                pgn: exportGameToPgn(chessGame.value),
-              ),
-            ),
+            canAttachVideo
+                ? () => unawaited(
+                  showGameVideoSubmission(
+                    context,
+                    gameId: videoRightGameId,
+                    pgn: exportGameToPgn(chessGame.value),
+                  ),
+                )
+                : null,
         onCopyPgn: copyPgnAction,
         onCopyFen: copyFenAction,
         onSavePgn: savePgnAction,
