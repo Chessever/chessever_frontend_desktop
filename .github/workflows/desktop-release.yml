@@ -667,7 +667,7 @@ jobs:
           joined=''
           for pair in "MACOS_ARM64:macOS Apple Silicon" "MACOS_X64:macOS Intel" "WINDOWS:Windows" "LINUX:Linux"; do
             name="${pair%%:*}"
-            [ "${!name}" = true ] && joined="${joined:+$joined + }${pair#*:}"
+            if [ "${!name}" = true ]; then joined="${joined:+$joined + }${pair#*:}"; fi
           done
           if [ "$PUBLISH" = true ]; then destination='publish to R2'; else destination='dry run, no publish'; fi
           DETAIL="$joined → $destination" python3 scripts/ci/telegram_run_updates.py watch
