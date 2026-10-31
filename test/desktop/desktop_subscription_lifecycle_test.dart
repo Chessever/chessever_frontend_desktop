@@ -24,8 +24,10 @@ class _Backend {
   final recordedAccounts = <String?>[];
   int signOuts = 0;
   DateTime clock = DateTime(2026, 9, 10, 12);
+  Duration maxTimerDelay = desktopMaxTimerDelay;
 
   DesktopSubscriptionDependencies deps() => DesktopSubscriptionDependencies(
+    maxTimerDelay: maxTimerDelay,
     isBackendAvailable: () => true,
     currentAccount: () => account,
     authChanges: () => auth.stream,
@@ -355,6 +357,41 @@ void main() {
     expect(notifier.state.willRenew, isFalse);
 
     await Future<void>.delayed(const Duration(milliseconds: 120));
+    await _settle();
+    expect(notifier.state.isSubscribed, isFalse);
+    expect(notifier.state.isLoading, isTrue);
+    expect(backend.requests, hasLength(2));
+  });
+
+  test('the expiry timer never asks a browser for more than 2^31-1 ms', () {
+    // setTimeout overflows past this and fires at once (app.chessever.com
+    // looped on "Checking your membership" for annual members).
+    expect(
+      desktopMaxTimerDelay.inMilliseconds,
+      lessThanOrEqualTo(0x7FFFFFFF),
+    );
+  });
+
+  test('a far expiry is waited out in steps, without refetching', () async {
+    backend.maxTimerDelay = const Duration(milliseconds: 20);
+    start();
+    await _settle();
+    final expiry = backend.clock.add(const Duration(days: 365));
+    backend.requests.first.complete(
+      EntitlementSnapshot(isActive: true, willRenew: true, expiresAt: expiry),
+    );
+    await _settle();
+
+    // Several steps elapse; each re-measures and re-arms, none refetches.
+    await Future<void>.delayed(const Duration(milliseconds: 90));
+    await _settle();
+    expect(notifier.state.isSubscribed, isTrue);
+    expect(notifier.state.isLoading, isFalse);
+    expect(backend.requests, hasLength(1));
+
+    // Once the expiry is within a step, access stops at the instant.
+    backend.clock = expiry;
+    await Future<void>.delayed(const Duration(milliseconds: 60));
     await _settle();
     expect(notifier.state.isSubscribed, isFalse);
     expect(notifier.state.isLoading, isTrue);

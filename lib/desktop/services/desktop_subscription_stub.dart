@@ -50,6 +50,7 @@ class DesktopSubscriptionDependencies {
     required this.signOut,
     this.now = DateTime.now,
     this.refreshPeriod = const Duration(minutes: 5),
+    this.maxTimerDelay = desktopMaxTimerDelay,
   });
 
   /// Production wiring: Supabase auth, the `entitlement` edge function and the
@@ -90,7 +91,22 @@ class DesktopSubscriptionDependencies {
   final Future<void> Function() signOut;
   final DateTime Function() now;
   final Duration refreshPeriod;
+
+  /// Longest single wait the expiry timer schedules. See [desktopMaxTimerDelay].
+  final Duration maxTimerDelay;
 }
+
+/// Longest delay handed to one [Timer] for the entitlement expiry.
+///
+/// In the browser a Dart [Timer] is a `setTimeout`, and neither dart2js nor
+/// dart2wasm clamps the delay. Browsers store it as a signed 32-bit count of
+/// milliseconds, so anything past 2^31-1 ms (about 24.8 days) overflows and
+/// fires immediately. An annual member's expiry is months away: the timer
+/// fired at once, reset the state to "checking" and refetched, and the
+/// verified result armed it again, so app.chessever.com showed "Checking your
+/// membership" forever while hammering the entitlement function. Longer
+/// waits are chained in steps of this size instead.
+const Duration desktopMaxTimerDelay = Duration(days: 1);
 
 /// Desktop-side override of [subscriptionProvider].
 ///
@@ -430,6 +446,13 @@ class DesktopSubscriptionNotifier extends SubscriptionNotifier {
     _expiryTimer = null;
     if (endsAt == null) return;
     final delay = endsAt.difference(_deps.now());
+    if (delay > _deps.maxTimerDelay) {
+      // Too far out for one browser timer; wait a step and measure again.
+      _expiryTimer = Timer(_deps.maxTimerDelay, () {
+        if (_owns(generation, account)) _armExpiry(generation, account, endsAt);
+      });
+      return;
+    }
     _expiryTimer = Timer(delay.isNegative ? Duration.zero : delay, () {
       if (!_owns(generation, account)) return;
       _offlineGraceActive = false;
