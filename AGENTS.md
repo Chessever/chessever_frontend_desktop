@@ -11,6 +11,14 @@
 > with the path — read the file before you work in that area; it is just as
 > binding.
 
+> **This app also ships as a web app at app.chessever.com.** The same
+> `lib/desktop/` shell runs in the browser as Wasm (`lib/web/web_main.dart`),
+> and the goal is full feature parity with the desktop app. Every feature and
+> fix is adapted to the browser in the same change, through browser
+> implementations of the platform mechanism, never by hiding it behind
+> `kIsWeb`. Rules, deploy steps and gap tracking: "Web port parity and
+> synchronized updates" in Part I, and `docs/web_build_feature_parity.md`.
+
 ## Fast checks — run these first
 
 | What | Fast (while iterating) | Reference / gate |
@@ -287,8 +295,9 @@ path.
 The browser build at app.chessever.com (`lib/web/`) is a third distribution
 of the same shell, gated by `kIsWeb`. Its sign-in is Supabase-hosted OAuth
 that redirects back to the page (PKCE), because a tab cannot run the loopback
-server. It has no desktop updater. `docs/web_build_feature_parity.md` lists
-what else differs. Put a `kIsWeb` check before an `isMacAppStore` one, so
+server. It has no installer updater: `DesktopUpdaterService` watches for a
+newer deploy (`lib/web/web_release_watcher.dart`) and the update chip
+reloads the page. `docs/web_build_feature_parity.md` lists what else differs. Put a `kIsWeb` check before an `isMacAppStore` one, so
 native builds take the same branch as before.
 
 ### Web port parity and synchronized updates
