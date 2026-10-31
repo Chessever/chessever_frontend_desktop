@@ -273,3 +273,34 @@ Deno.test("mobile opening metadata stays anonymous and published games carry the
     true,
   );
 });
+
+Deno.test("game analysis videos: reads open, submitting stays closed", () => {
+  assertEquals(
+    matchGamebaseProxyRoute("POST", "/api/collections/game-videos")?.viewer,
+    true,
+  );
+  for (
+    const [method, path] of [
+      ["GET", "/api/collections/videos/mine"],
+      ["PUT", "/api/collections/video-authors/follow"],
+    ] as const
+  ) {
+    assertEquals(matchGamebaseProxyRoute(method, path)?.member, true, path);
+  }
+  // Closed until Gamebase enforces superadmins + collection owners on submit.
+  for (
+    const [method, path] of [
+      ["POST", "/api/collections/videos"],
+      ["POST", "/api/collections/videos/eligibility"],
+      ["PUT", "/api/collections/videos/0b6c6c1e-2f4a-4b7e-9d1a-3c5e7f9a1b2c"],
+      [
+        "DELETE",
+        "/api/collections/videos/0b6c6c1e-2f4a-4b7e-9d1a-3c5e7f9a1b2c",
+      ],
+      ["PATCH", "/api/superadmin/game-videos/x"],
+      ["GET", "/api/superadmin/game-videos"],
+    ] as const
+  ) {
+    assertEquals(isAllowedGamebaseProxyRoute(method, path), false, path);
+  }
+});
