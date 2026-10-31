@@ -629,3 +629,45 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: bash ./scripts/codemagic_notify_telegram.sh "Linux$RUN_SUFFIX" finished
+
+  # One live message in the team Telegram chat (General topic), edited as each
+  # job is queued, runs and finishes, then a reply with the result. Runs with
+  # no environment, so it reads the organization TELEGRAM_* secrets (not the
+  # release environment's desktop-chat pair) and never sees signing material.
+  # A Telegram outage never fails the run. See scripts/ci/telegram_run_updates.py.
+  telegram:
+    name: Telegram updates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/ci/telegram_run_updates.py
+            pubspec.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Post live run updates
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          SELF_JOB: Telegram updates
+          MACOS_ARM64: ${{ inputs.macos_arm64 }}
+          MACOS_X64: ${{ inputs.macos_x64 }}
+          WINDOWS: ${{ inputs.windows }}
+          LINUX: ${{ inputs.linux }}
+        run: |
+          joined=''
+          for pair in "MACOS_ARM64:macOS Apple Silicon" "MACOS_X64:macOS Intel" "WINDOWS:Windows" "LINUX:Linux"; do
+            name="${pair%%:*}"
+            [ "${!name}" = true ] && joined="${joined:+$joined + }${pair#*:}"
+          done
+          if [ "$PUBLISH" = true ]; then destination='publish to R2'; else destination='dry run, no publish'; fi
+          DETAIL="$joined → $destination" python3 scripts/ci/telegram_run_updates.py watch

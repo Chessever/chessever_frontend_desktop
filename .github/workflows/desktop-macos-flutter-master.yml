@@ -154,3 +154,35 @@ jobs:
           path: build/macos/Build/Products/Release/*-master.zip
           retention-days: 7
           if-no-files-found: error
+
+  # One live message in the team Telegram chat (General topic), edited as each
+  # job is queued, runs and finishes, then a reply with the result. Runs with
+  # no environment, so it reads the organization TELEGRAM_* secrets (not the
+  # release environment's desktop-chat pair) and never sees signing material.
+  # A Telegram outage never fails the run. See scripts/ci/telegram_run_updates.py.
+  telegram:
+    name: Telegram updates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/ci/telegram_run_updates.py
+            pubspec.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Post live run updates
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          SELF_JOB: Telegram updates
+        run: |
+          DETAIL='Unsigned test build on Flutter master' python3 scripts/ci/telegram_run_updates.py watch

@@ -85,7 +85,7 @@ recipes.each do |source_id, job_id|
 end
 
 release.fetch('jobs').each do |id, job|
-  next if id == 'preflight'
+  next if id == 'preflight' || id == 'telegram'
   verify(job['environment'] == 'release' && job['needs'] == 'preflight',
          "#{id} lost the production approval boundary")
   finished = job.fetch('steps').find { |step| step['name'] == 'Notify Telegram release finished' }
@@ -126,9 +126,27 @@ verify(store_job['environment'] == 'release' && store_job['needs'] == 'preflight
 store_steps = store_job.fetch('steps')
 verify(store_steps.count { |step| step['background'] } == 3 &&
        store_steps.any? { |step| step.key?('wait-all') }, 'store toolchains are not parallel')
-store_text = File.read(File.join(ROOT, '.github/workflows/desktop-app-store.yml'))
-verify(!store_text.match?(/secrets\.(?:R2_|TELEGRAM_|MACOS_DEVELOPER_ID)/),
-       'direct-download credentials entered the store lane')
+# The signing job and preflight never see direct-download or chat credentials;
+# only the separate Telegram updates job reads the organization TELEGRAM_* pair.
+store.fetch('jobs').each do |id, job|
+  next if id == 'telegram'
+  verify(!job.to_s.match?(/secrets\.(?:R2_|TELEGRAM_|MACOS_DEVELOPER_ID)/),
+         'direct-download credentials entered the store lane')
+end
+# Telegram updates: outside every environment, after nothing, read-only token,
+# and only the organization chat pair plus the run's own token.
+[release, master, store].each do |workflow|
+  telegram = workflow.fetch('jobs').fetch('telegram')
+  verify(!telegram.key?('environment') && !telegram.key?('needs'),
+         'Telegram updates gained an environment or a dependency')
+  verify(telegram['permissions'] == { 'contents' => 'read', 'actions' => 'read' },
+         'Telegram updates token permissions expanded')
+  secrets = telegram.to_s.scan(/secrets\.(\w+)/).flatten.uniq.sort
+  verify(secrets == %w[TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID],
+         "Telegram updates reads unexpected secrets: #{secrets.join(', ')}")
+  verify(telegram.fetch('steps').all? { |step| step['uses'] || step['continue-on-error'] == true },
+         'a Telegram update can fail the run')
+end
 store_build = File.read(File.join(ROOT, 'scripts/build_mac_app_store.sh'))
 verify(store_build.include?('--dart-define=MAC_APP_STORE=true') &&
        store_build.include?('CHESSEVER_APP_STORE=YES'), 'store billing/native flags diverged')
