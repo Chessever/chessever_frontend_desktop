@@ -86,13 +86,15 @@ const allowedRoutes: AllowedRoute[] = [
     member: true,
   })),
 
-  // Game analysis videos: reading approved videos, your own submissions and
-  // following an author. Submitting and editing (POST /videos, PUT
-  // /videos/:id) and the "may I attach" check (POST /videos/eligibility) stay
-  // closed until Gamebase enforces superadmins + collection owners on submit;
-  // the deployed service still accepts a pending draft from any verified
-  // account, and phone builds before 37.6.12 offer Attach to everyone.
+  // Game analysis videos: reading approved videos, your own submissions,
+  // following an author, the "may I attach" check, and submitting or editing
+  // a pending draft. Gamebase 1.13.3+ lets only superadmins and the owner of
+  // a collection holding the game submit; a superadmin approves before any
+  // draft goes public. Review stays on the superadmin routes, never here.
   { method: "POST", pattern: /^\/api\/collections\/game-videos$/, viewer: true },
+  { method: "POST", pattern: /^\/api\/collections\/videos$/, member: true },
+  { method: "POST", pattern: /^\/api\/collections\/videos\/eligibility$/, member: true },
+  { method: "PUT", pattern: /^\/api\/collections\/videos\/[a-f0-9-]{36}$/, member: true },
   { method: "GET", pattern: /^\/api\/collections\/videos\/mine$/, member: true },
   { method: "PUT", pattern: /^\/api\/collections\/video-authors\/follow$/, member: true },
 
