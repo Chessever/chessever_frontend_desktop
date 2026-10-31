@@ -1,0 +1,15 @@
+# Response headers for app.chessever.com (Workers static assets; flutter
+# build copies this file into build/web, and Workers parses it rather than
+# serving it). Responses from web_worker/index.js (/_img) do not get these.
+#
+# Skwasm rasterizes on a Web Worker only when the page is cross-origin
+# isolated; otherwise all drawing shares the main thread with the Dart code,
+# and piece animations drop frames. COOP + COEP would isolate the page but
+# also block the broadcast video panel's cross-origin iframes (YouTube,
+# Twitch). Document-Isolation-Policy (Chrome 137+, the same floor as the Wasm
+# build) isolates this document alone and places no requirement on iframes;
+# credentialless loads no-CORS cross-origin resources without cookies.
+# Firefox and Safari ignore it and keep running Skwasm single-threaded.
+# web_boot.dart logs `cross-origin isolated: true|false` at startup.
+/*
+  Document-Isolation-Policy: isolate-and-credentialless

@@ -243,9 +243,22 @@ class _BoardState extends State<Chessboard> with TickerProviderStateMixin {
       animation: _controller.translationAnimation,
     );
 
+    // Background and highlights get their own layer: the coordinate labels
+    // are laid out on every paint, and without this boundary each tick of a
+    // piece animation re-recorded them along with the highlights.
     final List<Widget> highlightedBackground = [
-      SizedBox.square(dimension: widget.size, child: background),
-      CustomPaint(size: Size.square(widget.size), painter: highlightsPainter),
+      RepaintBoundary(
+        child: Stack(
+          alignment: Alignment.topLeft,
+          children: [
+            SizedBox.square(dimension: widget.size, child: background),
+            CustomPaint(
+              size: Size.square(widget.size),
+              painter: highlightsPainter,
+            ),
+          ],
+        ),
+      ),
     ];
 
     final board = Listener(
@@ -277,10 +290,15 @@ class _BoardState extends State<Chessboard> with TickerProviderStateMixin {
               )
             else
               ...highlightedBackground,
-            CustomPaint(
-              size: Size.square(widget.size),
-              painter: fadingPiecesPainter,
-              willChange: true,
+            // The two animated painters repaint on every animation tick. Each
+            // sits in its own layer so a tick repaints only the moving pieces,
+            // not the background, highlights, shapes and annotations beside it.
+            RepaintBoundary(
+              child: CustomPaint(
+                size: Size.square(widget.size),
+                painter: fadingPiecesPainter,
+                willChange: true,
+              ),
             ),
             // RepaintBoundary isolates this layer so that animation ticks from the
             // fading/translating painters and highlight changes do not cause the
@@ -293,10 +311,12 @@ class _BoardState extends State<Chessboard> with TickerProviderStateMixin {
                 painter: piecesPainter,
               ),
             ),
-            CustomPaint(
-              size: Size.square(widget.size),
-              painter: translatingPiecesPainter,
-              willChange: true,
+            RepaintBoundary(
+              child: CustomPaint(
+                size: Size.square(widget.size),
+                painter: translatingPiecesPainter,
+                willChange: true,
+              ),
             ),
             for (final shape in shapes)
               BoardShapeWidget(
@@ -317,14 +337,16 @@ class _BoardState extends State<Chessboard> with TickerProviderStateMixin {
                 square: entry.key,
                 annotation: entry.value,
               ),
-            CustomPaint(
-              size: Size.square(widget.size),
-              painter: ExplosionsPainter(
-                notifier: _explosionNotifier,
-                squareSize: widget.squareSize,
-                orientation: widget.orientation,
+            RepaintBoundary(
+              child: CustomPaint(
+                size: Size.square(widget.size),
+                painter: ExplosionsPainter(
+                  notifier: _explosionNotifier,
+                  squareSize: widget.squareSize,
+                  orientation: widget.orientation,
+                ),
+                willChange: true,
               ),
-              willChange: true,
             ),
             if (widget.settings.enableDrops)
               ...Square.values.map((square) {
@@ -1182,17 +1204,20 @@ class _DragAvatar {
     required double squareSize,
   }) : _positionNotifier = ValueNotifier<Offset>(initialPosition),
        _squareTargetNotifier = ValueNotifier<Offset?>(initialTargetPosition) {
-    // Only the paint phase runs on each pointer move.
+    // Only the paint phase runs on each pointer move, and the boundaries keep
+    // that repaint to the dragged piece instead of the overlay above it.
     _pieceEntry = OverlayEntry(
       builder: (_) => Positioned.fill(
         child: IgnorePointer(
-          child: CustomPaint(
-            painter: DragPiecePainter(
-              image: image,
-              feedbackSize: feedbackSize,
-              feedbackOffset: feedbackOffset,
-              upsideDown: upsideDown,
-              positionNotifier: _positionNotifier,
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: DragPiecePainter(
+                image: image,
+                feedbackSize: feedbackSize,
+                feedbackOffset: feedbackOffset,
+                upsideDown: upsideDown,
+                positionNotifier: _positionNotifier,
+              ),
             ),
           ),
         ),
@@ -1201,11 +1226,13 @@ class _DragAvatar {
     _squareTargetEntry = OverlayEntry(
       builder: (_) => Positioned.fill(
         child: IgnorePointer(
-          child: CustomPaint(
-            painter: DragSquareTargetPainter(
-              squareSize: squareSize,
-              targetKind: targetKind,
-              positionNotifier: _squareTargetNotifier,
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: DragSquareTargetPainter(
+                squareSize: squareSize,
+                targetKind: targetKind,
+                positionNotifier: _squareTargetNotifier,
+              ),
             ),
           ),
         ),

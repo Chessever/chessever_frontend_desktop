@@ -4,6 +4,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show BrowserContextMenu;
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:sqflite/sqflite.dart' show databaseFactory;
@@ -23,6 +24,7 @@ import 'package:chessever/web/web_file_system.dart';
 import 'package:chessever/web/web_path_provider.dart';
 import 'package:chessever/web/web_url_sync.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:web/web.dart' as web;
 
 /// Browser startup for the desktop shell.
 ///
@@ -44,38 +46,47 @@ Future<void> _boot() async {
   // and history. Flutter's own strategy would add its sentinel entry and
   // answer Back by itself, fighting the entries WebUrlSync pushes.
   setUrlStrategy(null);
+  // Right-click belongs to the app, as on desktop: the board draws arrows and
+  // rows, cards and panes open their own menus. The browser's menu would
+  // cover them, and while it is enabled text fields defer to it instead of
+  // showing Flutter's own copy/paste toolbar.
+  await BrowserContextMenu.disableContextMenu();
   print('[web] startup begin');
+  // Skwasm rasterizes on a Web Worker only in a cross-origin isolated page
+  // (web/_headers sends Document-Isolation-Policy). `false` here means every
+  // frame is drawn on the main thread, which is what makes animations stutter.
+  print('[web] cross-origin isolated: ${web.window.crossOriginIsolated}');
+  final stopwatch = Stopwatch()..start();
+  String elapsed() => '${stopwatch.elapsedMilliseconds} ms';
+
+  // Supabase keeps its session in SharedPreferences (localStorage), not in
+  // the file system or SQLite below, so its init (which may refresh the
+  // session over the network) runs while those come up instead of after.
+  final supabaseInit = DesktopSupabaseInit.initialize();
 
   // Local databases, workspaces and caches are files on desktop; here they
   // live in an IndexedDB-backed filesystem mounted before anything opens one.
   await WebFileSystem.mount();
   PathProviderPlatform.instance = WebPathProvider();
-  print('[web] file system mounted');
+  print('[web] file system mounted (${elapsed()})');
 
   // The worker-backed factory needs a SharedWorker, which some browsers lack
   // or refuse; the main-thread factory reads the same IndexedDB storage.
   databaseFactory = databaseFactoryFfiWeb;
   try {
     await AppDatabase.instance.database;
-    print('[web] sqlite ready');
+    print('[web] sqlite ready (${elapsed()})');
   } catch (e) {
     print('[web] sqlite worker unavailable ($e); using main thread');
     databaseFactory = databaseFactoryFfiWebNoWebWorker;
     try {
       await AppDatabase.instance.database;
-      print('[web] sqlite ready (main thread)');
+      print('[web] sqlite ready (main thread, ${elapsed()})');
     } catch (e, stack) {
       print('[web] sqlite warm-up failed: $e');
       ErrorReporter.report(e, stackTrace: stack, tag: 'web.db_warmup');
     }
   }
-
-  final supabaseReady = await DesktopSupabaseInit.initialize();
-  print(
-    supabaseReady
-        ? '[web] supabase init done'
-        : '[web] supabase unavailable; starting offline shell',
-  );
 
   final container = ProviderContainer(
     overrides: [
@@ -85,15 +96,29 @@ Future<void> _boot() async {
     ],
   );
 
-  try {
-    final settings = await container.read(boardSettingsProviderNew.future);
-    await ChessgroundImageCache.preloadPieceSet(settings.pieceSet);
-  } catch (e, stack) {
-    print('[web] piece preload failed: $e');
-    ErrorReporter.report(e, stackTrace: stack, tag: 'web.piece_preload');
+  // Board settings come from SQLite and preload the saved piece set; that
+  // overlaps with whatever is left of the Supabase init.
+  Future<void> preloadBoard() async {
+    try {
+      final settings = await container.read(boardSettingsProviderNew.future);
+      await ChessgroundImageCache.preloadPieceSet(settings.pieceSet);
+      print('[web] piece set ready (${elapsed()})');
+    } catch (e, stack) {
+      print('[web] piece preload failed: $e');
+      ErrorReporter.report(e, stackTrace: stack, tag: 'web.piece_preload');
+    }
   }
 
-  print('[web] running app');
+  final boardReady = preloadBoard();
+  final supabaseReady = await supabaseInit;
+  print(
+    supabaseReady
+        ? '[web] supabase init done (${elapsed()})'
+        : '[web] supabase unavailable; starting offline shell',
+  );
+  await boardReady;
+
+  print('[web] running app (${elapsed()})');
   runApp(
     UncontrolledProviderScope(container: container, child: const DesktopApp()),
   );

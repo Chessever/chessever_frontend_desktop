@@ -466,9 +466,11 @@ class _HoverSquareCue extends StatelessWidget {
           value: 1,
           builder: (context, value, child) {
             final t = value.clamp(0.0, 1.0);
+            // No filterQuality: it turns the transform into an image-filter
+            // layer re-rendered on every frame of the hover animation, and
+            // the cue is a vector box that scales crisply without it.
             return Transform.scale(
               scale: 0.88 + (0.12 * t),
-              filterQuality: FilterQuality.medium,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: kPrimaryColor.withValues(alpha: 0.08 * t),

@@ -468,8 +468,7 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
     if (move == null) return;
     final next = state.position.play(move);
     final now = DateTime.now();
-    final whiteMs = state.whiteMillis;
-    final blackMs = state.blackMillis;
+    final (whiteMs, blackMs) = _clocksAt(now);
     // Apply Fischer increment to the side that just moved.
     final mover = state.position.turn;
     final wMs =
@@ -530,16 +529,17 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
     if (move == null) return false;
     final next = state.position.play(move);
     final now = DateTime.now();
+    final (whiteMs, blackMs) = _clocksAt(now);
     // Apply Fischer increment to white/black.
     final mover = state.position.turn;
     final wMs =
         mover == Side.white
-            ? state.whiteMillis + config.whiteIncrementSeconds * 1000
-            : state.whiteMillis;
+            ? whiteMs + config.whiteIncrementSeconds * 1000
+            : whiteMs;
     final bMs =
         mover == Side.black
-            ? state.blackMillis + config.effectiveBlackIncrementSeconds * 1000
-            : state.blackMillis;
+            ? blackMs + config.effectiveBlackIncrementSeconds * 1000
+            : blackMs;
     state = state.copyWith(
       position: next,
       history: [...state.history, move.uci],
@@ -726,22 +726,49 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
     return seconds * 1000;
   }
 
+  /// The clocks as they read at [now]: the stored millis minus the time the
+  /// active clock has run since [PlaySessionState.lastClockTick].
+  ///
+  /// The stored millis only change when the displayed time does (see
+  /// [_onTick]), so anything that needs the true reading (a move, the game's
+  /// end) settles the clocks here first.
+  (int, int) _clocksAt(DateTime now) {
+    var white = state.whiteMillis;
+    var black = state.blackMillis;
+    final last = state.lastClockTick;
+    final side = state.activeClock;
+    if (last != null && side != null && !state.isGameOver) {
+      final elapsed = now.difference(last).inMilliseconds;
+      if (elapsed > 0) {
+        if (side == Side.white) {
+          white -= elapsed;
+        } else {
+          black -= elapsed;
+        }
+      }
+    }
+    return (white < 0 ? 0 : white, black < 0 ? 0 : black);
+  }
+
   void _onTick() {
     if (!mounted) return;
     if (state.isGameOver) return;
-    final last = state.lastClockTick;
-    if (last == null || state.activeClock == null) return;
+    if (state.lastClockTick == null || state.activeClock == null) return;
     final now = DateTime.now();
-    final elapsed = now.difference(last).inMilliseconds;
-    if (elapsed <= 0) return;
-    final side = state.activeClock!;
-    final newWhite =
-        side == Side.white ? state.whiteMillis - elapsed : state.whiteMillis;
-    final newBlack =
-        side == Side.black ? state.blackMillis - elapsed : state.blackMillis;
+    final (newWhite, newBlack) = _clocksAt(now);
+    final flagged = newWhite <= 0 || newBlack <= 0;
+    // Every state change rebuilds the whole play pane (board included), so
+    // only publish when the clock text changes: once a second, or every tenth
+    // in the last ten seconds. Skipped ticks leave lastClockTick alone, so the
+    // elapsed time keeps accumulating and nothing is lost.
+    if (!flagged &&
+        formatClock(newWhite) == formatClock(state.whiteMillis) &&
+        formatClock(newBlack) == formatClock(state.blackMillis)) {
+      return;
+    }
     state = state.copyWith(
-      whiteMillis: newWhite < 0 ? 0 : newWhite,
-      blackMillis: newBlack < 0 ? 0 : newBlack,
+      whiteMillis: newWhite,
+      blackMillis: newBlack,
       lastClockTick: now,
     );
     if (newWhite <= 0) {
@@ -773,7 +800,10 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
   }
 
   void _endGame(PlayEndReason reason, Outcome? outcome) {
+    final (whiteMs, blackMs) = _clocksAt(DateTime.now());
     state = state.copyWith(
+      whiteMillis: whiteMs,
+      blackMillis: blackMs,
       endReason: reason,
       outcome: outcome,
       clearActiveClock: true,

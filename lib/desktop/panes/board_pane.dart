@@ -7670,6 +7670,22 @@ bool _uciPathsEqual(List<String> left, List<String> right) {
   return true;
 }
 
+/// The (FEN, comments) of each ply the board replays for [pointer].
+@visibleForTesting
+List<(String, List<String>)> boardPlyReplayForTesting(
+  ChessGame game,
+  ChessMovePointer pointer,
+) => [
+  for (final ply in _pliesFromPath(
+    game.startingFen,
+    _pathFromPointer(game, pointer),
+  ))
+    (ply.position.fen, ply.comments),
+];
+
+@visibleForTesting
+void clearBoardPlyReplaysForTesting() => _recentPlyReplays.clear();
+
 /// Exercises the same tree replay used by the visible Board badge.
 @visibleForTesting
 Square? boardMoveBadgeSquareForTesting(
@@ -7706,15 +7722,49 @@ Widget boardMoveBadgeWidgetForTesting({
 /// initial one. This is the seam between the tree-model state and the
 /// rest of the desktop board build (board annotations, PGN comment
 /// shapes, last-move squares, …) which all key off `_Ply`.
+///
+/// The board build calls this on every rebuild, and each ply parses a FEN, so
+/// a long game re-parsed its whole line on every step. Recent replays are kept
+/// and a path that starts with the same [ChessMove] objects reuses their
+/// plies, parsing only the moves after them. Moves are immutable (edits go
+/// through `copyWith`), so an identical move always replays the same way.
 List<_Ply> _pliesFromPath(String startingFen, List<ChessMove> path) {
-  Position position;
-  try {
-    position = Chess.fromSetup(Setup.parseFen(startingFen));
-  } catch (_) {
-    position = Chess.initial;
+  _PlyReplay? base;
+  var reused = 0;
+  for (final replay in _recentPlyReplays) {
+    if (replay.startingFen != startingFen) continue;
+    final limit = math.min(path.length, replay.path.length);
+    var shared = 0;
+    while (shared < limit && identical(path[shared], replay.path[shared])) {
+      shared++;
+    }
+    if (base == null || shared > reused) {
+      base = replay;
+      reused = shared;
+    }
   }
-  final out = <_Ply>[_Ply(position: position, san: null)];
-  for (final m in path) {
+  if (base != null && reused == path.length && reused == base.path.length) {
+    _rememberPlyReplay(base);
+    return base.plies;
+  }
+
+  final Position position0;
+  final List<_Ply> out;
+  if (base != null) {
+    out = base.plies.sublist(0, reused + 1);
+    position0 = out.last.position;
+  } else {
+    Position start;
+    try {
+      start = Chess.fromSetup(Setup.parseFen(startingFen));
+    } catch (_) {
+      start = Chess.initial;
+    }
+    out = <_Ply>[_Ply(position: start, san: null)];
+    position0 = start;
+  }
+  var position = position0;
+  for (final m in path.skip(base == null ? 0 : reused)) {
     final move = Move.parse(m.uci);
     Position next;
     try {
@@ -7735,7 +7785,36 @@ List<_Ply> _pliesFromPath(String startingFen, List<ChessMove> path) {
     );
     position = next;
   }
-  return out;
+  // A replay that stopped early (unparseable move) covers only the moves it
+  // produced plies for.
+  final replay = _PlyReplay(
+    startingFen,
+    List<ChessMove>.unmodifiable(path.take(out.length - 1)),
+    List<_Ply>.unmodifiable(out),
+  );
+  _rememberPlyReplay(replay);
+  return replay.plies;
+}
+
+class _PlyReplay {
+  const _PlyReplay(this.startingFen, this.path, this.plies);
+
+  final String startingFen;
+  final List<ChessMove> path;
+  final List<_Ply> plies;
+}
+
+/// Most recent first. A few entries, so boards in other tabs (and the old and
+/// new paths compared on a game update) do not evict each other.
+final List<_PlyReplay> _recentPlyReplays = <_PlyReplay>[];
+const int _maxRecentPlyReplays = 6;
+
+void _rememberPlyReplay(_PlyReplay replay) {
+  _recentPlyReplays.remove(replay);
+  _recentPlyReplays.insert(0, replay);
+  if (_recentPlyReplays.length > _maxRecentPlyReplays) {
+    _recentPlyReplays.removeLast();
+  }
 }
 
 /// Resolve the [ChessLine] sitting at [pointer]. Used by [_nextPointer]
@@ -11040,7 +11119,10 @@ class _PlayerClock extends StatelessWidget {
                     ? [
                       BoxShadow(
                         color: kPrimaryColor.withValues(alpha: 0.18 * t),
-                        blurRadius: 6 * t,
+                        // Fixed radius: animating the blur re-created the
+                        // shadow's blur filter on every frame of the 360 ms
+                        // spring that runs on each move. Only the alpha fades.
+                        blurRadius: 6,
                         offset: const Offset(0, 1),
                       ),
                     ]

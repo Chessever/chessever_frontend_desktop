@@ -119,20 +119,6 @@ class DesktopUserAvatar extends HookConsumerWidget {
     final initials = _initials(effectiveName);
     final premium = showPremiumBorder && subscription.isSubscribed;
     final radius = borderRadius ?? size / 2;
-    final controller = useAnimationController(
-      duration: const Duration(seconds: 4),
-    );
-
-    useEffect(() {
-      if (premium) {
-        controller.repeat();
-      } else {
-        controller.stop();
-        controller.reset();
-      }
-      return null;
-    }, [premium]);
-
     final avatar = Container(
       width: size,
       height: size,
@@ -175,22 +161,15 @@ class DesktopUserAvatar extends HookConsumerWidget {
     if (!premium) return avatar;
 
     final borderWidth = math.max(2.0, size * 0.055);
-    return AnimatedBuilder(
-      animation: controller,
-      builder:
-          (context, child) => CustomPaint(
-            painter: _PremiumAvatarRingPainter(
-              progress: controller.value,
-              radius: radius,
-              strokeWidth: borderWidth,
-            ),
-            child: Padding(
-              padding: EdgeInsets.all(borderWidth + 2),
-              child: child,
-            ),
-          ),
-      // Own layer, so the ring's per-frame repaint never repaints the photo.
-      child: RepaintBoundary(child: avatar),
+    // A static ring. It used to sit in a repeating 4 s AnimationController
+    // whose value the painter never read, which kept a frame scheduled at the
+    // display's refresh rate for every subscriber, on every screen.
+    return CustomPaint(
+      painter: _PremiumAvatarRingPainter(
+        radius: radius,
+        strokeWidth: borderWidth,
+      ),
+      child: Padding(padding: EdgeInsets.all(borderWidth + 2), child: avatar),
     );
   }
 }
@@ -219,12 +198,10 @@ class _Initials extends StatelessWidget {
 
 class _PremiumAvatarRingPainter extends CustomPainter {
   const _PremiumAvatarRingPainter({
-    required this.progress,
     required this.radius,
     required this.strokeWidth,
   });
 
-  final double progress;
   final double radius;
   final double strokeWidth;
 
@@ -253,7 +230,6 @@ class _PremiumAvatarRingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _PremiumAvatarRingPainter oldDelegate) =>
-      oldDelegate.progress != progress ||
       oldDelegate.radius != radius ||
       oldDelegate.strokeWidth != strokeWidth;
 }

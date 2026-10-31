@@ -1,5 +1,6 @@
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:forui/forui.dart';
@@ -509,6 +510,10 @@ class _NotationLadderViewState extends State<NotationLadderView> {
       if (!mounted) return;
       final ctx = _activeKey.currentContext;
       if (ctx == null) return;
+      // Stepping through moves used to start a 180 ms centering scroll on
+      // every step, alongside the board's piece animation. Leave the list
+      // still while the move stays clear of the edges; center it otherwise.
+      if (_isComfortablyVisible(ctx)) return;
       Scrollable.ensureVisible(
         ctx,
         duration: const Duration(milliseconds: 180),
@@ -516,6 +521,24 @@ class _NotationLadderViewState extends State<NotationLadderView> {
         alignment: 0.5,
       );
     });
+  }
+
+  /// Whether [ctx]'s move sits inside its scroll view, at least 15% of the
+  /// viewport away from either edge.
+  bool _isComfortablyVisible(BuildContext ctx) {
+    final box = ctx.findRenderObject();
+    final position = Scrollable.maybeOf(ctx)?.position;
+    if (box == null || !box.attached || position == null) return false;
+    if (!position.hasPixels || !position.hasViewportDimension) return false;
+    final viewport = RenderAbstractViewport.maybeOf(box);
+    if (viewport == null) return false;
+    // Scroll offsets at which the move's top meets the viewport's top, and
+    // its bottom meets the viewport's bottom.
+    final topAligned = viewport.getOffsetToReveal(box, 0.0).offset;
+    final bottomAligned = viewport.getOffsetToReveal(box, 1.0).offset;
+    final margin = position.viewportDimension * 0.15;
+    return position.pixels >= bottomAligned + margin &&
+        position.pixels <= topAligned - margin;
   }
 
   void _scrollToTop() {
@@ -697,6 +720,10 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                           controller: _scroll,
                           physics: const DesktopScrollPhysics(),
                           padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
+                          // Scrolling (the active move is brought into view
+                          // on every step) then moves a recorded layer
+                          // instead of repainting every move in the list.
+                          child: RepaintBoundary(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             mainAxisSize: MainAxisSize.min,
@@ -750,11 +777,13 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                                 ),
                             ],
                           ),
+                          ),
                         )
                         : SingleChildScrollView(
                           controller: _scroll,
                           physics: const DesktopScrollPhysics(),
                           padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: RepaintBoundary(
                           child: _LineBlock(
                             line: mainline,
                             pointerPrefix: const <int>[],
@@ -785,6 +814,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                             useFigurine: widget.useFigurine,
                             pieceAssets: widget.pieceAssets,
                             gameResult: gameResult,
+                          ),
                           ),
                         ),
               ),

@@ -30,7 +30,32 @@
       font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
       color: #8a8a90; letter-spacing: 0.01em;
     }
+    /* flutter_bootstrap.js: unsupported browser or failed load. */
+    #boot.message > div { max-width: 420px; padding: 0 24px; }
+    #boot.message h1 {
+      margin: 0 0 12px; font-size: 22px; font-weight: 600; line-height: 1.3;
+      color: #f2f2f2; letter-spacing: 0;
+    }
+    #boot.message p { margin: 0; color: #a6a6a6; line-height: 1.5; }
+    #boot.message a { color: #f2f2f2; }
   </style>
+
+  <!--
+    The engine downloads every font in FontManifest.json before the first
+    frame, but only after main.dart.wasm has downloaded and compiled.
+    scripts/build_web.sh replaces the marker below with a preload per font so
+    they download alongside the Wasm instead of after it.
+  -->
+  <!-- flutter-font-preloads -->
+
+  <script>
+    // Flutter turns the browser's menu off on its own view once the app
+    // boots (web_boot.dart); this covers the page around it and the loading
+    // screen, so right-click never opens the browser menu.
+    document.addEventListener("contextmenu", function (event) {
+      event.preventDefault();
+    });
+  </script>
 
   <script>
     // Some image hosts send no CORS headers, which Flutter's web renderer
@@ -71,6 +96,9 @@
 </head>
 <body>
   <div id="boot">Loading ChessEver…</div>
-  <script src="flutter_bootstrap.js" async></script>
+  <!-- Inlined at build time: saves the round trip for flutter_bootstrap.js. -->
+  <script>
+    {{flutter_bootstrap_js}}
+  </script>
 </body>
 </html>
