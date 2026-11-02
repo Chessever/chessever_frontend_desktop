@@ -90,10 +90,7 @@ class WebUrlSync {
       (_, _) => sync(),
     );
     _events = container.listen(tournamentByTabIdProvider, (_, _) => sync());
-    _players = container.listen(
-      playerProfileByTabIdProvider,
-      (_, _) => sync(),
-    );
+    _players = container.listen(playerProfileByTabIdProvider, (_, _) => sync());
 
     _onPopState =
         ((web.PopStateEvent event) {
@@ -162,6 +159,7 @@ class WebUrlSync {
     'rankings': TabKind.rankings,
     'chess-players': TabKind.rankings,
     'analysis': TabKind.board,
+    'play': TabKind.play,
   };
 
   static Future<void> _openInitialPath(
@@ -217,6 +215,8 @@ class WebUrlSync {
         return '/calendar';
       case TabKind.rankings:
         return '/rankings';
+      case TabKind.play:
+        return '/play';
       default:
         return '/';
     }
