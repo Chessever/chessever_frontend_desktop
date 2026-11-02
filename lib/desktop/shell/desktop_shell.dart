@@ -1099,7 +1099,7 @@ Widget resolveDesktopTabContent(
     case TabKind.playerProfile:
       return PlayerProfilePane(tabId: tab.id);
     case TabKind.userProfile:
-      return const PlayProfilePane();
+      return PlayProfilePane(hostTabId: tab.id);
     case TabKind.boardSettings:
       return const BoardSettingsPane();
     case TabKind.play:
