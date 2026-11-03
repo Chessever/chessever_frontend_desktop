@@ -73,15 +73,15 @@ class GameAnalysisReportStore {
 
   /// Memory first, then the account's durable rows. Null on miss or corrupt
   /// data; never throws.
-  Future<GameAnalysisReport?> load(
-    String accountId,
-    String fingerprint,
-  ) async {
+  Future<GameAnalysisReport?> load(String accountId, String fingerprint) async {
     if (accountId.isEmpty) return null;
     final hot = peek(accountId, fingerprint);
     if (hot != null) return hot;
     try {
-      final raw = await _readRaw(accountId, cacheKeyForFingerprint(fingerprint));
+      final raw = await _readRaw(
+        accountId,
+        cacheKeyForFingerprint(fingerprint),
+      );
       if (raw == null) return null;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return null;
@@ -194,7 +194,7 @@ class _MemoryEntry {
 /// Payload version. Bump whenever a change alters what a report says about the
 /// same game, so reports produced under old classification rules become
 /// misses instead of being replayed.
-const int desktopGameReportCacheSchemaVersion = 1;
+const int desktopGameReportCacheSchemaVersion = 2;
 
 Map<String, dynamic> desktopGameReportToJson(GameAnalysisReport report) =>
     <String, dynamic>{
@@ -258,6 +258,13 @@ GameAnalysisReport? desktopGameReportFromJson(Map<String, dynamic> json) {
 Map<String, dynamic> _positionToJson(GameReportPosition position) => {
   'fen': position.fen,
   'lines': position.lines.map(_lineToJson).toList(),
+  if (position.search case final search?)
+    'search': {
+      'engineId': search.engineId,
+      'searchId': search.searchId,
+      'complete': search.complete,
+    },
+  if (position.uncertainty != null) 'uncertainty': position.uncertainty,
 };
 
 GameReportPosition? _positionFromJson(Map<String, dynamic> json) {
@@ -271,7 +278,23 @@ GameReportPosition? _positionFromJson(Map<String, dynamic> json) {
     if (line == null) return null;
     lines.add(line);
   }
-  return GameReportPosition(fen: fen, lines: List.unmodifiable(lines));
+  final rawSearch = json['search'];
+  return GameReportPosition(
+    fen: fen,
+    lines: List.unmodifiable(lines),
+    search:
+        rawSearch is Map &&
+                rawSearch['engineId'] is String &&
+                rawSearch['searchId'] is String &&
+                rawSearch['complete'] is bool
+            ? GameReportSearchEvidence(
+              engineId: rawSearch['engineId'] as String,
+              searchId: rawSearch['searchId'] as String,
+              complete: rawSearch['complete'] as bool,
+            )
+            : null,
+    uncertainty: json['uncertainty'] as String?,
+  );
 }
 
 Map<String, dynamic> _lineToJson(GameReportLine line) => {
