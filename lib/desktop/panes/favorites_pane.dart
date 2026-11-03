@@ -514,8 +514,10 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
       // frame; the grid itself still re-lays out at the new width.
       return BucketedLayoutBuilder<int>(
         bucket:
-            (constraints) =>
-                (constraints.maxWidth / 280.0).floor().clamp(2, 6).toInt(),
+            (constraints) => DesktopGameCardsFlow.columnCountForWidth(
+              DesktopCardLayout.grid,
+              constraints.maxWidth,
+            ),
         builder: (context, columns) {
           return DesktopGroupedGameKeyboardFocus(
             scopeId: 'favorites-games',

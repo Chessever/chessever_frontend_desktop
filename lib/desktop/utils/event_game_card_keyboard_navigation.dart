@@ -320,6 +320,13 @@ EventGameCardFocus _moveHierarchicalGroupFocus({
       key == LogicalKeyboardKey.arrowDown) {
     final direction = key == LogicalKeyboardKey.arrowUp ? -1 : 1;
     final preferredColumn = gameIndex % columns;
+    final targetRow = gameIndex ~/ columns + direction;
+    if (targetRow >= 0 && targetRow <= (gameCount - 1) ~/ columns) {
+      return _gameFocus(
+        eventIndex,
+        _clampInt(targetRow * columns + preferredColumn, 0, gameCount - 1),
+      );
+    }
     for (
       var targetEvent = eventIndex + direction;
       targetEvent >= 0 && targetEvent < eventCount;

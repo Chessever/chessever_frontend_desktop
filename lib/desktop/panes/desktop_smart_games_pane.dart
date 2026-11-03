@@ -704,10 +704,9 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     if (layout == DesktopCardLayout.grid) {
       return LayoutBuilder(
         builder: (context, constraints) {
-          const targetWidth = 280.0;
-          final columns = (constraints.maxWidth / targetWidth).floor().clamp(
-            2,
-            6,
+          final columns = DesktopGameCardsFlow.columnCountForWidth(
+            DesktopCardLayout.grid,
+            constraints.maxWidth - 48,
           );
           return DesktopGroupedGameKeyboardFocus(
             scopeId: scopeId,
@@ -1877,9 +1876,10 @@ class _SmartGamesLoadingSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        const targetWidth = 280.0;
-        final columns =
-            (constraints.maxWidth / targetWidth).floor().clamp(2, 6).toInt();
+        final columns = DesktopGameCardsFlow.columnCountForWidth(
+          DesktopCardLayout.grid,
+          constraints.maxWidth - 48,
+        );
 
         return Skeletonizer(
           ignorePointers: true,

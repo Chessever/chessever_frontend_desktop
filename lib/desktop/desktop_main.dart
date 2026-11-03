@@ -56,6 +56,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/country_dropdown_provider.dart';
+import 'package:chessever/providers/for_you_games_provider.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/gamebase/memorial_player_local_search.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
@@ -379,6 +380,9 @@ Future<void> _desktopBoot({
       desktopSubscriptionOverride,
       // Combined player-game filters are Premium on every entry point.
       desktopPlayerProfileGamesOverride,
+      forYouGamesPerEventLimitProvider.overrideWithValue(
+        kDesktopForYouGamesPerEvent,
+      ),
       // Desktop never builds the shared push settings; see desktop_push_isolation.
       ...desktopPushIsolationOverrides,
     ],
@@ -561,6 +565,9 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
       desktopSubscriptionOverride,
       // Combined player-game filters are Premium on every entry point.
       desktopPlayerProfileGamesOverride,
+      forYouGamesPerEventLimitProvider.overrideWithValue(
+        kDesktopForYouGamesPerEvent,
+      ),
       // Board engines never prompt about the account; see DesktopWindowRole.
       desktopWindowRoleProvider.overrideWithValue(DesktopWindowRole.detached),
       // Desktop never builds the shared push settings; see desktop_push_isolation.

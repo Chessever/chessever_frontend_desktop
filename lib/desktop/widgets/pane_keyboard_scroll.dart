@@ -118,7 +118,11 @@ class _PaneKeyboardScrollState extends State<PaneKeyboardScroll> {
   }
 
   bool _handleHardwareKey(KeyEvent event) {
-    if (!mounted || !TickerMode.valuesOf(context).enabled) return false;
+    if (!mounted ||
+        !_focusNode.canRequestFocus ||
+        !TickerMode.valuesOf(context).enabled) {
+      return false;
+    }
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
     final key = event.logicalKey;
     final isPageDown = key == LogicalKeyboardKey.pageDown;

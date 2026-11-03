@@ -11,12 +11,14 @@ import 'package:sqflite/sqflite.dart' show databaseFactory;
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
 import 'package:chessever/desktop/auth/desktop_player_profile_access.dart';
+import 'package:chessever/desktop/auth/desktop_guest_interaction_gate.dart';
 import 'package:chessever/desktop/desktop_app.dart';
 import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/providers/for_you_games_provider.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
@@ -92,7 +94,11 @@ Future<void> _boot() async {
   final container = ProviderContainer(
     overrides: [
       desktopSubscriptionOverride,
+      desktopGuestInteractionSignInProvider.overrideWithValue(true),
       desktopPlayerProfileGamesOverride,
+      forYouGamesPerEventLimitProvider.overrideWithValue(
+        kDesktopForYouGamesPerEvent,
+      ),
       ...desktopPushIsolationOverrides,
     ],
   );

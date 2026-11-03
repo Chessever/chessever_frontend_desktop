@@ -76,6 +76,7 @@ LiveGamesBatchKey _desktopForYouLiveBatchKey({
     eventId: eventId,
     tourId: tourId,
     games: games,
+    maxGames: kDesktopForYouGamesPerEvent,
   );
 }
 
@@ -1760,6 +1761,7 @@ class _TournamentEventGridKeyboardHostState
   }
 
   bool _handleGlobalKeyboard(KeyEvent event) {
+    if (!mounted || !widget.focusNode.canRequestFocus) return false;
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
     final key = event.logicalKey;
     final isRelevant = _isGridNavigationKey(key) || _isActivationKey(key);
@@ -2738,7 +2740,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     );
   }
 
-  int _gameColumnCountFor(DesktopCardLayout layout) {
+  int _gameColumnCountFor(DesktopCardLayout layout, GroupEventCardModel event) {
     // Read at key time. Passing the pane width in as a widget field rebuilt
     // the whole feed on every resize frame just for keyboard navigation.
     final paneWidth = context.size?.width ?? 0.0;
@@ -2749,13 +2751,11 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                 _ForYouEventSection.eventToGamesGap)
             .clamp(0.0, double.infinity)
             .toDouble();
-    if (layout == DesktopCardLayout.grid) {
-      return DesktopForYouStripLayout.compute(
-        available: gameAreaWidth,
-        gameCount: 6,
-      ).visibleCount;
-    }
-    return DesktopGameCardsFlow.columnCountForWidth(layout, gameAreaWidth);
+    return DesktopForYouStripLayout.compute(
+      available: gameAreaWidth,
+      gameCount: _gameCountFor(event),
+      layout: layout,
+    ).columns;
   }
 
   bool _hasNavigationModifier() {
@@ -2769,7 +2769,10 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   bool _handleGlobalKeyboardScroll(KeyEvent event) {
-    if (!mounted || !_keyboardScrollingActive || _hasNavigationModifier()) {
+    if (!mounted ||
+        !_focusNode.canRequestFocus ||
+        !_keyboardScrollingActive ||
+        _hasNavigationModifier()) {
       return false;
     }
     // When the For You focus host (or one of its descendants) owns focus,
@@ -2921,7 +2924,8 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       eventPageStride: _eventPageStrideFor(layout),
       gameCountForEvent: (index) => _gameCountFor(visibleEvents[index]),
       gameLayout: EventGameCardNavigationLayout.grid,
-      gameColumnCountForEvent: (index) => _gameColumnCountFor(layout),
+      gameColumnCountForEvent:
+          (index) => _gameColumnCountFor(layout, visibleEvents[index]),
       eventColumnCount: _eventColumns,
       hierarchicalGroups: true,
     );
@@ -3447,21 +3451,14 @@ class _ForYouEventSection extends ConsumerWidget {
       ),
     );
 
-    if (shouldAnimate) {
-      return row
-          .animate()
-          .fadeIn(duration: 220.ms)
-          .slideY(begin: 0.02, end: 0, duration: 220.ms);
+    if (shouldAnimate && !MediaQuery.disableAnimationsOf(context)) {
+      return row.animate().slideY(begin: 0.02, end: 0, duration: 220.ms);
     }
     return row;
   }
 
   static double _rowHeightFor(DesktopCardLayout layout) {
-    return switch (layout) {
-      DesktopCardLayout.grid => 292,
-      DesktopCardLayout.list => 286,
-      DesktopCardLayout.compact => 220,
-    };
+    return DesktopForYouStripLayout.heightFor(layout);
   }
 }
 
@@ -3724,183 +3721,56 @@ class _GamesStrip extends ConsumerWidget {
               onVisibleGameIdsChanged: onVisibleGameIdsChanged,
             );
           }
-          // Render only the bounded, server-selected category snapshot.
-          final allGames = gameContext.stripGames;
-          // Each event's strip has BOUNDED vertical space — the For You
-          // feed gives every event the same hard-coded row height (see
-          // _ForYouEventSection._rowHeightFor) and never lets a single
-          // event grow its own scroller. Cap the visible games to what
-          // actually fits a cols × rows grid of the current tile
-          // dimensions so a busy round doesn't shove its cards past the
-          // event's footer. Uses the known row-height constant rather
-          // than constraints.maxHeight so a transient unbounded pass
-          // (e.g. before the SizedBox propagates) can't render too many.
-          final tileMetrics = DesktopGameCardsFlow.metricsFor(layout);
-          final rowHeight = _ForYouEventSection._rowHeightFor(layout);
-          final rows =
-              ((rowHeight + tileMetrics.spacing) /
-                      (tileMetrics.tileHeight + tileMetrics.spacing))
-                  .floor()
-                  .clamp(1, 100)
-                  .toInt();
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              final maxW = constraints.maxWidth;
-              final cols =
-                  ((maxW + tileMetrics.spacing) /
-                          (tileMetrics.targetWidth + tileMetrics.spacing))
-                      .floor()
-                      .clamp(tileMetrics.minCols, tileMetrics.maxCols)
-                      .toInt();
-              final capacity = (cols * rows).clamp(1, allGames.length);
-              final games = allGames.take(capacity).toList(growable: false);
-              final liveBatchKey = _desktopForYouLiveBatchKey(
-                eventId: eventId,
-                tourId: snapshot.tourId,
-                games: snapshot.visibleGames,
-              );
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                onVisibleGameIdsChanged(
-                  games.map((game) => game.gameId).toList(growable: false),
-                );
-              });
-              return DesktopGameCardsFlow(
-                layout: layout,
-                itemCount: games.length,
-                embedded: true,
-                itemBuilder:
-                    (context, i) => _selectionTarget(
-                      games[i].gameId,
-                      LiveDesktopGameCard(
-                        game: games[i],
-                        eventGames: gameContext.boardGames,
-                        tournamentTitle: tournamentTitle,
-                        layout: layout,
-                        selected: selectedGameIndex == i,
-                        onSelect: () => onSelectGame(games[i].gameId),
-                        viewSource: ChessboardView.forYou,
-                        liveBatchKey: liveBatchKey,
-                        streamingEnabled: cardStreamingEnabled,
-                        allowStockfishFallback: true,
-                      ),
-                    ),
-              );
-            },
-          );
         }
 
-        final stripGames = gameContext.stripGames;
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final strip = DesktopForYouStripLayout.compute(
-              available: constraints.maxWidth,
-              gameCount: stripGames.length,
-            );
-            final games = stripGames
+        final games = gameContext.stripGames;
+        final liveBatchKey = _desktopForYouLiveBatchKey(
+          eventId: eventId,
+          tourId: snapshot.tourId,
+          games: snapshot.visibleGames,
+        );
+        return DesktopForYouGamesPreview(
+          layout: layout,
+          itemCount: games.length,
+          onLayoutResolved: (strip) {
+            final visibleIds = games
                 .take(strip.visibleCount)
+                .map((game) => game.gameId)
                 .toList(growable: false);
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              onVisibleGameIdsChanged(
-                games.map((game) => game.gameId).toList(growable: false),
-              );
+              onVisibleGameIdsChanged(visibleIds);
             });
-            final liveBatchKey = _desktopForYouLiveBatchKey(
-              eventId: eventId,
-              tourId: snapshot.tourId,
-              games: snapshot.visibleGames,
-            );
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (int i = 0; i < games.length; i++) ...[
-                  if (i > 0)
-                    const SizedBox(width: DesktopForYouStripLayout.gap),
-                  SizedBox(
-                    width: strip.cardWidth,
-                    child: _selectionTarget(
-                      games[i].gameId,
-                      LiveDesktopGameCard(
-                        game: games[i],
-                        eventGames: gameContext.boardGames,
-                        tournamentTitle: tournamentTitle,
-                        layout: DesktopCardLayout.grid,
-                        selected: selectedGameIndex == i,
-                        onSelect: () => onSelectGame(games[i].gameId),
-                        viewSource: ChessboardView.forYou,
-                        liveBatchKey: liveBatchKey,
-                        streamingEnabled: cardStreamingEnabled,
-                        allowStockfishFallback: true,
-                      ),
-                    ),
-                  ),
-                ],
-                const Spacer(),
-              ],
-            );
           },
+          itemBuilder:
+              (context, i) => _selectionTarget(
+                games[i].gameId,
+                LiveDesktopGameCard(
+                  game: games[i],
+                  eventGames: gameContext.boardGames,
+                  tournamentTitle: tournamentTitle,
+                  layout: layout,
+                  selected: selectedGameIndex == i,
+                  onSelect: () => onSelectGame(games[i].gameId),
+                  viewSource: ChessboardView.forYou,
+                  liveBatchKey: liveBatchKey,
+                  streamingEnabled: cardStreamingEnabled,
+                  allowStockfishFallback: true,
+                ),
+              ),
         );
       },
       loading:
-          () => LayoutBuilder(
-            builder: (context, constraints) {
-              if (layout != DesktopCardLayout.grid) {
-                // Match the data-state cap: cols × rows fits the bounded
-                // event row, skeletons render at the same density as the
-                // real cards will.
-                final tileMetrics = DesktopGameCardsFlow.metricsFor(layout);
-                final rowHeight = _ForYouEventSection._rowHeightFor(layout);
-                final rows =
-                    ((rowHeight + tileMetrics.spacing) /
-                            (tileMetrics.tileHeight + tileMetrics.spacing))
-                        .floor()
-                        .clamp(1, 100)
-                        .toInt();
-                final cols =
-                    ((constraints.maxWidth + tileMetrics.spacing) /
-                            (tileMetrics.targetWidth + tileMetrics.spacing))
-                        .floor()
-                        .clamp(tileMetrics.minCols, tileMetrics.maxCols)
-                        .toInt();
-                final count = (cols * rows).clamp(1, 24);
-                return DesktopGameCardsFlow(
-                  layout: layout,
-                  itemCount: count,
-                  embedded: true,
-                  itemBuilder:
-                      (context, _) => DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: kBlack2Color,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: kDividerColor),
-                        ),
-                      ),
-                );
-              }
-              final strip = DesktopForYouStripLayout.compute(
-                available: constraints.maxWidth,
-                gameCount: 6,
-              );
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (int i = 0; i < strip.visibleCount; i++) ...[
-                    if (i > 0)
-                      const SizedBox(width: DesktopForYouStripLayout.gap),
-                    SizedBox(
-                      width: strip.cardWidth,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: kBlack2Color,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: kDividerColor),
-                        ),
-                      ),
-                    ),
-                  ],
-                  const Spacer(),
-                ],
-              );
-            },
+          () => DesktopForYouGamesPreview(
+            layout: layout,
+            itemCount: kDesktopForYouGamesPerEvent,
+            itemBuilder:
+                (context, _) => DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: kBlack2Color,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: kDividerColor),
+                  ),
+                ),
           ),
       error:
           (_, __) => const Align(

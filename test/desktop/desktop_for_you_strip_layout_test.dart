@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:chessever/desktop/widgets/desktop_for_you_game_context.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_strip_layout.dart';
+import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -86,6 +87,56 @@ void main() {
   );
 
   group('DesktopForYouStripLayout', () {
+    test('fits three Compact rows and two List rows without clipping', () {
+      for (final layout in [
+        DesktopCardLayout.compact,
+        DesktopCardLayout.list,
+      ]) {
+        final metrics = DesktopGameCardsFlow.metricsFor(layout);
+        final result = DesktopForYouStripLayout.compute(
+          available: metrics.targetWidth * 4 + metrics.spacing * 3,
+          gameCount: 30,
+          layout: layout,
+        );
+        expect(result.columns, 4);
+        expect(result.rows, layout == DesktopCardLayout.compact ? 3 : 2);
+        expect(result.visibleCount, result.columns * result.rows);
+        expect(
+          metrics.tileHeight * result.rows +
+              metrics.spacing * (result.rows - 1),
+          DesktopForYouStripLayout.heightFor(layout),
+        );
+      }
+    });
+
+    test('empty and invalid widths never allocate visible previews', () {
+      for (final available in [0.0, -1.0, double.infinity, double.nan]) {
+        expect(
+          DesktopForYouStripLayout.compute(
+            available: available,
+            gameCount: 12,
+          ).visibleCount,
+          0,
+        );
+      }
+      expect(
+        DesktopForYouStripLayout.compute(
+          available: 1200,
+          gameCount: 0,
+        ).visibleCount,
+        0,
+      );
+    });
+
+    test('a narrow board preview stays inside its available width', () {
+      final layout = DesktopForYouStripLayout.compute(
+        available: 180,
+        gameCount: 12,
+      );
+      expect(layout.visibleCount, 1);
+      expect(layout.cardWidth, 180);
+    });
+
     test('keeps four boards on ordinary wide rows', () {
       const availableForFour =
           DesktopForYouStripLayout.minCardWidth * 4 +

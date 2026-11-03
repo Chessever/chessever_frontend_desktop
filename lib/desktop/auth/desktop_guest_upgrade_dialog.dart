@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/auth/desktop_auth_browser.dart';
@@ -12,6 +13,7 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_icon.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -331,16 +333,23 @@ Future<bool> showDesktopAccountSignIn(
   required String message,
 }) async {
   if (desktopCurrentUserIsPermanent()) return true;
-  final signedIn = await showDesktopModal<bool>(
+  final signedIn = await showDesktopDialog<bool>(
     context,
-    maxWidth: 440,
     builder:
-        (dialogContext) => _GuestAccountBody(
-          surface: surface,
-          title: title,
-          message: message,
-          dismissLabel: 'Not now',
-          onDone: (signedIn) => Navigator.of(dialogContext).pop(signedIn),
+        (dialogContext) => FDialog.raw(
+          semanticsLabel: title,
+          constraints: const BoxConstraints(maxWidth: 440),
+          builder:
+              (_, _) => SingleChildScrollView(
+                child: _GuestAccountBody(
+                  surface: surface,
+                  title: title,
+                  message: message,
+                  dismissLabel: 'Not now',
+                  onDone:
+                      (signedIn) => Navigator.of(dialogContext).pop(signedIn),
+                ),
+              ),
         ),
   );
   return signedIn == true && desktopCurrentUserIsPermanent();

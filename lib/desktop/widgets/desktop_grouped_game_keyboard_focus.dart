@@ -270,6 +270,7 @@ class _DesktopGroupedGameKeyboardFocusState
   /// of advancing the highlighted round or board.
   bool _handleHardwareKey(KeyEvent event) {
     if (!mounted ||
+        !_focusNode.canRequestFocus ||
         !TickerMode.valuesOf(context).enabled ||
         _focusNode.hasFocus ||
         _hasNavigationModifier() ||

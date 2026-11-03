@@ -46,6 +46,12 @@ int get _topGamesPerEventSnapshotLimit {
   };
 }
 
+/// The desktop shell overrides this in both native and browser startup.
+/// Shared/mobile callers retain their existing four-game preview contract.
+final forYouGamesPerEventLimitProvider = Provider<int>(
+  (ref) => _topGamesPerEventSnapshotLimit,
+);
+
 /// One bounded realtime key shared by For You membership refresh and every
 /// rendered card leaf for the same event.
 ///
@@ -56,9 +62,10 @@ LiveGamesBatchKey forYouEventLiveBatchKey({
   required String eventId,
   required String tourId,
   required Iterable<GamesTourModel> games,
+  int? maxGames,
 }) {
   final boundedGames = games
-      .take(_topGamesPerEventSnapshotLimit)
+      .take(maxGames ?? _topGamesPerEventSnapshotLimit)
       .toList(growable: false);
   final keysByGame = liveBatchKeysForGames(
     games: boundedGames,
@@ -685,7 +692,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         gameRepository
             .getForYouTopGamesByEventIds(
               eventIds: eventIds,
-              boardsPerEvent: _topGamesPerEventSnapshotLimit,
+              boardsPerEvent: ref.read(forYouGamesPerEventLimitProvider),
             )
             .timeout(const Duration(seconds: 6)),
         _loadFavoritePlayerMatches(
@@ -752,7 +759,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       final gamesByEvent = await gameRepository
           .getForYouTopGamesByEventIds(
             eventIds: eventIds,
-            boardsPerEvent: _topGamesPerEventSnapshotLimit,
+            boardsPerEvent: ref.read(forYouGamesPerEventLimitProvider),
           )
           .timeout(const Duration(seconds: 6));
 
@@ -810,9 +817,10 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   }) {
     final snapshots = <String, ForYouEventGamesSnapshot>{};
     for (final model in models) {
-      snapshots[model.id] = _topGamesSnapshotFromGames(
+      snapshots[model.id] = buildForYouTopGamesSnapshot(
         eventId: model.id,
         games: gamesByEvent[model.id] ?? const <Games>[],
+        maxGames: ref.read(forYouGamesPerEventLimitProvider),
       );
     }
 
@@ -1042,17 +1050,6 @@ List<int> _favoriteFideIdsFrom(Iterable<FavoritePlayer> favorites) {
   return fideIds.toList(growable: false);
 }
 
-ForYouEventGamesSnapshot _topGamesSnapshotFromGames({
-  required String eventId,
-  required List<Games> games,
-}) {
-  return buildForYouTopGamesSnapshot(
-    eventId: eventId,
-    games: games,
-    maxGames: _topGamesPerEventSnapshotLimit,
-  );
-}
-
 final forYouEventsProvider =
     StateNotifierProvider.autoDispose<ForYouNotifier, ForYouState>((ref) {
       ref.keepAlive();
@@ -1197,11 +1194,12 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
   String
 >((ref, eventId) {
   final snapshotAsync = ref.watch(forYouEventSnapshotProvider(eventId));
+  final maxGames = ref.watch(forYouGamesPerEventLimitProvider);
 
   return snapshotAsync.when(
     data: (snapshot) {
       final displayedGames = snapshot.visibleGames
-          .take(_topGamesPerEventSnapshotLimit)
+          .take(maxGames)
           .toList(growable: false);
 
       if (displayedGames.isNotEmpty && ref.watch(shouldStreamProvider)) {
@@ -1209,6 +1207,7 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
           eventId: eventId,
           tourId: snapshot.tourId,
           games: displayedGames,
+          maxGames: maxGames,
         );
         final representedIds = liveBatchKey.gameIds.toSet();
         final displayedStreamGames = displayedGames
