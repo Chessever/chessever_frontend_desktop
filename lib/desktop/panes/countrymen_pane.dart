@@ -522,7 +522,7 @@ class _CountryEventTileState extends ConsumerState<_CountryEventTile> {
                         live
                             ? Icons.radio_button_checked_rounded
                             : Icons.emoji_events_outlined,
-                        color: live ? kGreenColor : kPrimaryColor,
+                        color: kPrimaryColor,
                         size: 24,
                       ),
                     ),
@@ -553,7 +553,7 @@ class _CountryEventTileState extends ConsumerState<_CountryEventTile> {
                                         ? Icons.circle
                                         : Icons.calendar_today_rounded,
                                 label: live ? 'Live' : event.dates,
-                                color: live ? kGreenColor : kWhiteColor70,
+                                color: live ? kPrimaryColor : kWhiteColor70,
                               ),
                               if (event.timeControl.isNotEmpty)
                                 _MiniChip(
@@ -1526,15 +1526,15 @@ class _StatChipState extends State<_StatChip> {
   Widget build(BuildContext context) {
     final (baseBorder, fg, dot) = switch (widget.tone) {
       _StatTone.live => (
-        kGreenColor.withValues(alpha: 0.5),
-        kGreenColor,
-        kGreenColor,
+        kPrimaryColor.withValues(alpha: 0.5),
+        kPrimaryColor,
+        kPrimaryColor,
       ),
       _StatTone.neutral => (kDividerColor, kWhiteColor, kPrimaryColor),
       _StatTone.muted => (kDividerColor, kLightGreyColor, kLightGreyColor),
     };
     final accent = switch (widget.tone) {
-      _StatTone.live => kGreenColor,
+      _StatTone.live => kPrimaryColor,
       _StatTone.neutral => kPrimaryColor,
       _StatTone.muted => kLightGreyColor,
     };

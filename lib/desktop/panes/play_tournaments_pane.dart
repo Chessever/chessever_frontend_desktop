@@ -409,9 +409,9 @@ class _TournamentHeader extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final snapshot = state.snapshot;
     final indicator = switch (state.status) {
-      TournamentServerStatus.running => kGreenColor,
+      TournamentServerStatus.running => kPrimaryColor,
       TournamentServerStatus.starting ||
-      TournamentServerStatus.stopping => kPrimaryColor,
+      TournamentServerStatus.stopping => kLightGreyColor,
       TournamentServerStatus.error => kRedColor,
       TournamentServerStatus.stopped => kSecondaryTextColor,
     };
@@ -975,7 +975,7 @@ class _LiveRoundCard extends StatelessWidget {
         border: Border.all(
           color:
               round.round == snapshot.currentRound
-                  ? color.withValues(alpha: 0.46)
+                  ? color.withValues(alpha: 0.28)
                   : kDividerColor,
         ),
         borderRadius: BorderRadius.circular(8),
@@ -1045,12 +1045,12 @@ class _LiveRoundCard extends StatelessWidget {
   TournamentSnapshot snapshot,
   _LiveRoundGroup round,
 ) {
-  if (round.live > 0) return (label: 'LIVE', color: kGreenColor);
+  if (round.live > 0) return (label: 'LIVE', color: kPrimaryColor);
   if (round.finished == round.games.length) {
     return (label: 'DONE', color: kLightGreyColor);
   }
   if (round.round == snapshot.currentRound) {
-    return (label: 'NOW', color: kPrimaryColor);
+    return (label: 'NOW', color: kWhiteColor70);
   }
   return (label: 'NEXT', color: kSecondaryTextColor);
 }
@@ -1062,7 +1062,7 @@ class _StatusDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = switch (status) {
-      TournamentGameStatus.inProgress => kGreenColor,
+      TournamentGameStatus.inProgress => kPrimaryColor,
       TournamentGameStatus.scheduled => kSecondaryTextColor,
       TournamentGameStatus.finished => kWhiteColor70,
     };

@@ -130,8 +130,8 @@ class _EventCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final statusColor = switch (event.status) {
-      PlayedTournamentStatus.running => kGreenColor,
-      PlayedTournamentStatus.stopped => kPrimaryColor,
+      PlayedTournamentStatus.running => kPrimaryColor,
+      PlayedTournamentStatus.stopped => kLightGreyColor,
       PlayedTournamentStatus.aborted => kRedColor,
       PlayedTournamentStatus.completed => kWhiteColor70,
     };
@@ -214,8 +214,8 @@ Future<void> _showEventDetails(
   PlayedTournamentEvent event,
 ) {
   final statusColor = switch (event.status) {
-    PlayedTournamentStatus.running => kGreenColor,
-    PlayedTournamentStatus.stopped => kPrimaryColor,
+    PlayedTournamentStatus.running => kPrimaryColor,
+    PlayedTournamentStatus.stopped => kLightGreyColor,
     PlayedTournamentStatus.aborted => kRedColor,
     PlayedTournamentStatus.completed => kWhiteColor70,
   };
