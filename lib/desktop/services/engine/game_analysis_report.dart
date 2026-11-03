@@ -43,6 +43,10 @@ enum GameMoveClassification {
       this == GameMoveClassification.missedWin;
 }
 
+/// Evaluation policy is selected only after the caller establishes provenance.
+/// It never grants verified-source trust or changes source evaluations.
+enum GameReportEvidencePolicy { native, verifiedSource }
+
 @immutable
 class GameReportLine {
   const GameReportLine({
@@ -58,14 +62,90 @@ class GameReportLine {
   final int? mate;
 }
 
+/// Identity of one genuine native-engine snapshot, not official-source trust.
+/// All lines must be from the same completed effective-depth MultiPV batch.
+@immutable
+class GameReportSearchEvidence {
+  const GameReportSearchEvidence({
+    required this.engineId,
+    required this.searchId,
+    required this.complete,
+  });
+  final String engineId;
+  final String searchId;
+  final bool complete;
+}
+
 @immutable
 class GameReportPosition {
-  const GameReportPosition({required this.fen, required this.lines});
+  const GameReportPosition({
+    required this.fen,
+    required this.lines,
+    this.search,
+    this.uncertainty,
+  });
 
   final String fen;
   final List<GameReportLine> lines;
+  final GameReportSearchEvidence? search;
+
+  /// A bounded confirmation failed. Keep measured evaluations, withhold praise.
+  final String? uncertainty;
 
   GameReportLine get bestLine => lines.first;
+}
+
+@immutable
+class GameReportConfirmationBudget {
+  const GameReportConfirmationBudget({
+    this.maxConflicts = 6,
+    this.maxSearchesPerConflict = 6,
+    this.depths = const [18, 20],
+    this.maxNodesPerSearch = 6000000,
+    this.maxTimePerSearch = const Duration(seconds: 12),
+    this.maxTimePerConflict = const Duration(seconds: 36),
+    this.maxTimeTotal = const Duration(seconds: 90),
+  });
+  final int maxConflicts;
+  final int maxSearchesPerConflict;
+  final List<int> depths;
+  final int maxNodesPerSearch;
+  final Duration maxTimePerSearch;
+  final Duration maxTimePerConflict;
+  final Duration maxTimeTotal;
+}
+
+@immutable
+class GameReportConfirmationRequest {
+  const GameReportConfirmationRequest({
+    required this.fen,
+    required this.depth,
+    required this.multiPv,
+    required this.maxNodes,
+    required this.maxTime,
+  });
+  final String fen;
+  final int depth;
+  final int multiPv;
+  final int maxNodes;
+  final Duration maxTime;
+}
+
+typedef GameReportConfirmationEvaluator =
+    Future<GameReportPosition> Function(GameReportConfirmationRequest request);
+
+@immutable
+class GameReportRootComparison {
+  const GameReportRootComparison({
+    required this.played,
+    required this.alternative,
+    required this.playedLossPp,
+    required this.alternativeGapPp,
+  });
+  final GameReportLine played;
+  final GameReportLine alternative;
+  final double playedLossPp;
+  final double alternativeGapPp;
 }
 
 @immutable
@@ -195,6 +275,7 @@ class GameAnalysisReportController extends ChangeNotifier {
   /// multipass design. Depth alone is not the win; **when** we spend MultiPV is.
   static const int reportDepth = 14;
   static const int reportMultiPv = 3;
+
   /// High-precision !! verification only (same depth family as mobile 16).
   static const int brilliantDepth = 16;
   static const int brilliantMultiPv = 3;
@@ -412,8 +493,7 @@ class GameAnalysisReportController extends ChangeNotifier {
               completedPositions: completedBefore,
               totalPositions: primaryAndRefineUnits,
               progress: (completedBefore + 0.5) / primaryAndRefineUnits,
-              message:
-                  'Refining move ${moveIndex + 1} of $totalMoves',
+              message: 'Refining move ${moveIndex + 1} of $totalMoves',
             );
             refinedPositions[fen] = refined;
           }
@@ -456,8 +536,7 @@ class GameAnalysisReportController extends ChangeNotifier {
           completedPositions: primaryAndRefineUnits,
           totalPositions: primaryAndRefineUnits,
           progress:
-              0.92 +
-              0.08 * (c + 0.5) / math.max(1, brilliantCandidates.length),
+              0.92 + 0.08 * (c + 0.5) / math.max(1, brilliantCandidates.length),
           message:
               'Verifying brilliant candidate ${c + 1} of ${brilliantCandidates.length}',
         );
@@ -475,8 +554,7 @@ class GameAnalysisReportController extends ChangeNotifier {
             completedPositions: primaryAndRefineUnits,
             totalPositions: primaryAndRefineUnits,
             progress:
-                0.92 +
-                0.08 * (c + 1) / math.max(1, brilliantCandidates.length),
+                0.92 + 0.08 * (c + 1) / math.max(1, brilliantCandidates.length),
             message:
                 'Verifying brilliant candidate ${c + 1} of ${brilliantCandidates.length}',
           );
@@ -485,10 +563,29 @@ class GameAnalysisReportController extends ChangeNotifier {
         }
       }
 
+      // The frozen pass-2 win-percentage selection above deliberately stays
+      // frozen. Reconcile only suspect final snapshots, then rebuild ALL graph,
+      // accuracy, ratings and labels from the same reconciled position list.
+      final confirmedPositions = await confirmGameReportConsistency(
+        game: game,
+        positions: positions,
+        isCancelled: () => _disposed || generation != _generation,
+        cancelSearch: () => _stockfish.cancelEvaluationsForOwner(_ownerId),
+        evaluate:
+            (request) => _evaluate(
+              request.fen,
+              depth: request.depth,
+              multiPv: request.multiPv,
+              ownerId: _ownerId,
+              maxTime: request.maxTime,
+              maxNodes: request.maxNodes,
+            ),
+      );
+      if (_disposed || generation != _generation) return;
       final report = buildGameAnalysisReport(
         game: game,
         fingerprint: fingerprint,
-        positions: positions,
+        positions: confirmedPositions,
         whiteRating: whiteRating,
         blackRating: blackRating,
         bookGameCounts: await bookGameCountsFuture,
@@ -501,6 +598,10 @@ class GameAnalysisReportController extends ChangeNotifier {
           completedPositions: primaryAndRefineUnits,
           totalPositions: primaryAndRefineUnits,
           report: report,
+          message:
+              confirmedPositions.any((p) => p.uncertainty != null)
+                  ? 'Some engine evidence is unresolved. Unsupported praise was withheld.'
+                  : null,
         ),
       );
     } on StockfishUnavailableException catch (error) {
@@ -549,12 +650,13 @@ class GameAnalysisReportController extends ChangeNotifier {
         game,
         whiteRating: whiteRating,
         blackRating: blackRating,
-        onProgress: (progress, message) => _anchorRemoteProgress(
-          generation: generation,
-          totalUnits: totalUnits,
-          serverProgress: progress,
-          message: message,
-        ),
+        onProgress:
+            (progress, message) => _anchorRemoteProgress(
+              generation: generation,
+              totalUnits: totalUnits,
+              serverProgress: progress,
+              message: message,
+            ),
         isCancelled: () => _disposed || generation != _generation,
       );
 
@@ -653,25 +755,23 @@ class GameAnalysisReportController extends ChangeNotifier {
     _emitRemoteProgress(generation: generation, totalUnits: totalUnits);
   }
 
-  void _emitRemoteProgress({
-    required int generation,
-    required int totalUnits,
-  }) {
+  void _emitRemoteProgress({required int generation, required int totalUnits}) {
     if (_disposed || generation != _generation) {
       _stopRemoteProgress();
       return;
     }
     final anchor = _remoteProgressAnchor;
     final headroom = remoteProgressCeiling - anchor;
-    final creep = headroom <= 0
-        ? 0.0
-        : headroom *
-            remoteProgressCreepShare *
-            (1 -
-                math.exp(
-                  -_remoteProgressSilence.elapsedMilliseconds /
-                      remoteProgressTimeConstant.inMilliseconds,
-                ));
+    final creep =
+        headroom <= 0
+            ? 0.0
+            : headroom *
+                remoteProgressCreepShare *
+                (1 -
+                    math.exp(
+                      -_remoteProgressSilence.elapsedMilliseconds /
+                          remoteProgressTimeConstant.inMilliseconds,
+                    ));
     final displayed = math.min(0.99, anchor + creep);
     _reportProgress(
       generation: generation,
@@ -717,9 +817,7 @@ class GameAnalysisReportController extends ChangeNotifier {
     if (game.startingFen != kInitialFEN) return counts;
 
     final limit = math.min(game.mainline.length, kBookProbeMaxPlies);
-    final line = game.mainline
-        .map((move) => move.uci)
-        .toList(growable: false);
+    final line = game.mainline.map((move) => move.uci).toList(growable: false);
     // The engine passes normally outlast this walk, but a stalled database must
     // not be what holds a finished report open. Whatever theory was resolved
     // before the budget ran out is kept.
@@ -815,13 +913,27 @@ class GameAnalysisReportController extends ChangeNotifier {
     }
   }
 
+  int _searchSerial = 0;
+
   Future<GameReportPosition> _evaluate(
     String fen, {
     required int depth,
     required int multiPv,
     required String ownerId,
+    Duration? maxTime,
+    int? maxNodes,
     void Function(int reachedDepth, int knodes)? onProgress,
   }) async {
+    final searchId = '${_ownerId}_${_searchSerial++}';
+    var nodeLimitReached = false;
+    void progress(int reachedDepth, int knodes) {
+      if (maxNodes != null && knodes * 1000 >= maxNodes && !nodeLimitReached) {
+        nodeLimitReached = true;
+        unawaited(_stockfish.cancelEvaluationsForOwner(ownerId));
+      }
+      onProgress?.call(reachedDepth, knodes);
+    }
+
     final customEvaluator = _evaluator;
     final result =
         customEvaluator != null
@@ -830,23 +942,35 @@ class GameAnalysisReportController extends ChangeNotifier {
               depth: depth,
               multiPv: multiPv,
               ownerId: ownerId,
-              onProgress: onProgress,
+              onProgress: progress,
             )
             : await _stockfish.evaluatePosition(
               fen,
               depth: depth,
               maxDepth: depth,
+              maxNodes: maxNodes,
+              searchDuration: maxTime,
               multiPV: multiPv,
+              completePvBatches: true,
               // Report searches are background work. Live board analysis must
               // remain responsive and may preempt this job; the caller retries
               // the same report position when that happens.
               isCurrentPosition: false,
-              allowCache: true,
+              // Cache entries from ordinary board searches may contain mixed
+              // depths. Reuse only our own completed snapshots within a pass.
+              allowCache: false,
               ownerId: ownerId,
-              onDepthUpdate: onProgress,
+              onDepthUpdate: progress,
             );
-    if (result.isCancelled) {
+    if (result.isCancelled ||
+        nodeLimitReached ||
+        (maxNodes != null && result.knodes * 1000 >= maxNodes)) {
       throw const _ReportPositionPreempted();
+    }
+    if (result.fen != fen || !result.fromWhitePerspective) {
+      throw StateError(
+        'Stockfish returned a different position or perspective',
+      );
     }
     final lines = <GameReportLine>[
       for (final pv in result.pvs)
@@ -866,7 +990,17 @@ class GameAnalysisReportController extends ChangeNotifier {
     if (lines.isEmpty) {
       throw StateError('Stockfish returned no principal variation');
     }
-    return GameReportPosition(fen: fen, lines: List.unmodifiable(lines));
+    return GameReportPosition(
+      fen: fen,
+      lines: List.unmodifiable(lines),
+      search: GameReportSearchEvidence(
+        // Identifies the actual local engine session without inventing a version
+        // (the browser and native binaries need not have the same version).
+        engineId: 'local-stockfish-session:$_ownerId',
+        searchId: searchId,
+        complete: true,
+      ),
+    );
   }
 
   void _fail(String message) {
@@ -929,6 +1063,522 @@ List<String> gameReportFens(ChessGame game) => List<String>.unmodifiable([
   ...game.mainline.map((move) => move.fen),
 ]);
 
+/// Validates score, effective-depth batch, legal PVs and distinct legal roots.
+/// Optional metadata is not invented for old cache entries. Native exceptional
+/// praise and confirmations explicitly require it at their trust boundary.
+bool gameReportSnapshotIsCoherent(
+  GameReportPosition position, {
+  int minDepth = 1,
+  bool requireNative = false,
+}) {
+  if (position.lines.isEmpty || position.uncertainty != null) return false;
+  final search = position.search;
+  if ((requireNative && search == null) ||
+      (search != null &&
+          (!search.complete ||
+              search.engineId.isEmpty ||
+              search.searchId.isEmpty))) {
+    return false;
+  }
+  try {
+    final start = Chess.fromSetup(Setup.parseFen(position.fen));
+    if (start.isGameOver) {
+      final terminal = terminalGameReportPosition(position.fen)!;
+      return position.lines.length == 1 &&
+          position.bestLine.moves.isEmpty &&
+          position.bestLine.centipawns == terminal.bestLine.centipawns &&
+          position.bestLine.mate == terminal.bestLine.mate;
+    }
+    final depth = position.bestLine.depth;
+    if (depth < minDepth) return false;
+    final roots = <String>{};
+    for (final line in position.lines) {
+      if (line.depth != depth ||
+          line.moves.isEmpty ||
+          (line.centipawns == null) == (line.mate == null) ||
+          line.mate == 0 ||
+          !roots.add(line.moves.first)) {
+        return false;
+      }
+      Position pos = start;
+      for (final uci in line.moves) {
+        final move = NormalMove.fromUci(uci);
+        if (!pos.isLegal(move)) return false;
+        pos = pos.play(move);
+      }
+      if (pos.isCheckmate) {
+        final whiteWon = pos.turn == Side.black;
+        if (line.mate == null || (line.mate! > 0) != whiteWon) return false;
+      } else if (pos.isGameOver &&
+          (line.mate != null || line.centipawns != 0)) {
+        return false;
+      }
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Only subtract scores measured in ONE root's completed search snapshot.
+GameReportRootComparison? gameReportRootComparison({
+  required GameReportPosition position,
+  required String playedUci,
+  required bool isWhite,
+}) {
+  if (position.lines.length < 2 || !gameReportSnapshotIsCoherent(position)) {
+    return null;
+  }
+  final sign = isWhite ? 1 : -1;
+  if (position.lines.any(
+    (line) =>
+        (gameReportWinPercentage(line) -
+                gameReportWinPercentage(position.bestLine)) *
+            sign >
+        0.01,
+  )) {
+    return null;
+  }
+  GameReportLine? played;
+  GameReportLine? alternative;
+  for (final line in position.lines) {
+    if (line.moves.first == playedUci) {
+      played = line;
+    } else if (alternative == null ||
+        gameReportWinPercentage(line) * sign >
+            gameReportWinPercentage(alternative) * sign) {
+      alternative = line;
+    }
+  }
+  if (played == null || alternative == null) return null;
+  return GameReportRootComparison(
+    played: played,
+    alternative: alternative,
+    playedLossPp:
+        (gameReportWinPercentage(played) -
+            gameReportWinPercentage(position.bestLine)) *
+        sign,
+    alternativeGapPp:
+        (gameReportWinPercentage(played) -
+            gameReportWinPercentage(alternative)) *
+        sign,
+  );
+}
+
+bool _reportScoresConflict(GameReportLine a, GameReportLine b, bool white) {
+  final x = gameReportWinPercentage(a) * (white ? 1 : -1) + (white ? 0 : 100);
+  final y = gameReportWinPercentage(b) * (white ? 1 : -1) + (white ? 0 : 100);
+  // Magnitudes inside one saturated outcome are not independent contradictions.
+  if ((x >= kBandCompetitiveMax && y >= kBandCompetitiveMax) ||
+      (x <= kBandWorseMax && y <= kBandWorseMax)) {
+    return false;
+  }
+  if ((x >= kBandCompetitiveMax &&
+          y < kBandCompetitiveMax - kBandHysteresisPp) ||
+      (y >= kBandCompetitiveMax &&
+          x < kBandCompetitiveMax - kBandHysteresisPp) ||
+      (x <= kBandWorseMax && y > kBandWorseMax + kBandHysteresisPp) ||
+      (y <= kBandWorseMax && x > kBandWorseMax + kBandHysteresisPp)) {
+    return true;
+  }
+  return (x - y).abs() >= 10;
+}
+
+bool gameReportMoveNeedsConfirmation({
+  required int index,
+  required ChessGame game,
+  required List<GameReportPosition> positions,
+}) {
+  if (index < 0 ||
+      index + 1 >= positions.length ||
+      index >= game.mainline.length) {
+    return false;
+  }
+  final before = positions[index], after = positions[index + 1];
+  if (before.lines.isEmpty || after.lines.isEmpty) return false;
+  final move = game.mainline[index];
+  final white = move.turn == ChessColor.white;
+  for (final line in before.lines) {
+    if (line.moves.isNotEmpty && line.moves.first == move.uci) {
+      return _reportScoresConflict(line, after.bestLine, white);
+    }
+  }
+  // A child claiming a substantially better outcome than the parent's best
+  // also signals incompatible search horizons. A normal inferior move does not.
+  final delta =
+      (gameReportWinPercentage(after.bestLine) -
+          gameReportWinPercentage(before.bestLine)) *
+      (white ? 1 : -1);
+  return delta > 0 &&
+      _reportScoresConflict(before.bestLine, after.bestLine, white);
+}
+
+GameReportPosition _uncertainReportPosition(
+  GameReportPosition position,
+  String reason,
+) => GameReportPosition(
+  fen: position.fen,
+  lines: position.lines,
+  search: position.search,
+  uncertainty: reason,
+);
+
+/// Candidate-only consistency pass. The adapter owns stopping the actual engine
+/// at request time/node limits; this layer independently bounds count, depth,
+/// elapsed time, cancellation and late writes. No partial pair is committed.
+/// Official-source reports MUST NOT be sent through this native controller.
+Future<List<GameReportPosition>> confirmGameReportConsistency({
+  required ChessGame game,
+  required List<GameReportPosition> positions,
+  required GameReportConfirmationEvaluator evaluate,
+  required bool Function() isCancelled,
+  Future<void> Function()? cancelSearch,
+  GameReportConfirmationBudget budget = const GameReportConfirmationBudget(),
+}) async {
+  final result = List<GameReportPosition>.of(positions);
+  final fens = gameReportFens(game);
+  if (result.length != fens.length) {
+    throw ArgumentError('Confirmation requires every game position');
+  }
+  final totalTime = Stopwatch()..start();
+  var conflicts = 0;
+  for (var i = 0; i < game.mainline.length; i++) {
+    if (isCancelled()) break;
+    final contradictory = gameReportMoveNeedsConfirmation(
+      index: i,
+      game: game,
+      positions: result,
+    );
+    final critical = _nativeCriticalCandidate(i, game, result);
+    final criticalNeedsDepth =
+        critical &&
+        [i - 1, i, i + 1].any(
+          (n) =>
+              terminalGameReportPosition(result[n].fen) == null &&
+              !gameReportSnapshotIsCoherent(
+                result[n],
+                minDepth: 18,
+                requireNative: true,
+              ),
+        );
+    if (!contradictory && !criticalNeedsDepth) continue;
+    if (conflicts >= budget.maxConflicts ||
+        totalTime.elapsed >= budget.maxTimeTotal) {
+      result[i] = _uncertainReportPosition(
+        result[i],
+        'native_confirmation_report_budget',
+      );
+      continue;
+    }
+    conflicts++;
+    final conflictTime = Stopwatch()..start();
+    var searches = 0;
+    var resolved = false;
+    var reason = 'native_confirmation_unresolved';
+    Future<GameReportPosition?> search(int positionIndex, int depth) async {
+      final terminal = terminalGameReportPosition(fens[positionIndex]);
+      if (terminal != null) return terminal;
+      if (isCancelled() || searches >= budget.maxSearchesPerConflict) {
+        return null;
+      }
+      final remaining = [
+        budget.maxTimePerSearch,
+        budget.maxTimePerConflict - conflictTime.elapsed,
+        budget.maxTimeTotal - totalTime.elapsed,
+      ].reduce((a, b) => a < b ? a : b);
+      if (remaining <= Duration.zero || budget.maxNodesPerSearch <= 0) {
+        return null;
+      }
+      searches++;
+      var finished = false;
+      try {
+        final cancellation = Future<GameReportPosition>(() async {
+          while (!finished) {
+            if (isCancelled()) {
+              throw StateError('Native confirmation cancelled');
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 25));
+          }
+          throw StateError('Native confirmation finished');
+        });
+        final candidate = await Future.any([
+          evaluate(
+            GameReportConfirmationRequest(
+              fen: fens[positionIndex],
+              depth: depth,
+              multiPv: 3,
+              maxNodes: budget.maxNodesPerSearch,
+              maxTime: remaining,
+            ),
+          ),
+          cancellation,
+        ]).timeout(remaining);
+        if (isCancelled()) return null;
+        if (candidate.fen != fens[positionIndex] ||
+            !gameReportSnapshotIsCoherent(
+              candidate,
+              minDepth: depth,
+              requireNative: true,
+            )) {
+          reason = 'native_confirmation_invalid_snapshot';
+          return null;
+        }
+        return candidate;
+      } on TimeoutException {
+        reason = 'native_confirmation_timeout';
+        return null;
+      } catch (_) {
+        reason = 'native_confirmation_search_unavailable';
+        return null;
+      } finally {
+        finished = true;
+        if (reason == 'native_confirmation_timeout' || isCancelled()) {
+          try {
+            await cancelSearch?.call().timeout(
+              const Duration(milliseconds: 800),
+            );
+          } catch (_) {
+            // Stop acknowledgement is bounded too. Never accept the late search.
+          }
+        }
+      }
+    }
+
+    for (final depth in budget.depths) {
+      // Hard ceiling, even if a caller supplies an accidental global-depth plan.
+      if (depth < 18 || depth > 20 || isCancelled()) continue;
+      // Reuse a genuine final snapshot from THIS report when it already meets
+      // the confirmation depth. Re-searching it spends budget without adding
+      // evidence, and may replace a completed batch with a truncated iteration.
+      final parent =
+          gameReportSnapshotIsCoherent(
+                result[i],
+                minDepth: depth,
+                requireNative: true,
+              )
+              ? result[i]
+              : await search(i, depth);
+      if (parent == null) break;
+      final child =
+          gameReportSnapshotIsCoherent(
+                result[i + 1],
+                minDepth: depth,
+                requireNative: true,
+              )
+              ? result[i + 1]
+              : await search(i + 1, depth);
+      if (child == null) break;
+      if (parent.search?.engineId != child.search?.engineId &&
+          terminalGameReportPosition(child.fen) == null) {
+        reason = 'native_confirmation_engine_mismatch';
+        break;
+      }
+      final trial = List<GameReportPosition>.of(result);
+      trial[i] = parent;
+      trial[i + 1] = child;
+      if (criticalNeedsDepth) {
+        final pre =
+            gameReportSnapshotIsCoherent(
+                  result[i - 1],
+                  minDepth: depth,
+                  requireNative: true,
+                )
+                ? result[i - 1]
+                : await search(i - 1, depth);
+        if (pre == null) break;
+        trial[i - 1] = pre;
+      }
+      if (!gameReportMoveNeedsConfirmation(
+            index: i,
+            game: game,
+            positions: trial,
+          ) &&
+          (!criticalNeedsDepth ||
+              !gameReportMoveNeedsConfirmation(
+                index: i - 1,
+                game: game,
+                positions: trial,
+              ))) {
+        if (criticalNeedsDepth) result[i - 1] = trial[i - 1];
+        result[i] = parent;
+        result[i + 1] = child;
+        resolved = true;
+        break;
+      }
+    }
+    if (isCancelled()) break;
+    if (!resolved) result[i] = _uncertainReportPosition(result[i], reason);
+  }
+  // Later adjacent confirmations may revise a shared anchor. Never let such a
+  // revision silently reintroduce a formerly resolved praise contradiction.
+  if (!isCancelled()) {
+    for (var i = 0; i < game.mainline.length; i++) {
+      if (result[i].uncertainty == null &&
+          gameReportMoveNeedsConfirmation(
+            index: i,
+            game: game,
+            positions: result,
+          )) {
+        result[i] = _uncertainReportPosition(
+          result[i],
+          'native_confirmation_adjacent_conflict',
+        );
+      }
+    }
+  }
+  return result;
+}
+
+bool _nativeCriticalCandidate(
+  int index,
+  ChessGame game,
+  List<GameReportPosition> positions,
+) {
+  if (index < 1 ||
+      index + 1 >= positions.length ||
+      positions[index].lines.isEmpty ||
+      positions[index + 1].lines.isEmpty) {
+    return false;
+  }
+  if (lichessJudgementForReportMove(
+        index: index - 1,
+        game: game,
+        positions: positions,
+      ) !=
+      LichessJudgement.blunder) {
+    return false;
+  }
+  final move = game.mainline[index];
+  final white = move.turn == ChessColor.white;
+  final win = gameReportWinPercentage(positions[index].bestLine);
+  if ((white ? win : 100 - win) < kBandCompetitiveMax - kBandHysteresisPp) {
+    return false;
+  }
+  return isMeaningfulBrilliantInvestment(
+    positions[index].fen,
+    move.uci,
+    positions[index + 1].bestLine.moves,
+  );
+}
+
+/// Native three-position exception. This never creates official provenance and
+/// does not relax the separate verified-Lichess adapter's quality policy.
+String nativeCriticalPunishmentReason({
+  required int index,
+  required ChessGame game,
+  required List<GameReportPosition> positions,
+  required GameMoveClassification? previous,
+}) {
+  if (index < 1 ||
+      index + 1 >= positions.length ||
+      index >= game.mainline.length ||
+      previous != GameMoveClassification.blunder) {
+    return 'preceding_native_blunder_not_verified';
+  }
+  final fens = gameReportFens(game);
+  final pre = positions[index - 1],
+      root = positions[index],
+      after = positions[index + 1];
+  for (final n in [index - 1, index, index + 1]) {
+    final p = positions[n];
+    if (p.fen != fens[n]) return 'native_position_mismatch';
+    if (terminalGameReportPosition(p.fen) != null &&
+        !gameReportSnapshotIsCoherent(p)) {
+      return 'native_terminal_mismatch';
+    }
+    if (terminalGameReportPosition(p.fen) == null &&
+        !gameReportSnapshotIsCoherent(p, minDepth: 18, requireNative: true)) {
+      return 'native_quality_not_verified';
+    }
+    if (terminalGameReportPosition(p.fen) == null &&
+        p.search?.engineId != pre.search?.engineId) {
+      return 'native_engine_mismatch';
+    }
+  }
+  if (lichessJudgementForReportMove(
+        index: index - 1,
+        game: game,
+        positions: positions,
+      ) !=
+      LichessJudgement.blunder) {
+    return 'preceding_native_blunder_not_verified';
+  }
+  final move = game.mainline[index];
+  final white = move.turn == ChessColor.white;
+  double mover(GameReportLine line) =>
+      white
+          ? gameReportWinPercentage(line)
+          : 100 - gameReportWinPercentage(line);
+  if (mover(pre.bestLine) >= kBandCompetitiveMax - kBandHysteresisPp) {
+    return 'pre_blunder_already_winning_or_boundary';
+  }
+  if (gameReportMoveNeedsConfirmation(
+        index: index - 1,
+        game: game,
+        positions: positions,
+      ) ||
+      gameReportMoveNeedsConfirmation(
+        index: index,
+        game: game,
+        positions: positions,
+      )) {
+    return 'native_outcome_conflict';
+  }
+  if (mover(root.bestLine) < kBandBetterMax ||
+      mover(after.bestLine) < kBandBetterMax ||
+      mover(after.bestLine) - mover(root.bestLine) < -2) {
+    return 'native_win_not_retained';
+  }
+  final comparison = gameReportRootComparison(
+    position: root,
+    playedUci: move.uci,
+    isWhite: white,
+  );
+  if (comparison == null ||
+      comparison.playedLossPp < -kBrilliantMaxLossPp ||
+      comparison.alternativeGapPp < kBrilliantMinAlternativeGapPp) {
+    return 'not_engine_best_or_insufficient_moat';
+  }
+  if (root.lines.any(
+    (l) =>
+        l.moves.first != move.uci &&
+        mover(l) >= kBandCompetitiveMax - kBandHysteresisPp,
+  )) {
+    return 'winning_or_boundary_alternative';
+  }
+  if (move.san.contains('=') ||
+      isReportLikelyOpeningBookForBrilliant(index, game)) {
+    return 'opening_or_promotion';
+  }
+  final facts = describeMove(
+    beforeFen: root.fen,
+    playedUci: move.uci,
+    previousUci: game.mainline[index - 1].uci,
+  );
+  if (facts.isForcedOrRoutine ||
+      isSimpleReportRecapture(
+        pre.fen,
+        game.mainline[index - 1].uci,
+        move.uci,
+      )) {
+    return 'routine_or_forced';
+  }
+  final continuation = comparison.played.moves.skip(1).toList();
+  if (!isMeaningfulBrilliantInvestment(root.fen, move.uci, continuation)) {
+    return 'sacrifice_not_verified';
+  }
+  if (!brilliantContinuationPersists(
+    beforeFen: root.fen,
+    playedUci: move.uci,
+    continuationAfterMove: continuation,
+    afterWin: gameReportWinPercentage(after.bestLine),
+    isWhite: white,
+  )) {
+    return 'continuation_not_verified';
+  }
+  return 'verified_native_critical_punishment';
+}
+
 GameReportPosition? terminalGameReportPosition(String fen) {
   try {
     final position = Chess.fromSetup(Setup.parseFen(fen));
@@ -965,8 +1615,10 @@ GameAnalysisReport buildGameAnalysisReport({
   required List<GameReportPosition> positions,
   int? whiteRating,
   int? blackRating,
+
   /// Database game count per move index, or null where it was not looked up.
   List<int?>? bookGameCounts,
+  GameReportEvidencePolicy evidencePolicy = GameReportEvidencePolicy.native,
 }) {
   if (positions.length != game.mainline.length + 1) {
     throw ArgumentError('A report needs one evaluation per game position');
@@ -987,6 +1639,7 @@ GameAnalysisReport buildGameAnalysisReport({
       positions: positions,
       winPercentages: winPercentages,
       previousMoveClassification: previousClassification,
+      evidencePolicy: evidencePolicy,
       bookGameCount:
           bookGameCounts != null && i < bookGameCounts.length
               ? bookGameCounts[i]
@@ -1065,6 +1718,7 @@ GameMoveClassification? classifyGameReportMove({
   required List<double> winPercentages,
   GameMoveClassification? previousMoveClassification,
   int? bookGameCount,
+  GameReportEvidencePolicy evidencePolicy = GameReportEvidencePolicy.native,
 }) => applyBookMoveOverride(
   _classifyGameReportMoveCore(
     index: index,
@@ -1072,6 +1726,7 @@ GameMoveClassification? classifyGameReportMove({
     positions: positions,
     winPercentages: winPercentages,
     previousMoveClassification: previousMoveClassification,
+    evidencePolicy: evidencePolicy,
   ),
   bookGameCount,
 );
@@ -1090,7 +1745,9 @@ GameMoveClassification? applyBookMoveOverride(
   if (bookGameCount == null || bookGameCount < kBookMoveMinGames) {
     return classification;
   }
-  if (classification != null && classification.isNegative) return classification;
+  if (classification != null && classification.isNegative) {
+    return classification;
+  }
   return GameMoveClassification.bookMove;
 }
 
@@ -1100,7 +1757,9 @@ GameMoveClassification? _classifyGameReportMoveCore({
   required List<GameReportPosition> positions,
   required List<double> winPercentages,
   GameMoveClassification? previousMoveClassification,
+  GameReportEvidencePolicy evidencePolicy = GameReportEvidencePolicy.native,
 }) {
+  final nativePolicy = evidencePolicy == GameReportEvidencePolicy.native;
   final move = game.mainline[index];
   final before = positions[index];
   final isWhite = move.turn == ChessColor.white;
@@ -1110,14 +1769,25 @@ GameMoveClassification? _classifyGameReportMoveCore({
   // Mover ΔWin% (pp). Negative = lost winning chances.
   var moverChange = (afterWin - beforeWin) * (isWhite ? 1 : -1);
 
-  // Prefer MultiPV estimate of the played candidate when present (stable under
-  // shallow mobile search).
-  for (final line in before.lines) {
-    if (line.moves.isEmpty || line.moves.first != move.uci) continue;
-    final lineWin = gameReportWinPercentage(line);
-    final lineChange = (lineWin - beforeWin) * (isWhite ? 1 : -1);
-    moverChange = math.max(moverChange, lineChange);
-    break;
+  // A root candidate is useful only for ranking candidates in that SAME root.
+  // It cannot optimistically erase damage measured in the final graph anchors.
+  final comparison = gameReportRootComparison(
+    position: before,
+    playedUci: move.uci,
+    isWhite: isWhite,
+  );
+  if (nativePolicy && comparison != null) {
+    moverChange = math.min(moverChange, comparison.playedLossPp);
+  } else if (!nativePolicy) {
+    // Preserve the separately verified official-source policy. Its scalar
+    // anchors and variation evidence are not native same-search snapshots.
+    for (final line in before.lines) {
+      if (line.moves.isEmpty || line.moves.first != move.uci) continue;
+      final lineChange =
+          (gameReportWinPercentage(line) - beforeWin) * (isWhite ? 1 : -1);
+      moverChange = math.max(moverChange, lineChange);
+      break;
+    }
   }
 
   final playedIsBest =
@@ -1141,19 +1811,26 @@ GameMoveClassification? _classifyGameReportMoveCore({
     );
   }
 
-  final alternatives = before.lines
-      .where((line) => line.moves.isNotEmpty && line.moves.first != move.uci)
-      .toList(growable: false);
-  final alternativeWin = alternatives.isEmpty
-      ? null
-      : gameReportWinPercentage(alternatives.first);
-  final alternativeMoverWin = alternativeWin == null
-      ? null
-      : (isWhite ? alternativeWin : (100 - alternativeWin));
-
-  // Gap: played result vs next-best path (pp, mover's favour).
-  final alternativeGap =
+  final sourceAlternatives = before.lines.where(
+    (line) => line.moves.isNotEmpty && line.moves.first != move.uci,
+  );
+  final alternativeWin =
+      nativePolicy
+          ? (comparison == null
+              ? null
+              : gameReportWinPercentage(comparison.alternative))
+          : (sourceAlternatives.isEmpty
+              ? null
+              : gameReportWinPercentage(sourceAlternatives.first));
+  final alternativeMoverWin =
       alternativeWin == null
+          ? null
+          : (isWhite ? alternativeWin : (100 - alternativeWin));
+
+  final alternativeGap =
+      nativePolicy
+          ? comparison?.alternativeGapPp ?? 0.0
+          : alternativeWin == null
           ? 0.0
           : (afterWin - alternativeWin) * (isWhite ? 1 : -1);
 
@@ -1177,7 +1854,27 @@ GameMoveClassification? _classifyGameReportMoveCore({
   // Routine and forced moves veto *positive* labels only. They must still fall
   // through to the judgment — an obvious-looking move can be an inaccuracy or
   // worse, and returning "no symbol" here would hide it.
-  var positiveLabelsEligible = !facts.isForcedOrRoutine && !simpleRecapture;
+  var positiveLabelsEligible =
+      !facts.isForcedOrRoutine &&
+      !simpleRecapture &&
+      (!nativePolicy ||
+          (comparison != null &&
+              before.fen ==
+                  (index == 0
+                      ? game.startingFen
+                      : game.mainline[index - 1].fen) &&
+              positions[index + 1].fen == move.fen &&
+              (before.search == null ||
+                  positions[index + 1].search == null ||
+                  before.search!.engineId ==
+                      positions[index + 1].search!.engineId) &&
+              before.uncertainty == null &&
+              positions[index + 1].uncertainty == null &&
+              !gameReportMoveNeedsConfirmation(
+                index: index,
+                game: game,
+                positions: positions,
+              )));
 
   // Routine material recovery: taking a loose or already-committed unit while
   // conceding nothing, in a position the capture does not actually change.
@@ -1241,22 +1938,42 @@ GameMoveClassification? _classifyGameReportMoveCore({
 
   // ── Steps 4–7: positive labels ─────────────────────────────────────────
   if (positiveLabelsEligible) {
+    if (nativePolicy &&
+        nativeCriticalPunishmentReason(
+              index: index,
+              game: game,
+              positions: positions,
+              previous: previousMoveClassification,
+            ) ==
+            'verified_native_critical_punishment') {
+      return GameMoveClassification.brilliant;
+    }
     // Brilliant (!!): engine-best/tied + genuine material investment +
     // multi-ply persistence + exclusions. An immediate one-reply sacrifice
     // alone is not enough — ordinary gambits and accepted pawn offers stay
     // untagged.
-    if (verifyBrilliantMove(
-      index: index,
-      game: game,
-      positions: positions,
-      winPercentages: winPercentages,
-      moverChange: moverChange,
-      playedIsBest: playedIsBest,
-      alternativeWin: alternativeWin,
-      alternativeGap: alternativeGap,
-      simpleRecapture: simpleRecapture,
-      facts: facts,
-    )) {
+    // A newly winning reply to a native blunder must satisfy the complete
+    // three-position gate, not fall through its quality/necessity veto via
+    // the ordinary two-position verifier at the winning-band boundary.
+    final requiresCriticalEvidence =
+        nativePolicy &&
+        previousMoveClassification == GameMoveClassification.blunder &&
+        (moverBefore >= kBandCompetitiveMax - kBandHysteresisPp ||
+            moverAfter >= kBandCompetitiveMax - kBandHysteresisPp);
+    if (!requiresCriticalEvidence &&
+        verifyBrilliantMove(
+          index: index,
+          game: game,
+          positions: positions,
+          winPercentages: winPercentages,
+          moverChange: moverChange,
+          playedIsBest: playedIsBest,
+          alternativeWin: alternativeWin,
+          alternativeGap: alternativeGap,
+          simpleRecapture: simpleRecapture,
+          facts: facts,
+          evidencePolicy: evidencePolicy,
+        )) {
       return GameMoveClassification.brilliant;
     }
 
@@ -1265,20 +1982,19 @@ GameMoveClassification? _classifyGameReportMoveCore({
     // a defensive save, or a clean advantage conversion where natural
     // alternatives slip. Defensive saves may still sit under 50% after the
     // move (partial recovery); other paths keep the losing/alt-crushing veto.
-    if (greatAndBestEligible &&
-        moverChange >= -2 &&
-        alternativeWin != null) {
+    if (greatAndBestEligible && moverChange >= -2 && alternativeWin != null) {
       final defensiveSave = _isDefensiveSave(
         playedIsBest: playedIsBest,
         moverBefore: moverBefore,
         moverAfter: moverAfter,
         alternativeGap: alternativeGap,
       );
-      final notLosingOrCrushing = !_isLosingOrAlternateCrushing(
-        afterWin: afterWin,
-        alternativeWin: alternativeWin,
-        isWhite: isWhite,
-      );
+      final notLosingOrCrushing =
+          !_isLosingOrAlternateCrushing(
+            afterWin: afterWin,
+            alternativeWin: alternativeWin,
+            isWhite: isWhite,
+          );
       if (defensiveSave || notLosingOrCrushing) {
         final onlyGoodMove = alternativeGap >= kGreatOnlyGoodMoveGapPp;
         final outcomeSwing = _hasChangedGameOutcome(
@@ -1450,8 +2166,7 @@ bool _hasChangedGameOutcome({
   required double moverChange,
 }) {
   if (moverChange <= 10) return false;
-  return (beforeWin < 50 && afterWin > 50) ||
-      (beforeWin > 50 && afterWin < 50);
+  return (beforeWin < 50 && afterWin > 50) || (beforeWin > 50 && afterWin < 50);
 }
 
 /// Near-best resource that lifts the mover out of a lost or clearly-worse
@@ -1655,6 +2370,7 @@ bool verifyBrilliantMove({
   required double alternativeGap,
   required bool simpleRecapture,
   MovePositionFacts? facts,
+  GameReportEvidencePolicy evidencePolicy = GameReportEvidencePolicy.native,
 }) {
   if (index < 0 || index >= game.mainline.length) return false;
   if (index + 1 >= positions.length || index + 1 >= winPercentages.length) {
@@ -1666,6 +2382,22 @@ bool verifyBrilliantMove({
   final isWhite = move.turn == ChessColor.white;
   final beforeWin = winPercentages[index];
   final afterWin = winPercentages[index + 1];
+
+  // A decisive reply cannot acquire !! merely by converting an advantage
+  // already established before the opponent moved. The three-position
+  // exception is for a newly created tactical win, not an older won game.
+  final moverBefore = isWhite ? beforeWin : 100 - beforeWin;
+  final moverAfter = isWhite ? afterWin : 100 - afterWin;
+  if (evidencePolicy == GameReportEvidencePolicy.native &&
+      index > 0 &&
+      moverBefore >= kBandBetterMax &&
+      moverAfter >= kBandBetterMax) {
+    final preWin = gameReportWinPercentage(positions[index - 1].bestLine);
+    if ((isWhite ? preWin : 100 - preWin) >=
+        kBandCompetitiveMax - kBandHysteresisPp) {
+      return false;
+    }
+  }
 
   // ── Hard exclusions ────────────────────────────────────────────────────
   if (move.san.contains('=')) return false;
@@ -1830,11 +2562,7 @@ bool isMeaningfulBrilliantInvestment(
     // is one step stricter than counting a bare exchange sacrifice, chosen
     // deliberately to favour precision — a missed !! costs less than a wrong
     // one.
-    return _isNetHangingPiece(
-      after,
-      square: move.to,
-      owner: moving.color,
-    );
+    return _isNetHangingPiece(after, square: move.to, owner: moving.color);
   } catch (_) {
     return false;
   }

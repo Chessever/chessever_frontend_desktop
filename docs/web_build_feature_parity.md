@@ -26,6 +26,7 @@ still need a manual pass.
 |---|---|---|
 | Live events, games, players, calendar, rankings | Same | Shared code; images from hosts without CORS go through the `/_img` relay (`web_worker/index.js`, `web/index.html`) |
 | Board, notation, explorer, keyboard shortcuts | Same | Browser-reserved chords (Cmd/Ctrl+W, T, Tab) also answer to Alt (`browser_safe_shortcuts.dart`) |
+| Whole-game native report fallback | Same classifier and bounded confirmation | Shared `GameAnalysisReportController` uses completed effective-depth batches and candidate-only depth18/20 confirmations, with count/time/node/cancellation limits. Browser Worker and native binary can differ; session identity never claims verified Lichess provenance. Unresolved evidence is retained as a diagnostic and withholds unsupported praise. Authoritative server/source reports are not re-run through native confirmation. Unit-tested adapters, not a browser/device runtime acceptance claim |
 | Stockfish analysis and Play | Same | Stockfish 19 lite single-threaded Wasm in a Web Worker (`web/stockfish/`) |
 | Maia bot | Same | onnxruntime-web through `lib/web/onnx_runtime_web.dart` |
 | Leela (lc0) bot | Not available | No browser build of lc0; marked Unavailable and left out of tournament setup |
