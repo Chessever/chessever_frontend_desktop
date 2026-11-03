@@ -194,7 +194,7 @@ class _MemoryEntry {
 /// Payload version. Bump whenever a change alters what a report says about the
 /// same game, so reports produced under old classification rules become
 /// misses instead of being replayed.
-const int desktopGameReportCacheSchemaVersion = 2;
+const int desktopGameReportCacheSchemaVersion = 3;
 
 Map<String, dynamic> desktopGameReportToJson(GameAnalysisReport report) =>
     <String, dynamic>{

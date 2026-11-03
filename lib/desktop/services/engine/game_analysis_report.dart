@@ -948,6 +948,7 @@ class GameAnalysisReportController extends ChangeNotifier {
               fen,
               depth: depth,
               maxDepth: depth,
+              maxNodes: maxNodes,
               searchDuration: maxTime,
               multiPV: multiPv,
               completePvBatches: true,
@@ -1450,7 +1451,9 @@ bool _nativeCriticalCandidate(
   final move = game.mainline[index];
   final white = move.turn == ChessColor.white;
   final win = gameReportWinPercentage(positions[index].bestLine);
-  if ((white ? win : 100 - win) < kBandBetterMax) return false;
+  if ((white ? win : 100 - win) < kBandCompetitiveMax - kBandHysteresisPp) {
+    return false;
+  }
   return isMeaningfulBrilliantInvestment(
     positions[index].fen,
     move.uci,
@@ -1949,19 +1952,28 @@ GameMoveClassification? _classifyGameReportMoveCore({
     // multi-ply persistence + exclusions. An immediate one-reply sacrifice
     // alone is not enough — ordinary gambits and accepted pawn offers stay
     // untagged.
-    if (verifyBrilliantMove(
-      index: index,
-      game: game,
-      positions: positions,
-      winPercentages: winPercentages,
-      moverChange: moverChange,
-      playedIsBest: playedIsBest,
-      alternativeWin: alternativeWin,
-      alternativeGap: alternativeGap,
-      simpleRecapture: simpleRecapture,
-      facts: facts,
-      evidencePolicy: evidencePolicy,
-    )) {
+    // A newly winning reply to a native blunder must satisfy the complete
+    // three-position gate, not fall through its quality/necessity veto via
+    // the ordinary two-position verifier at the winning-band boundary.
+    final requiresCriticalEvidence =
+        nativePolicy &&
+        previousMoveClassification == GameMoveClassification.blunder &&
+        (moverBefore >= kBandCompetitiveMax - kBandHysteresisPp ||
+            moverAfter >= kBandCompetitiveMax - kBandHysteresisPp);
+    if (!requiresCriticalEvidence &&
+        verifyBrilliantMove(
+          index: index,
+          game: game,
+          positions: positions,
+          winPercentages: winPercentages,
+          moverChange: moverChange,
+          playedIsBest: playedIsBest,
+          alternativeWin: alternativeWin,
+          alternativeGap: alternativeGap,
+          simpleRecapture: simpleRecapture,
+          facts: facts,
+          evidencePolicy: evidencePolicy,
+        )) {
       return GameMoveClassification.brilliant;
     }
 
