@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart';
@@ -86,6 +87,10 @@ class UserMoveNagsNotifier
   /// undo stack to restore the pre-mutation snapshot. An empty map
   /// removes the tab entry entirely.
   void restoreTab(String tabId, Map<int, List<int>> nags) {
+    // Live broadcast applies call this on every incoming move, nearly always
+    // with what the tab already holds. A fresh map would still notify every
+    // watcher and rebuild every mounted Board tab, so keep the state as is.
+    if (_sameNags(state[tabId] ?? const <int, List<int>>{}, nags)) return;
     final next = Map<String, Map<int, List<int>>>.from(state);
     if (nags.isEmpty) {
       next.remove(tabId);
@@ -97,6 +102,16 @@ class UserMoveNagsNotifier
     }
     state = next;
   }
+}
+
+bool _sameNags(Map<int, List<int>> a, Map<int, List<int>> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (final entry in a.entries) {
+    final other = b[entry.key];
+    if (other == null || !listEquals(other, entry.value)) return false;
+  }
+  return true;
 }
 
 /// Whether a NAG code is a quality / move-quality glyph

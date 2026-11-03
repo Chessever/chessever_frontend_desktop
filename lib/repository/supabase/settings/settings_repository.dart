@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:chessever/repository/supabase/base_repository.dart';
 import 'package:chessever/repository/supabase/settings/settings.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 // providers.dart
@@ -31,7 +32,10 @@ class SettingsRepository extends BaseRepository {
             data.isEmpty
                 ? <String>[]
                 : List<String>.from(data.first['live_round_ids'] ?? []),
-      );
+      )
+      // The row is rewritten every few seconds during live rounds; only a
+      // real change to this column should reach (and rebuild) listeners.
+      .distinct(listEquals);
 
   Stream<List<String>> subscribeToLiveTourIds() => supabase
       .from('settings')
@@ -54,7 +58,8 @@ class SettingsRepository extends BaseRepository {
                 : List<String>.from(
                   data.first['live_group_broadcast_ids'] ?? [],
                 ),
-      );
+      )
+      .distinct(listEquals);
 }
 
 bool _sameStringSet(List<String> a, List<String> b) {
