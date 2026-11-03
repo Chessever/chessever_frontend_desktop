@@ -285,9 +285,23 @@ final _playerTreeBuildProvider =
     });
 
 class PlayerWorkspacePane extends HookConsumerWidget {
-  const PlayerWorkspacePane({super.key, this.tabId});
+  const PlayerWorkspacePane({
+    super.key,
+    this.tabId,
+    this.pinnedPlayerId,
+    this.hostTabId,
+  });
 
   final String? tabId;
+
+  /// Shows only this prep profile, with no Players list to return to. Used
+  /// by the user's own profile page, whose Prep tab is one fixed profile.
+  final String? pinnedPlayerId;
+
+  /// The desktop tab hosting a pinned workspace. Workspace operations act on
+  /// the selected player, so a pinned view selects its player only while
+  /// this tab is in front, never over a Players tab the user is working in.
+  final String? hostTabId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -316,13 +330,15 @@ class PlayerWorkspacePane extends HookConsumerWidget {
     );
     final openedPlayerId = useState<String?>(requestedPlayerId);
     final visiblePlayerId =
-        tabId == null
+        pinnedPlayerId ??
+        (tabId == null
             ? requestedPlayerId ?? openedPlayerId.value
-            : routedPlayerId;
+            : routedPlayerId);
     final selected = _playerById(players, visiblePlayerId);
+    final activeTabId = tabId ?? hostTabId;
     final isActiveTab = ref.watch(
       desktopTabsProvider.select(
-        (tabs) => tabId == null || tabs.activeId == tabId,
+        (tabs) => activeTabId == null || tabs.activeId == activeTabId,
       ),
     );
     final tab = useState(_PlayerWorkspaceTab.overview);
@@ -381,7 +397,7 @@ class PlayerWorkspacePane extends HookConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (selected == null)
+          if (selected == null && pinnedPlayerId == null)
             _Header(
               onAddPlayer:
                   () => unawaited(
@@ -394,7 +410,7 @@ class PlayerWorkspacePane extends HookConsumerWidget {
             ),
           Expanded(
             child:
-                isLoading
+                isLoading || (selected == null && pinnedPlayerId != null)
                     ? const Center(
                       child: CircularProgressIndicator(color: kPrimaryColor),
                     )
@@ -6073,10 +6089,27 @@ const DesktopAccessContext _prepareSourceAccess = DesktopAccessContext(
   origin: DesktopDiscoveryOrigin.localFile,
 );
 
+/// Creates a prep profile through the same dialog as Players > Add player,
+/// then calls [onCreated] with its id before offering to connect usernames.
+Future<void> showCreatePrepProfileDialog(
+  BuildContext context,
+  WidgetRef ref, {
+  required String title,
+  required void Function(String playerId) onCreated,
+}) {
+  return _showAddPlayerDialog(
+    context,
+    ref,
+    title: title,
+    onOpenPlayer: onCreated,
+  );
+}
+
 Future<void> _showAddPlayerDialog(
   BuildContext context,
   WidgetRef ref, {
   required void Function(String playerId) onOpenPlayer,
+  String title = 'Add player',
 }) async {
   // The click is the explicit action: a free user gets the paywall here and
   // no dialog, so no search can run and no control pretends to be live.
@@ -6091,7 +6124,7 @@ Future<void> _showAddPlayerDialog(
     context: context,
     builder:
         (context, _, animation) => _AddPlayerDialog(
-          title: 'Add player',
+          title: title,
           animation: animation,
           offerConnect: true,
           searchAccess: _prepareCreateAccess,
