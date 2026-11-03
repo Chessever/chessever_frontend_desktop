@@ -187,7 +187,11 @@ GamesTourModel _mapPlayerGameRowToModel(
   final whiteCard = PlayerCard(
     name: whiteName,
     federation: '',
-    title: _normalizeTitle(row['whiteTitle'] ?? whitePlayer?.title),
+    title: ChessTitleUtils.listRowTitle(
+      row,
+      isWhite: true,
+      fallback: whitePlayer?.title,
+    ),
     rating: whiteElo,
     countryCode: whiteFed,
     team: null,
@@ -201,7 +205,11 @@ GamesTourModel _mapPlayerGameRowToModel(
   final blackCard = PlayerCard(
     name: blackName,
     federation: '',
-    title: _normalizeTitle(row['blackTitle'] ?? blackPlayer?.title),
+    title: ChessTitleUtils.listRowTitle(
+      row,
+      isWhite: false,
+      fallback: blackPlayer?.title,
+    ),
     rating: blackElo,
     countryCode: blackFed,
     team: null,
@@ -257,11 +265,6 @@ int? _parseFide(Object? raw) {
   return int.tryParse(raw.toString());
 }
 
-String _normalizeTitle(Object? raw) {
-  final text = raw?.toString();
-  if (text == null || text.trim().isEmpty) return '';
-  return ChessTitleUtils.normalize(text);
-}
 
 int _ratingFor(GamebasePlayer? player, String? timeControl) {
   if (player == null) return 0;

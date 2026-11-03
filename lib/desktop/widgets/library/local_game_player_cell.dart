@@ -119,6 +119,9 @@ class LocalGamePlayerCell extends ConsumerWidget {
   Widget? _buildTitleChip(WidgetRef ref, int? fideId) {
     final tagTitle = ChessTitleUtils.normalize(localPgnTitle(metadata, side));
     if (tagTitle.isNotEmpty) return _titleText(tagTitle);
+    // A title tag only for the opponent means this player was untitled when
+    // the game was played; today's title would be wrong.
+    if (ChessTitleUtils.carriesTitles(metadata)) return null;
     if (fideId == null) return null;
     return ref
         .watch(chessPlayerByFideIdProvider(fideId))

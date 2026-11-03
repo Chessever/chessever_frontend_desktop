@@ -13,6 +13,7 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
 import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/utils/chess_title_utils.dart';
 
 bool canSaveDesktopGameToLibrary(GamesTourModel game) {
   return game.gameStatus.isFinished;
@@ -161,8 +162,12 @@ Map<String, dynamic> mergeDesktopGameMetadataForLibrary(
   );
   _putMeaningful(metadata, 'White', game.whitePlayer.name);
   _putMeaningful(metadata, 'Black', game.blackPlayer.name);
-  _putMeaningful(metadata, 'WhiteTitle', game.whitePlayer.title);
-  _putMeaningful(metadata, 'BlackTitle', game.blackPlayer.title);
+  // The game's own title tags are the title of the day: keep them.
+  ChessTitleUtils.fillMissingTitleTags(
+    metadata,
+    white: game.whitePlayer.title.trim(),
+    black: game.blackPlayer.title.trim(),
+  );
   if (game.whitePlayer.rating > 0) {
     metadata['WhiteElo'] = game.whitePlayer.rating.toString();
   }

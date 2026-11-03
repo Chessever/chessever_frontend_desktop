@@ -34,6 +34,7 @@ import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/utils/eco_openings.dart';
 import 'package:chessever/utils/local_pgn_metadata.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/utils/chess_title_utils.dart';
 
 export 'package:chessever/repository/sqlite/local_chess_schema.dart'
     show createLocalChessDatabaseSchema;
@@ -4570,13 +4571,19 @@ class LocalChessDatabaseRepository {
         final updates = <List<Object?>>[];
         for (final entry in pending) {
           final metadata = Map<String, dynamic>.of(entry.metadata);
+          // A game with a title tag for either side already holds the titles
+          // of the day; a missing side was untitled then, so only games with
+          // no titles at all take today's (ChessTitleUtils.gameTimeTitle).
+          final gameCarriesTitles = ChessTitleUtils.carriesTitles(metadata);
           var changed = false;
           for (final side in const <String>['White', 'Black']) {
             final fideId = localPgnFideId(metadata, side);
             final player = fideId == null ? null : resolved[fideId];
             if (player == null) continue;
             final title = player.title?.trim() ?? '';
-            if (title.isNotEmpty && localPgnTitle(metadata, side).isEmpty) {
+            if (title.isNotEmpty &&
+                !gameCarriesTitles &&
+                localPgnTitle(metadata, side).isEmpty) {
               metadata['${side}Title'] = title;
               changed = true;
             }

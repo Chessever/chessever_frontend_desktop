@@ -3311,7 +3311,11 @@ class PlayerProfileGamesNotifier
     final whiteCard = PlayerCard(
       name: whiteName,
       federation: '',
-      title: _normalizeTitle(row['whiteTitle'] ?? whitePlayer?.title),
+      title: ChessTitleUtils.listRowTitle(
+        row,
+        isWhite: true,
+        fallback: whitePlayer?.title,
+      ),
       rating:
           whiteEloRaw > 0 ? whiteEloRaw : _ratingFor(whitePlayer, timeControl),
       countryCode:
@@ -3331,7 +3335,11 @@ class PlayerProfileGamesNotifier
     final blackCard = PlayerCard(
       name: blackName,
       federation: '',
-      title: _normalizeTitle(row['blackTitle'] ?? blackPlayer?.title),
+      title: ChessTitleUtils.listRowTitle(
+        row,
+        isWhite: false,
+        fallback: blackPlayer?.title,
+      ),
       rating:
           blackEloRaw > 0 ? blackEloRaw : _ratingFor(blackPlayer, timeControl),
       countryCode:
@@ -3398,11 +3406,6 @@ class PlayerProfileGamesNotifier
     return int.tryParse(raw.toString());
   }
 
-  static String _normalizeTitle(Object? raw) {
-    final text = raw?.toString();
-    if (text == null || text.trim().isEmpty) return '';
-    return ChessTitleUtils.normalize(text);
-  }
 
   Future<Map<String, GamebasePlayer>> _fetchGamebasePlayersByIds(
     Iterable<Map<String, dynamic>> rows,
