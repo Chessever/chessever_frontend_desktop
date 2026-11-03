@@ -1148,6 +1148,42 @@ void main() {
     expect(resolved.fideId, 123456);
   });
 
+  test("an archive game's title tag beats the list row's current title", () {
+    // An IM in 2014 who is a GM today: the list row carries today's title.
+    final today = PlayerCard(
+      name: 'Player',
+      federation: 'TUR',
+      title: 'GM',
+      rating: 2600,
+      countryCode: 'TUR',
+      fideId: 123456,
+      team: null,
+    );
+    BoardPlayerHeaderMetadata resolve(String own, String opponent) =>
+        resolveBoardPlayerHeaderMetadata(
+          sourcePlayer: today,
+          sourceIsAuthoritative: false,
+          pgnName: 'Player',
+          pgnFederation: 'TUR',
+          pgnTitle: own,
+          pgnOpponentTitle: opponent,
+          pgnRating: 2450,
+          pgnFideId: 123456,
+          fallbackName: '',
+          fallbackFederation: '',
+          fallbackTitle: '',
+          fallbackRating: 0,
+          fallbackFideId: null,
+        );
+
+    expect(resolve('IM', 'GM').title, 'IM');
+    // A tag only for the opponent: untitled when the game was played.
+    expect(resolve('', 'GM').title, '');
+    // No titles in the PGN at all, or relay placeholders: today's title.
+    expect(resolve('', '').title, 'GM');
+    expect(resolve('-', '-').title, 'GM');
+  });
+
   test('regression confirmation guard includes result and player metadata', () {
     final current = _liveGame(
       pgn: '1. e4 e5 *',

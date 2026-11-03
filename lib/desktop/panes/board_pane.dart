@@ -348,6 +348,7 @@ BoardPlayerHeaderMetadata resolveBoardPlayerHeaderMetadata({
   required String pgnName,
   required String pgnFederation,
   required String pgnTitle,
+  String pgnOpponentTitle = '',
   required int pgnRating,
   required int pgnFideId,
   required String fallbackName,
@@ -388,10 +389,16 @@ BoardPlayerHeaderMetadata resolveBoardPlayerHeaderMetadata({
                 : (pgnFederation.isNotEmpty
                     ? pgnFederation
                     : fallbackFederation)),
+    // The title held when the game was played: the game's own tags outrank
+    // the list row, whose title is the player's today. A tag only for the
+    // opponent means this side was untitled then (see
+    // ChessTitleUtils.gameTimeTitle); no tags at all fall back as before.
     title:
-        sourceTitle.isNotEmpty
-            ? sourceTitle
-            : (pgnTitle.isNotEmpty ? pgnTitle : fallbackTitle),
+        ChessTitleUtils.normalize(pgnTitle).isNotEmpty
+            ? ChessTitleUtils.normalize(pgnTitle)
+            : ChessTitleUtils.normalize(pgnOpponentTitle).isNotEmpty
+            ? ''
+            : (sourceTitle.isNotEmpty ? sourceTitle : fallbackTitle),
     rating:
         sourceRating > 0
             ? sourceRating
@@ -1368,8 +1375,12 @@ class _BoardPaneContent extends HookConsumerWidget {
         putIfMissing('Black', tabArgs.blackName);
         putIfMissing('WhiteFed', tabArgs.whiteFederation);
         putIfMissing('BlackFed', tabArgs.blackFederation);
-        putIfMissing('WhiteTitle', tabArgs.whiteTitle);
-        putIfMissing('BlackTitle', tabArgs.blackTitle);
+        // The tab's titles are the list row's. They may only fill a PGN with
+        // no titles of its own, or they would mask the title of the day.
+        if (!ChessTitleUtils.carriesTitles(updatedMetadata)) {
+          putIfMissing('WhiteTitle', tabArgs.whiteTitle);
+          putIfMissing('BlackTitle', tabArgs.blackTitle);
+        }
         if (tabArgs.whiteFideId != null && tabArgs.whiteFideId! > 0) {
           putIfMissing('WhiteFideId', tabArgs.whiteFideId);
         }
@@ -8955,6 +8966,7 @@ class _BoardArea extends ConsumerWidget {
         'WhiteTeam',
       ]),
       pgnTitle: pgn('WhiteTitle'),
+      pgnOpponentTitle: pgn('BlackTitle'),
       pgnRating: pgnInt('WhiteElo'),
       pgnFideId: pgnInt('WhiteFideId'),
       fallbackName: tournamentGame?.whitePlayer ?? '',
@@ -8974,6 +8986,7 @@ class _BoardArea extends ConsumerWidget {
         'BlackTeam',
       ]),
       pgnTitle: pgn('BlackTitle'),
+      pgnOpponentTitle: pgn('WhiteTitle'),
       pgnRating: pgnInt('BlackElo'),
       pgnFideId: pgnInt('BlackFideId'),
       fallbackName: tournamentGame?.blackPlayer ?? '',
@@ -8988,6 +9001,11 @@ class _BoardArea extends ConsumerWidget {
     final blackFed = blackHeader.federation;
     final whiteTitle = whiteHeader.title;
     final blackTitle = blackHeader.title;
+    // When an archive game's tags decided the titles, an empty one means
+    // untitled then: the hover card must not look up today's title for it.
+    final titlesFromGame =
+        sourceGame?.source != GameSource.supabase &&
+        ChessTitleUtils.carriesTitles(pgnHeaders);
     final whiteRating = whiteHeader.rating;
     final blackRating = blackHeader.rating;
     final whiteFideId = whiteHeader.fideId;
@@ -9062,6 +9080,7 @@ class _BoardArea extends ConsumerWidget {
               title: topTitle,
               rating: topRating,
               fideId: topIsWhite ? whiteFideId : blackFideId,
+              titleFromGame: titlesFromGame,
               result: topResult,
               isWhite: topIsWhite,
               isToMove:
@@ -9088,6 +9107,7 @@ class _BoardArea extends ConsumerWidget {
               title: bottomTitle,
               rating: bottomRating,
               fideId: bottomIsWhite ? whiteFideId : blackFideId,
+              titleFromGame: titlesFromGame,
               result: bottomResult,
               isWhite: bottomIsWhite,
               isToMove:
@@ -9861,6 +9881,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     required this.result,
     required this.isWhite,
     required this.isToMove,
+    this.titleFromGame = false,
     this.clockText,
     this.pointsText,
     this.trailingControl,
@@ -9881,6 +9902,10 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
   final DesktopBoardPlayerResult? result;
   final bool isWhite;
   final bool isToMove;
+
+  /// [title] came from the game's own PGN tags, so an empty one means the
+  /// player was untitled when the game was played and is not looked up.
+  final bool titleFromGame;
 
   /// Most recent PGN-baked clock annotation for this player at the
   /// active pointer (`null` when the game has no `[%clk …]` markers).
@@ -9991,7 +10016,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     // Local PGNs (e.g. TWIC) often carry a FIDE ID but no title tag; resolve
     // the title on demand from chess_players, same as the flag backfill.
     final resolvedTitle =
-        title.isNotEmpty
+        title.isNotEmpty || titleFromGame
             ? title
             : fideId == null
             ? ''
