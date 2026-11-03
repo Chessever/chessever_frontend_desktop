@@ -21,7 +21,7 @@ import 'package:chessever/theme/app_theme.dart';
 ///    `EvaluationBarWidget` so the rest of the desktop UI stays
 ///    consistent with mobile cards.
 ///  - The numeric readout sits at the meeting line, in `kPrimaryColor`,
-///    on a tabular-figure face.
+///    using the bundled Geist face.
 ///  - The fill animates with `motor`'s `CupertinoMotion.smooth` between
 ///    eval updates — same physics the mobile bar uses, just driven from
 ///    here so we don't pull mobile's responsive helper.
@@ -218,12 +218,15 @@ class _DesktopEvalBarState extends State<DesktopEvalBar> {
                           _displayText(),
                           maxLines: 1,
                           textAlign: TextAlign.center,
+                          // Use the bundled face directly so browser font
+                          // fallbacks and inherited spacing cannot distort
+                          // the compact label.
                           style: const TextStyle(
+                            inherit: false,
                             color: kBackgroundColor,
+                            fontFamily: 'Geist',
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
-                            letterSpacing: -0.2,
-                            fontFeatures: [FontFeature.tabularFigures()],
                             height: 1.0,
                           ),
                         ),

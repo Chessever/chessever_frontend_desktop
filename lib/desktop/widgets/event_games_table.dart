@@ -16,7 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
@@ -4887,12 +4887,17 @@ class _EventGamePlayerLine extends StatelessWidget {
         // tick cannot dirt the whole row" (.ce-cell in components.css,
         // BoardCell.tsx:11). [RepaintBoundary] is Flutter's primitive for that:
         // the 1 Hz digit repaints this slot, not the row chunk behind it.
+        // The slot is also a relayout boundary: a fixed one-line height
+        // makes its constraints tight, so the digit change re-lays out this
+        // slot only. Without it each 1 Hz tick climbed to the RenderTable and
+        // re-measured the intrinsic widths of every cell in the round.
         RepaintBoundary(
-          child: SizedBox(
+          child: _FixedLineSlot(
             key: Key(
               'event-game-${game.id}-${isWhite ? 'white' : 'black'}-trailing',
             ),
             width: 64,
+            style: trailingStyle,
             child:
                 result != null
                     ? Text(
@@ -4924,6 +4929,49 @@ class _EventGamePlayerLine extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// A [width] wide box exactly one line of [style] tall, the height the
+/// [Text] inside would take anyway. Tight constraints make the child a
+/// relayout boundary.
+class _FixedLineSlot extends StatelessWidget {
+  const _FixedLineSlot({
+    super.key,
+    required this.width,
+    required this.style,
+    required this.child,
+  });
+
+  final double width;
+  final TextStyle style;
+  final Widget child;
+
+  static final Map<(TextStyle, TextScaler), double> _lineHeights = {};
+
+  static double _lineHeight(TextStyle style, TextScaler scaler) {
+    return _lineHeights[(style, scaler)] ??= () {
+      if (_lineHeights.length > 64) _lineHeights.clear();
+      final painter = TextPainter(
+        text: TextSpan(text: '0:00:00', style: style),
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final height = painter.height;
+      painter.dispose();
+      return height;
+    }();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final merged = DefaultTextStyle.of(context).style.merge(style);
+    return SizedBox(
+      width: width,
+      height: _lineHeight(merged, MediaQuery.textScalerOf(context)),
+      child: child,
     );
   }
 }

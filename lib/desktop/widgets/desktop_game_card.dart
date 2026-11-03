@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'package:chessever/desktop/widgets/desktop_game_points.dart';
 
 import 'package:dartchess/dartchess.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -431,6 +430,7 @@ class _ListLayoutState extends State<_ListLayout>
           child: ClipRRect(
             borderRadius: BorderRadius.circular(11),
             child: Stack(
+              alignment: Alignment.center,
               children: [
                 Padding(
                   padding: EdgeInsets.fromLTRB(12, isLive ? 14 : 12, 12, 12),
@@ -1055,6 +1055,7 @@ class _CompactLayoutState extends State<_CompactLayout>
           child: ClipRRect(
             borderRadius: BorderRadius.circular(9),
             child: Stack(
+              alignment: Alignment.center,
               children: [
                 DesktopDesaturated(
                   enabled: locked,
@@ -1755,10 +1756,8 @@ String _resultLabel(GameCardData data) {
 /// Per-layout tile sizing for [DesktopGameCardsFlow].
 ///
 /// Compact and list render in a responsive multi-column grid instead of
-/// full-width vertical strips. Target widths are tuned so even a narrow
-/// content pane (left-rail + right-inspector chewing into the window)
-/// still lands at 2 columns — otherwise the redesign degrades back into
-/// the full-width-strip look it was meant to replace.
+/// full-width vertical strips. The available pane width determines how many
+/// readable cards fit, including a single column in narrow panes.
 const double _kListTileTargetWidth = 360;
 const double _kListTileHeight = 138;
 const double _kCompactTileTargetWidth = 300;
@@ -1785,15 +1784,11 @@ class DesktopGameCardsFlowMetrics {
   const DesktopGameCardsFlowMetrics({
     required this.targetWidth,
     required this.tileHeight,
-    required this.minCols,
-    required this.maxCols,
     required this.spacing,
   });
 
   final double targetWidth;
   final double tileHeight;
-  final int minCols;
-  final int maxCols;
   final double spacing;
 }
 
@@ -1831,13 +1826,12 @@ class DesktopGameCardsFlow extends StatelessWidget {
   /// stride without waiting for a layout pass.
   static int columnCountForWidth(DesktopCardLayout layout, double width) {
     final metrics = metricsFor(layout);
-    if (!width.isFinite || width <= 0) return metrics.minCols;
-    final raw = (width / metrics.targetWidth).floor();
-    // Too narrow for even two cards in a phone-width browser window: one
-    // full-width card, rather than two too narrow to show the players. The
-    // desktop app keeps at least [DesktopGameCardsFlowMetrics.minCols].
-    if (kIsWeb && raw < 2) return 1;
-    return raw.clamp(metrics.minCols, metrics.maxCols).toInt();
+    if (!width.isFinite || width <= 0) return 1;
+    return math.max(
+      1,
+      ((width + metrics.spacing) / (metrics.targetWidth + metrics.spacing))
+          .floor(),
+    );
   }
 
   static DesktopGameCardsFlowMetrics metricsFor(DesktopCardLayout layout) {
@@ -1846,24 +1840,18 @@ class DesktopGameCardsFlow extends StatelessWidget {
         return const DesktopGameCardsFlowMetrics(
           targetWidth: _kCompactTileTargetWidth,
           tileHeight: _kCompactTileHeight,
-          minCols: 2,
-          maxCols: 6,
           spacing: 6,
         );
       case DesktopCardLayout.list:
         return const DesktopGameCardsFlowMetrics(
           targetWidth: _kListTileTargetWidth,
           tileHeight: _kListTileHeight,
-          minCols: 2,
-          maxCols: 4,
           spacing: 8,
         );
       case DesktopCardLayout.grid:
         return const DesktopGameCardsFlowMetrics(
           targetWidth: _kGridTileTargetWidth,
           tileHeight: _kGridTileTargetWidth, // square-ish; aspect handles it
-          minCols: 2,
-          maxCols: 6,
           spacing: 8,
         );
     }
@@ -1929,6 +1917,7 @@ class DesktopGameCardsFlow extends StatelessWidget {
                   SizedBox(
                     height: cellHeight,
                     child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         for (var col = 0; col < columns; col++) ...[
                           if (col > 0) SizedBox(width: spacing),

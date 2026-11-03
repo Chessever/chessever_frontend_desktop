@@ -7626,10 +7626,9 @@ class _GamesGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        const targetWidth = 280.0;
-        final columns = (constraints.maxWidth / targetWidth).floor().clamp(
-          2,
-          6,
+        final columns = DesktopGameCardsFlow.columnCountForWidth(
+          DesktopCardLayout.grid,
+          constraints.maxWidth - 40,
         );
         return GridView.builder(
           physics: const DesktopScrollPhysics(),
@@ -10938,10 +10937,9 @@ class _TwicGamesGrid extends StatelessWidget {
     final itemCount = state.games.length + (state.hasMore ? 1 : 0);
     return LayoutBuilder(
       builder: (context, constraints) {
-        const targetWidth = 280.0;
-        final columns = (constraints.maxWidth / targetWidth).floor().clamp(
-          2,
-          6,
+        final columns = DesktopGameCardsFlow.columnCountForWidth(
+          DesktopCardLayout.grid,
+          constraints.maxWidth - 40,
         );
         return GridView.builder(
           controller: scrollController,

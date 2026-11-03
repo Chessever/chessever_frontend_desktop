@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/auth/desktop_guest_gate.dart';
+import 'package:chessever/desktop/auth/desktop_guest_interaction_gate.dart';
 import 'package:chessever/desktop/auth/desktop_welcome_screen.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
@@ -42,7 +43,7 @@ class DesktopAuthGate extends HookConsumerWidget {
     if (!DesktopSupabaseInit.isInitialized) {
       // No backend available: surface the shell so panes can still be
       // developed locally.
-      return const DesktopShell();
+      return const DesktopGuestInteractionGate(child: DesktopShell());
     }
 
     final auth = Supabase.instance.client.auth;
@@ -126,7 +127,9 @@ class DesktopAuthGate extends HookConsumerWidget {
         );
       case DesktopAuthGateView.shell:
         return const MandatoryUpdateGate(
-          child: DesktopGuestGateListener(child: DesktopShell()),
+          child: DesktopGuestGateListener(
+            child: DesktopGuestInteractionGate(child: DesktopShell()),
+          ),
         );
     }
   }

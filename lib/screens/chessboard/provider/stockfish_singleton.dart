@@ -12,6 +12,15 @@ import 'package:chessever/desktop/services/engine/stockfish_facade.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/utils/host_platform.dart';
 
+// Parsed out of every `info` line, often dozens a second with MultiPV.
+// Built once: on dart2wasm each RegExp construction is a JS round trip.
+final _infoDepthPattern = RegExp(r'depth (\d+)');
+final _infoNodesPattern = RegExp(r'nodes (\d+)');
+final _infoPvPattern = RegExp(r'\bpv (.+)');
+final _infoMultiPvPattern = RegExp(r'multipv (\d+)');
+final _infoScoreCpPattern = RegExp(r'score cp (-?\d+)');
+final _infoScoreMatePattern = RegExp(r'score mate (-?\d+)');
+
 @visibleForTesting
 List<Pv> normalizeStockfishPvsToWhitePerspective(List<Pv> pvs, String fen) {
   if (pvs.isEmpty) return pvs;
@@ -811,8 +820,8 @@ class StockfishSingleton {
         // debugPrint('🟢 STOCKFISH STDOUT: $line');
         // Parse info lines for analysis data
         if (line.startsWith('info depth')) {
-          final depthMatch = RegExp(r'depth (\d+)').firstMatch(line);
-          final knodesMatch = RegExp(r'nodes (\d+)').firstMatch(line);
+          final depthMatch = _infoDepthPattern.firstMatch(line);
+          final knodesMatch = _infoNodesPattern.firstMatch(line);
 
           if (depthMatch != null) {
             final currentDepth = int.parse(depthMatch.group(1)!);
@@ -835,12 +844,12 @@ class StockfishSingleton {
           }
 
           // Parse score and moves for the principal variation
-          final pvMatch = RegExp(r'\bpv (.+)').firstMatch(line);
+          final pvMatch = _infoPvPattern.firstMatch(line);
           if (pvMatch != null) {
             final moves = pvMatch.group(1)!.trim();
 
             var multipvIndex = 1;
-            final multipvMatch = RegExp(r'multipv (\d+)').firstMatch(line);
+            final multipvMatch = _infoMultiPvPattern.firstMatch(line);
             if (multipvMatch != null) {
               multipvIndex = int.parse(multipvMatch.group(1)!);
             }
@@ -851,8 +860,8 @@ class StockfishSingleton {
             }
 
             // Parse score (either cp or mate)
-            final cpMatch = RegExp(r'score cp (-?\d+)').firstMatch(line);
-            final mateMatch = RegExp(r'score mate (-?\d+)').firstMatch(line);
+            final cpMatch = _infoScoreCpPattern.firstMatch(line);
+            final mateMatch = _infoScoreMatePattern.firstMatch(line);
 
             if (cpMatch != null) {
               final cp = int.parse(cpMatch.group(1)!);

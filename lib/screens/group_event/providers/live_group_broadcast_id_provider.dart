@@ -97,16 +97,29 @@ final liveGroupBroadcastIdsProvider = AutoDisposeStreamProvider<List<String>>((
     emit(resolvedIds);
   }
 
-  void applySettingsSnapshot(Settings? settings) {
+  // The settings row is rewritten every few seconds during live rounds, and
+  // realtime delivers each write even when only unrelated columns changed.
+  // Re-resolving then cost an RPC plus a parse every ~2 s on every page, so
+  // stream snapshots whose live ids are unchanged are skipped. The periodic
+  // refresh passes [force] so staleness (a round going quiet) is still
+  // re-checked against the server once a minute.
+  void applySettingsSnapshot(Settings? settings, {bool force = true}) {
     settingsSnapshotVersion += 1;
-    configuredLiveEntries = List<String>.unmodifiable(
+    final nextConfigured = List<String>.unmodifiable(
       settings?.liveGroupBroadcastIds ?? const <String>[],
     );
-    liveRoundIds = List<String>.unmodifiable(
+    final nextRoundIds = List<String>.unmodifiable(
       settings?.liveRoundIds ?? const <String>[],
     );
+    final unchanged =
+        hasSettingsSnapshot &&
+        listEquals(nextConfigured, configuredLiveEntries) &&
+        listEquals(nextRoundIds, liveRoundIds);
+    configuredLiveEntries = nextConfigured;
+    liveRoundIds = nextRoundIds;
     hasSettingsSnapshot = true;
     refreshedAfterRealtimeInterruption = false;
+    if (unchanged && !force) return;
     unawaited(emitResolvedIds());
   }
 
@@ -143,7 +156,7 @@ final liveGroupBroadcastIdsProvider = AutoDisposeStreamProvider<List<String>>((
   unawaited(refreshSettingsSnapshot('startup'));
 
   final settingsSubscription = settingsStream.listen(
-    applySettingsSnapshot,
+    (settings) => applySettingsSnapshot(settings, force: false),
     onError: (Object error, StackTrace stackTrace) {
       if (_isRecoverableRealtimeSettingsStreamError(error)) {
         if (!refreshedAfterRealtimeInterruption) {

@@ -1775,8 +1775,10 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
       // frame; the grid itself still re-lays out at the new width.
       return BucketedLayoutBuilder<int>(
         bucket:
-            (constraints) =>
-                (constraints.maxWidth / 280.0).floor().clamp(2, 6).toInt(),
+            (constraints) => DesktopGameCardsFlow.columnCountForWidth(
+              DesktopCardLayout.grid,
+              constraints.maxWidth - 48,
+            ),
         builder: (context, columns) {
           return DesktopGroupedGameKeyboardFocus(
             scopeId: 'countrymen-games',

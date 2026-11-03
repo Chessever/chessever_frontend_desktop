@@ -46,4 +46,31 @@ void main() {
 
     expect(notifier.state, isEmpty);
   });
+
+  test('restoreTab with what the tab already holds does not notify', () {
+    final notifier = UserMoveNagsNotifier();
+    notifier.restoreTab('tab-1', {
+      4: [1],
+      7: [3, 16],
+    });
+    final before = notifier.state;
+    var notifications = 0;
+    notifier.addListener((_) => notifications++, fireImmediately: false);
+
+    notifier.restoreTab('tab-1', {
+      7: [3, 16],
+      4: [1],
+    });
+    notifier.restoreTab('tab-2', const {});
+    expect(identical(notifier.state, before), isTrue);
+    expect(notifications, 0);
+
+    notifier.restoreTab('tab-1', {
+      4: [2],
+    });
+    expect(notifications, 1);
+    expect(notifier.state['tab-1'], {
+      4: [2],
+    });
+  });
 }

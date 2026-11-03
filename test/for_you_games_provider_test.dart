@@ -12,6 +12,8 @@ import 'package:chessever/repository/supabase/round/round_repository.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_pin_provider.dart';
+import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -210,6 +212,82 @@ GroupEventCardModel _event(String id, {required TourEventCategory category}) {
 }
 
 void main() {
+  test('desktop refresh and card leaves share all twelve realtime games', () {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final games = List.generate(12, (i) => _game('game-$i'));
+    LiveGamesBatchKey? subscribedKey;
+    final container = ProviderContainer(
+      overrides: [
+        forYouGamesPerEventLimitProvider.overrideWithValue(12),
+        shouldStreamProvider.overrideWith((ref) => true),
+        forYouEventSnapshotProvider.overrideWith((ref, eventId) {
+          return AsyncValue.data(_snapshot(eventId, visibleGames: games));
+        }),
+        gameUpdatesBatchStreamProvider.overrideWith((ref, key) {
+          subscribedKey = key;
+          return const Stream.empty();
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+    final subscription = container.listen(
+      forYouEventGamesWithAutoRefreshProvider('event'),
+      (_, __) {},
+      fireImmediately: true,
+    );
+    addTearDown(subscription.close);
+    expect(subscribedKey, isNotNull);
+    expect(subscribedKey!.gameIds, hasLength(12));
+    expect(
+      subscribedKey,
+      forYouEventLiveBatchKey(
+        eventId: 'event',
+        tourId: 'tour-1',
+        games: games,
+        maxGames: 12,
+      ),
+    );
+  });
+
+  for (final platform in [TargetPlatform.iOS, TargetPlatform.android]) {
+    test('$platform retains four games outside the desktop shell', () {
+      debugDefaultTargetPlatformOverride = platform;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final mobile = ProviderContainer();
+      final desktop = ProviderContainer(
+        overrides: [
+          forYouGamesPerEventLimitProvider.overrideWithValue(
+            kDesktopForYouGamesPerEvent,
+          ),
+        ],
+      );
+      addTearDown(mobile.dispose);
+      addTearDown(desktop.dispose);
+      expect(mobile.read(forYouGamesPerEventLimitProvider), 4);
+      expect(desktop.read(forYouGamesPerEventLimitProvider), 12);
+      final games = List.generate(14, (i) => _game('game-$i'));
+      expect(
+        forYouEventLiveBatchKey(
+          eventId: 'event',
+          tourId: 'tour',
+          games: games,
+        ).gameIds,
+        hasLength(4),
+      );
+      expect(
+        forYouEventLiveBatchKey(
+          eventId: 'event',
+          tourId: 'tour',
+          games: games,
+          maxGames: desktop.read(forYouGamesPerEventLimitProvider),
+        ).gameIds,
+        hasLength(12),
+      );
+      expect(mobile.read(forYouGamesPerEventLimitProvider), 4);
+    });
+  }
+
   test('For You shares one bounded batch that retains terminal rows', () {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);

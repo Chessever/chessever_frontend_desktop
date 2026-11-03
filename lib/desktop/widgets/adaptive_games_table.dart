@@ -472,7 +472,20 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   Widget? _lazyBodyCache;
   Object? _lazyBodyCacheKey;
 
+  /// Cells and sublines of each row. Hover changes only a row's
+  /// decoration, so it rebuilds the [TableRow]s around these same widget
+  /// instances and Flutter skips every cell; rebuilding them all on each
+  /// hovered-row change was a full table rebuild per mouse move across rows.
+  final Map<(int, double?), List<Widget>> _rowCellsCache = {};
+  Map<int, Widget>? _sublinesCache;
+
   void _dropBodyCaches() {
+    _dropRowShells();
+    _rowCellsCache.clear();
+    _sublinesCache = null;
+  }
+
+  void _dropRowShells() {
     _bodyRowsCache = null;
     _lazyBodyCache = null;
   }
@@ -529,7 +542,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   void _setHover(int? next) {
     if (!widget.enableRowHover) return;
     if (_hoveredIndex == next) return;
-    _dropBodyCaches();
+    _dropRowShells();
     setState(() => _hoveredIndex = next);
     if (next == null || next < 0 || next >= widget.rows.length) return;
     widget.onRowHover?.call(widget.rows[next], next);
@@ -605,13 +618,16 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
 
   List<TableRow> _buildBodyRows(BuildContext context) {
     // Pre-resolve sublines so we don't ask the builder twice per row.
-    final sublines = <int, Widget>{};
-    if (widget.rowSublineBuilder != null) {
-      for (var i = 0; i < widget.rows.length; i++) {
-        final s = widget.rowSublineBuilder!(context, widget.rows[i]);
-        if (s != null) sublines[i] = s;
+    final sublines = _sublinesCache ??= () {
+      final resolved = <int, Widget>{};
+      if (widget.rowSublineBuilder != null) {
+        for (var i = 0; i < widget.rows.length; i++) {
+          final s = widget.rowSublineBuilder!(context, widget.rows[i]);
+          if (s != null) resolved[i] = s;
+        }
       }
-    }
+      return resolved;
+    }();
     return [
       for (var i = 0; i < widget.rows.length; i++) ...[
         _bodyRow(i, hasSubline: sublines.containsKey(i)),
@@ -866,7 +882,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
 
     return TableRow(
       decoration: decoration,
-      children: [
+      children: _rowCellsCache[(rowIndex, height)] ??= [
         for (var colIndex = 0; colIndex < widget.columns.length; colIndex++)
           _buildInteractiveCell(
             row: row,

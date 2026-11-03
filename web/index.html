@@ -63,15 +63,31 @@
     // web_worker/index.js (keep the two host lists in sync).
     (function () {
       var relayHosts = {
+        "image.lichess.org": true,
         "image.lichess1.org": true,
+        "chessever.com": true,
+        "www.chessever.com": true,
         "marketing.chess.com": true,
         "saintlouischessclub.org": true,
-        "aicf.in": true
+        "aicf.in": true,
+        "ruchess.ru": true,
+        "www.pucharpolskiamatorow.pl": true
       };
+      // Shared hosts where only one bucket is relayed.
+      var relayPrefixes = [
+        { host: "storage.googleapis.com", path: "/cdn.chessmanager.com/" }
+      ];
+      // image.lichess1.org 301s every request to image.lichess.org.
+      var hostAliases = { "image.lichess1.org": "image.lichess.org" };
       function relayed(raw) {
         try {
           var url = new URL(raw, location.href);
-          if (relayHosts[url.hostname]) {
+          var allowed = relayHosts[url.hostname] ||
+            relayPrefixes.some(function (p) {
+              return url.hostname === p.host && url.pathname.indexOf(p.path) === 0;
+            });
+          if (allowed) {
+            if (hostAliases[url.hostname]) url.hostname = hostAliases[url.hostname];
             return "/_img?u=" + encodeURIComponent(url.href);
           }
         } catch (e) {}

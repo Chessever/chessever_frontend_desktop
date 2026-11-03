@@ -1594,7 +1594,7 @@ TournamentGameSummary _preserveRicherEventRailSnapshot(
       existing.lastMoveTime != null &&
       (fresh.lastMoveTime == null ||
           existing.lastMoveTime!.isAfter(fresh.lastMoveTime!));
-  return fresh.copyWith(
+  final merged = fresh.copyWith(
     pgn: (fresh.pgn ?? '').trim().isNotEmpty ? fresh.pgn : existing.pgn,
     whiteClockSeconds:
         existingIsNewer
@@ -1620,4 +1620,13 @@ TournamentGameSummary _preserveRicherEventRailSnapshot(
     hasStarted: existingIsNewer ? existing.hasStarted : fresh.hasStarted,
     localPgnSource: existing.localPgnSource,
   );
+  // Keep the old object when nothing changed. The rail caches each row
+  // chunk by summary identity, so the 5 s safety refresh handing back a
+  // fresh copy of every row rebuilt and re-laid-out the whole round table
+  // whenever any single game had moved.
+  if (merged.timeControlText == existing.timeControlText &&
+      _eventRailSummariesEqual(existing, merged)) {
+    return existing;
+  }
+  return merged;
 }

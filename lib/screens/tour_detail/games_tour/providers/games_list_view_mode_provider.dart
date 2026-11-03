@@ -9,7 +9,9 @@ final gamesListViewModeProvider = Provider<GamesListViewMode>((ref) {
   final boardSettings = ref.watch(boardSettingsProviderNew);
   final index =
       boardSettings.valueOrNull?.gamesListViewModeIndex ??
-      0; // Safe loading fallback: compact cards until persisted settings resolve
+      // Same default as BoardSettingsNew while persisted settings load, so
+      // the first frame does not flash a different layout.
+      const BoardSettingsNew().gamesListViewModeIndex;
   return GamesListViewMode.values[index.clamp(
     0,
     GamesListViewMode.values.length - 1,

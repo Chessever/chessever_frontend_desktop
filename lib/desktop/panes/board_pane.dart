@@ -990,6 +990,18 @@ class _BoardPaneContent extends HookConsumerWidget {
       () => ResizableSplitViewController(),
       const [],
     );
+    // One rail widget instance per tab. The rail reads everything it shows
+    // from providers, so it never needs this pane's build; a fresh instance
+    // (and closure) every time made Flutter re-run its heavy build on each
+    // move step, engine-arrow change and live move of the open game.
+    final gamesRailTabId = activeTabId ?? 'board-default';
+    final gamesRail = useMemoized(
+      () => EventGamesTable(
+        tabId: gamesRailTabId,
+        onClose: () => mainSplitController.collapse(0),
+      ),
+      [gamesRailTabId],
+    );
     final pictureInPictureMode = ref.watch(boardPictureInPictureModeProvider);
     final pictureInPictureVisibility = ref.watch(
       boardPictureInPictureVisibilityProvider,
@@ -4505,7 +4517,9 @@ class _BoardPaneContent extends HookConsumerWidget {
     NagDisplay? boardAnnotationGlyph;
     if (cursor > 0) {
       final userNagsForTab =
-          ref.watch(userMoveNagsProvider)[activeTabId ?? '__none__'] ??
+          ref.watch(
+            userMoveNagsProvider.select((m) => m[activeTabId ?? '__none__']),
+          ) ??
           const <int, List<int>>{};
       final userNagsForPly =
           isOnMainline
@@ -5082,7 +5096,9 @@ class _BoardPaneContent extends HookConsumerWidget {
         visibleMoveOrderController: visibleNotationMoveOrderController,
         lichessAnnotations: moveAnnotations,
         userNags:
-            ref.watch(userMoveNagsProvider)[activeTabId ?? '__none__'] ??
+            ref.watch(
+            userMoveNagsProvider.select((m) => m[activeTabId ?? '__none__']),
+          ) ??
             const <int, List<int>>{},
         onSetUserQualityNag: (ply, nag) {
           final id = activeTabId;
@@ -5315,10 +5331,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                   collapsedIcon: Icons.view_list_rounded,
                   dismissible: true,
                   initialCollapsed: gameRailInitialCollapsed,
-                  child: EventGamesTable(
-                    tabId: activeTabId ?? 'board-default',
-                    onClose: () => mainSplitController.collapse(0),
-                  ),
+                  child: gamesRail,
                 ),
               SplitChild(
                 minSize: pictureInPictureMode ? 0 : 380,
@@ -7075,13 +7088,41 @@ bool doesGameTreeMatchBroadcastPgn({
   required String broadcastPgn,
 }) {
   if (game.detachedRootAnalysis?.isNotEmpty ?? false) return false;
-  final ChessGame canonical;
-  try {
-    canonical = ChessGame.fromPgn(game.gameId, broadcastPgn);
-  } catch (_) {
-    return false;
-  }
+  final ChessGame? canonical = _canonicalBroadcastParse(
+    game.gameId,
+    broadcastPgn,
+  );
+  if (canonical == null) return false;
   return _broadcastLinesMatch(game.mainline, canonical.mainline);
+}
+
+// A live move reaches doesGameTreeMatchBroadcastPgn two to four times with
+// the same PGN (incremental path, the seed effect echo, applyPgn), and each
+// full parse builds a SAN and FEN for every move on the UI thread, in the
+// frame the piece animation starts. The parse is only compared against,
+// never handed out, so a few recent results can be shared.
+final _canonicalBroadcastParses = <String, ChessGame?>{};
+const _canonicalBroadcastParseCacheSize = 8;
+
+ChessGame? _canonicalBroadcastParse(String gameId, String broadcastPgn) {
+  final key = '$gameId\u0000$broadcastPgn';
+  if (_canonicalBroadcastParses.containsKey(key)) {
+    // Re-insert so the map's insertion order stays least-recent first.
+    final hit = _canonicalBroadcastParses.remove(key);
+    _canonicalBroadcastParses[key] = hit;
+    return hit;
+  }
+  ChessGame? parsed;
+  try {
+    parsed = ChessGame.fromPgn(gameId, broadcastPgn);
+  } catch (_) {
+    parsed = null;
+  }
+  _canonicalBroadcastParses[key] = parsed;
+  while (_canonicalBroadcastParses.length > _canonicalBroadcastParseCacheSize) {
+    _canonicalBroadcastParses.remove(_canonicalBroadcastParses.keys.first);
+  }
+  return parsed;
 }
 
 bool _broadcastLinesMatch(ChessLine current, ChessLine canonical) {
@@ -8892,28 +8933,12 @@ class _BoardArea extends ConsumerWidget {
     // right rail, so the gauge and PV list always query the same position.
     // A threat probe can only be active when a legal null move was formed.
     final threatActive = threatMode;
-    final evalPvFirstMoves =
-        showEngineAnalysis && engineSettings.showPvArrows
-            ? ref.watch(
-              boardEvalProvider(analysisFen).select((state) {
-                final arrowCount = math.min(
-                  engineSettings.getMaxArrowsOnBoard(),
-                  state.pvs.length,
-                );
-                return [
-                  for (var index = 0; index < arrowCount; index++)
-                    _firstPvMove(state.pvs[index].moves),
-                ].join('\u0000');
-              }),
-            )
-            : '';
-    final evalPvs =
-        evalPvFirstMoves.isEmpty
-            ? const <BoardPv>[]
-            : <BoardPv>[
-              for (final moves in evalPvFirstMoves.split('\u0000'))
-                BoardPv(evaluation: 0, mate: null, moves: moves),
-            ];
+    // Engine arrows are watched inside [_BoardWithAnnotations]. Watching them
+    // here rebuilt this whole area, both player headers included, every time
+    // a first PV move changed, which at low depth is several times in the
+    // first second after each move, while the piece slide is running.
+    final engineArrowFen =
+        showEngineAnalysis && engineSettings.showPvArrows ? analysisFen : null;
     final showEvalBar = shouldShowDesktopBoardEvalBar(engineSettings);
     final tournament =
         boardArgs == null ? ref.watch(tournamentGamesProvider) : null;
@@ -9195,7 +9220,7 @@ class _BoardArea extends ConsumerWidget {
                   showEvalBar: showEvalBar,
                   showEngineAnalysis: showEngineAnalysis,
                   threatActive: threatActive,
-                  evalPvs: evalPvs,
+                  engineArrowFen: engineArrowFen,
                   hasHeaders: hasHeaders,
                   topRowHeight: topRowHeight,
                   bottomRowHeight: bottomRowHeight,
@@ -9285,7 +9310,7 @@ class _BoardArea extends ConsumerWidget {
     required bool showEvalBar,
     required bool showEngineAnalysis,
     required bool threatActive,
-    required List<BoardPv> evalPvs,
+    required String? engineArrowFen,
     required bool hasHeaders,
     required double topRowHeight,
     required double bottomRowHeight,
@@ -9338,7 +9363,7 @@ class _BoardArea extends ConsumerWidget {
               boardAnnotationSquare: boardAnnotationSquare,
               gameEnding: gameEnding,
               onWheelStep: onWheelStep,
-              evalPvs: evalPvs,
+              engineArrowFen: engineArrowFen,
             ),
           ),
         ],
@@ -9528,7 +9553,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     required this.boardAnnotationSquare,
     required this.gameEnding,
     required this.onWheelStep,
-    required this.evalPvs,
+    required this.engineArrowFen,
   });
 
   final String tabId;
@@ -9552,7 +9577,8 @@ class _BoardWithAnnotations extends ConsumerWidget {
   final Square? boardAnnotationSquare;
   final _GameEndingData? gameEnding;
   final ValueChanged<int> onWheelStep;
-  final List<BoardPv> evalPvs;
+  /// Position whose engine lines draw arrows, or null when arrows are off.
+  final String? engineArrowFen;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -9569,6 +9595,29 @@ class _BoardWithAnnotations extends ConsumerWidget {
     final engineSettings =
         ref.watch(engineSettingsProviderNew).valueOrNull ??
         const EngineSettings();
+    final arrowFen = engineArrowFen;
+    final evalPvFirstMoves =
+        arrowFen == null
+            ? ''
+            : ref.watch(
+              boardEvalProvider(arrowFen).select((state) {
+                final arrowCount = math.min(
+                  engineSettings.getMaxArrowsOnBoard(),
+                  state.pvs.length,
+                );
+                return [
+                  for (var index = 0; index < arrowCount; index++)
+                    _firstPvMove(state.pvs[index].moves),
+                ].join('\u0000');
+              }),
+            );
+    final evalPvs =
+        evalPvFirstMoves.isEmpty
+            ? const <BoardPv>[]
+            : <BoardPv>[
+              for (final moves in evalPvFirstMoves.split('\u0000'))
+                BoardPv(evaluation: 0, mate: null, moves: moves),
+            ];
     final engineShapes = _enginePvArrowShapes(
       fen: fen,
       pvs: evalPvs,
