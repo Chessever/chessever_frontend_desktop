@@ -33,7 +33,9 @@ class BoardSettingsNew {
     this.soundVolume = kDefaultSoundVolume,
     this.chatEnabled = true,
     this.pieceStyleIndex = 0, // Now used for chessground PieceSet
-    this.gamesListViewModeIndex = 0,
+    // GamesListViewMode.chessBoardGrid: game lists open as board-preview
+    // grid cards (the rightmost Compact / List / Grid toggle) by default.
+    this.gamesListViewModeIndex = 1,
     this.useFigurine =
         false, // Use letters (KQRBN) instead of chess piece symbols by default
     this.notationInline = true,
