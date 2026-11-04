@@ -39,6 +39,11 @@ enum DesktopFeature {
 
   /// Premium Events discovery tabs. Current events and Calendar stay free.
   eventDiscovery,
+
+  /// The community Likes ranking (most liked games of a day, week, month or
+  /// year). Browsing every ranking is free; opening a game is free only from
+  /// today's ranking. Not the user's own Likes collection ([likes]).
+  communityLikes,
 }
 
 /// Where the user discovered the content a request acts on.
@@ -66,6 +71,10 @@ enum DesktopDiscoveryOrigin {
   /// A published collection. Its games are the author's work: they are read
   /// on the board and never copied, saved or exported from it.
   collection,
+
+  /// The community Likes ranking. [DesktopAccessContext.contentDate] is the
+  /// start of the ranked day, and is set only for a one-day ranking.
+  communityLikes,
 }
 
 /// What the request wants to do.

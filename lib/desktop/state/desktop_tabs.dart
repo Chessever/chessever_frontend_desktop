@@ -72,6 +72,10 @@ enum TabKind {
 
   /// Editorial messages shared with the phone Inbox.
   inbox,
+
+  /// The community Likes ranking: the most liked games of a day, week, month
+  /// or year, and the players in them (the phone's Discovery › Likes).
+  likes,
 }
 
 extension TabKindLabel on TabKind {
@@ -127,6 +131,8 @@ extension TabKindLabel on TabKind {
         return 'Collections';
       case TabKind.collectionWorkspace:
         return 'Collection';
+      case TabKind.likes:
+        return 'Likes';
     }
   }
 }

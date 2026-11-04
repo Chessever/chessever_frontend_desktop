@@ -11,6 +11,7 @@ import 'package:chessever/desktop/panes/library_pane.dart'
     show DatabaseWorkspaceArgs, openDatabaseWorkspaceTabForContainer;
 import 'package:chessever/desktop/services/collections_reader.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
+import 'package:chessever/desktop/services/likes/community_likes_link.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_team.dart';
 import 'package:chessever/desktop/widgets/collections/collection_actions.dart'
@@ -158,6 +159,10 @@ DesktopBroadcastDeepLink? parseDesktopBroadcastDeepLink(Uri uri) {
 /// broadcast, player profile.
 enum DesktopIncomingLinkTarget {
   inbox,
+
+  /// The community Likes ranking (`/app/likes/<period>?date=&view=`), as the
+  /// phone shares it.
+  likes,
   game,
   book,
   folder,
@@ -181,9 +186,13 @@ class DesktopIncomingLink {
     this.fideId,
     this.teamName,
     this.profileId,
+    this.likes,
   });
 
   final DesktopIncomingLinkTarget target;
+
+  /// The ranking a Likes link names.
+  final CommunityLikesLink? likes;
   final DesktopGameDeepLink? game;
   final DesktopBroadcastDeepLink? broadcast;
   final String? shareToken;
@@ -227,6 +236,11 @@ DesktopIncomingLink? parseDesktopIncomingLink(Uri uri) {
               uri.host == 'inbox' &&
               (uri.path.isEmpty || uri.path == '/')))) {
     return const DesktopIncomingLink._(DesktopIncomingLinkTarget.inbox);
+  }
+
+  final likes = parseCommunityLikesLink(uri, isWeb: isWeb);
+  if (likes != null) {
+    return DesktopIncomingLink._(DesktopIncomingLinkTarget.likes, likes: likes);
   }
 
   final segs = uri.pathSegments;
@@ -398,6 +412,9 @@ class DesktopDeepLinkRouter {
     switch (link.target) {
       case DesktopIncomingLinkTarget.inbox:
         container.read(desktopTabsProvider.notifier).open(TabKind.inbox);
+        return true;
+      case DesktopIncomingLinkTarget.likes:
+        openCommunityLikesLink(link.likes!, container);
         return true;
       case DesktopIncomingLinkTarget.game:
         return _handleGame(uri, link.game!, container);

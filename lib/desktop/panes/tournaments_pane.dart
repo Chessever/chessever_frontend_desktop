@@ -3271,6 +3271,10 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                                 )
                                 .update((types) => {...types, tabId: type});
                           },
+                          onLikesTap:
+                              () => ref
+                                  .read(desktopTabsProvider.notifier)
+                                  .open(TabKind.likes),
                         ),
                         const DesktopSmartEventShelf(),
                       ],

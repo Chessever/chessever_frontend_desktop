@@ -8,3 +8,6 @@ const String kLikeLockedReason =
 const String kMiniatureLockedReason =
     "Free opens today's miniatures. Premium opens every day, "
     'including undated games.';
+
+const String kCommunityLikesLockedReason =
+    "Free opens games from today's ranking. Premium opens every period.";

@@ -93,6 +93,7 @@ import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/desktop/widgets/board_annotation_layer.dart';
 import 'package:chessever/desktop/widgets/board_resize_handle.dart';
 import 'package:chessever/desktop/widgets/board_wheel_navigation.dart';
+import 'package:chessever/desktop/widgets/board_like_button.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
@@ -5239,6 +5240,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           startPlayAgainFromBoardHeaders(ref, pgnHeaders.value)
                       : null,
               onPlayFromHere: openPlayFromHereDialog,
+              likeGame: desktopLikeableBoardGame(boardArgs?.sourceGame),
             );
 
     // Broadcasts resolve from an event; author analyses can belong to any game.
@@ -8241,7 +8243,12 @@ class _RightRailBoardActions extends StatelessWidget {
     required this.canSaveGame,
     required this.saveShortcutLabel,
     this.onPlayAgain,
+    this.likeGame,
   });
+
+  /// The game Like acts on, or null when the board holds no likeable game
+  /// (an analysis board, a pasted PGN, the board editor).
+  final GamesTourModel? likeGame;
 
   final Map<String, String> headers;
   final int eventInfoTrigger;
@@ -8262,6 +8269,13 @@ class _RightRailBoardActions extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (likeGame case final game?) ...[
+            DesktopBoardLikeButton(
+              key: ValueKey('board-like:${game.likeId}'),
+              game: game,
+            ),
+            const SizedBox(width: 4),
+          ],
           _RailIconAction(
             tooltip: saveTooltip,
             icon: FIcons.bookmarkPlus,
@@ -8662,6 +8676,21 @@ bool _isPromotionPawnMove(Position position, NormalMove move) {
   if (position.board.roleAt(move.from) != Role.pawn) return false;
   return (move.to.rank == Rank.first && position.turn == Side.black) ||
       (move.to.rank == Rank.eighth && position.turn == Side.white);
+}
+
+/// The game a board's Like button acts on: the phone's likeable sources
+/// (`_isLikeableGameSource`), broadcast, Gamebase, TWIC and saved analyses,
+/// whose like identity is their original game (`GamesTourModel.likeId`).
+@visibleForTesting
+GamesTourModel? desktopLikeableBoardGame(GamesTourModel? game) {
+  if (game == null || game.likeId.trim().isEmpty) return null;
+  return switch (game.source) {
+    GameSource.supabase ||
+    GameSource.gamebase ||
+    GameSource.twic ||
+    GameSource.savedAnalysis => game,
+    _ => null,
+  };
 }
 
 @visibleForTesting

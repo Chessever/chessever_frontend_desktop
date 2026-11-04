@@ -73,6 +73,7 @@ DesktopPane? paneForTabKind(TabKind kind) {
     case TabKind.tournaments:
     case TabKind.tournamentDetail:
     case TabKind.smartGames:
+    case TabKind.likes:
       // Tournament detail and smart game collection tabs map back to the
       // Tournaments sidebar entry — they're deeper views of the same category.
       return DesktopPane.tournaments;

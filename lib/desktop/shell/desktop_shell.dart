@@ -12,6 +12,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/board_pane.dart';
+import 'package:chessever/desktop/panes/desktop_likes_pane.dart';
 import 'package:chessever/desktop/panes/desktop_whats_new_home_pane.dart';
 import 'package:chessever/desktop/panes/calendar_pane.dart';
 import 'package:chessever/desktop/panes/opening_explorer_pane.dart';
@@ -1046,6 +1047,8 @@ Widget resolveDesktopTabContent(
       return TournamentDetailPane(tabId: tab.id);
     case TabKind.smartGames:
       return DesktopSmartGamesTabContent(tabId: tab.id);
+    case TabKind.likes:
+      return DesktopLikesPane(tabId: tab.id);
     case TabKind.library:
       return const LibraryPane();
     case TabKind.databaseWorkspace:

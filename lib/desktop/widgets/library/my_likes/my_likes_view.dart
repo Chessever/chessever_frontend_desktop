@@ -10,6 +10,7 @@ import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/my_likes_provider.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_date_gate_prompt.dart';
@@ -234,6 +235,20 @@ class MyLikesView extends HookConsumerWidget {
                           onPress:
                               () => _pickFilters(buttonContext, ref, query),
                         ),
+                  ),
+                  const SizedBox(width: 8),
+                  // The community ranking of everyone's likes. Free to
+                  // browse, so it is reachable here and not only from the
+                  // Premium For You shelf.
+                  DesktopToolbarPillButton(
+                    label: 'Most liked',
+                    icon: Icons.leaderboard_outlined,
+                    height: desktopToolbarControlHeight,
+                    tooltip: 'The games the community liked most',
+                    onPress:
+                        () => ref
+                            .read(desktopTabsProvider.notifier)
+                            .open(TabKind.likes),
                   ),
                   const SizedBox(width: 8),
                   DesktopToolbarPillButton(

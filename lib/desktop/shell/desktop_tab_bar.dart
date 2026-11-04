@@ -1608,6 +1608,8 @@ IconData _iconFor(TabKind kind) {
       return Icons.emoji_events_outlined;
     case TabKind.smartGames:
       return Icons.sports_score_outlined;
+    case TabKind.likes:
+      return Icons.favorite_border_rounded;
     case TabKind.library:
       return Icons.collections_bookmark_outlined;
     case TabKind.databaseWorkspace:

@@ -12,6 +12,7 @@ void main() {
   test('dispatch priority matches the phone', () {
     expect(DesktopIncomingLinkTarget.values, [
       DesktopIncomingLinkTarget.inbox,
+      DesktopIncomingLinkTarget.likes,
       DesktopIncomingLinkTarget.game,
       DesktopIncomingLinkTarget.book,
       DesktopIncomingLinkTarget.folder,

@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_guest_upgrade_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/providers/auth_state_provider.dart';
 import 'package:chessever/repository/liked_games/liked_games_provider.dart';
@@ -11,14 +12,28 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 ///
 /// Waits for the liked list to load first: toggling against a list that has
 /// not arrived yet would read "not liked" and insert a duplicate row.
-Future<void> toggleDesktopGameLike({
+///
+/// Answers the like state the game was left in, or null when nothing changed
+/// (sign-in declined, likes not loaded, or the write was rolled back).
+Future<bool?> toggleDesktopGameLike({
   required BuildContext context,
   required WidgetRef ref,
   required GamesTourModel game,
 }) async {
-  if (ref.read(currentUserProvider) == null) {
-    showDesktopToast(context, 'Sign in to like games.');
-    return;
+  // Likes live on the account (My Likes on every device, and the community
+  // ranking), so a guest or signed-out window signs in first, then the like
+  // goes through in the same click.
+  final user = ref.read(currentUserProvider);
+  if (user == null || user.isAnonymous) {
+    final signedIn = await showDesktopAccountSignIn(
+      context,
+      surface: 'like_game',
+      title: 'Sign in to like games',
+      message:
+          'Liked games are saved to My Likes on every device and count '
+          'toward the community Likes ranking.',
+    );
+    if (!signedIn || !context.mounted) return null;
   }
   final likeId = game.likeId;
   try {
@@ -31,22 +46,23 @@ Future<void> toggleDesktopGameLike({
         error: true,
       );
     }
-    return;
+    return null;
   }
   final notifier = ref.read(likedGamesProvider.notifier);
   final wasLiked = notifier.isLiked(likeId);
   final nowLiked = await notifier.toggle(game);
-  if (!context.mounted) return;
+  if (!context.mounted) return nowLiked == wasLiked ? null : nowLiked;
   if (nowLiked == wasLiked) {
     showDesktopToast(
       context,
       wasLiked ? "Couldn't remove the like." : "Couldn't like this game.",
       error: true,
     );
-    return;
+    return null;
   }
   showDesktopToast(
     context,
     nowLiked ? 'Added to My Likes' : 'Removed from My Likes',
   );
+  return nowLiked;
 }

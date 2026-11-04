@@ -12,6 +12,7 @@ void main() {
     tester,
   ) async {
     PremiumGamesType? selectedType;
+    var likesTaps = 0;
 
     await tester.pumpWidget(
       ProviderScope(
@@ -32,6 +33,7 @@ void main() {
                     onFavoritesTap: () {},
                     onCountrymenTap: () {},
                     onSmartCollectionTap: (type) => selectedType = type,
+                    onLikesTap: () => likesTaps++,
                   ),
                 ),
               );
@@ -49,6 +51,13 @@ void main() {
     await tester.pump();
 
     expect(selectedType, PremiumGamesType.gm);
+
+    // Likes sits at the end of the shelf; bring it into view first.
+    await tester.ensureVisible(find.text('Likes'));
+    await tester.pump();
+    await tester.tap(find.text('Likes'));
+    await tester.pump();
+    expect(likesTaps, 1);
   });
 }
 

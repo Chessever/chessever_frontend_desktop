@@ -324,6 +324,13 @@ DesktopPaywallCopy _premiumCopy(
         title: 'Only today\'s Miniatures are free',
         body: 'Earlier, undated and upcoming games need Premium.',
       );
+    case DesktopAccessReason.premiumCommunityLikesNotToday:
+      return const DesktopPaywallCopy(
+        title: 'Only today\'s most liked games open free',
+        body:
+            'Every ranking stays free to browse. Premium opens games from '
+            'any week, month, year or earlier day.',
+      );
     case DesktopAccessReason.premiumBotvinnikAllowance:
       // Never "unlimited": Botvinnik is a daily allowance set by the server.
       return const DesktopPaywallCopy(

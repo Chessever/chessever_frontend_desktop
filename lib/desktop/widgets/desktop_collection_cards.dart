@@ -23,11 +23,15 @@ class DesktopCollectionCards extends StatelessWidget {
     required this.onFavoritesTap,
     required this.onCountrymenTap,
     required this.onSmartCollectionTap,
+    required this.onLikesTap,
   });
 
   final VoidCallback onFavoritesTap;
   final VoidCallback onCountrymenTap;
   final ValueChanged<PremiumGamesType> onSmartCollectionTap;
+
+  /// Opens the community Likes ranking (the phone's Discovery › Likes).
+  final VoidCallback onLikesTap;
 
   // A "shelf" of fixed-width tiles, left-aligned. Keeping these at their
   // natural width avoids the top row becoming a full-width dashboard band.
@@ -91,6 +95,17 @@ class DesktopCollectionCards extends StatelessWidget {
               width: _smartCardWidth + 24,
               height: _cardHeight,
               onTap: () => onSmartCollectionTap(PremiumGamesType.miniatures),
+            ),
+            const SizedBox(width: _gap),
+            _SmartCollectionCard(
+              width: _smartCardWidth,
+              height: _cardHeight,
+              title: 'Likes',
+              hint: 'Community favorites',
+              icon: Icons.favorite_rounded,
+              // Deep rose into oxblood: white copy stays well above 4.5:1.
+              colors: const [Color(0xFF881337), Color(0xFF581C1C)],
+              onTap: onLikesTap,
             ),
           ],
         ),

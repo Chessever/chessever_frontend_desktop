@@ -41,6 +41,7 @@ enum DesktopAccessReason {
   premiumLocalPositionQuery('premium_local_position_query'),
   premiumLikesOutsideWindow('premium_likes_outside_window'),
   premiumMiniatureNotToday('premium_miniature_not_today'),
+  premiumCommunityLikesNotToday('premium_community_likes_not_today'),
   premiumBotvinnikAllowance('premium_botvinnik_allowance'),
   quotaFavoritePlayers('quota_favorite_players'),
   quotaCloudDatabases('quota_cloud_databases'),
@@ -318,6 +319,8 @@ _Requirement _requirementFor(DesktopAccessContext context, DateTime now) {
       return _localFilesRequirement(context);
     case DesktopFeature.miniatures:
       return _miniatureRequirement(context, now);
+    case DesktopFeature.communityLikes:
+      return _communityLikesRequirement(context, now);
 
     case DesktopFeature.ownedDocument:
     case DesktopFeature.sharedBook:
@@ -387,6 +390,9 @@ _Requirement _provenanceRequirement(DesktopAccessContext context, DateTime now) 
   if (context.origin == DesktopDiscoveryOrigin.miniatures) {
     return _miniatureRequirement(context, now);
   }
+  if (context.origin == DesktopDiscoveryOrigin.communityLikes) {
+    return _communityLikesRequirement(context, now);
+  }
   if (_paidOrigins.contains(context.origin)) {
     if (context.ownershipCovers) return _owned;
     if (_paidSourceFreeActions.contains(context.action)) return _free;
@@ -441,6 +447,27 @@ _Requirement _miniatureRequirement(DesktopAccessContext context, DateTime now) {
       ? _free
       : const _Requirement.premium(
           DesktopAccessReason.premiumMiniatureNotToday,
+        );
+}
+
+/// Free: browsing every ranking (Today, Week, Month, Year, earlier dates and
+/// the Players list), sorting and filtering it. Opening a game is free only
+/// from today's one-day ranking, whose start [contentDate] carries; a week,
+/// month or year ranking carries no date and is Premium. Same rule as the
+/// phone's Discovery › Likes (`MostLikedQuery.isFree`).
+_Requirement _communityLikesRequirement(
+  DesktopAccessContext context,
+  DateTime now,
+) {
+  if (_paidSourceFreeActions.contains(context.action)) return _free;
+  if (context.ownershipCovers) return _owned;
+  final day = context.contentDate;
+  final today = DateTime(now.year, now.month, now.day);
+  final free = day != null && DateTime(day.year, day.month, day.day) == today;
+  return free
+      ? _free
+      : const _Requirement.premium(
+          DesktopAccessReason.premiumCommunityLikesNotToday,
         );
 }
 
