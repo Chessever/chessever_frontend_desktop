@@ -50,13 +50,14 @@ import 'package:chessever/utils/pgn_clock_utils.dart';
 /// size that feels right for playing.
 const _playBoardSizePreferenceKey = 'desktop_play_board_size_px_v1';
 
-/// Fixed chrome around the play board. Both player rows get the same height
-/// and the same trailing reserve, so the two clocks share a right edge and
-/// the resize grip never lands on top of the bottom one.
+/// Fixed chrome around the play board. Both player rows span the board's
+/// full width and end in the clock, so both clocks sit flush with the board's
+/// right edge. The resize grip lives in the board's own bottom-right corner
+/// (as on the Board pane), not in the player row.
 const _playHeaderHeight = 52.0;
 const _playHeaderGap = 10.0;
 const _playBoardPadding = 16.0;
-const _playHeaderTrailingReserve = kDesktopBoardResizeHandleSize + 10.0;
+const _playResizeGripTarget = 16.0;
 
 const _playSplitStorageKey = 'play_pane.active_game.v1';
 const _playBoardInitialWeight = 0.64;
@@ -748,19 +749,22 @@ class _PlayBoardColumn extends ConsumerWidget {
                             ),
                           ],
                         ),
+                        // Same placement as the Board pane: a 16px target in
+                        // the board's extreme bottom-right corner, clear of
+                        // the piece centre and out of the player row.
                         Positioned(
                           right: 0,
-                          bottom:
-                              (_playHeaderHeight -
-                                  kDesktopBoardResizeHandleSize) /
-                              2,
-                          child: BoardResizeHandle(
-                            boardSize: boardSize,
-                            minSize: metrics.minBoardSize,
-                            maxSize: metrics.growLimit,
-                            onResize: onBoardSizeChanged,
-                            onResizeEnd: onBoardSizeChangeEnd,
-                            onReset: onBoardSizeReset,
+                          bottom: _playHeaderHeight + _playHeaderGap,
+                          child: SizedBox.square(
+                            dimension: _playResizeGripTarget,
+                            child: BoardResizeHandle(
+                              boardSize: boardSize,
+                              minSize: metrics.minBoardSize,
+                              maxSize: metrics.growLimit,
+                              onResize: onBoardSizeChanged,
+                              onResizeEnd: onBoardSizeChangeEnd,
+                              onReset: onBoardSizeReset,
+                            ),
                           ),
                         ),
                       ],
@@ -850,7 +854,10 @@ class _PlayerRow extends ConsumerWidget {
             ),
           ),
         const SizedBox(width: 12),
-        Flexible(
+        // Expanded, not Flexible + Spacer: two flex-1 children split the free
+        // space in half, which parked the clock mid-row at a name-dependent
+        // offset. The name column takes all of it, so the clock is flush right.
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -893,7 +900,7 @@ class _PlayerRow extends ConsumerWidget {
             ],
           ),
         ),
-        const Spacer(),
+        const SizedBox(width: 12),
         if (score != null) ...[
           _PostGameBadge(
             key: ValueKey(
@@ -903,10 +910,11 @@ class _PlayerRow extends ConsumerWidget {
           ),
           const SizedBox(width: 12),
         ],
-        _ClockChip(millis: clockMs, active: isActive),
-        // Both rows reserve the grip's slot so the two clocks share one right
-        // edge; only the bottom row actually carries the grip.
-        const SizedBox(width: _playHeaderTrailingReserve),
+        _ClockChip(
+          key: ValueKey('play-clock-${side.name}'),
+          millis: clockMs,
+          active: isActive,
+        ),
       ],
     );
   }
@@ -1084,7 +1092,7 @@ class _EloDeltaPillState extends State<_EloDeltaPill> {
 }
 
 class _ClockChip extends StatelessWidget {
-  const _ClockChip({required this.millis, required this.active});
+  const _ClockChip({super.key, required this.millis, required this.active});
 
   final int millis;
   final bool active;

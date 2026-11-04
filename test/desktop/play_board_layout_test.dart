@@ -117,6 +117,25 @@ void main() {
       expect(boardSize.width, boardSize.height);
       expect(boardSize.width, greaterThan(700));
     });
+
+    testWidgets('both clocks sit flush with the board right edge',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1440, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(_playHarness());
+      await tester.pump(const Duration(seconds: 5));
+
+      // A Flexible name column beside a Spacer split the row's free space in
+      // half, parking each clock mid-row at a name-dependent offset.
+      final boardRight =
+          tester.getTopRight(find.byType(DesktopChessBoard)).dx;
+      for (final side in ['white', 'black']) {
+        final clock = find.byKey(ValueKey('play-clock-$side'));
+        expect(clock, findsOneWidget);
+        expect(tester.getTopRight(clock).dx, closeTo(boardRight, 0.5));
+      }
+    });
   });
 }
 
