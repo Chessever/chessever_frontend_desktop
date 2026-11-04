@@ -25,6 +25,8 @@ class SplitChild {
     this.dismissible = true,
     this.initialCollapsed = false,
     this.onRestore,
+    this.comfortableSize,
+    this.spareAbove,
   });
 
   final Widget child;
@@ -58,6 +60,42 @@ class SplitChild {
 
   /// Optional hook invoked when a collapsed rail expands this child again.
   final VoidCallback? onRestore;
+
+  /// Size at which this child shows all of its content, such as a toolbar
+  /// that drops buttons when it is narrower.
+  ///
+  /// When the weights leave the child smaller, the split grows it with space
+  /// its siblings can spare (see [spareAbove]), nearest sibling first. It
+  /// grows only part of the way when not enough can be spared, so a small
+  /// window degrades the same way it did without this.
+  ///
+  /// A gutter drag or a `setSize` call is kept as the user left it, even
+  /// below this size. The next change to the available space, the visible
+  /// panes, or any child's [comfortableSize] or [spareAbove] applies it again.
+  final double? comfortableSize;
+
+  /// Size above which this child can lend space to a sibling that is below
+  /// its [comfortableSize]. Space below it is never lent. Null means
+  /// [minSize]. Use it for a pane whose extra size is dead space past some
+  /// point, like a board column wider than the board it holds.
+  final double? spareAbove;
+
+  /// Copy with [comfortableSize] and [spareAbove] replaced.
+  SplitChild withSizing({double? comfortableSize, double? spareAbove}) {
+    return SplitChild(
+      minSize: minSize,
+      maxSize: maxSize,
+      initialWeight: initialWeight,
+      label: label,
+      collapsedIcon: collapsedIcon,
+      dismissible: dismissible,
+      initialCollapsed: initialCollapsed,
+      onRestore: onRestore,
+      comfortableSize: comfortableSize,
+      spareAbove: spareAbove,
+      child: child,
+    );
+  }
 }
 
 /// A flexible split layout with draggable gutters between adjacent children.
@@ -147,6 +185,12 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
   bool _animateLayout = false;
   int _animationTicket = 0;
 
+  /// Sizing inputs at the last gutter drag or `setSize`. While they are
+  /// unchanged, [SplitChild.comfortableSize] stays off so the layout the user
+  /// made holds. Null when nothing is suspended.
+  int? _suspendedSizingSignature;
+  Timer? _comfortableAnimationTimer;
+
   @override
   void initState() {
     super.initState();
@@ -183,6 +227,18 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
       // controller / storage layer will re-collapse intentionally if
       // needed.
       _collapsed = <int>{};
+      _suspendedSizingSignature = null;
+    } else if (_comfortableSizeChanged(oldWidget.children, widget.children)) {
+      // A pane that now needs more room, such as a toolbar that gained the
+      // Explorer controls, slides to it instead of jumping. The first
+      // measurement (null to a value) lands without motion.
+      final ticket = ++_animationTicket;
+      _animateLayout = !(MediaQuery.maybeDisableAnimationsOf(context) ?? false);
+      _comfortableAnimationTimer?.cancel();
+      _comfortableAnimationTimer = Timer(_kSplitAnimationDuration, () {
+        if (!mounted || ticket != _animationTicket) return;
+        setState(() => _animateLayout = false);
+      });
     }
     if (oldWidget.storageKey != widget.storageKey &&
         widget.storageKey != null) {
@@ -198,6 +254,7 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
   void dispose() {
     widget.controller?._detach(this);
     _saveDebounce?.cancel();
+    _comfortableAnimationTimer?.cancel();
     super.dispose();
   }
 
@@ -231,6 +288,7 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
 
     final sizes = _resolveVisibleSizes(visible, available);
     if (_resizeVisiblePane(sizes, visible, index, sizePx)) {
+      _suspendedSizingSignature = _sizingSignature(visible, available);
       _setWeightsFromVisibleSizes(sizes, visible);
       if (persist) _scheduleSave();
     }
@@ -324,6 +382,9 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
       setState(() {
         if (restoredWeights != null) _weights = restoredWeights;
         _collapsed = restoredCollapsed;
+        // A saved layout is a starting point, not a drag: it still grows a
+        // pane to its comfortable size when the window has room.
+        _suspendedSizingSignature = null;
       });
     } catch (_) {
       // Bad stored value — fall back to initial layout silently.
@@ -570,7 +631,71 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
               ? 0.0
               : _weights[i] / remainingWeight * remaining;
     }
+    if (_comfortableSizingActive(visible, available)) {
+      _growTowardComfortableSizes(sizes, visible);
+    }
     return sizes;
+  }
+
+  bool _comfortableSizingActive(List<int> visible, double available) {
+    if (!visible.any((i) => widget.children[i].comfortableSize != null)) {
+      return false;
+    }
+    return _suspendedSizingSignature != _sizingSignature(visible, available);
+  }
+
+  /// Everything that decides comfortable sizing. Rounded so sub-pixel layout
+  /// noise does not count as a change.
+  int _sizingSignature(List<int> visible, double available) {
+    return Object.hashAll([
+      available.round(),
+      for (final i in visible) ...[
+        i,
+        widget.children[i].comfortableSize?.round(),
+        widget.children[i].spareAbove?.round(),
+      ],
+    ]);
+  }
+
+  /// Grows each pane below its [SplitChild.comfortableSize] using only space
+  /// its siblings can spare, nearest sibling first. A sibling never gives up
+  /// space below its own comfortable size, its [SplitChild.spareAbove], or
+  /// its minimum.
+  void _growTowardComfortableSizes(Map<int, double> sizes, List<int> visible) {
+    for (final index in visible) {
+      final child = widget.children[index];
+      final comfortable = child.comfortableSize;
+      if (comfortable == null) continue;
+      final target = math.min(comfortable, child.maxSize ?? double.infinity);
+      var deficit = target - (sizes[index] ?? 0);
+      if (deficit <= 0.5) continue;
+      for (final donor in _resizeOrder(visible, index)) {
+        final donorChild = widget.children[donor];
+        final floor = math.max(
+          donorChild.minSize,
+          math.max(donorChild.comfortableSize ?? 0, donorChild.spareAbove ?? 0),
+        );
+        final spare = (sizes[donor] ?? 0) - floor;
+        if (spare <= 0) continue;
+        final take = math.min(spare, deficit);
+        sizes[donor] = (sizes[donor] ?? 0) - take;
+        sizes[index] = (sizes[index] ?? 0) + take;
+        deficit -= take;
+        if (deficit <= 0.5) break;
+      }
+    }
+  }
+
+  static bool _comfortableSizeChanged(
+    List<SplitChild> before,
+    List<SplitChild> after,
+  ) {
+    for (var i = 0; i < after.length; i++) {
+      final was = before[i].comfortableSize;
+      final now = after[i].comfortableSize;
+      if (was != null && now != null && (was - now).abs() >= 1) return true;
+    }
+    return false;
   }
 
   void _handleDrag(
@@ -614,6 +739,11 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
     // when restored).
     final visibleTotal = visible.fold<double>(0, (a, i) => a + (sizes[i] ?? 0));
     if (visibleTotal <= 0) return;
+    // The weights now hold what is on screen plus this drag, so comfortable
+    // sizing can step aside without a jump. Leaving it on would refill a pane
+    // dragged below its comfortable size from a pane on the far side of the
+    // split, which the user never touched.
+    _suspendedSizingSignature = _sizingSignature(visible, available);
     _setWeightsFromVisibleSizes(sizes, visible);
   }
 

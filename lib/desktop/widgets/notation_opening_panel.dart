@@ -20,6 +20,7 @@ import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
+import 'package:chessever/desktop/widgets/desktop_adaptive_toolbar.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
@@ -127,6 +128,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.previousGameShortcutLabel,
     this.nextGameShortcutLabel,
     this.trailingActions,
+    this.onFullToolbarWidthChanged,
     this.reportSelected = false,
     this.reportEnabled = true,
     this.showReport = true,
@@ -194,6 +196,11 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// Used by the desktop board to keep Save / Play-from-here / Info visible
   /// without consuming a separate board chrome row.
   final Widget? trailingActions;
+
+  /// Reports the panel width at which the bottom strip shows every control.
+  /// The board pane sizes its Analysis rail from it. When the window cannot
+  /// spare that width, the controls wrap onto additional rows.
+  final ValueChanged<double>? onFullToolbarWidthChanged;
 
   /// Report toggle state. The report itself renders in the engine panel and is
   /// fully independent of the engine on/off switch; this button (beside the
@@ -751,6 +758,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               previousGameShortcutLabel: widget.previousGameShortcutLabel,
               nextGameShortcutLabel: widget.nextGameShortcutLabel,
               trailingActions: widget.trailingActions,
+              onFullWidthChanged: widget.onFullToolbarWidthChanged,
             ),
           ],
         ),
@@ -1036,6 +1044,7 @@ class _SegmentBar extends ConsumerWidget {
     this.previousGameShortcutLabel,
     this.nextGameShortcutLabel,
     this.trailingActions,
+    this.onFullWidthChanged,
   });
 
   final bool explorerOpen;
@@ -1063,6 +1072,7 @@ class _SegmentBar extends ConsumerWidget {
   final String? previousGameShortcutLabel;
   final String? nextGameShortcutLabel;
   final Widget? trailingActions;
+  final ValueChanged<double>? onFullWidthChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1075,109 +1085,75 @@ class _SegmentBar extends ConsumerWidget {
         onPreviousGame != null ||
         onNextGame != null;
     return Container(
-      height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: kBlack2Color,
         border: Border(top: BorderSide(color: kDividerColor)),
       ),
-      child: Row(
-        children: [
-          _RailIconButton(
-            icon: Icons.menu_book_outlined,
-            tooltip: _tooltipWithShortcut(
-              explorerOpen ? 'Hide Explorer' : 'Open Explorer',
-              openExplorerShortcutLabel,
+      child: DesktopAdaptiveToolbar(
+        onFullWidthChanged:
+            (width) => onFullWidthChanged?.call(
+              // Include the strip's padding and a pixel for fractional split sizes.
+              (width + 20).ceilToDouble() + 1,
             ),
-            selected: explorerOpen,
-            onTap: onToggleExplorer,
-          ),
-          if (showReport) ...[
-            const SizedBox(width: 6),
+        leading: Wrap(
+          spacing: 6,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
             _RailIconButton(
-              icon: Icons.analytics_outlined,
-              tooltip:
-                  reportSelected ? 'Hide game analysis' : 'Show game analysis',
-              selected: reportSelected,
-              enabled: reportEnabled && onToggleReport != null,
-              onTap: onToggleReport ?? () {},
-            ),
-          ],
-          if (explorerOpen) ...[
-            const SizedBox(width: 4),
-            _ExplorerSourceButton(controller: sourceController),
-            const SizedBox(width: 6),
-            ExplorerFiltersPopoverButton(
-              compact: true,
-              scopedPlayer: scopedPlayer,
-            ),
-          ],
-          if (hasNavigationControls)
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(left: 8),
-                // A narrow rail drops the least-used jumps instead of letting
-                // the buttons spill over their neighbours: game jumps first,
-                // then first/last move; the remaining back/forward pair
-                // shrinks to fit, and only leaves when even that cannot.
-                // Their keyboard shortcuts keep working.
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final width = constraints.maxWidth;
-                    if (width < 48) return const SizedBox.shrink();
-                    // Between 48 px and a full pair, the back/forward pair
-                    // shrinks to fit rather than leaving the rail.
-                    final squeezed = width < _clusterWidth(buttons: 2, air: 0);
-                    final hasGameJumps =
-                        onPreviousGame != null || onNextGame != null;
-                    final dropGameJumps =
-                        hasGameJumps && width < _clusterWidth(buttons: 6);
-                    final dropEdgeJumps = width < _clusterWidth(buttons: 4);
-                    final cluster = _ExplorerNavigationCluster(
-                      canGoBack: canGoBack,
-                      canGoForward: canGoForward,
-                      canStepForward: canStepForward,
-                      onFirstMove: dropEdgeJumps ? null : onFirstMove,
-                      onPreviousMove: onPreviousMove,
-                      onNextMove: onNextMove,
-                      onLastMove: dropEdgeJumps ? null : onLastMove,
-                      onPreviousGame: dropGameJumps ? null : onPreviousGame,
-                      onNextGame: dropGameJumps ? null : onNextGame,
-                      firstMoveShortcutLabel: firstMoveShortcutLabel,
-                      previousMoveShortcutLabel: previousMoveShortcutLabel,
-                      nextMoveShortcutLabel: nextMoveShortcutLabel,
-                      lastMoveShortcutLabel: lastMoveShortcutLabel,
-                      previousGameShortcutLabel: previousGameShortcutLabel,
-                      nextGameShortcutLabel: nextGameShortcutLabel,
-                    );
-                    return Align(
-                      alignment: Alignment.center,
-                      child:
-                          squeezed
-                              ? FittedBox(fit: BoxFit.scaleDown, child: cluster)
-                              : cluster,
-                    );
-                  },
-                ),
+              icon: Icons.menu_book_outlined,
+              tooltip: _tooltipWithShortcut(
+                explorerOpen ? 'Hide Explorer' : 'Open Explorer',
+                openExplorerShortcutLabel,
               ),
-            )
-          else
-            const Spacer(),
-          if (trailingActions != null) ...[
-            if (hasNavigationControls) const SizedBox(width: 8),
-            trailingActions!,
+              selected: explorerOpen,
+              onTap: onToggleExplorer,
+            ),
+            if (showReport)
+              _RailIconButton(
+                icon: Icons.analytics_outlined,
+                tooltip:
+                    reportSelected
+                        ? 'Hide game analysis'
+                        : 'Show game analysis',
+                selected: reportSelected,
+                enabled: reportEnabled && onToggleReport != null,
+                onTap: onToggleReport ?? () {},
+              ),
+            if (explorerOpen) ...[
+              _ExplorerSourceButton(controller: sourceController),
+              ExplorerFiltersPopoverButton(
+                compact: true,
+                scopedPlayer: scopedPlayer,
+              ),
+            ],
           ],
-        ],
+        ),
+        navigation:
+            hasNavigationControls
+                ? _ExplorerNavigationCluster(
+                  canGoBack: canGoBack,
+                  canGoForward: canGoForward,
+                  canStepForward: canStepForward,
+                  onFirstMove: onFirstMove,
+                  onPreviousMove: onPreviousMove,
+                  onNextMove: onNextMove,
+                  onLastMove: onLastMove,
+                  onPreviousGame: onPreviousGame,
+                  onNextGame: onNextGame,
+                  firstMoveShortcutLabel: firstMoveShortcutLabel,
+                  previousMoveShortcutLabel: previousMoveShortcutLabel,
+                  nextMoveShortcutLabel: nextMoveShortcutLabel,
+                  lastMoveShortcutLabel: lastMoveShortcutLabel,
+                  previousGameShortcutLabel: previousGameShortcutLabel,
+                  nextGameShortcutLabel: nextGameShortcutLabel,
+                )
+                : null,
+        trailing: trailingActions,
       ),
     );
   }
-}
-
-/// Width the navigation cluster needs for [buttons] 36 px buttons with 4 px
-/// gaps, plus [air] so an optional jump is only added when it will not sit
-/// flush against its neighbours.
-double _clusterWidth({required int buttons, double air = 8}) {
-  return buttons * 36.0 + (buttons - 1) * 4.0 + air;
 }
 
 /// Exposes the actual Explorer navigation controls without remote providers.
@@ -1232,8 +1208,10 @@ class _ExplorerNavigationCluster extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    return Wrap(
+      spacing: 4,
+      runSpacing: 8,
+      alignment: WrapAlignment.center,
       children: [
         if (onPreviousGame != null) ...[
           _RailIconButton(
@@ -1244,7 +1222,6 @@ class _ExplorerNavigationCluster extends StatelessWidget {
             ),
             onTap: onPreviousGame!,
           ),
-          const SizedBox(width: 4),
         ],
         if (onFirstMove != null) ...[
           _RailIconButton(
@@ -1253,7 +1230,6 @@ class _ExplorerNavigationCluster extends StatelessWidget {
             enabled: canGoBack,
             onTap: onFirstMove!,
           ),
-          const SizedBox(width: 4),
         ],
         if (onPreviousMove != null) ...[
           _RailIconButton(
@@ -1265,7 +1241,6 @@ class _ExplorerNavigationCluster extends StatelessWidget {
             enabled: canGoBack,
             onTap: onPreviousMove!,
           ),
-          const SizedBox(width: 4),
         ],
         if (onNextMove != null) ...[
           _RailIconButton(
@@ -1274,7 +1249,6 @@ class _ExplorerNavigationCluster extends StatelessWidget {
             enabled: canStepForward ?? canGoForward,
             onTap: onNextMove!,
           ),
-          const SizedBox(width: 4),
         ],
         if (onLastMove != null) ...[
           _RailIconButton(
@@ -1283,7 +1257,6 @@ class _ExplorerNavigationCluster extends StatelessWidget {
             enabled: canGoForward,
             onTap: onLastMove!,
           ),
-          const SizedBox(width: 4),
         ],
         if (onNextGame != null)
           _RailIconButton(

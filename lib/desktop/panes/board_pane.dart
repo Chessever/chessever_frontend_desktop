@@ -422,6 +422,40 @@ const _boardFocusRightPaneWeight = 0.40;
 const _boardAreaPadding = 16.0;
 const _boardFocusPadding = 10.0;
 
+/// Board column width past which extra width is dead space around the board.
+///
+/// It is the width the board takes when only the height limits it: the
+/// user's preferred size (or the default), capped by [vLimit], the height
+/// left after the player rows. Mirrors the sizing in `_BoardArea`.
+@visibleForTesting
+double desktopBoardColumnFitWidth({
+  required double vLimit,
+  required double? sizePreference,
+  required bool focusMode,
+  required double evalBarReservation,
+  required double outerPadding,
+}) {
+  final height = math.max(0.0, vLimit);
+  final preferred =
+      focusMode
+          ? math.min(height, _maxDesktopBoardSize)
+          : (sizePreference ?? math.min(height, _defaultDesktopBoardSize));
+  final board =
+      preferred
+          .clamp(
+            math.min(_minDesktopBoardSize, height),
+            math.min(height, _maxDesktopBoardSize),
+          )
+          .toDouble();
+  return (board + evalBarReservation + outerPadding * 2).ceilToDouble();
+}
+
+/// The last full-toolbar and board-fit widths any Board pane measured. A
+/// newly opened tab starts from them, so its first frame is already sized
+/// instead of shifting once its own measurements arrive.
+double? _lastAnalysisToolbarWidth;
+double? _lastBoardColumnFitWidth;
+
 final _desktopBoardPlayerPhotoProvider = FutureProvider.autoDispose
     .family<String?, int>(
       (ref, fideId) => FidePhotoService.getPhotoUrlOrNull('$fideId'),
@@ -728,11 +762,19 @@ class _BoardPaneSplitView extends StatelessWidget {
     required this.controller,
     required this.storageKey,
     required this.children,
+    required this.analysisToolbarWidth,
+    required this.boardColumnFitWidth,
   });
 
   final ResizableSplitViewController controller;
   final String? storageKey;
   final List<SplitChild> children;
+
+  /// Width at which the Analysis rail's bottom strip shows every control.
+  final ValueListenable<double?> analysisToolbarWidth;
+
+  /// Board column width past which the column is dead space around the board.
+  final ValueListenable<double?> boardColumnFitWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -760,14 +802,41 @@ class _BoardPaneSplitView extends StatelessWidget {
             children: stacked,
           );
         }
-        return ResizableSplitView(
-          axis: Axis.horizontal,
-          controller: controller,
-          storageKey: storageKey,
-          children: children,
+        return ListenableBuilder(
+          listenable: Listenable.merge([
+            analysisToolbarWidth,
+            boardColumnFitWidth,
+          ]),
+          builder:
+              (context, _) => ResizableSplitView(
+                axis: Axis.horizontal,
+                controller: controller,
+                storageKey: storageKey,
+                children: _sizedToContent(children),
+              ),
         );
       },
     );
+  }
+
+  /// Widens the Analysis rail until its bottom strip shows every control,
+  /// whatever the window size. It takes only space nobody uses: the board
+  /// column's width past its board, then the games rail's width above its
+  /// minimum. The board never shrinks for it, so on a small window the board
+  /// keeps priority and the strip wraps its controls onto additional rows.
+  /// Weight-only until both widths have been measured.
+  List<SplitChild> _sizedToContent(List<SplitChild> children) {
+    final toolbarWidth = analysisToolbarWidth.value;
+    final boardFitWidth = boardColumnFitWidth.value;
+    if (toolbarWidth == null || boardFitWidth == null) return children;
+    return [
+      for (final child in children)
+        switch (child.label) {
+          'Board' => child.withSizing(spareAbove: boardFitWidth),
+          'Analysis' => child.withSizing(comfortableSize: toolbarWidth),
+          _ => child,
+        },
+    ];
   }
 }
 
@@ -991,6 +1060,32 @@ class _BoardPaneContent extends HookConsumerWidget {
       () => ResizableSplitViewController(),
       const [],
     );
+    // Measured after each layout by the Analysis rail's bottom strip and by
+    // the board area; the split sizes the rail from them.
+    final analysisToolbarWidth = useValueNotifier<double?>(
+      _lastAnalysisToolbarWidth,
+    );
+    final boardColumnFitWidth = useValueNotifier<double?>(
+      _lastBoardColumnFitWidth,
+    );
+    void publishLayoutWidth(ValueNotifier<double?> target, double width) {
+      // Reports arrive after the frame, possibly after this tab closed.
+      if (!context.mounted) return;
+      final current = target.value;
+      if (current != null && (current - width).abs() < 0.5) return;
+      target.value = width;
+    }
+
+    void publishAnalysisToolbarWidth(double width) {
+      _lastAnalysisToolbarWidth = width;
+      publishLayoutWidth(analysisToolbarWidth, width);
+    }
+
+    void publishBoardColumnFitWidth(double width) {
+      _lastBoardColumnFitWidth = width;
+      publishLayoutWidth(boardColumnFitWidth, width);
+    }
+
     // One rail widget instance per tab. The rail reads everything it shows
     // from providers, so it never needs this pane's build; a fresh instance
     // (and closure) every time made Flutter re-run its heavy build on each
@@ -5308,6 +5403,8 @@ class _BoardPaneContent extends HookConsumerWidget {
           canRequestFocus: true,
           child: _BoardPaneSplitView(
             controller: mainSplitController,
+            analysisToolbarWidth: analysisToolbarWidth,
+            boardColumnFitWidth: boardColumnFitWidth,
             // Storage key flips between contextual and scratch modes so the
             // split view keeps independent persisted widths. Event and
             // database/library tabs both carry a left games rail; scratch
@@ -5468,6 +5565,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                                 persistBoardSizePreference();
                               },
                               suppressEngineAnalysis: !runLiveBoardAnalysis,
+                              onColumnFitWidthChanged:
+                                  publishBoardColumnFitWidth,
                             );
                           },
                         ),
@@ -5683,6 +5782,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                                   reportRevealRevision.value++;
                                 },
                                 trailingActions: boardActionCluster,
+                                onFullToolbarWidthChanged:
+                                    publishAnalysisToolbarWidth,
                                 showEngine: ref.watch(
                                   engineSettingsProviderNew.select(
                                     (s) =>
@@ -8837,6 +8938,7 @@ class _BoardArea extends ConsumerWidget {
     required this.onBoardSizeChangeEnd,
     required this.suppressEngineAnalysis,
     this.onGraphicCommentaryChanged,
+    this.onColumnFitWidthChanged,
     this.activeGameId,
     this.boardArgs,
     this.whiteClock,
@@ -8944,6 +9046,11 @@ class _BoardArea extends ConsumerWidget {
   final VoidCallback onBoardSizeReset;
   final VoidCallback onBoardSizeChangeEnd;
   final ValueChanged<Set<cg.Shape>>? onGraphicCommentaryChanged;
+
+  /// Reports [desktopBoardColumnFitWidth] for the current height and board
+  /// size, so the pane can lend the board column's dead space to the
+  /// Analysis rail.
+  final ValueChanged<double>? onColumnFitWidthChanged;
 
   static const double _evalBarWidth = 24.0;
   static const double _evalBarGap = 12.0;
@@ -9234,6 +9341,20 @@ class _BoardArea extends ConsumerWidget {
                           .toDouble();
               final boardWithBar = boardSize + evalBarReservation;
               final hasResizeHandle = !(pictureInPicture || boardSize < 16);
+              final reportColumnFit = onColumnFitWidthChanged;
+              if (reportColumnFit != null && !pictureInPicture) {
+                final columnFit = desktopBoardColumnFitWidth(
+                  vLimit: vLimit,
+                  sizePreference: sizePreference,
+                  focusMode: focusMode,
+                  evalBarReservation: evalBarReservation,
+                  outerPadding: chromeMetrics.outerPadding,
+                );
+                // After layout: the listener rebuilds the split view.
+                WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => reportColumnFit(columnFit),
+                );
+              }
 
               // Everything inside the stack depends on these three values
               // only; the pointer listener below reads live constraints.

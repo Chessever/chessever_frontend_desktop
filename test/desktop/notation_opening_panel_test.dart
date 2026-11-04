@@ -453,6 +453,112 @@ void main() {
     await _drainStripTestTimers(tester);
   });
 
+  testWidgets('bottom strip reports the width that shows every control', (
+    tester,
+  ) async {
+    _ignoreExplorerEmptyStateOverflowForTest();
+    final repository = _FakeExplorerRepository();
+    double? reported;
+    Widget strip(double width) => _harness(
+      repository: repository,
+      canGoBack: true,
+      canGoForward: true,
+      onFirstMove: () {},
+      onPreviousMove: () {},
+      onNextMove: () {},
+      onLastMove: () {},
+      onPreviousGame: () {},
+      onNextGame: () {},
+      // Stands in for the board's Like / Save / Play / Info cluster.
+      trailingActions: const SizedBox(width: 156, height: 36),
+      onFullToolbarWidthChanged: (width) => reported = width,
+      width: width,
+      height: 1000,
+    );
+
+    await tester.pumpWidget(strip(760));
+    await tester.pump();
+
+    // 20 padding + 36 Explorer + 42 report + 8 + 236 navigation + 8 + 156
+    // trailing, rounded up with a pixel spare.
+    final fullWidth = reported!;
+    expect(fullWidth, 507);
+
+    final navigationIcons = [
+      Icons.keyboard_double_arrow_left_rounded,
+      Icons.first_page_rounded,
+      Icons.chevron_left_rounded,
+      Icons.chevron_right_rounded,
+      Icons.last_page_rounded,
+      Icons.keyboard_double_arrow_right_rounded,
+    ];
+
+    await tester.pumpWidget(strip(fullWidth));
+    await tester.pump();
+    for (final icon in navigationIcons) {
+      expect(find.byIcon(icon), findsOneWidget);
+    }
+    expect(reported, fullWidth);
+
+    await tester.pumpWidget(strip(fullWidth - 2));
+    await tester.pump();
+    for (final icon in navigationIcons) {
+      expect(find.byIcon(icon), findsOneWidget);
+    }
+    expect(
+      tester.getCenter(find.byIcon(Icons.chevron_left_rounded)).dy,
+      greaterThan(tester.getCenter(find.byIcon(Icons.menu_book_outlined)).dy),
+    );
+    // Measured from the fixed-width controls, so it does not follow the pane.
+    expect(reported, fullWidth);
+    await _drainStripTestTimers(tester);
+  });
+
+  testWidgets('narrow bottom strips keep every navigation target clickable', (
+    tester,
+  ) async {
+    final repository = _FakeExplorerRepository();
+    var taps = 0;
+    final icons = [
+      Icons.keyboard_double_arrow_left_rounded,
+      Icons.first_page_rounded,
+      Icons.chevron_left_rounded,
+      Icons.chevron_right_rounded,
+      Icons.last_page_rounded,
+      Icons.keyboard_double_arrow_right_rounded,
+    ];
+    for (final width in [280.0, 320.0, 507.0, 760.0]) {
+      await tester.pumpWidget(
+        _harness(
+          repository: repository,
+          canGoBack: true,
+          canGoForward: true,
+          onFirstMove: () => taps++,
+          onPreviousMove: () => taps++,
+          onNextMove: () => taps++,
+          onLastMove: () => taps++,
+          onPreviousGame: () => taps++,
+          onNextGame: () => taps++,
+          trailingActions: const SizedBox(width: 156, height: 36),
+          width: width,
+        ),
+      );
+      await tester.pump();
+      final bounds = tester.getRect(find.byType(NotationOpeningPanel));
+      for (final icon in icons) {
+        final target = find.byIcon(icon);
+        expect(target.hitTestable(), findsOneWidget);
+        final rect = tester.getRect(target);
+        expect(bounds.contains(rect.topLeft), isTrue);
+        expect(bounds.contains(rect.bottomRight), isTrue);
+        await tester.tap(target);
+      }
+      expect(tester.takeException(), isNull);
+    }
+    expect(taps, 24);
+    await _drainStripTestTimers(tester);
+  });
+
   testWidgets('Explorer strip tooltips include supplied shortcut labels', (
     tester,
   ) async {
@@ -2197,10 +2303,12 @@ Widget _harness({
   bool showEngine = true,
   bool reportSelected = false,
   List<Override>? accessOverrides,
+  Widget? trailingActions,
+  ValueChanged<double>? onFullToolbarWidthChanged,
 }) {
   return ProviderScope(
     overrides: [
-          ...(accessOverrides ?? desktopPremiumTestOverrides),
+      ...(accessOverrides ?? desktopPremiumTestOverrides),
       gamebaseRepositoryProvider.overrideWithValue(repository),
       boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
       keyboardShortcutsProvider.overrideWith(
@@ -2249,6 +2357,8 @@ Widget _harness({
             enginePanel: enginePanel,
             showEngine: showEngine,
             reportSelected: reportSelected,
+            trailingActions: trailingActions,
+            onFullToolbarWidthChanged: onFullToolbarWidthChanged,
           ),
         ),
       ),
@@ -2351,7 +2461,7 @@ class _PositionChangingHarnessState extends State<_PositionChangingHarness> {
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
-          ...desktopPremiumTestOverrides,
+        ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
@@ -2421,7 +2531,7 @@ class _ExternalBoardMoveHarnessState extends State<_ExternalBoardMoveHarness> {
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
-          ...desktopPremiumTestOverrides,
+        ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
@@ -2490,7 +2600,7 @@ class _PreviewFeedbackHarnessState extends State<_PreviewFeedbackHarness> {
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
-          ...desktopPremiumTestOverrides,
+        ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
@@ -2545,7 +2655,7 @@ class _NotationTapHarnessState extends State<_NotationTapHarness> {
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
-          ...desktopPremiumTestOverrides,
+        ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
@@ -2620,7 +2730,7 @@ class _StatefulExplorerHarnessState extends State<_StatefulExplorerHarness> {
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
-          ...desktopPremiumTestOverrides,
+        ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(
@@ -2687,7 +2797,7 @@ class _StatefulLineInsertionHarnessState
   Widget build(BuildContext context) {
     return ProviderScope(
       overrides: [
-          ...desktopPremiumTestOverrides,
+        ...desktopPremiumTestOverrides,
         gamebaseRepositoryProvider.overrideWithValue(widget.repository),
         boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
         keyboardShortcutsProvider.overrideWith(

@@ -11,6 +11,7 @@ import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_endgame_board_overlay.dart';
+import 'package:chessever/desktop/widgets/desktop_like_count_heart.dart';
 import 'package:chessever/desktop/widgets/desktop_locked_content.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
@@ -612,7 +613,11 @@ class _CleanPlayerRow extends StatelessWidget {
           ],
           if (result.isNotEmpty) ...[
             const SizedBox(width: 10),
-            _ResultBadge(label: result, compact: false, color: _resultBadgeColor(data.status, isWhite)),
+            _ResultBadge(
+              label: result,
+              compact: false,
+              color: _resultBadgeColor(data.status, isWhite),
+            ),
           ],
         ],
       ),
@@ -1442,22 +1447,43 @@ class _BoardPreview extends ConsumerWidget {
     final settings =
         ref.watch(boardSettingsProviderNew).valueOrNull ??
         const BoardSettingsNew();
+    final likes = DesktopBoardLikeBadge.maybeOf(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         // Chessground takes a fixed `size` and renders square. Use the
         // shorter side so it always fits, and center inside the parent so
         // any extra vertical space stays balanced.
         final side = constraints.biggest.shortestSide;
+        // Finished games get the toppled-king / dove endgame treatment;
+        // ongoing games fall through to a plain board inside this widget.
+        final board = DesktopEndgameBoard(
+          size: side,
+          fen: resolvedFen,
+          orientation: flipped ? Side.black : Side.white,
+          status: data.status,
+          settings: settings,
+          lastMove: _uciToMove(data.lastMove ?? ''),
+        );
+        if (likes == null) return Center(child: board);
+        // The Likes ranking sets each game's count on its board's top-left
+        // corner, as the phone does.
+        final inset = (side * 0.025).clamp(2.0, 6.0);
         return Center(
-          // Finished games get the toppled-king / dove endgame treatment;
-          // ongoing games fall through to a plain board inside this widget.
-          child: DesktopEndgameBoard(
-            size: side,
-            fen: resolvedFen,
-            orientation: flipped ? Side.black : Side.white,
-            status: data.status,
-            settings: settings,
-            lastMove: _uciToMove(data.lastMove ?? ''),
+          child: SizedBox.square(
+            dimension: side,
+            child: Stack(
+              children: [
+                board,
+                Positioned(
+                  top: inset,
+                  left: inset,
+                  child: DesktopLikeCountHeart(
+                    likes: likes,
+                    size: desktopLikeHeartSizeFor(side),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -1637,14 +1663,17 @@ class _ClockPill extends StatelessWidget {
 }
 
 class _ResultBadge extends StatelessWidget {
-  const _ResultBadge({required this.label, required this.compact, required this.color});
+  const _ResultBadge({
+    required this.label,
+    required this.compact,
+    required this.color,
+  });
   final Color color;
   final String label;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
-
     return SizedBox(
       width: compact ? 24 : 30,
       height: compact ? 18 : 22,
@@ -1674,7 +1703,8 @@ class _ResultBadge extends StatelessWidget {
 
 Color _resultBadgeColor(GameStatus status, bool isWhite) {
   if (status == GameStatus.draw) return kLightGreyColor;
-  final won = isWhite ? status == GameStatus.whiteWins : status == GameStatus.blackWins;
+  final won =
+      isWhite ? status == GameStatus.whiteWins : status == GameStatus.blackWins;
   return won ? kPrimaryColor : kRedColor;
 }
 
@@ -1743,8 +1773,11 @@ class _NoEvalSplit extends StatelessWidget {
 }
 
 String _resultFor(GameCardData data, {required bool isWhite}) =>
-    desktopGamePointsLabel(data.status, isWhite: isWhite,
-      customPoints: isWhite ? data.whiteCustomPoints : data.blackCustomPoints);
+    desktopGamePointsLabel(
+      data.status,
+      isWhite: isWhite,
+      customPoints: isWhite ? data.whiteCustomPoints : data.blackCustomPoints,
+    );
 
 String _resultLabel(GameCardData data) {
   if (data.status.isFinished) {

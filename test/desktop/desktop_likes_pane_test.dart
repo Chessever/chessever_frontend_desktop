@@ -8,11 +8,14 @@ import 'package:chessever/desktop/services/likes/community_likes_repository.dart
 import 'package:chessever/desktop/state/community_likes_providers.dart';
 import 'package:chessever/desktop/widgets/desktop_lock_reasons.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
+import 'package:chessever/desktop/widgets/desktop_like_count_heart.dart';
+import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 
 import 'support/collections_fakes.dart';
@@ -56,11 +59,27 @@ class _FakeGameStream extends GameStreamRepository {
 }
 
 class _NoEvalBoardSettings extends BoardSettingsNotifierNew {
+  _NoEvalBoardSettings(this.initialMode);
+
+  final GamesListViewMode initialMode;
+  final List<int> savedViewModes = [];
+
   @override
   Future<BoardSettingsNew> build() async {
-    const settings = BoardSettingsNew(showEvaluationBar: false);
-    state = const AsyncValue.data(settings);
+    final settings = BoardSettingsNew(
+      showEvaluationBar: false,
+      gamesListViewModeIndex: initialMode.index,
+    );
+    state = AsyncValue.data(settings);
     return settings;
+  }
+
+  @override
+  Future<void> setGamesListViewModeIndex(int index) async {
+    savedViewModes.add(index);
+    state = AsyncValue.data(
+      state.requireValue.copyWith(gamesListViewModeIndex: index),
+    );
   }
 }
 
@@ -108,8 +127,12 @@ Future<_FakeRepository> _pump(
   WidgetTester tester, {
   CommunityLikesResult? result,
   SubscriptionState? subscription,
+  GamesListViewMode viewMode = GamesListViewMode.gamesCard,
+  double width = 1440,
 }) async {
-  tester.view.physicalSize = const Size(1280, 820);
+  // Wide enough that the test font's full-em glyphs fit the compact
+  // scorecards' rating rows, the column width every games list uses.
+  tester.view.physicalSize = Size(width, 820);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
 
@@ -132,7 +155,9 @@ Future<_FakeRepository> _pump(
           (ref) => FakeSubscription(subscription ?? SubscriptionState()),
         ),
         gameStreamRepositoryProvider.overrideWithValue(_FakeGameStream()),
-        boardSettingsProviderNew.overrideWith(_NoEvalBoardSettings.new),
+        boardSettingsProviderNew.overrideWith(
+          () => _NoEvalBoardSettings(viewMode),
+        ),
         engineSettingsProviderNew.overrideWith(_NoGaugeEngineSettings.new),
       ],
       child: MaterialApp(
@@ -151,20 +176,137 @@ Future<_FakeRepository> _pump(
 }
 
 void main() {
-  testWidgets('ranks games with their likes beside each card', (tester) async {
+  testWidgets('top-right view controls update the shared saved choice', (
+    tester,
+  ) async {
+    await _pump(tester);
+    final toggle = find.byType(GameViewModeToggle);
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(DesktopLikesPane)),
+    );
+    final settings =
+        container.read(boardSettingsProviderNew.notifier)
+            as _NoEvalBoardSettings;
+    final rect = tester.getRect(toggle);
+    expect(rect.right, greaterThan(1340));
+    expect(rect.top, lessThan(tester.getTopLeft(find.text('Today')).dy));
+
+    for (final (icon, mode, layout) in [
+      (
+        Icons.view_list_rounded,
+        GamesListViewMode.chessBoard,
+        DesktopCardLayout.list,
+      ),
+      (
+        Icons.grid_view_rounded,
+        GamesListViewMode.chessBoardGrid,
+        DesktopCardLayout.grid,
+      ),
+      (
+        Icons.view_agenda_outlined,
+        GamesListViewMode.gamesCard,
+        DesktopCardLayout.compact,
+      ),
+    ]) {
+      await tester.tap(
+        find.descendant(of: toggle, matching: find.byIcon(icon)),
+      );
+      await tester.pump();
+      expect(container.read(gamesListViewModeProvider), mode);
+      expect(
+        tester
+            .widgetList<DesktopGameCard>(find.byType(DesktopGameCard))
+            .map((card) => card.layout),
+        everyElement(layout),
+      );
+    }
+    expect(settings.savedViewModes, [2, 1, 0]);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 2));
+  });
+
+  for (final mode in GamesListViewMode.values) {
+    testWidgets('${mode.name} fits a narrow desktop pane', (tester) async {
+      await _pump(tester, viewMode: mode, width: 760);
+      expect(tester.takeException(), isNull);
+      final toggle = tester.getRect(find.byType(GameViewModeToggle));
+      expect(toggle.right, lessThanOrEqualTo(740));
+      expect(toggle.left, greaterThan(350));
+      expect(find.byType(DesktopGameCard), findsNWidgets(3));
+    });
+  }
+
+  testWidgets('scorecards carry their likes and event above each card', (
+    tester,
+  ) async {
     final repository = await _pump(tester);
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Likes'), findsWidgets);
+    expect(find.byType(GameViewModeToggle), findsOneWidget);
     expect(find.text('1.2K'), findsOneWidget);
     expect(find.text('31'), findsOneWidget);
+    expect(find.text('Norway Chess'), findsNWidgets(3));
     expect(find.byType(DesktopGameCard), findsNWidgets(3));
+    final layouts = tester
+        .widgetList<DesktopGameCard>(find.byType(DesktopGameCard))
+        .map((card) => card.layout);
+    expect(layouts, everyElement(DesktopCardLayout.compact));
     // Week is the default: a weekly ranking is browsable but locked to open.
     expect(repository.queries.single.period, CommunityLikesPeriod.week);
     final card = tester.widget<DesktopGameCard>(
       find.byType(DesktopGameCard).first,
     );
     expect(card.lockedReason, kCommunityLikesLockedReason);
+  });
+
+  testWidgets('grid view sets each like count on its board', (tester) async {
+    await _pump(tester, viewMode: GamesListViewMode.chessBoardGrid);
+
+    expect(tester.takeException(), isNull);
+    final cards = tester.widgetList<DesktopGameCard>(
+      find.byType(DesktopGameCard),
+    );
+    expect(
+      cards.map((card) => card.layout),
+      everyElement(DesktopCardLayout.grid),
+    );
+    final hearts =
+        tester
+            .widgetList<DesktopLikeCountHeart>(
+              find.byType(DesktopLikeCountHeart),
+            )
+            .map((heart) => heart.likes)
+            .toList();
+    expect(hearts, [1240, 31, 4]);
+    expect(cards.first.lockedReason, kCommunityLikesLockedReason);
+  });
+
+  testWidgets('list view follows the choice and gates at the click', (
+    tester,
+  ) async {
+    await _pump(tester, viewMode: GamesListViewMode.chessBoard);
+
+    expect(tester.takeException(), isNull);
+    final cards = tester.widgetList<DesktopGameCard>(
+      find.byType(DesktopGameCard),
+    );
+    expect(
+      cards.map((card) => card.layout),
+      everyElement(DesktopCardLayout.list),
+    );
+    // The list card has no locked treatment; the open stays gated.
+    expect(cards.first.lockedReason, isNull);
+    expect(find.byType(DesktopLikeCountHeart), findsNWidgets(3));
+  });
+
+  testWidgets('the view toggle is only offered on Games', (tester) async {
+    await _pump(tester);
+    expect(find.byType(GameViewModeToggle), findsOneWidget);
+
+    await tester.tap(find.text('Players'));
+    await tester.pump();
+    expect(find.byType(GameViewModeToggle), findsNothing);
+    await tester.pump(const Duration(seconds: 2));
   });
 
   testWidgets("today's ranking draws its cards unlocked", (tester) async {

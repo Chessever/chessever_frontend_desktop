@@ -306,4 +306,140 @@ void main() {
       );
     },
   );
+
+  group('comfortable size', () {
+    // Two 8 px gutters leave exactly 1000 px for the panes. Weights alone
+    // give Games 300, Board 400, Analysis 300.
+    Widget harness({
+      required double width,
+      double analysisComfortable = 400,
+      ResizableSplitViewController? controller,
+      bool reduceMotion = false,
+    }) {
+      return MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(disableAnimations: reduceMotion),
+          child: Directionality(
+            textDirection: TextDirection.ltr,
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: width,
+                height: 200,
+                child: ResizableSplitView(
+                  axis: Axis.horizontal,
+                  controller: controller,
+                  children: [
+                    const SplitChild(
+                      minSize: 200,
+                      initialWeight: 0.3,
+                      label: 'Games',
+                      child: SizedBox(key: ValueKey<String>('games')),
+                    ),
+                    const SplitChild(
+                      minSize: 300,
+                      initialWeight: 0.4,
+                      label: 'Board',
+                      dismissible: false,
+                      spareAbove: 350,
+                      child: SizedBox(key: ValueKey<String>('board')),
+                    ),
+                    SplitChild(
+                      minSize: 150,
+                      initialWeight: 0.3,
+                      label: 'Analysis',
+                      comfortableSize: analysisComfortable,
+                      child: const SizedBox(key: ValueKey<String>('analysis')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    double widthOf(WidgetTester tester, String key) =>
+        tester.getSize(find.byKey(ValueKey<String>(key))).width;
+
+    // The default 800 px test surface would clamp the harness.
+    void useWideSurface(WidgetTester tester) {
+      tester.view.physicalSize = const Size(1400, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+    }
+
+    testWidgets('borrows dead space first, then room above minimums', (
+      tester,
+    ) async {
+      useWideSurface(tester);
+      await tester.pumpWidget(harness(width: 1016));
+
+      // Board lends only its 50 px past spareAbove; Games covers the rest.
+      expect(widthOf(tester, 'analysis'), closeTo(400, 0.01));
+      expect(widthOf(tester, 'board'), closeTo(350, 0.01));
+      expect(widthOf(tester, 'games'), closeTo(250, 0.01));
+    });
+
+    testWidgets('grows only as far as siblings can spare', (tester) async {
+      useWideSurface(tester);
+      await tester.pumpWidget(harness(width: 1016, analysisComfortable: 600));
+
+      expect(widthOf(tester, 'board'), closeTo(350, 0.01));
+      expect(widthOf(tester, 'games'), closeTo(200, 0.01));
+      expect(widthOf(tester, 'analysis'), closeTo(450, 0.01));
+    });
+
+    testWidgets('a gutter drag holds until the window changes size', (
+      tester,
+    ) async {
+      useWideSurface(tester);
+      await tester.pumpWidget(harness(width: 1016));
+      expect(widthOf(tester, 'analysis'), closeTo(400, 0.01));
+
+      // Gutter between Board and Analysis: Games 250 + gutter 8 + Board 350.
+      final gutter = tester.getTopLeft(find.byKey(const ValueKey('board')));
+      await tester.timedDragFrom(
+        Offset(gutter.dx + 350 + 4, 100),
+        const Offset(60, 0),
+        const Duration(milliseconds: 200),
+      );
+      await tester.pumpAndSettle();
+
+      // The user's narrower Analysis stays, and Games is left alone instead
+      // of being drained to refill it.
+      expect(widthOf(tester, 'analysis'), lessThan(400));
+      expect(widthOf(tester, 'games'), closeTo(250, 0.01));
+
+      await tester.pumpWidget(harness(width: 1116));
+      await tester.pumpAndSettle();
+
+      expect(widthOf(tester, 'analysis'), greaterThanOrEqualTo(399.5));
+    });
+
+    testWidgets('setSize keeps the size it was asked for', (tester) async {
+      useWideSurface(tester);
+      final controller = ResizableSplitViewController();
+      await tester.pumpWidget(harness(width: 1016, controller: controller));
+
+      controller.setSize(1, 420, persist: false);
+      await tester.pump();
+
+      expect(widthOf(tester, 'board'), closeTo(420, 0.01));
+      expect(widthOf(tester, 'analysis'), closeTo(330, 0.01));
+    });
+
+    testWidgets('new toolbar space applies immediately with reduced motion', (
+      tester,
+    ) async {
+      useWideSurface(tester);
+      await tester.pumpWidget(harness(width: 1016, reduceMotion: true));
+      await tester.pumpWidget(
+        harness(width: 1016, analysisComfortable: 450, reduceMotion: true),
+      );
+      expect(widthOf(tester, 'analysis'), closeTo(450, 0.01));
+      await tester.pumpAndSettle();
+    });
+  });
 }

@@ -279,6 +279,31 @@ void main() {
     );
   });
 
+  test('board column fit is the width the board can use at this height', () {
+    double fit({
+      required double vLimit,
+      double? preference,
+      bool focusMode = false,
+    }) => desktopBoardColumnFitWidth(
+      vLimit: vLimit,
+      sizePreference: preference,
+      focusMode: focusMode,
+      evalBarReservation: 36,
+      outerPadding: 16,
+    );
+
+    // Default size, capped by the height: board + eval bar + padding.
+    expect(fit(vLimit: 700), 700 + 36 + 32);
+    expect(fit(vLimit: 900), 760 + 36 + 32);
+    // A chosen size wins below the cap and is capped above it.
+    expect(fit(vLimit: 900, preference: 500), 500 + 36 + 32);
+    expect(fit(vLimit: 600, preference: 1000), 600 + 36 + 32);
+    // Focus mode fills the height.
+    expect(fit(vLimit: 900, focusMode: true), 900 + 36 + 32);
+    // A very short pane never asks for more than it can show.
+    expect(fit(vLimit: 200), 200 + 36 + 32);
+  });
+
   test('explorer line previews hide stale move decorations', () {
     expect(
       shouldShowBoardMoveDecorations(

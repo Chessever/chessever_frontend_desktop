@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -18,6 +16,8 @@ import 'package:chessever/desktop/widgets/desktop_lock_reasons.dart';
 import 'package:chessever/desktop/widgets/desktop_keyboard_action.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
+import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
+import 'package:chessever/desktop/widgets/desktop_like_count_heart.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
@@ -25,6 +25,7 @@ import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show LiveDesktopGameCard;
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 typedef _LikesSection = CommunityLikesSection;
@@ -105,72 +106,58 @@ class _DesktopLikesPaneState extends ConsumerState<DesktopLikesPane> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // The home page's toolbar: what to show on the left, how to show
+          // it on the right.
           Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 14),
-            child: Row(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Likes',
-                        style: TextStyle(
-                          color: kWhiteColor,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'The games ChessEver players liked most',
-                        style: TextStyle(
-                          color: kWhiteColor.withValues(alpha: 0.68),
-                          fontSize: 13,
-                        ),
-                      ),
+                Row(
+                  children: [
+                    DesktopSegmentedTabs<CommunityLikesSection>(
+                      selected: current,
+                      onChanged: (section) {
+                        if (section != current) _showSection(section);
+                      },
+                      tabs: [
+                        for (final section in _LikesSection.values)
+                          DesktopSegmentedTab(
+                            value: section,
+                            label: section.label,
+                            icon: section.icon,
+                          ),
+                      ],
+                    ),
+                    const Spacer(),
+                    if (current == _LikesSection.games) ...[
+                      const GameViewModeToggle(buttonSize: 38),
+                      const SizedBox(width: 8),
                     ],
-                  ),
+                    if (browsing)
+                      DesktopTooltip(
+                        message: 'Refresh',
+                        child: FTheme(
+                          data: FThemes.zinc.dark,
+                          child: FButton.icon(
+                            style: FButtonStyle.ghost(),
+                            onPress: () => _refresh(query),
+                            child: const Icon(Icons.refresh_rounded, size: 18),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-                if (browsing)
-                  DesktopTooltip(
-                    message: 'Refresh',
-                    child: FButton.icon(
-                      style: FButtonStyle.ghost(),
-                      onPress: () => _refresh(query),
-                      child: const Icon(Icons.refresh_rounded),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                for (final section in _LikesSection.values)
-                  Semantics(
-                    selected: current == section,
-                    child: _LikesActionButton(
-                      label: section.label,
-                      icon: section.icon,
-                      tone:
-                          current == section
-                              ? DesktopToolbarPillTone.primary
-                              : DesktopToolbarPillTone.neutral,
-                      onPress: () => _showSection(section),
-                    ),
-                  ),
                 if (browsing) ...[
-                  const SizedBox(width: 18),
-                  _PeriodControl(
-                    query: query,
-                    now: now,
-                    onPeriod: _setPeriod,
-                    onStep: _step,
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: _PeriodControl(
+                      query: query,
+                      now: now,
+                      onPeriod: _setPeriod,
+                      onStep: _step,
+                    ),
                   ),
                 ],
               ],
@@ -364,8 +351,10 @@ String _emptyTitle(CommunityLikesQuery query, DateTime now) {
   return 'No games liked in this period';
 }
 
-/// The ranked games: a rank gutter beside each compact card, in as many
-/// columns as the pane fits.
+/// The ranked games, in rank order and in the viewer's own games view (the
+/// Card / List / Grid toggle every games list shares). Boards carry their
+/// like count on the corner; a scorecard has no board, so its count and
+/// event ride on a line above it, as on the phone.
 class _RankedGamesView extends ConsumerStatefulWidget {
   const _RankedGamesView({
     required this.tabId,
@@ -384,9 +373,8 @@ class _RankedGamesView extends ConsumerStatefulWidget {
 }
 
 class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
-  static const double _gutter = 64;
-  static const double _gap = 8;
-  static const DesktopCardLayout _layout = DesktopCardLayout.compact;
+  /// The compact scorecard's likes line, and the gap under it.
+  static const double _metaHeight = 22;
 
   final ScrollController _scroll = ScrollController();
   int _columns = 1;
@@ -401,6 +389,7 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final query = widget.query;
+    final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
     final ranking = _watchRanking(
       ref,
       query,
@@ -437,7 +426,14 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
     final active = ref.watch(
       desktopTabsProvider.select((tabs) => tabs.activeId == widget.tabId),
     );
-    final metrics = DesktopGameCardsFlow.metricsFor(_layout);
+    final metrics = DesktopGameCardsFlow.metricsFor(layout);
+    final compact = layout == DesktopCardLayout.compact;
+    // The list card has no locked treatment; its open is still gated at the
+    // click, as every layout's is.
+    final lockedReason =
+        locked && layout != DesktopCardLayout.list
+            ? kCommunityLikesLockedReason
+            : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -459,74 +455,79 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
                     builder: (context, selectedId, select, keyFor) {
                       return LayoutBuilder(
                         builder: (context, constraints) {
-                          final width = constraints.maxWidth - 48;
-                          _columns = math.max(
-                            1,
-                            ((width + _gap) /
-                                    (metrics.targetWidth + _gutter + _gap))
-                                .floor(),
+                          _columns = DesktopGameCardsFlow.columnCountForWidth(
+                            layout,
+                            constraints.maxWidth - 40,
                           );
+                          final SliverGridDelegate delegate =
+                              layout == DesktopCardLayout.grid
+                                  ? SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: _columns,
+                                    mainAxisSpacing: metrics.spacing,
+                                    crossAxisSpacing: metrics.spacing,
+                                    childAspectRatio: 0.95,
+                                  )
+                                  : SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: _columns,
+                                    mainAxisSpacing: metrics.spacing,
+                                    crossAxisSpacing: metrics.spacing,
+                                    mainAxisExtent:
+                                        metrics.tileHeight +
+                                        (compact ? _metaHeight : 0),
+                                  );
                           return CustomScrollView(
                             controller: _scroll,
                             physics: const DesktopScrollPhysics(),
                             slivers: [
                               SliverPadding(
                                 padding: const EdgeInsets.fromLTRB(
-                                  24,
+                                  20,
                                   4,
-                                  24,
+                                  20,
                                   16,
                                 ),
                                 sliver: SliverGrid(
-                                  gridDelegate:
-                                      SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: _columns,
-                                        mainAxisSpacing: _gap,
-                                        crossAxisSpacing: _gap,
-                                        mainAxisExtent: metrics.tileHeight,
-                                      ),
+                                  gridDelegate: delegate,
                                   delegate: SliverChildBuilderDelegate((
                                     context,
                                     i,
                                   ) {
                                     final entry = entries[i];
                                     final game = entry.game;
+                                    final card = LiveDesktopGameCard(
+                                      game: game,
+                                      tournamentTitle:
+                                          game.eventName ??
+                                          game.tourName ??
+                                          'Likes',
+                                      layout: layout,
+                                      selected: selectedId == game.gameId,
+                                      lockedReason: lockedReason,
+                                      accessContext: accessContext,
+                                      onTap: () => open(game),
+                                      // A locked card's Open entries would
+                                      // skip the click-time gate.
+                                      enableContextMenu: !locked,
+                                      streamingEnabled: active,
+                                    );
                                     return DesktopGameKeyboardItem(
                                       itemKey: keyFor(game.gameId),
                                       gameId: game.gameId,
                                       onSelect: select,
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.stretch,
-                                        children: [
-                                          SizedBox(
-                                            width: _gutter,
-                                            child: _RankGutter(entry: entry),
-                                          ),
-                                          Expanded(
-                                            child: LiveDesktopGameCard(
-                                              game: game,
-                                              tournamentTitle:
-                                                  game.eventName ??
-                                                  game.tourName ??
-                                                  'Likes',
-                                              layout: _layout,
-                                              selected:
-                                                  selectedId == game.gameId,
-                                              lockedReason:
-                                                  locked
-                                                      ? kCommunityLikesLockedReason
-                                                      : null,
-                                              accessContext: accessContext,
-                                              onTap: () => open(game),
-                                              // A locked card's Open entries
-                                              // would skip the click-time gate.
-                                              enableContextMenu: !locked,
-                                              streamingEnabled: active,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                      child:
+                                          compact
+                                              ? Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.stretch,
+                                                children: [
+                                                  _LikesMeta(entry: entry),
+                                                  Expanded(child: card),
+                                                ],
+                                              )
+                                              : DesktopBoardLikeBadge(
+                                                likes: entry.likes,
+                                                child: card,
+                                              ),
                                     );
                                   }, childCount: entries.length),
                                 ),
@@ -557,63 +558,59 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
   }
 }
 
-/// The rank, set large in tabular figures, and the like count under it. The
-/// ranking's signature: the number is what the list is about.
-class _RankGutter extends StatelessWidget {
-  const _RankGutter({required this.entry});
+/// "♥ 1.2K · Sinquefield Cup" over a scorecard: the card has no board for
+/// the heart, so the count rides here with the game's event.
+class _LikesMeta extends StatelessWidget {
+  const _LikesMeta({required this.entry});
 
   final CommunityLikesEntry entry;
 
   @override
   Widget build(BuildContext context) {
-    const tabular = [FontFeature.tabularFigures()];
+    final game = entry.game;
+    final event = (game.eventName ?? game.tourName)?.trim();
+    const muted = Color(0xB3FFFFFF);
     return Semantics(
-      label: 'Rank ${entry.rank}, ${communityLikesLabel(entry.likes)}',
+      label: [
+        communityLikesLabel(entry.likes),
+        if (event != null && event.isNotEmpty) event,
+      ].join(', '),
       excludeSemantics: true,
-      child: Padding(
-        padding: const EdgeInsets.only(right: 12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                '${entry.rank}',
-                style: TextStyle(
-                  color: entry.rank <= 3 ? kWhiteColor : kWhiteColor70,
-                  fontSize: 26,
-                  height: 1.05,
+      child: SizedBox(
+        height: _RankedGamesViewState._metaHeight,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 6),
+          child: Row(
+            children: [
+              const Icon(Icons.favorite_rounded, size: 12, color: muted),
+              const SizedBox(width: 5),
+              Text(
+                compactLikeCount(entry.likes),
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 12,
+                  height: 1,
                   fontWeight: FontWeight.w700,
-                  fontFeatures: tabular,
+                  fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
-            ),
-            const SizedBox(height: 4),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.favorite_rounded,
-                    size: 12,
-                    color: kWhiteColor.withValues(alpha: 0.55),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    compactLikeCount(entry.likes),
-                    style: TextStyle(
-                      color: kWhiteColor.withValues(alpha: 0.7),
+              if (event != null && event.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    event,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: muted,
                       fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: tabular,
+                      height: 1,
                     ),
                   ),
-                ],
-              ),
-            ),
-          ],
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -629,7 +626,7 @@ class _PlayerFilterBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
       child: Row(
         children: [
           Flexible(
@@ -678,7 +675,7 @@ class _LoadMore extends StatelessWidget {
     if (!paging.hasMore) return const SizedBox(height: 16);
     if (paging.loading) return const _Spinner();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
       child: Center(
         child: _LikesActionButton(
           label: paging.failed ? 'Retry' : 'Show more',
@@ -718,7 +715,7 @@ class _RankedPlayersView extends ConsumerWidget {
 
     return ListView(
       physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(21, 0, 24, 24),
+      padding: const EdgeInsets.fromLTRB(17, 0, 20, 24),
       children: [
         const _PlayerColumnsHeader(),
         const SizedBox(height: 6),
@@ -972,7 +969,7 @@ class _LikesAboutView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
       child: Align(
         alignment: Alignment.topLeft,
         child: ConstrainedBox(
@@ -1152,14 +1149,12 @@ class _LikesActionButton extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.onPress,
-    this.tone = DesktopToolbarPillTone.neutral,
     this.height = 34,
   });
 
   final String label;
   final IconData icon;
   final VoidCallback? onPress;
-  final DesktopToolbarPillTone tone;
   final double height;
 
   @override
@@ -1169,7 +1164,6 @@ class _LikesActionButton extends StatelessWidget {
     child: DesktopToolbarPillButton(
       label: label,
       icon: icon,
-      tone: tone,
       height: height,
       onPress: onPress,
     ),
