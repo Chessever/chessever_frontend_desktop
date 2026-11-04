@@ -4649,9 +4649,22 @@ Future<void> _showManualPgnDialog(BuildContext context, WidgetRef ref) {
 }
 
 class _AddAccountChoiceDialog extends StatelessWidget {
-  const _AddAccountChoiceDialog({required this.animation});
+  const _AddAccountChoiceDialog({
+    required this.animation,
+    this.title = 'Add account',
+    this.body = 'Choose the source to connect to this player.',
+    this.sources = const [
+      PlayerWorkspaceSource.chessever,
+      PlayerWorkspaceSource.chesscom,
+      PlayerWorkspaceSource.lichess,
+      PlayerWorkspaceSource.manual,
+    ],
+  });
 
   final Animation<double> animation;
+  final String title;
+  final String body;
+  final List<PlayerWorkspaceSource> sources;
 
   @override
   Widget build(BuildContext context) {
@@ -4665,30 +4678,25 @@ class _AddAccountChoiceDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                'Add account',
-                style: TextStyle(
+              Text(
+                title,
+                style: const TextStyle(
                   color: kWhiteColor,
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Choose the source to connect to this player.',
-                style: TextStyle(
+              Text(
+                body,
+                style: const TextStyle(
                   color: kWhiteColor70,
                   fontSize: 12,
                   height: 1.35,
                 ),
               ),
               const SizedBox(height: 16),
-              for (final source in const [
-                PlayerWorkspaceSource.chessever,
-                PlayerWorkspaceSource.chesscom,
-                PlayerWorkspaceSource.lichess,
-                PlayerWorkspaceSource.manual,
-              ]) ...[
+              for (final source in sources) ...[
                 _SourceChoiceButton(
                   source: source,
                   onPress: () => Navigator.of(context).pop(source),
@@ -6089,20 +6097,104 @@ const DesktopAccessContext _prepareSourceAccess = DesktopAccessContext(
   origin: DesktopDiscoveryOrigin.localFile,
 );
 
-/// Creates a prep profile through the same dialog as Players > Add player,
-/// then calls [onCreated] with its id before offering to connect usernames.
-Future<void> showCreatePrepProfileDialog(
+/// The sources a player's own prep profile starts from, in the order the
+/// phone app's My Prep offers them.
+const List<PlayerWorkspaceSource> kOwnPrepSources = [
+  PlayerWorkspaceSource.lichess,
+  PlayerWorkspaceSource.chessever,
+  PlayerWorkspaceSource.chesscom,
+];
+
+/// The user's own prep profile, set up the way the phone app's My Prep does
+/// it: pick where you play, attach your username(s), and the profile is
+/// created from them and named after the first one. Nothing is created until
+/// an account is attached, so cancelling leaves no empty player behind.
+/// [source] skips the source choice when the caller already knows it.
+Future<void> showAttachOwnUsernamesFlow(
   BuildContext context,
   WidgetRef ref, {
-  required String title,
   required void Function(String playerId) onCreated,
-}) {
-  return _showAddPlayerDialog(
-    context,
-    ref,
-    title: title,
-    onOpenPlayer: onCreated,
+  PlayerWorkspaceSource? source,
+}) async {
+  if (!admitDesktopAction(
+    ProviderScope.containerOf(context, listen: false),
+    _prepareCreateAccess,
+    surface: 'prepare_own_profile',
+  )) {
+    return;
+  }
+  final picked =
+      source ??
+      await showFDialog<PlayerWorkspaceSource>(
+        context: context,
+        builder:
+            (context, _, animation) => _AddAccountChoiceDialog(
+              animation: animation,
+              title: 'Attach your username',
+              body: 'Where do you play? You can attach more accounts later.',
+              sources: kOwnPrepSources,
+            ),
+      );
+  if (picked == null || !context.mounted) return;
+  final notifier = ref.read(playerWorkspaceProvider.notifier);
+  if (picked == PlayerWorkspaceSource.chessever) {
+    final result = await showFDialog<_AddPlayerResult>(
+      context: context,
+      builder:
+          (context, _, animation) => _AddPlayerDialog(
+            title: 'Find yourself on ChessEver',
+            animation: animation,
+            offerConnect: true,
+            searchAccess: _prepareCreateAccess,
+            onSearch: notifier.searchChessEverPlayers,
+            onAddChessEver: notifier.addChessEverPlayer,
+          ),
+    );
+    if (result != null) onCreated(result.playerId);
+    return;
+  }
+  if (picked != PlayerWorkspaceSource.lichess &&
+      picked != PlayerWorkspaceSource.chesscom) {
+    return;
+  }
+  final repository = ref.read(playerWorkspaceRepositoryProvider);
+  await showFDialog<void>(
+    context: context,
+    builder:
+        (context, _, animation) => _ConnectAccountsDialog(
+          source: picked,
+          animation: animation,
+          existingUsernames: const [],
+          onValidate:
+              (username) =>
+                  picked == PlayerWorkspaceSource.lichess
+                      ? repository.fetchLichessAccount(username)
+                      : repository.fetchChessComAccount(username),
+          onConnect: (accounts) async {
+            if (accounts.isEmpty) return;
+            final first = accounts.first;
+            final name = first.displayName?.trim();
+            final playerId = await notifier.addManualPlayer(
+              name == null || name.isEmpty ? first.username : name,
+            );
+            await notifier.selectPlayer(playerId);
+            await notifier.attachFetchedAccounts(accounts);
+            onCreated(playerId);
+          },
+        ),
   );
+}
+
+/// A source's brand mark (Lichess, Chess.com, ChessEver) at [size], bare.
+class PlayerSourceMark extends StatelessWidget {
+  const PlayerSourceMark({super.key, required this.source, this.size = 32});
+
+  final PlayerWorkspaceSource source;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) =>
+      _SourceBrandMark(source: source, size: size);
 }
 
 Future<void> _showAddPlayerDialog(

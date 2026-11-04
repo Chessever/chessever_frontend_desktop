@@ -10,7 +10,11 @@ import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/panes/play_pane.dart'
     show PlayPaneTab, playPaneTabByTabIdProvider, playPaneTabProvider;
 import 'package:chessever/desktop/panes/player_workspace_pane.dart'
-    show PlayerWorkspacePane, showCreatePrepProfileDialog;
+    show
+        PlayerSourceMark,
+        PlayerWorkspacePane,
+        kOwnPrepSources,
+        showAttachOwnUsernamesFlow;
 import 'package:chessever/desktop/services/auth/desktop_guest_upgrade.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/services/play/play_achievements.dart';
@@ -25,6 +29,7 @@ import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_profile_sign_in.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/play_achievement_badge.dart';
@@ -582,16 +587,21 @@ class _PrepSection extends ConsumerWidget {
   }
 }
 
-/// Shown until the user has a prep profile of their own: create one, or
-/// adopt a profile already built in Players.
+/// Shown until the user has a prep profile of their own. Mirrors the phone
+/// app's My Prep > Games: attach the usernames you play under and the
+/// profile is built from them, or adopt a profile already built in Players.
 class _PrepSetup extends ConsumerWidget {
   const _PrepSetup();
 
-  Future<void> _create(BuildContext context, WidgetRef ref) {
-    return showCreatePrepProfileDialog(
+  Future<void> _attach(
+    BuildContext context,
+    WidgetRef ref, [
+    PlayerWorkspaceSource? source,
+  ]) {
+    return showAttachOwnUsernamesFlow(
       context,
       ref,
-      title: 'Your prep profile',
+      source: source,
       onCreated:
           (playerId) => unawaited(
             ref.read(myPrepPlayerIdProvider.notifier).link(playerId),
@@ -632,8 +642,21 @@ class _PrepSetup extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final source in kOwnPrepSources) ...[
+                  _SourceMarkButton(
+                    source: source,
+                    onTap: () => unawaited(_attach(context, ref, source)),
+                  ),
+                  if (source != kOwnPrepSources.last) const SizedBox(width: 6),
+                ],
+              ],
+            ),
+            const SizedBox(height: 18),
             const Text(
-              'Prepare against yourself',
+              'Attach your own usernames',
               style: TextStyle(
                 color: kWhiteColor,
                 fontSize: 24,
@@ -643,9 +666,8 @@ class _PrepSetup extends ConsumerWidget {
             ),
             const SizedBox(height: 10),
             const Text(
-              'Connect the Lichess, Chess.com or FIDE identity you play '
-              'under. Your openings, results and repertoire are built here '
-              'the same way you prep an opponent.',
+              'Add your Lichess and Chess.com accounts here. Their games stay '
+              'together. You can also attach your ChessEver player record.',
               style: TextStyle(
                 color: kWhiteColor70,
                 fontSize: 14,
@@ -658,16 +680,13 @@ class _PrepSetup extends ConsumerWidget {
               child: FButton(
                 style: playPrimaryActionButtonStyle(),
                 prefix: const Icon(Icons.person_add_alt_1_outlined, size: 16),
-                onPress: () => unawaited(_create(context, ref)),
-                child: const Text('Create my prep profile'),
+                onPress: () => unawaited(_attach(context, ref)),
+                child: const Text('Attach your username'),
               ),
             ),
             if (players.isNotEmpty) ...[
               const SizedBox(height: 36),
-              const Text(
-                'Or choose a profile you already prepared',
-                style: _kHeading,
-              ),
+              const Text('Already in Players? Pick yourself', style: _kHeading),
               const SizedBox(height: 10),
               DecoratedBox(
                 decoration: _surface(),
@@ -692,6 +711,35 @@ class _PrepSetup extends ConsumerWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// One source's mark in the Prep empty state; clicking it opens the attach
+/// flow straight at that source, skipping the source choice.
+class _SourceMarkButton extends StatelessWidget {
+  const _SourceMarkButton({required this.source, required this.onTap});
+
+  final PlayerWorkspaceSource source;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return DesktopTooltip(
+      message: 'Attach ${source.label}',
+      child: _Hoverable(
+        onTap: onTap,
+        builder:
+            (hovered) => AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: hovered ? kBlack3Color : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: PlayerSourceMark(source: source, size: 32),
+            ),
       ),
     );
   }

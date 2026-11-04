@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/panes/play_profile_pane.dart';
 import 'package:chessever/desktop/services/play/play_achievements.dart';
@@ -12,6 +14,7 @@ import 'package:chessever/desktop/services/play/play_profile_repository.dart';
 import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/state/my_prep_profile.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 void main() {
@@ -25,7 +28,10 @@ void main() {
     await font.load();
   });
 
-  Future<_MyPrep> pumpProfile(WidgetTester tester) async {
+  Future<_MyPrep> pumpProfile(
+    WidgetTester tester, {
+    bool premium = false,
+  }) async {
     tester.view.physicalSize = const Size(1600, 1100);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -42,6 +48,22 @@ void main() {
           ),
           myPrepPlayerIdProvider.overrideWith((ref) => myPrep),
           playerWorkspaceProvider.overrideWith((ref) => _Workspace()),
+          if (premium) ...[
+            subscriptionProvider.overrideWith(
+              (ref) => SubscriptionNotifier.stub(
+                SubscriptionState(
+                  isSubscribed: true,
+                  expirationDate: DateTime.now().add(const Duration(days: 30)),
+                ),
+              ),
+            ),
+            desktopEntitlementProvider.overrideWith(
+              (ref) => const DesktopEntitlementSnapshot(
+                accountId: 'acct-a',
+                generation: 1,
+              ),
+            ),
+          ],
         ],
         child: MaterialApp(
           home: Scaffold(
@@ -64,9 +86,28 @@ void main() {
   ) async {
     await pumpProfile(tester);
 
-    expect(find.text('Prepare against yourself'), findsOneWidget);
-    expect(find.text('Create my prep profile'), findsOneWidget);
+    expect(find.text('Attach your own usernames'), findsOneWidget);
+    expect(find.text('Attach your username'), findsOneWidget);
     expect(find.text('Record'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('attaching a username starts with where the user plays', (
+    tester,
+  ) async {
+    await pumpProfile(tester, premium: true);
+
+    await tester.tap(find.text('Attach your username'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Where do you play? You can attach more accounts later.'),
+      findsOneWidget,
+    );
+    expect(find.text('Lichess username'), findsOneWidget);
+    expect(find.text('Chess.com username'), findsOneWidget);
+    expect(find.text('ChessEver player'), findsOneWidget);
+    expect(find.text('PGN file'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
