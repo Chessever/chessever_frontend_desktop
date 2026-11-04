@@ -2,6 +2,7 @@ import 'package:collection/collection.dart';
 
 import '../../screens/chessboard/analysis/chess_game.dart';
 import '../../screens/chessboard/utils/chessever_annotation.dart';
+import '../../screens/chessboard/utils/chessever_report_stamp.dart';
 import 'engine/game_analysis_report.dart';
 
 /// Engine evidence is reusable across records; permission to export it is not.
@@ -30,16 +31,15 @@ Future<ChessGame> resolveBoardLibrarySaveGame({
 
 /// Overlays a tab's user NAGs (`userMoveNagsProvider`) on the mainline. A user
 /// quality glyph replaces the move's other quality and classification marks
-/// and adds [kChesseverUserQualityOverrideNag]. Merging twice gives the same
+/// and adds [kChesseverUserQualityOverrideNag], and drops the report stamp
+/// ([kChesseverReportStampTag]). Merging twice gives the same
 /// result as merging once.
-ChessGame mergeUserMainlineNags(
-  ChessGame game,
-  Map<int, List<int>> userNags,
-) {
+ChessGame mergeUserMainlineNags(ChessGame game, Map<int, List<int>> userNags) {
   if (userNags.isEmpty) return game;
   bool isQuality(int nag) =>
       (nag >= 1 && nag <= 7) || isChesseverClassificationNag(nag);
   var changed = false;
+  var userVerdict = false;
   final mainline = <ChessMove>[
     for (var index = 0; index < game.mainline.length; index++)
       (() {
@@ -47,6 +47,7 @@ ChessGame mergeUserMainlineNags(
         if (overlay.isEmpty) return game.mainline[index];
         final existing = game.mainline[index].nags ?? const <int>[];
         final overlayHasQuality = overlay.any(isQuality);
+        if (overlayHasQuality) userVerdict = true;
         final mergedNags = <int>[
           ...overlay,
           ...existing.where(
@@ -64,7 +65,10 @@ ChessGame mergeUserMainlineNags(
         );
       })(),
   ];
-  return changed ? game.copyWith(mainline: mainline) : game;
+  final merged = changed ? game.copyWith(mainline: mainline) : game;
+  // A user verdict makes the PGN partly the user's: it must no longer vouch
+  // for itself as ChessEver's analysis, even after a copy drops `$248`.
+  return userVerdict ? withoutChesseverReportStamp(merged) : merged;
 }
 
 // Quality and positional symbols are independent fields. A late positional

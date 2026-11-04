@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report_store.dart';
 import 'package:chessever/desktop/services/engine/game_report_allowance.dart';
+import 'package:chessever/desktop/services/engine/game_report_from_pgn.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 enum GameReportRequestOutcome {
@@ -87,9 +88,10 @@ bool gameReportHasFinalResult(ChessGame game, Map<String, String> headers) {
 /// 1. validate the game (source access, finished, nonempty mainline);
 /// 2. require an account and serialize this account's requests in-process so
 ///    two tabs cannot both consume the one free success;
-/// 3. restore a completed session report or account-scoped cached report only
-///    when this account has explicitly admitted that fingerprint. A first
-///    explicit cache hit can spend the free success;
+/// 3. restore a completed session report, an account-scoped cached report, or
+///    the report the game's PGN already carries, without analysing. Restoring
+///    is free only once this account has admitted that fingerprint; a first
+///    explicit restore can spend the free success;
 /// 4. generate only when Premium is verified or the lifetime free success is
 ///    still unused. Failed/cancelled analysis writes no success marker;
 /// 5. after an upgrade, refresh the entitlement and re-check before
@@ -189,7 +191,21 @@ class GameReportRequestCoordinator {
                     shown.report?.fingerprint == fingerprint
                 ? shown.report
                 : null;
-        final cached = sessionReport ?? await _store.load(owner, fingerprint);
+        // Session, then this account's cache, then the game's own PGN: a game
+        // whose PGN carries our own stamped report (the analysis service
+        // writes one onto prewarmed broadcast games) is adopted instead of
+        // re-analysed. Annotations a user added are never read as ours; see
+        // gameAnalysisReportFromPgn. Every source is an existing report, so
+        // admission below treats them identically — reading one back never
+        // bypasses the allowance.
+        final cached =
+            sessionReport ??
+            await _store.load(owner, fingerprint) ??
+            gameAnalysisReportFromPgn(
+              game,
+              whiteRating: whiteRating,
+              blackRating: blackRating,
+            );
         if (!current()) return _stale;
         if (admitted && cached != null) {
           if (sessionReport == null &&

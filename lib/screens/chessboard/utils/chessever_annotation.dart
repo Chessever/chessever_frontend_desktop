@@ -3,6 +3,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_report_stamp.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 
 /// The private carrier that lets a copied game come home with its exact
@@ -460,7 +461,24 @@ ChessGame mergeGameReportAnnotationsForExport(
       })(),
   ];
 
-  return changed ? game.copyWith(mainline: mainline) : game;
+  final merged = changed ? game.copyWith(mainline: mainline) : game;
+  // Provenance: only a report that judged and scored every mainline move may
+  // vouch for the PGN as ours. A partial report, or a move whose score fell
+  // back to an imported `[%eval]`, would let somebody else's numbers ride
+  // under our stamp. [withChesseverReportStamp] also refuses a game that
+  // carries a user verdict.
+  final coversMainline =
+      game.mainline.isNotEmpty &&
+      Iterable<int>.generate(game.mainline.length).every((index) {
+        final reportMove = byPly[index + 1];
+        return reportMove != null &&
+            reportMove.uci == game.mainline[index].uci &&
+            (reportMove.evaluation.centipawns != null ||
+                reportMove.evaluation.mate != null);
+      });
+  return coversMainline
+      ? withChesseverReportStamp(merged)
+      : withoutChesseverReportStamp(merged);
 }
 
 /// Alias — GIF was the first consumer; same product-name hydrate as export.

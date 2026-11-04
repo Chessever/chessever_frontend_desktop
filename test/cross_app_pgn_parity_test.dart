@@ -3,6 +3,7 @@ import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_report_stamp.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Copy on mobile, paste on desktop: the two apps must render the same game the
@@ -114,6 +115,7 @@ const kCrossAppCanonicalExport = '''
 [White "Rewitz, Poul"]
 [Black "Nielsen, Frode Benedikt"]
 [Result "1-0"]
+[ChessEverReport "v1 10ada6736e15ae6bbb776a741bff6fbcf0168ecd2f730b4e872781be3b1a75a4"]
 [TimeControl "40/5400+30:1800+30"]
 
 1. b3 \$6 \$244 { [%eval -0.32] [%clk 1:30:53] } 1... d6 \$247 { [%eval 0.16] [%clk 1:29:21] } 2. Bb2 \$1 \$242 { [%eval 0.14] [%clk 1:31:04] } 2... c6 \$3 \$240 { [%eval 0.25] [%clk 1:29:34] } 3. f4 \$4 \$243 { [%eval -0.16] [%clk 1:28:36] } 3... Nf6 \$2 \$245 { [%eval -0.13] [%clk 1:29:10] } 4. e3 \$4 \$246 { [%eval -0.25] [%clk 1:27:12] } 1-0''';
@@ -123,13 +125,10 @@ void main() {
 
   test('every ply resolves to the same classification badge', () {
     final annotations = chesseverAnnotationsFromMainline(game);
-    expect(
-      <int, GameMoveClassification>{
-        for (final entry in annotations.entries)
-          entry.key: _classificationFor(entry.value.type),
-      },
-      kCrossAppParityClassifications,
-    );
+    expect(<int, GameMoveClassification>{
+      for (final entry in annotations.entries)
+        entry.key: _classificationFor(entry.value.type),
+    }, kCrossAppParityClassifications);
     for (final annotation in annotations.values) {
       expect(annotation.useClassificationIcon, isTrue);
       expect(annotation.reportOwnsMoveQuality, isTrue);
@@ -208,14 +207,13 @@ void main() {
     // classifications the fixture asserts, so a game copied either direction
     // renders the same.
     final reopened = ChessGame.fromPgn('roundtrip', kCrossAppCanonicalExport);
+    // The export vouches for itself as our report, on both apps.
+    expect(carriesVerifiedChesseverReport(reopened), isTrue);
     final annotations = chesseverAnnotationsFromMainline(reopened);
-    expect(
-      <int, GameMoveClassification>{
-        for (final entry in annotations.entries)
-          entry.key: _classificationFor(entry.value.type),
-      },
-      kCrossAppParityClassifications,
-    );
+    expect(<int, GameMoveClassification>{
+      for (final entry in annotations.entries)
+        entry.key: _classificationFor(entry.value.type),
+    }, kCrossAppParityClassifications);
     for (var ply = 0; ply < kCrossAppParityClocks.length; ply++) {
       expect(reopened.mainline[ply].clockTime, kCrossAppParityClocks[ply]);
       expect(reopened.mainline[ply].eval, kCrossAppParityEvals[ply]);
