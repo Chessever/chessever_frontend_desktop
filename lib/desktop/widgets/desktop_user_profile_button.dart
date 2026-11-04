@@ -10,6 +10,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/services/play/play_profile_repository.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/providers/auth_state_provider.dart';
+import 'package:chessever/repository/authentication/auth_repository.dart';
+import 'package:chessever/repository/authentication/model/auth_state.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -98,7 +100,9 @@ class DesktopUserAvatar extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(currentUserProvider);
     final playProfile = ref.watch(playUserProfileProvider).valueOrNull;
-    final subscription = ref.watch(subscriptionProvider);
+    final isSubscribed = ref.watch(
+      subscriptionProvider.select((state) => state.isSubscribed),
+    );
     final effectiveName =
         _clean(displayName) ??
         _clean(playProfile?.displayName) ??
@@ -110,14 +114,21 @@ class DesktopUserAvatar extends HookConsumerWidget {
     // those blips do not swap the photo for initials and fade it back in.
     final lastAvatar = useRef<(String?, String)?>(null);
     final resolvedAvatarUrl = _clean(avatarUrl) ?? _clean(user?.avatarUrl);
-    if (resolvedAvatarUrl != null) {
+    final signedOut = ref.watch(
+      authStateProvider.select(
+        (state) => state.valueOrNull?.status == AppAuthStatus.unauthenticated,
+      ),
+    );
+    if (signedOut && avatarUrl == null) {
+      lastAvatar.value = null;
+    } else if (resolvedAvatarUrl != null) {
       lastAvatar.value = (user?.id, resolvedAvatarUrl);
     } else if (user != null && lastAvatar.value?.$1 != user.id) {
       lastAvatar.value = null;
     }
     final effectiveAvatarUrl = resolvedAvatarUrl ?? lastAvatar.value?.$2;
     final initials = _initials(effectiveName);
-    final premium = showPremiumBorder && subscription.isSubscribed;
+    final premium = showPremiumBorder && isSubscribed;
     final radius = borderRadius ?? size / 2;
     final avatar = Container(
       width: size,
@@ -139,6 +150,9 @@ class DesktopUserAvatar extends HookConsumerWidget {
           effectiveAvatarUrl == null
               ? _Initials(initials: initials, size: size)
               : CachedNetworkImage(
+                // Keep playback across refreshes of one account, but never
+                // display the previous account's photo while another loads.
+                key: ValueKey(user?.id ?? lastAvatar.value?.$1),
                 imageUrl: effectiveAvatarUrl,
                 fit: BoxFit.cover,
                 // The browser build has no disk cache, so a re-resolve would
@@ -158,18 +172,24 @@ class DesktopUserAvatar extends HookConsumerWidget {
               ),
     );
 
-    if (!premium) return avatar;
-
     final borderWidth = math.max(2.0, size * 0.055);
     // A static ring. It used to sit in a repeating 4 s AnimationController
     // whose value the painter never read, which kept a frame scheduled at the
     // display's refresh rate for every subscriber, on every screen.
     return CustomPaint(
-      painter: _PremiumAvatarRingPainter(
-        radius: radius,
-        strokeWidth: borderWidth,
+      painter:
+          premium
+              ? _PremiumAvatarRingPainter(
+                radius: radius,
+                strokeWidth: borderWidth,
+              )
+              : null,
+      // Entitlement refreshes must not reparent the photo. Keeping this path
+      // stable preserves its image stream when the premium ring changes.
+      child: Padding(
+        padding: EdgeInsets.all(premium ? borderWidth + 2 : 0),
+        child: avatar,
       ),
-      child: Padding(padding: EdgeInsets.all(borderWidth + 2), child: avatar),
     );
   }
 }
@@ -230,8 +250,7 @@ class _PremiumAvatarRingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _PremiumAvatarRingPainter oldDelegate) =>
-      oldDelegate.radius != radius ||
-      oldDelegate.strokeWidth != strokeWidth;
+      oldDelegate.radius != radius || oldDelegate.strokeWidth != strokeWidth;
 }
 
 FBaseButtonStyle Function(FButtonStyle style) _profileButtonStyle({

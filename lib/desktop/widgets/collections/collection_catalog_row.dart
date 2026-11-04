@@ -450,22 +450,27 @@ class CollectionCatalogColumns {
   const CollectionCatalogColumns._({
     required this.showAuthor,
     required this.showViews,
+    required this.showDates,
   });
 
   factory CollectionCatalogColumns.forWidth(double width) =>
       CollectionCatalogColumns._(
         showAuthor: width >= 600,
         showViews: width >= 700,
+        showDates: width >= 1080,
       );
 
   final bool showAuthor;
   final bool showViews;
+  final bool showDates;
 
   static const double gutter = 16;
   static const double coverWidth = 27;
   static const double authorWidth = 160;
   static const double gamesWidth = 72;
   static const double viewsWidth = 60;
+  static const double dateWidth = 112;
+  static const double lastGameAddedWidth = 140;
 
   /// The star count's own slot: every count ends on its right edge, and a
   /// row without stars leaves it empty instead of closing it.
@@ -489,6 +494,8 @@ class _CatalogColumnsLayout extends StatelessWidget {
     required this.views,
     required this.stars,
     required this.star,
+    required this.published,
+    required this.lastGameAdded,
     this.stretch = false,
   });
 
@@ -499,6 +506,8 @@ class _CatalogColumnsLayout extends StatelessWidget {
   final Widget views;
   final Widget stars;
   final Widget star;
+  final Widget published;
+  final Widget lastGameAdded;
 
   /// Cells take the full height of the line: a header cell is pressable all
   /// over, not only on its label.
@@ -525,6 +534,18 @@ class _CatalogColumnsLayout extends StatelessWidget {
               SizedBox(
                 width: CollectionCatalogColumns.authorWidth,
                 child: author,
+              ),
+            ],
+            if (columns.showDates) ...[
+              gutter,
+              SizedBox(
+                width: CollectionCatalogColumns.dateWidth,
+                child: published,
+              ),
+              gutter,
+              SizedBox(
+                width: CollectionCatalogColumns.lastGameAddedWidth,
+                child: lastGameAdded,
               ),
             ],
             gutter,
@@ -589,6 +610,11 @@ class CollectionCatalogHeader extends StatelessWidget {
           views: cell(CollectionSortColumn.views, 'VIEWS', end: true),
           stars: cell(CollectionSortColumn.stars, 'STARS', end: true),
           star: const SizedBox.shrink(),
+          published: cell(CollectionSortColumn.publishedAt, 'PUBLISHED'),
+          lastGameAdded: cell(
+            CollectionSortColumn.lastGameAdded,
+            'LAST GAME ADDED',
+          ),
         ),
       ),
     );
@@ -624,7 +650,10 @@ class _SortHeaderCellState extends State<_SortHeaderCell>
 
   @override
   Widget build(BuildContext context) {
-    final active = widget.sort.column == widget.column;
+    final active =
+        widget.sort.column == widget.column ||
+        (widget.sort.isStandard &&
+            widget.column == CollectionSortColumn.lastGameAdded);
     final ascending = widget.sort.ascending;
     final color =
         active
@@ -671,7 +700,7 @@ class _SortHeaderCellState extends State<_SortHeaderCell>
       },
       child: Semantics(
         button: true,
-        label: 'Sort by ${widget.column.api}',
+        label: 'Sort by ${widget.column.label}',
         value: active ? (ascending ? 'Ascending' : 'Descending') : null,
         onTap: widget.onPress,
         excludeSemantics: true,
@@ -765,6 +794,8 @@ class CollectionCatalogRow extends ConsumerWidget {
     final credit = collectionCredit(collection);
     final caption = collectionCaption(collection);
     final games = collectionGamesLabel(collection.gameCount);
+    final published = collectionCatalogDate(collection.publishedAt);
+    final lastGameAdded = collectionCatalogDate(collection.lastGameAddedAt);
     return LibraryCatalogRowFrame(
       selected: selected,
       focusDebugLabel: 'collection-row-${collection.slug}',
@@ -776,6 +807,8 @@ class CollectionCatalogRow extends ConsumerWidget {
         if (collection.kind == CollectionKind.book) '$views views',
         if (stars > 0) '$stars stars',
         if (caption != null) caption,
+        if (published != null) 'Published $published',
+        if (lastGameAdded != null) 'Last game added $lastGameAdded',
       ].join(', '),
       onSelect: onSelect,
       onOpen: onOpen,
@@ -795,6 +828,14 @@ class CollectionCatalogRow extends ConsumerWidget {
             ),
             author: LibraryCatalogMutedCell(credit ?? ''),
             games: LibraryCatalogMutedCell(games, textAlign: TextAlign.right),
+            published: _CollectionDateCell(
+              published ?? '',
+              key: ValueKey('collection-published-${collection.slug}'),
+            ),
+            lastGameAdded: _CollectionDateCell(
+              lastGameAdded ?? '',
+              key: ValueKey('collection-last-game-${collection.slug}'),
+            ),
             views: LibraryCatalogMutedCell(
               collection.kind == CollectionKind.book ? '$views' : '',
               textAlign: TextAlign.right,
@@ -811,6 +852,25 @@ class CollectionCatalogRow extends ConsumerWidget {
           ),
     );
   }
+}
+
+class _CollectionDateCell extends StatelessWidget {
+  const _CollectionDateCell(this.value, {super.key});
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    value,
+    maxLines: 1,
+    overflow: TextOverflow.ellipsis,
+    style: const TextStyle(
+      color: kWhiteColor70,
+      fontSize: 11.5,
+      fontWeight: FontWeight.w600,
+      fontFeatures: [FontFeature.tabularFigures()],
+    ),
+  );
 }
 
 /// A row's title with what follows it on the same line: the Premium lock,

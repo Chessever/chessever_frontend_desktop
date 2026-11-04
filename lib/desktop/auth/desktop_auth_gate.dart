@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -128,6 +129,7 @@ class DesktopAuthGate extends HookConsumerWidget {
       case DesktopAuthGateView.shell:
         return const MandatoryUpdateGate(
           child: DesktopGuestGateListener(
+            promptOnFirstEntry: kIsWeb,
             child: DesktopGuestInteractionGate(child: DesktopShell()),
           ),
         );

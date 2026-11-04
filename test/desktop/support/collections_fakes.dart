@@ -167,6 +167,8 @@ final Map<String, Comparable<Object> Function(Collection book)> _sortKeys = {
   'games': (book) => book.gameCount,
   'views': (book) => book.viewCount,
   'stars': (book) => book.starCount,
+  'publishedAt': (book) => book.publishedAt?.millisecondsSinceEpoch ?? 0,
+  'lastGameAdded': (book) => book.lastGameAddedAt?.millisecondsSinceEpoch ?? 0,
 };
 
 /// A reader over fixed data, recording what was asked of it.
@@ -282,6 +284,8 @@ class FakeCollectionsReader implements CollectionsReader {
       authorId: base.authorId,
       publisher: base.publisher,
       publishedYear: base.publishedYear,
+      publishedAt: base.publishedAt,
+      lastGameAddedAt: base.lastGameAddedAt,
       location: base.location,
       gameCount: base.gameCount,
       viewCount: base.viewCount,

@@ -36,6 +36,9 @@ enum DesktopFeature {
   /// so nothing here gates it a second time; the value records where a board
   /// tab's game came from, which is what keeps it from being exported.
   collection,
+
+  /// Premium Events discovery tabs. Current events and Calendar stay free.
+  eventDiscovery,
 }
 
 /// Where the user discovered the content a request acts on.

@@ -235,7 +235,13 @@ class ChatClientContext {
     'formFactor': formFactor,
     if (appVersion != null) 'appVersion': appVersion,
     if (buildNumber != null) 'buildNumber': buildNumber,
-    'capabilities': const ['app-help-v1', 'event-navigation-v1'],
+    'capabilities': [
+      'app-help-v1',
+      'event-navigation-v1',
+      // The browser app uses the shared desktop shell, while ChessEver.com
+      // has separate website navigation under the same web platform value.
+      if (platform == 'web') 'desktop-shell-v1',
+    ],
   };
 }
 

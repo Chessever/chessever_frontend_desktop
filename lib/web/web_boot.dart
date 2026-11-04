@@ -11,7 +11,6 @@ import 'package:sqflite/sqflite.dart' show databaseFactory;
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
 import 'package:chessever/desktop/auth/desktop_player_profile_access.dart';
-import 'package:chessever/desktop/auth/desktop_guest_interaction_gate.dart';
 import 'package:chessever/desktop/desktop_app.dart';
 import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
@@ -94,7 +93,6 @@ Future<void> _boot() async {
   final container = ProviderContainer(
     overrides: [
       desktopSubscriptionOverride,
-      desktopGuestInteractionSignInProvider.overrideWithValue(true),
       desktopPlayerProfileGamesOverride,
       forYouGamesPerEventLimitProvider.overrideWithValue(
         kDesktopForYouGamesPerEvent,

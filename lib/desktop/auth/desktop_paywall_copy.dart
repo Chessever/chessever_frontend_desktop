@@ -200,6 +200,13 @@ DesktopPaywallCopy _premiumCopy(
   String? capacityLine,
 ) {
   switch (reason) {
+    case DesktopAccessReason.premiumEventDiscovery:
+      return const DesktopPaywallCopy(
+        title: 'For You and Past events are Premium',
+        body:
+            'Get Premium for personalized recommendations and past events. '
+            'Current events and Calendar stay free.',
+      );
     case DesktopAccessReason.premiumPaidSource when context == null:
       // Legacy shared guards that do not pass a request yet.
       return const DesktopPaywallCopy(

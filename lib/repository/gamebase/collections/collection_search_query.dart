@@ -30,7 +30,7 @@ class CollectionSearchQuery {
   final bool annotated;
 
   /// `default`, `newest`, `oldest`, or a column: `name`, `author`, `games`,
-  /// `views`, `stars`.
+  /// `views`, `stars`, `publishedAt`, `lastGameAdded`.
   final String sort;
 
   /// `asc` or `desc` for a column sort. Empty asks for the column's own
@@ -42,7 +42,7 @@ class CollectionSearchQuery {
   /// its own.
   static String naturalOrder(String sort) => switch (sort) {
     'name' || 'author' => 'asc',
-    'games' || 'views' || 'stars' => 'desc',
+    'games' || 'views' || 'stars' || 'publishedAt' || 'lastGameAdded' => 'desc',
     _ => '',
   };
 

@@ -176,22 +176,30 @@ enum CollectionSortColumn {
   author('author'),
   games('games'),
   views('views'),
-  stars('stars');
+  stars('stars'),
+  publishedAt('publishedAt'),
+  lastGameAdded('lastGameAdded');
 
   const CollectionSortColumn(this.api);
 
   final String api;
+
+  String get label => switch (this) {
+    publishedAt => 'publication date',
+    lastGameAdded => 'last game added',
+    _ => api,
+  };
 
   /// Whether a first press sorts upwards: names do, counts start from the
   /// largest.
   bool get ascendingFirst => CollectionSearchQuery.naturalOrder(api) == 'asc';
 }
 
-/// The order the catalog is asked for: the team's own, or one column in one
+/// The order the catalog is asked for: latest game additions, or one column in one
 /// direction. The server sorts; nothing here reorders a row.
 @immutable
 class CollectionCatalogSort {
-  /// The team's own order.
+  /// Collections with the latest game additions first.
   const CollectionCatalogSort.standard() : column = null, ascending = false;
 
   const CollectionCatalogSort.by(
@@ -212,7 +220,7 @@ class CollectionCatalogSort {
   bool get isNatural => column != null && ascending == column!.ascendingFirst;
 
   /// The API's `sort`.
-  String get sort => column?.api ?? 'default';
+  String get sort => column?.api ?? 'lastGameAdded';
 
   /// The API's `order`.
   String get order => column == null ? '' : (ascending ? 'asc' : 'desc');
@@ -233,6 +241,9 @@ class CollectionCatalogSort {
       ascending: !pressed.ascendingFirst,
     );
     const standard = CollectionCatalogSort.standard();
+    if (isStandard && pressed == CollectionSortColumn.lastGameAdded) {
+      return refused.contains(reversed) ? this : reversed;
+    }
     final steps =
         column != pressed
             ? [natural, reversed]

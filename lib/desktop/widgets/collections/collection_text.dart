@@ -86,6 +86,13 @@ const List<String> _months = [
   'Dec',
 ];
 
+/// A publication/addition timestamp, without inventing a date for old servers.
+String? collectionCatalogDate(DateTime? timestamp) {
+  if (timestamp == null) return null;
+  final date = timestamp.toLocal();
+  return '${_months[date.month - 1]} ${date.day}, ${date.year}';
+}
+
 /// "Oct 2, 2025", "Oct 2-14, 2025" or "Sep 28 - Oct 3, 2025".
 String? collectionDateRange(DateTime? start, DateTime? end) {
   final from = start ?? end;

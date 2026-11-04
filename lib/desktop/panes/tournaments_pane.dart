@@ -10,6 +10,8 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_event_discovery_access.dart';
+import 'package:chessever/desktop/widgets/desktop_event_discovery_gate.dart';
 import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/widgets/botvinnik/botvinnik_launch_button.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -130,6 +132,9 @@ class TournamentsPane extends HookConsumerWidget {
     final selectedTournamentId = useState<String?>(null);
     final loadingId = useState<String?>(null);
     final selectedCategory = ref.watch(ge.selectedGroupCategoryProvider);
+    final access = ref.watch(
+      desktopEventDiscoveryAccessProvider(selectedCategory),
+    );
     final forYouFilterState = ref.watch(forYouAppliedFilterProvider);
     final currentPastFilterState = ref.watch(currentPastAppliedFilterProvider);
     final selectedFilterState =
@@ -140,7 +145,7 @@ class TournamentsPane extends HookConsumerWidget {
     // Pulls live events the For You feed has not paged in yet into the feed,
     // and asks for a fresh ranking when one of them is newly live. Ordering
     // itself belongs to the feed providers' queries.
-    ref.watch(tournamentLiveEventPrefetchProvider);
+    if (access.isAllowed) ref.watch(tournamentLiveEventPrefetchProvider);
     final globalSearchQuery = ref.watch(desktopGlobalSearchQueryProvider);
     // Stable per-tournament-id GlobalKeys so we can `Scrollable.ensureVisible`
     // the highlighted row when the user navigates with the arrow keys.
@@ -153,20 +158,25 @@ class TournamentsPane extends HookConsumerWidget {
     // the global Current/Past list. Mirror that wiring on desktop so the
     // category actually surfaces useful data.
     final asyncTournaments =
-        selectedCategory == ge.GroupEventCategory.forYou
+        !access.isAllowed
+            ? const AsyncValue<List<GroupEventCardModel>>.data([])
+            : selectedCategory == ge.GroupEventCategory.forYou
             ? ref.watch(forYouEventsProvider).toAsyncValue()
             : ref.watch(groupEventScreenProvider);
 
     // Match the mobile screen: refresh stale data when the user lands on
     // the For You tab.
     useEffect(() {
-      if (selectedCategory == ge.GroupEventCategory.forYou) {
+      var disposed = false;
+      if (access.isAllowed &&
+          selectedCategory == ge.GroupEventCategory.forYou) {
         Future<void>(() async {
+          if (disposed) return;
           await ref.read(forYouEventsProvider.notifier).refreshIfStale();
         });
       }
-      return null;
-    }, [selectedCategory]);
+      return () => disposed = true;
+    }, [selectedCategory, access.isAllowed]);
     useEffect(() {
       selectedTournamentId.value = null;
       return null;
@@ -243,15 +253,19 @@ class TournamentsPane extends HookConsumerWidget {
                           .state = category;
                     },
                   ),
-                  const SizedBox(width: 10),
-                  _DesktopEventFilterButton(
-                    activeCount: activeFilterCount,
-                    onPressed: openFilters,
-                  ),
+                  if (access.isAllowed) ...[
+                    const SizedBox(width: 10),
+                    _DesktopEventFilterButton(
+                      activeCount: activeFilterCount,
+                      onPressed: openFilters,
+                    ),
+                  ],
                   const Spacer(),
-                  if (shouldShowTournamentLiveFirst(selectedCategory))
+                  if (access.isAllowed &&
+                      shouldShowTournamentLiveFirst(selectedCategory))
                     const TournamentLiveFirstToggle(),
-                  if (selectedCategory == ge.GroupEventCategory.forYou) ...[
+                  if (access.isAllowed &&
+                      selectedCategory == ge.GroupEventCategory.forYou) ...[
                     const SizedBox(width: 8),
                     const GameViewModeToggle(buttonSize: 38),
                   ],
@@ -268,68 +282,76 @@ class TournamentsPane extends HookConsumerWidget {
           ),
         ),
         Expanded(
-          child:
-              hasQuery
-                  ? _SearchResultsView(
-                    query: searchQuery,
-                    pendingQuery: null,
-                    onClearSearch: () {
-                      ref
-                          .read(desktopGlobalSearchQueryProvider.notifier)
-                          .state = null;
-                    },
-                    onOpenTournament: openTournament,
-                  )
-                  : selectedCategory == ge.GroupEventCategory.forYou
-                  ? _ForYouFeed(tabId: tabId, onOpenTournament: openTournament)
-                  : asyncTournaments.when(
-                    data: (tournaments) {
-                      // Rendered in provider order. Live first re-runs the
-                      // Current query and republishes a ranked list, so
-                      // re-sorting here would only fight it.
-                      // Past is the finished-broadcast bucket; calendar
-                      // date_end can still be in the future (weekend
-                      // leagues), so force Completed chips in this tab.
-                      final displayTournaments =
-                          selectedCategory == ge.GroupEventCategory.past
-                              ? [
-                                for (final tournament in tournaments)
-                                  tournament.asCompleted(),
-                              ]
-                              : tournaments;
-                      return _TournamentEventGridKeyboardHost(
-                        focusNode: listFocusNode,
-                        tournaments: displayTournaments,
-                        selectedId: selectedTournamentId.value,
-                        onSelectedIdChanged: (id) {
-                          selectedTournamentId.value = id;
-                        },
-                        onActivate: openTournament,
-                        tileKeys: tileKeys.value,
-                        child: _TournamentBrowser(
-                          tournaments: displayTournaments,
-                          storageKey: PageStorageKey<String>(
-                            'desktop_tournament_rows_${tabId}_${selectedCategory.name}',
-                          ),
-                          selectedId: selectedTournamentId.value,
-                          onSelect: (id) {
-                            selectedTournamentId.value = id;
-                            listFocusNode.requestFocus();
+          child: DesktopEventDiscoveryGate(
+            category: selectedCategory,
+            builder:
+                (context) =>
+                    hasQuery
+                        ? _SearchResultsView(
+                          query: searchQuery,
+                          pendingQuery: null,
+                          onClearSearch: () {
+                            ref
+                                .read(desktopGlobalSearchQueryProvider.notifier)
+                                .state = null;
                           },
-                          onActivate: openTournament,
-                          loadingId: loadingId.value,
-                          tileKeys: tileKeys.value,
-                          scrollController: listScrollController,
+                          onOpenTournament: openTournament,
+                        )
+                        : selectedCategory == ge.GroupEventCategory.forYou
+                        ? _ForYouFeed(
+                          tabId: tabId,
+                          onOpenTournament: openTournament,
+                        )
+                        : asyncTournaments.when(
+                          data: (tournaments) {
+                            // Rendered in provider order. Live first re-runs the
+                            // Current query and republishes a ranked list, so
+                            // re-sorting here would only fight it.
+                            // Past is the finished-broadcast bucket; calendar
+                            // date_end can still be in the future (weekend
+                            // leagues), so force Completed chips in this tab.
+                            final displayTournaments =
+                                selectedCategory == ge.GroupEventCategory.past
+                                    ? [
+                                      for (final tournament in tournaments)
+                                        tournament.asCompleted(),
+                                    ]
+                                    : tournaments;
+                            return _TournamentEventGridKeyboardHost(
+                              focusNode: listFocusNode,
+                              tournaments: displayTournaments,
+                              selectedId: selectedTournamentId.value,
+                              onSelectedIdChanged: (id) {
+                                selectedTournamentId.value = id;
+                              },
+                              onActivate: openTournament,
+                              tileKeys: tileKeys.value,
+                              child: _TournamentBrowser(
+                                tournaments: displayTournaments,
+                                storageKey: PageStorageKey<String>(
+                                  'desktop_tournament_rows_${tabId}_${selectedCategory.name}',
+                                ),
+                                selectedId: selectedTournamentId.value,
+                                onSelect: (id) {
+                                  selectedTournamentId.value = id;
+                                  listFocusNode.requestFocus();
+                                },
+                                onActivate: openTournament,
+                                loadingId: loadingId.value,
+                                tileKeys: tileKeys.value,
+                                scrollController: listScrollController,
+                              ),
+                            );
+                          },
+                          loading: () => const _LoadingState(),
+                          error:
+                              (e, _) => _ErrorState(
+                                message: e.toString(),
+                                onRetry:
+                                    () => ref.refresh(groupEventScreenProvider),
+                              ),
                         ),
-                      );
-                    },
-                    loading: () => const _LoadingState(),
-                    error:
-                        (e, _) => _ErrorState(
-                          message: e.toString(),
-                          onRetry: () => ref.refresh(groupEventScreenProvider),
-                        ),
-                  ),
+          ),
         ),
       ],
     );

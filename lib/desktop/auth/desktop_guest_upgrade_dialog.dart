@@ -12,14 +12,40 @@ import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_icon.dart';
-import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/svg_asset.dart';
 
 String _guestDaysLabel(int days) => days == 1 ? '1 day' : '$days days';
+
+/// Shared forui route and surface for guest account prompts. The body scrolls
+/// on short browser windows so the sign-in and "Not now" controls stay usable.
+Future<T?> _showGuestAccountDialog<T>(
+  BuildContext context, {
+  required WidgetBuilder builder,
+  required double maxWidth,
+  String? semanticsLabel,
+  bool barrierDismissible = true,
+}) {
+  return showDesktopDialog<T>(
+    context,
+    barrierDismissible: barrierDismissible,
+    builder:
+        (dialogContext) => FDialog.raw(
+          semanticsLabel: semanticsLabel,
+          constraints: BoxConstraints(
+            maxWidth: maxWidth,
+            maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.85,
+          ),
+          builder:
+              (bodyContext, _) =>
+                  SingleChildScrollView(child: builder(bodyContext)),
+        ),
+  );
+}
 
 /// The file name with its parent folder, e.g. `Downloads/analysis.pgn`.
 String _shortExportPath(String path) {
@@ -29,22 +55,27 @@ String _shortExportPath(String path) {
   return path.substring(path.lastIndexOf(separator, last - 1) + 1);
 }
 
-/// Day 7 and weekly after: a dismissible reminder. Returns `true` when the
-/// guest signed in from it.
+/// First browser entry, then day 7 and weekly after: a dismissible account
+/// prompt. Returns `true` when the guest signed in from it.
 Future<bool> showDesktopGuestReminder(
   BuildContext context, {
   required int guestDays,
+  bool initial = false,
 }) async {
-  final upgraded = await showDesktopModal<bool>(
+  final upgraded = await _showGuestAccountDialog<bool>(
     context,
     maxWidth: 440,
     builder:
         (dialogContext) => _GuestAccountBody(
-          surface: 'guest_reminder',
+          surface: initial ? 'guest_initial' : 'guest_reminder',
           title: 'Keep your chess, wherever you play',
           message:
-              '${_guestDaysLabel(guestDays)} as a guest. '
-              'A free account keeps it all safe, on every device.',
+              initial
+                  ? 'Sign in with a free account to keep your chess on every '
+                      'device. Or choose Not now to try ChessEver as a guest '
+                      'for 28 days.'
+                  : '${_guestDaysLabel(guestDays)} as a guest. '
+                      'A free account keeps it all safe, on every device.',
           dismissLabel: 'Not now',
           onDone: (signedIn) => Navigator.of(dialogContext).pop(signedIn),
         ),
@@ -59,7 +90,7 @@ Future<void> showDesktopGuestRequiredSignIn(
   BuildContext context, {
   required int guestDays,
 }) async {
-  await showDesktopModal<bool>(
+  await _showGuestAccountDialog<bool>(
     context,
     maxWidth: 460,
     barrierDismissible: false,
@@ -89,7 +120,7 @@ Future<bool> ensureDesktopPermanentAccountForPurchase(
   BuildContext context,
 ) async {
   if (desktopCurrentUserIsPermanent()) return true;
-  final signedIn = await showDesktopModal<bool>(
+  final signedIn = await _showGuestAccountDialog<bool>(
     context,
     maxWidth: 440,
     builder:
@@ -132,6 +163,13 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
   bool _exporting = false;
   String? _error;
   String? _exportedPath;
+  bool _completed = false;
+
+  void _complete(bool signedIn) {
+    if (_completed) return;
+    _completed = true;
+    widget.onDone(signedIn);
+  }
 
   List<DesktopUnsavedBoard> _unsavedBoards() {
     if (!widget.offerUnsavedExport) return const [];
@@ -161,7 +199,7 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
       );
       if (!mounted) return;
       if (signedIn) {
-        widget.onDone(true);
+        _complete(true);
         return;
       }
       setState(() => _error = 'Sign-in did not finish. Please try again.');
@@ -191,6 +229,17 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<DesktopAccountIdentity>(desktopAccountIdentityProvider, (
+      previous,
+      next,
+    ) {
+      if (!next.isPermanent) return;
+      final binding = WidgetsBinding.instance;
+      binding.addPostFrameCallback((_) {
+        if (mounted) _complete(true);
+      });
+      binding.ensureVisualUpdate();
+    });
     final busy = _busyProvider != null;
     final unsaved = _unsavedBoards();
     final exportedPath = _exportedPath;
@@ -313,7 +362,7 @@ class _GuestAccountBodyState extends ConsumerState<_GuestAccountBody> {
                 label: widget.dismissLabel!,
                 tone: DesktopDialogButtonTone.ghost,
                 // Dismissing mid sign-in matches Esc and the barrier.
-                onPress: () => widget.onDone(false),
+                onPress: () => _complete(false),
               ),
             ),
           ],
@@ -333,23 +382,17 @@ Future<bool> showDesktopAccountSignIn(
   required String message,
 }) async {
   if (desktopCurrentUserIsPermanent()) return true;
-  final signedIn = await showDesktopDialog<bool>(
+  final signedIn = await _showGuestAccountDialog<bool>(
     context,
+    maxWidth: 440,
+    semanticsLabel: title,
     builder:
-        (dialogContext) => FDialog.raw(
-          semanticsLabel: title,
-          constraints: const BoxConstraints(maxWidth: 440),
-          builder:
-              (_, _) => SingleChildScrollView(
-                child: _GuestAccountBody(
-                  surface: surface,
-                  title: title,
-                  message: message,
-                  dismissLabel: 'Not now',
-                  onDone:
-                      (signedIn) => Navigator.of(dialogContext).pop(signedIn),
-                ),
-              ),
+        (dialogContext) => _GuestAccountBody(
+          surface: surface,
+          title: title,
+          message: message,
+          dismissLabel: 'Not now',
+          onDone: (signedIn) => Navigator.of(dialogContext).pop(signedIn),
         ),
   );
   return signedIn == true && desktopCurrentUserIsPermanent();

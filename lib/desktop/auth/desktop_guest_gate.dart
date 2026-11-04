@@ -61,7 +61,13 @@ class DesktopGuestGateObserver extends NavigatorObserver {
 }
 
 /// What the guest reminder should do on this app entry.
-enum DesktopGuestGateAction { none, startClock, softPrompt, forcedSignIn }
+enum DesktopGuestGateAction {
+  none,
+  startClock,
+  initialPrompt,
+  softPrompt,
+  forcedSignIn,
+}
 
 /// Whether this is a safe moment to interrupt at all. Pure so the window,
 /// dialog and startup rules are unit tested without a widget tree.
@@ -85,11 +91,16 @@ DesktopGuestGateAction resolveDesktopGuestGateAction({
   required bool isGuest,
   required GuestSessionState? session,
   required DateTime now,
+  bool promptOnFirstEntry = false,
 }) {
   if (!isGuest || session == null) return DesktopGuestGateAction.none;
   // Legacy anonymous installs (from before guest mode) have no stamp: start
   // their clock now instead of locking them out immediately.
-  if (!session.hasGuestClock) return DesktopGuestGateAction.startClock;
+  if (!session.hasGuestClock) {
+    return promptOnFirstEntry
+        ? DesktopGuestGateAction.initialPrompt
+        : DesktopGuestGateAction.startClock;
+  }
   return switch (session.gateAt(now)) {
     GuestGate.none => DesktopGuestGateAction.none,
     GuestGate.softPrompt => DesktopGuestGateAction.softPrompt,
@@ -99,7 +110,8 @@ DesktopGuestGateAction resolveDesktopGuestGateAction({
 
 /// Owns the guest reminder schedule for the main desktop window:
 ///
-/// * day 0-6: silence; a guest has the full free app.
+/// * first browser entry: sign-in with a "Not now" guest path, like mobile.
+/// * day 0-6 after that: silence; a guest has the full free app.
 /// * day 7+: a dismissible reminder, re-asked at most weekly.
 /// * day 28+: sign-in is required. The shell stays mounted underneath, so
 ///   open boards and drafts survive, and unsaved analysis can be exported
@@ -109,9 +121,17 @@ DesktopGuestGateAction resolveDesktopGuestGateAction({
 /// over another dialog, never during startup, and never in a detached board
 /// window.
 class DesktopGuestGateListener extends ConsumerStatefulWidget {
-  const DesktopGuestGateListener({required this.child, super.key});
+  const DesktopGuestGateListener({
+    required this.child,
+    this.promptOnFirstEntry = false,
+    super.key,
+  });
 
   final Widget child;
+
+  /// Mirrors the phone's final onboarding step in the browser. The persisted
+  /// guest clock makes this a once-only prompt, including across page reloads.
+  final bool promptOnFirstEntry;
 
   @override
   ConsumerState<DesktopGuestGateListener> createState() =>
@@ -131,6 +151,11 @@ class _DesktopGuestGateListenerState
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     DesktopGuestGateObserver.instance.modalDepth.addListener(_scheduleEvaluate);
+    ref.listenManual<DesktopAccountIdentity>(
+      desktopAccountIdentityProvider,
+      _onAccountChanged,
+      fireImmediately: true,
+    );
     _startupTimer = Timer(kDesktopGuestGateStartupSettle, () {
       if (!mounted) return;
       _startupComplete = true;
@@ -160,7 +185,11 @@ class _DesktopGuestGateListenerState
 
   void _scheduleEvaluate() {
     if (!mounted) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_evaluate()));
+    final binding = WidgetsBinding.instance;
+    binding.addPostFrameCallback((_) => unawaited(_evaluate()));
+    // Startup timers, browser resumes and dialog closures can arrive while
+    // the shell is idle. A post-frame callback alone never requests a frame.
+    binding.ensureVisualUpdate();
   }
 
   Future<void> _evaluate() async {
@@ -175,7 +204,7 @@ class _DesktopGuestGateListenerState
       return;
     }
 
-    final isGuest = desktopCurrentUserIsGuest();
+    final isGuest = ref.read(desktopAccountIdentityProvider).isGuest;
     if (!isGuest) {
       _entryCheckArmed = false;
       return;
@@ -188,6 +217,7 @@ class _DesktopGuestGateListenerState
       isGuest: isGuest,
       session: session,
       now: now,
+      promptOnFirstEntry: widget.promptOnFirstEntry,
     );
     // This entry has had its look; anything further waits for the next one.
     _entryCheckArmed = false;
@@ -198,6 +228,9 @@ class _DesktopGuestGateListenerState
       switch (action) {
         case DesktopGuestGateAction.startClock:
           await ref.read(guestSessionProvider.notifier).startGuestSession();
+        case DesktopGuestGateAction.initialPrompt:
+          await ref.read(guestSessionProvider.notifier).startGuestSession();
+          if (mounted) await _showSoftPrompt(session, now, initial: true);
         case DesktopGuestGateAction.softPrompt:
           await _showSoftPrompt(session, now);
         case DesktopGuestGateAction.forcedSignIn:
@@ -212,17 +245,21 @@ class _DesktopGuestGateListenerState
     }
   }
 
-  Future<void> _showSoftPrompt(GuestSessionState session, DateTime now) async {
+  Future<void> _showSoftPrompt(
+    GuestSessionState session,
+    DateTime now, {
+    bool initial = false,
+  }) async {
     // Mark before showing: if the app dies while the prompt is up, skipping a
     // reminder beats greeting the guest with it on every cold start.
     await ref.read(guestSessionProvider.notifier).markPromptShown(now: now);
     final days = session.ageAt(now)?.inDays ?? 0;
     AnalyticsService.instance.trackEventDetached(
       'Guest Upgrade Prompt Shown',
-      properties: {'guest_days': days, 'forced': false},
+      properties: {'guest_days': days, 'forced': false, 'initial': initial},
     );
     if (!mounted) return;
-    await showDesktopGuestReminder(context, guestDays: days);
+    await showDesktopGuestReminder(context, guestDays: days, initial: initial);
   }
 
   Future<void> _showRequiredSignIn(
@@ -238,29 +275,44 @@ class _DesktopGuestGateListenerState
     await showDesktopGuestRequiredSignIn(context, guestDays: days);
   }
 
+  void _onAccountChanged(
+    DesktopAccountIdentity? previous,
+    DesktopAccountIdentity next,
+  ) {
+    if (next.isPermanent) {
+      // Also handle the already-restored account after a browser OAuth
+      // redirect, when there need not be another account-change event.
+      unawaited(_finishGuestSession(next));
+      return;
+    }
+    if (previous?.userId != next.userId ||
+        previous?.isAnonymous != next.isAnonymous) {
+      _entryCheckArmed = true;
+      _scheduleEvaluate();
+    }
+  }
+
+  Future<void> _finishGuestSession(DesktopAccountIdentity account) async {
+    try {
+      await ref.read(guestSessionProvider.future);
+      if (!mounted || ref.read(desktopAccountIdentityProvider) != account) {
+        return;
+      }
+      await ref.read(guestSessionProvider.notifier).clearGuestSession();
+      if (mounted && ref.read(desktopAccountIdentityProvider) == account) {
+        await retryPendingDesktopGuestMerge(ref);
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[GuestSession] Account cleanup failed: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<AsyncValue<GuestSessionState>>(
       guestSessionProvider,
       (_, _) => _scheduleEvaluate(),
     );
-    ref.listen<DesktopAccountIdentity>(desktopAccountIdentityProvider, (
-      previous,
-      next,
-    ) {
-      // A permanent account ends guest mode for good. clearGuestSession is a
-      // no-op when no clock exists.
-      if (next.isPermanent) {
-        unawaited(ref.read(guestSessionProvider.notifier).clearGuestSession());
-        // Replays a guest merge an earlier attempt could not finish.
-        unawaited(retryPendingDesktopGuestMerge(ref));
-        return;
-      }
-      if (previous?.userId != next.userId) {
-        _entryCheckArmed = true;
-        _scheduleEvaluate();
-      }
-    });
     return widget.child;
   }
 }

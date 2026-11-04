@@ -171,6 +171,7 @@ class Collection {
     this.publishedYear,
     this.sortOrder = 0,
     this.publishedAt,
+    this.lastGameAddedAt,
     this.gameCount = 0,
     this.viewCount = 0,
     this.starCount = 0,
@@ -236,6 +237,10 @@ class Collection {
 
   final int sortOrder;
   final DateTime? publishedAt;
+
+  /// The most recent game addition, independent of cover or metadata edits.
+  /// Null until the server supplies this fact, or for an empty collection.
+  final DateTime? lastGameAddedAt;
   final int gameCount;
   final int viewCount;
   final int starCount;
@@ -340,6 +345,7 @@ class Collection {
       publishedYear: _nullableInt(json['publishedYear']),
       sortOrder: _int(json['sortOrder']),
       publishedAt: _timestamp(json['publishedAt']),
+      lastGameAddedAt: _timestamp(json['lastGameAddedAt']),
       gameCount: _int(json['gameCount']),
       viewCount: _int(json['viewCount']),
       starCount: _int(json['starCount']),

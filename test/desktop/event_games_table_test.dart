@@ -25,6 +25,163 @@ import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:dio/dio.dart';
 
 void main() {
+  group('local game PGN copy', () {
+    final localRow = _summary(
+      id: 'local-file-game-1',
+      roundLabel: '',
+      pgn: '[White "White Player"]\n[Black "Black Player"]\n\n*',
+      localPgnSource: const TournamentGameLocalPgnSource(
+        sourcePath: 'imported.pgn',
+        sourceIndex: 0,
+        sourceFileGameCount: 4,
+        pgnFingerprint: 'verified-game',
+        title: 'Imported game',
+      ),
+    );
+
+    testWidgets(
+      'copy shortcut exports every selected local game with its moves',
+      (tester) async {
+        String? clipboard;
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          if (call.method == 'Clipboard.setData') {
+            clipboard = (call.arguments as Map)['text'] as String;
+          }
+          return null;
+        });
+        addTearDown(
+          () =>
+              messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+        );
+        final rows = [
+          for (var i = 0; i < 4; i++)
+            _summary(
+              id: 'local-$i',
+              roundLabel: '',
+              whitePlayer: 'Local White $i',
+              pgn: '[White "Local White $i"]\n[Black "Opponent"]\n\n*',
+              localPgnSource: TournamentGameLocalPgnSource(
+                sourcePath: 'imported.pgn',
+                sourceIndex: i,
+                sourceFileGameCount: 4,
+                pgnFingerprint: 'record-$i',
+                title: 'Local $i',
+              ),
+            ),
+        ];
+        await tester.pumpWidget(
+          _wrap(
+            BoardTabGameArgs(
+              pgn: '1. e4 e5 *',
+              label: 'Local games',
+              whiteName: 'Local White 0',
+              blackName: 'Opponent',
+              databaseTitle: 'Imported PGN',
+              databaseGames: rows,
+              gameListSelectedId: rows.first.id,
+            ),
+            overrides: [
+              retainedLocalPgnHydratorProvider.overrideWithValue(
+                (row) async => row.copyWith(
+                  pgn:
+                      '[White "${row.whitePlayer}"]\n[Black "Opponent"]\n\n1. e4 {A saved annotation} e5 *',
+                ),
+              ),
+            ],
+          ),
+        );
+        await tester.pump();
+        await tester.tap(
+          find.byKey(const ValueKey('database-player-white-local-0')),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.tap(
+          find.byKey(const ValueKey('database-player-white-local-3')),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pump();
+        expect(clipboard, isNotNull);
+        for (var i = 0; i < 4; i++) {
+          expect(clipboard, contains('[White "Local White $i"]'));
+        }
+        expect('1. e4'.allMatches(clipboard!), hasLength(4));
+        expect('A saved annotation'.allMatches(clipboard!), hasLength(4));
+      },
+    );
+
+    test(
+      'header-only local rows copy their source moves and annotations',
+      () async {
+        const fullPgn =
+            '[White "White Player"]\n[Black "Black Player"]\n\n'
+            '1. e4 {My note} e5 2. Nf3 (2. Bc4) Nc6 *';
+        final container = ProviderContainer(
+          overrides: [
+            retainedLocalPgnHydratorProvider.overrideWithValue((row) async {
+              expect(identical(row, localRow), isTrue);
+              return row.copyWith(pgn: fullPgn);
+            }),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        expect(await resolveEventGameSummaryPgn(container, localRow), fullPgn);
+      },
+    );
+
+    test(
+      'local copies refresh stale inline annotations before exporting',
+      () async {
+        final row = localRow.copyWith(pgn: '1. e4 {old note} e5 *');
+        final container = ProviderContainer(
+          overrides: [
+            retainedLocalPgnHydratorProvider.overrideWithValue(
+              (row) async => row.copyWith(pgn: '1. e4 {current note} e5 *'),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        expect(
+          await resolveEventGameSummaryPgn(container, row),
+          '1. e4 {current note} e5 *',
+        );
+      },
+    );
+
+    test(
+      'a missing local source never exports the stale inline game',
+      () async {
+        final failure = StateError('Source is unavailable');
+        final container = ProviderContainer(
+          overrides: [
+            retainedLocalPgnHydratorProvider.overrideWithValue(
+              (_) async => throw failure,
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        await expectLater(
+          resolveEventGameSummaryPgn(
+            container,
+            localRow.copyWith(pgn: '1. e4 e5 *'),
+          ),
+          throwsA(same(failure)),
+        );
+      },
+    );
+  });
+
   test('gamebase result parsing accepts unicode dashes', () {
     expect(gamebaseStatusFromResult('0–1'), GameStatus.blackWins);
     expect(gamebaseStatusFromResult('1—0'), GameStatus.whiteWins);
@@ -2052,7 +2209,9 @@ void main() {
     expect(find.text('White ?'), findsNWidgets(2));
     expect(find.text('Black ?'), findsNWidgets(2));
     expect(find.textContaining('· Game #'), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('database-player-white-unnamed-1')));
+    await tester.tap(
+      find.byKey(const ValueKey('database-player-white-unnamed-1')),
+    );
     await tester.pump(const Duration(milliseconds: 400));
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
@@ -2072,7 +2231,8 @@ void main() {
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
-    final previous = container.read(boardTabGameArgsByTabIdProvider).values.single;
+    final previous =
+        container.read(boardTabGameArgsByTabIdProvider).values.single;
     expect(previous.gameListSelectedId, rows.first.id);
     expect(previous.librarySaveOrigin?.sourceIndex, 1424);
     expect(previous.pgn, rows.first.pgn);

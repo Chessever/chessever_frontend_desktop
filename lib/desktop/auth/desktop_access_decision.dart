@@ -22,6 +22,7 @@ enum DesktopAccessReason {
   accountRequiredForPurchase('account_required_purchase'),
   accountRequiredForBotvinnik('account_required_botvinnik'),
   premiumPaidSource('premium_paid_source'),
+  premiumEventDiscovery('premium_event_discovery'),
   premiumPlay('premium_play'),
   premiumPrepareTarget('premium_prepare_target'),
   premiumPrepareSource('premium_prepare_source'),
@@ -299,6 +300,10 @@ _Requirement _requirementFor(DesktopAccessContext context, DateTime now) {
   }
 
   switch (context.feature) {
+    case DesktopFeature.eventDiscovery:
+      return const _Requirement.premium(
+        DesktopAccessReason.premiumEventDiscovery,
+      );
     case DesktopFeature.play:
       return const _Requirement.premium(DesktopAccessReason.premiumPlay);
     case DesktopFeature.prepare:

@@ -106,6 +106,28 @@ void main() {
       expect((await repository.read()).startedAt, day(0));
     });
 
+    test('account upgrade clears persisted stamps before the next guest', () async {
+      final repository = GuestSessionRepository();
+      await repository.clear();
+      await repository.startIfMissing(day(0));
+      await repository.markPromptShown(day(7));
+      final signedInContainer = ProviderContainer();
+      await signedInContainer.read(guestSessionProvider.future);
+      await signedInContainer
+          .read(guestSessionProvider.notifier)
+          .clearGuestSession();
+      signedInContainer.dispose();
+
+      final nextLaunch = ProviderContainer();
+      addTearDown(nextLaunch.dispose);
+      expect(
+        await nextLaunch.read(guestSessionProvider.future),
+        const GuestSessionState.unknown(),
+      );
+      expect(await repository.startIfMissing(day(40)), day(40));
+      expect((await repository.read()).lastPromptAt, isNull);
+    });
+
     test('markPromptShown persists the last prompt time', () async {
       final repository = GuestSessionRepository();
       await repository.clear();
@@ -239,6 +261,46 @@ void main() {
     });
   });
 
+  group('guest gate scheduling', () {
+    Future<void> mountGate(WidgetTester tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [guestSessionProvider.overrideWith(_GateTestSession.new)],
+          child: const DesktopGuestGateListener(child: SizedBox()),
+        ),
+      );
+      await tester.pump();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    }
+
+    testWidgets('browser resume evaluates even when the shell is idle', (
+      tester,
+    ) async {
+      await mountGate(tester);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+      expect(tester.binding.hasScheduledFrame, isTrue);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('closing a modal schedules the waiting guest check', (
+      tester,
+    ) async {
+      final observer = DesktopGuestGateObserver.instance;
+      observer.modalDepth.value = 0;
+      addTearDown(() => observer.modalDepth.value = 0);
+      await mountGate(tester);
+      observer.modalDepth.value = 1;
+      await tester.pump();
+
+      observer.modalDepth.value = 0;
+
+      expect(tester.binding.hasScheduledFrame, isTrue);
+      await tester.pumpWidget(const SizedBox());
+    });
+  });
+
   group('account identity across windows', () {
     test('a new account bumps the generation, a token refresh does not', () {
       const guest = DesktopAccountIdentity(
@@ -326,4 +388,12 @@ void main() {
       );
     });
   });
+}
+
+class _GateTestSession extends GuestSessionNotifier {
+  @override
+  Future<GuestSessionState> build() async => const GuestSessionState.unknown();
+
+  @override
+  Future<void> refresh() async {}
 }

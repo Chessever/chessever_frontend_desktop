@@ -77,6 +77,17 @@ void main() {
     );
   });
 
+  test('distinguishes the browser app shell from website chat', () {
+    const context = ChatClientContext(
+      platform: 'web',
+      surface: 'web',
+      formFactor: 'desktop',
+    );
+    expect(context.toJson()['capabilities'], contains('desktop-shell-v1'));
+    expect(context.toJson()['platform'], 'web');
+    expect(context.toJson()['surface'], 'web');
+  });
+
   test('builds current tournament screen metadata', () {
     const context = ChatScreenContext(
       screen: 'tournament',

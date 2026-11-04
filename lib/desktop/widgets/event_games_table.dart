@@ -2919,18 +2919,35 @@ Future<int> _copyEventGameSummariesAsPgn({
 
   final pgns = <String>[];
   var skipped = 0;
+  Object? localReadError;
+  final container = ProviderScope.containerOf(context, listen: false);
   for (final game in games) {
-    final pgn = await _resolveEventGameSummaryPgn(ref, game);
-    if (pgn != null && pgnHasMoves(pgn)) {
-      pgns.add(pgn.trim());
-    } else {
+    try {
+      final pgn = await resolveEventGameSummaryPgn(
+        container,
+        game,
+        activeArgs: activeArgs,
+      );
+      if (pgn != null && pgnHasMoves(pgn)) {
+        pgns.add(pgn.trim());
+      } else {
+        skipped += 1;
+      }
+    } catch (error) {
+      localReadError ??= error;
       skipped += 1;
     }
   }
 
   if (!context.mounted) return 0;
   if (pgns.isEmpty) {
-    showDesktopToast(context, 'No PGN with moves to copy.', error: true);
+    showDesktopToast(
+      context,
+      localReadError == null
+          ? 'No PGN with moves to copy.'
+          : localPgnOpenErrorMessage(localReadError),
+      error: true,
+    );
     return 0;
   }
 
@@ -2947,10 +2964,29 @@ Future<int> _copyEventGameSummariesAsPgn({
   return count;
 }
 
-Future<String?> _resolveEventGameSummaryPgn(
-  WidgetRef ref,
-  TournamentGameSummary game,
-) async {
+/// Local rail rows only retain headers. Resolve their verified source record
+/// through the same reader as opening a game, before considering inline data.
+/// A failed local read must never fall through to an unrelated remote id.
+@visibleForTesting
+Future<String?> resolveEventGameSummaryPgn(
+  ProviderContainer container,
+  TournamentGameSummary game, {
+  BoardTabGameArgs? activeArgs,
+}) async {
+  if (game.localPgnSource != null) {
+    var localGame = game;
+    final source = activeArgs?.databaseGamesContinuation?.argument;
+    if (source is LocalBoardGamesSource) {
+      localGame = await source.prepareSelection(
+        container.read(localChessDatabaseRepositoryProvider),
+        localGame,
+      );
+    }
+    final hydrated = await container.read(retainedLocalPgnHydratorProvider)(
+      localGame,
+    );
+    return hydrated.pgn?.trim();
+  }
   final direct = game.pgn?.trim();
   if (direct != null && direct.isNotEmpty && pgnHasMoves(direct)) return direct;
 
@@ -2958,14 +2994,16 @@ Future<String?> _resolveEventGameSummaryPgn(
   if (id.isEmpty) return null;
 
   try {
-    final supabasePgn = await ref.read(gameRepositoryProvider).getGamePgn(id);
+    final supabasePgn = await container
+        .read(gameRepositoryProvider)
+        .getGamePgn(id);
     if (supabasePgn != null && pgnHasMoves(supabasePgn)) {
       return supabasePgn.trim();
     }
   } catch (_) {}
 
   try {
-    final fullGame = await ref
+    final fullGame = await container
         .read(gamebaseRepositoryProvider)
         .getGameWithPgn(id);
     final pgn = fullGame?.pgn;

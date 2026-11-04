@@ -399,7 +399,131 @@ const List<Collection> _fixtureBooks = [
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  testWidgets(
+    'capture collection date layouts',
+    (tester) async {
+      await tester.runAsync(_loadFixtureFonts);
+      final collection = Collection(
+        id: 'dated',
+        slug: 'dated',
+        kind: CollectionKind.book,
+        title: 'My 60 Memorable Games',
+        author: 'Bobby Fischer',
+        gameCount: 60,
+        publishedAt: DateTime.utc(2026, 10, 2, 12),
+        lastGameAddedAt: DateTime.utc(2026, 11, 2, 12),
+      );
+      for (final width in [1600.0, 740.0]) {
+        final capture = GlobalKey();
+        await _pump(
+          tester,
+          const CollectionsPane(),
+          reader: FakeCollectionsReader(books: [collection]),
+          window: Size(width, 760),
+          toaster: true,
+          capture: capture,
+          theme: _macTheme,
+        );
+        expect(tester.takeException(), isNull);
+        await _shoot(tester, capture, 'dates_catalog_${width.round()}');
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+      for (final width in [1100.0, 480.0]) {
+        final capture = GlobalKey();
+        await _pump(
+          tester,
+          CollectionAboutView(
+            collection: collection,
+            locked: false,
+            playerCount: 2,
+            onShowAuthor: () {},
+          ),
+          reader: FakeCollectionsReader(books: [collection]),
+          window: Size(width, 620),
+          toaster: true,
+          capture: capture,
+          theme: _macTheme,
+        );
+        expect(find.text('Published Oct 2, 2026'), findsOneWidget);
+        expect(find.text('Last game added Nov 2, 2026'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await _shoot(tester, capture, 'dates_about_${width.round()}');
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    },
+    skip: _shots == null,
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
   group('the catalog', () {
+    testWidgets('narrow catalog keeps publication sorting available', (
+      tester,
+    ) async {
+      final reader = FakeCollectionsReader();
+      await _pump(
+        tester,
+        const CollectionsPane(),
+        reader: reader,
+        window: const Size(740, 700),
+      );
+      expect(find.text('PUBLISHED'), findsNothing);
+      await tester.tap(find.text('Sort'));
+      await _settle(tester);
+      await tester.tap(find.text('Published: oldest first'));
+      await _settle(tester);
+      expect(reader.bookQueries.last.parameters, {
+        'sort': 'publishedAt',
+        'order': 'asc',
+      });
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'shows publication and addition dates with working chronological sorts',
+      (tester) async {
+        final reader = FakeCollectionsReader(
+          books: [
+            Collection(
+              id: 'old',
+              slug: 'old',
+              kind: CollectionKind.book,
+              title: 'Older collection',
+              publishedAt: DateTime.utc(2026, 10, 2, 12),
+              lastGameAddedAt: DateTime.utc(2026, 11, 2, 12),
+            ),
+            Collection(
+              id: 'new',
+              slug: 'new',
+              kind: CollectionKind.book,
+              title: 'Newer collection',
+              publishedAt: DateTime.utc(2026, 10, 5, 12),
+              lastGameAddedAt: DateTime.utc(2026, 11, 1, 12),
+            ),
+          ],
+        );
+        await _pump(tester, const CollectionsPane(), reader: reader);
+        expect(reader.bookQueries.first.parameters, {'sort': 'lastGameAdded'});
+        expect(_titles(tester), ['Older collection', 'Newer collection']);
+        expect(find.text('Oct 2, 2026'), findsOneWidget);
+        expect(find.text('Nov 2, 2026'), findsOneWidget);
+        await tester.tap(find.text('PUBLISHED'));
+        await _settle(tester);
+        expect(reader.bookQueries.last.parameters, {'sort': 'publishedAt'});
+        expect(_titles(tester), ['Newer collection', 'Older collection']);
+        await tester.tap(find.text('LAST GAME ADDED'));
+        await _settle(tester);
+        expect(_titles(tester), ['Older collection', 'Newer collection']);
+        await tester.tap(find.text('LAST GAME ADDED'));
+        await _settle(tester);
+        expect(reader.bookQueries.last.parameters, {
+          'sort': 'lastGameAdded',
+          'order': 'asc',
+        });
+        expect(_titles(tester), ['Newer collection', 'Older collection']);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('lists published collections on the Library row frame', (
       tester,
     ) async {
@@ -903,7 +1027,7 @@ void main() {
 
   group('under real use', () {
     testWidgets(
-      'a starred row moves up and its star still reaches the server',
+      'starring preserves chronological order and reaches the server',
       (tester) async {
         final reader = FakeCollectionsReader();
         await _pump(
@@ -923,10 +1047,10 @@ void main() {
         await tester.tap(_in(last, _glyph(SvgAsset.starIcon)));
         await _settle(tester);
 
-        // Pinned to the top: the row that was pressed has been rebuilt.
+        // Starring does not override the latest-game order.
         expect(
           tester.getTopLeft(_row('Candidates Tournament 1962')).dy,
-          lessThan(tester.getTopLeft(_row('My 60 Memorable Games')).dy),
+          greaterThan(tester.getTopLeft(_row('My 60 Memorable Games')).dy),
         );
         expect(reader.stars, [('candidates-1962', true)]);
       },
@@ -1297,7 +1421,7 @@ void main() {
         await tester.tap(find.text(column));
         await _settle(tester);
       }
-      expect(_glyph(SvgAsset.arrowDown), findsNothing);
+      expect(_glyph(SvgAsset.arrowDown), findsOneWidget);
       expect(edges(), unsorted);
     });
 
@@ -1313,6 +1437,16 @@ void main() {
         tester.getRect(_in(row, find.byType(CollectionCoverThumb))),
         tester.getRect(_in(row, find.byType(CollectionTitleLine))),
         tester.getRect(_in(row, find.text('Bobby Fischer'))),
+        tester.getRect(
+          find.byKey(
+            const ValueKey('collection-published-my-60-memorable-games'),
+          ),
+        ),
+        tester.getRect(
+          find.byKey(
+            const ValueKey('collection-last-game-my-60-memorable-games'),
+          ),
+        ),
         tester.getRect(find.text('3 games')),
         tester.getRect(find.text('1284')),
         tester.getRect(find.text('37')),
@@ -1450,7 +1584,7 @@ void main() {
         'Candidates Tournament 1962',
       ];
       expect(_titles(tester), team);
-      expect(_glyph(SvgAsset.arrowDown), findsNothing);
+      expect(_glyph(SvgAsset.arrowDown), findsOneWidget);
       var asked = reader.bookQueries.length;
 
       // Counts start from the largest.
@@ -1487,8 +1621,12 @@ void main() {
       await tester.tap(find.text('GAMES'));
       await _settle(tester);
       expect(_titles(tester), team);
-      expect(_glyph(SvgAsset.arrowDown), findsNothing);
-      expect(reader.bookQueries.last.sort, 'games', reason: 'still listed');
+      expect(_glyph(SvgAsset.arrowDown), findsOneWidget);
+      expect(
+        reader.bookQueries.last.sort,
+        'lastGameAdded',
+        reason: 'chronological default restored',
+      );
       asked = reader.bookQueries.length;
 
       // Names start from A.
@@ -1592,7 +1730,7 @@ void main() {
       handle.dispose();
     });
 
-    testWidgets('starred collections lead the team\'s order only', (
+    testWidgets('starred collections keep the latest-game order', (
       tester,
     ) async {
       await _pump(
@@ -1602,7 +1740,7 @@ void main() {
         window: table,
         starred: [starredCollection('candidates-1962')],
       );
-      expect(_titles(tester).first, 'Candidates Tournament 1962');
+      expect(_titles(tester).first, 'My 60 Memorable Games');
 
       await tester.tap(find.text('STARS'));
       await _settle(tester);
@@ -1735,7 +1873,7 @@ void main() {
 
       await tester.tap(find.text('COLLECTION'));
       await _settle(tester);
-      expect(_glyph(SvgAsset.arrowDown), findsNothing);
+      expect(_glyph(SvgAsset.arrowDown), findsOneWidget);
       expect(_titles(tester).first, 'My 60 Memorable Games');
     });
 
@@ -1756,7 +1894,7 @@ void main() {
       await _settle(tester);
 
       expect(find.text('Could not sort by views. Try again.'), findsOneWidget);
-      expect(_glyph(SvgAsset.arrowDown), findsNothing);
+      expect(_glyph(SvgAsset.arrowDown), findsOneWidget);
       expect(find.byType(CollectionCatalogRow), findsNWidgets(3));
       await tester.pump(const Duration(seconds: 4));
       await _settle(tester);
@@ -1807,7 +1945,7 @@ void main() {
       await tester.tap(find.text('Apply'));
       await _settle(tester);
 
-      expect(_glyph(SvgAsset.arrowDown), findsNothing);
+      expect(_glyph(SvgAsset.arrowDown), findsOneWidget);
       expect(_titles(tester), [
         'My 60 Memorable Games',
         'Zurich 1953',
@@ -1991,11 +2129,10 @@ void main() {
   });
 
   group('the catalog query', () {
-    test('untouched filters send nothing', () {
+    test('untouched filters ask for latest game additions', () {
       final query = collectionQueryFor(text: '  ', filter: GameFilter());
 
-      expect(query.isActive, isFalse);
-      expect(query.parameters, isEmpty);
+      expect(query.parameters, {'sort': 'lastGameAdded'});
     });
 
     test('each header state sends its own sort and order', () {
@@ -2006,7 +2143,9 @@ void main() {
             sort: sort,
           ).parameters;
 
-      expect(sent(const CollectionCatalogSort.standard()), isEmpty);
+      expect(sent(const CollectionCatalogSort.standard()), {
+        'sort': 'lastGameAdded',
+      });
       // The natural direction is the server's default for the column.
       for (final column in CollectionSortColumn.values) {
         expect(sent(CollectionCatalogSort.natural(column)), {
@@ -2074,7 +2213,9 @@ void main() {
 
     test('a header cycles natural, reversed, then back to the team\'s', () {
       const team = CollectionCatalogSort.standard();
-      for (final column in CollectionSortColumn.values) {
+      for (final column in CollectionSortColumn.values.where(
+        (column) => column != CollectionSortColumn.lastGameAdded,
+      )) {
         final first = team.after(column);
         expect(first, CollectionCatalogSort.natural(column));
         expect(
@@ -2147,6 +2288,7 @@ void main() {
         'result': '1/2-1/2',
         'minYear': 1990,
         'maxYear': 2000,
+        'sort': 'lastGameAdded',
       });
     });
   });

@@ -29,14 +29,12 @@ import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/play_achievement_badge.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
-import 'package:chessever/desktop/widgets/play_rating_chart.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart'
     show GameStatus;
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/png_asset.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
 
 /// The profile's two halves: the user's own prep profile (primary) and the
@@ -69,56 +67,6 @@ const _kTimeControls = <RatedTimeControl>[
 /// Page gutter. Matches the Players workspace's own padding so the pinned
 /// Prep view lines up with the header above it.
 const double _kGutter = 24;
-
-String _assetFor(RatedTimeControl tc) {
-  switch (tc) {
-    case RatedTimeControl.classical:
-      return PngAsset.classicalIcon;
-    case RatedTimeControl.rapid:
-      return PngAsset.rapidIcon;
-    case RatedTimeControl.blitz:
-      return PngAsset.blitzIcon;
-    case RatedTimeControl.bullet:
-      return PngAsset.bulletIcon;
-  }
-}
-
-/// The time-control marks are full-colour art; the profile shows them in
-/// greyscale so teal stays the page's only accent.
-const ColorFilter _kGreyscale = ColorFilter.matrix(<double>[
-  0.2126, 0.7152, 0.0722, 0, 0, //
-  0.2126, 0.7152, 0.0722, 0, 0, //
-  0.2126, 0.7152, 0.0722, 0, 0, //
-  0, 0, 0, 1, 0, //
-]);
-
-class _TcMark extends StatelessWidget {
-  const _TcMark(this.tc, {this.dim = false});
-
-  static const double size = 14;
-
-  final RatedTimeControl tc;
-  final bool dim;
-
-  @override
-  Widget build(BuildContext context) {
-    final px = (size * MediaQuery.devicePixelRatioOf(context)).round();
-    return Opacity(
-      opacity: dim ? 0.55 : 0.9,
-      child: ColorFiltered(
-        colorFilter: _kGreyscale,
-        child: Image.asset(
-          _assetFor(tc),
-          width: size,
-          height: size,
-          fit: BoxFit.contain,
-          cacheWidth: px,
-          cacheHeight: px,
-        ),
-      ),
-    );
-  }
-}
 
 /// A raised surface: one tonal step above the page, no outline.
 BoxDecoration _surface({bool raised = false}) => BoxDecoration(
@@ -159,7 +107,6 @@ class PlayProfilePane extends ConsumerStatefulWidget {
 class _PlayProfilePaneState extends ConsumerState<PlayProfilePane> {
   _ProfileSection _section = _ProfileSection.prep;
   _PlayView _playView = _PlayView.overview;
-  RatedTimeControl? _ratingsTc;
   DesktopAccountProvider? _busyProvider;
   String? _signInError;
 
@@ -272,11 +219,7 @@ class _PlayProfilePaneState extends ConsumerState<PlayProfilePane> {
                                       ? '${gamesAsync.error}'
                                       : null,
                               view: _playView,
-                              ratingsTc:
-                                  _ratingsTc ?? profile.headlineTimeControl,
                               onViewChanged: _showPlay,
-                              onRatingsTcChanged:
-                                  (tc) => setState(() => _ratingsTc = tc),
                             ),
                           ],
                         ),
@@ -389,8 +332,8 @@ class _IdentityHeaderState extends ConsumerState<_IdentityHeader> {
             : p.displayName;
     final joined = p.createdAt;
     final meta = [
-      isPermanent ? 'ChessEver player' : 'Guest profile',
-      if (joined != null) 'joined ${_formatDate(joined)}',
+      if (!isPermanent) 'Guest profile',
+      if (joined != null) 'Joined ${_formatDate(joined)}',
     ].join(' · ');
     final actions =
         _editing
@@ -455,17 +398,18 @@ class _IdentityHeaderState extends ConsumerState<_IdentityHeader> {
                     height: 1.15,
                   ),
                 ),
-              const SizedBox(height: 5),
-              Text(
-                meta,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: kSecondaryTextColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+              if (meta.isNotEmpty) const SizedBox(height: 5),
+              if (meta.isNotEmpty)
+                Text(
+                  meta,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: kSecondaryTextColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
             ],
           ),
         ),
@@ -887,9 +831,7 @@ class _PlayStatsSection extends StatelessWidget {
     required this.games,
     required this.historyLoading,
     required this.view,
-    required this.ratingsTc,
     required this.onViewChanged,
-    required this.onRatingsTcChanged,
     this.historyError,
   });
 
@@ -899,9 +841,7 @@ class _PlayStatsSection extends StatelessWidget {
   final bool historyLoading;
   final String? historyError;
   final _PlayView view;
-  final RatedTimeControl ratingsTc;
   final ValueChanged<_PlayView> onViewChanged;
-  final ValueChanged<RatedTimeControl> onRatingsTcChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -932,8 +872,6 @@ class _PlayStatsSection extends StatelessWidget {
                   profile: profile,
                   achievements: achievements,
                   games: games,
-                  selectedTc: ratingsTc,
-                  onTcChanged: onRatingsTcChanged,
                   onShowGames: () => onViewChanged(_PlayView.games),
                   onShowAchievements:
                       () => onViewChanged(_PlayView.achievements),
@@ -996,8 +934,6 @@ class _PlayOverview extends StatelessWidget {
     required this.profile,
     required this.achievements,
     required this.games,
-    required this.selectedTc,
-    required this.onTcChanged,
     required this.onShowGames,
     required this.onShowAchievements,
   });
@@ -1005,8 +941,6 @@ class _PlayOverview extends StatelessWidget {
   final PlayUserProfile profile;
   final PlayAchievementsState achievements;
   final List<PlayGameRecord> games;
-  final RatedTimeControl selectedTc;
-  final ValueChanged<RatedTimeControl> onTcChanged;
   final VoidCallback onShowGames;
   final VoidCallback onShowAchievements;
 
@@ -1017,14 +951,6 @@ class _PlayOverview extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _RatingLadder(
-            profile: profile,
-            selected: selectedTc,
-            onSelected: onTcChanged,
-          ),
-          const SizedBox(height: 12),
-          _RatingChartPanel(profile: profile, tc: selectedTc),
-          const SizedBox(height: 12),
           IntrinsicHeight(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1054,196 +980,6 @@ class _PlayOverview extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           _GameList(games: games.take(6).toList(growable: false)),
-        ],
-      ),
-    );
-  }
-}
-
-/// The four ratings side by side on one surface. The chosen time control
-/// sits on a raised step and drives the chart below.
-class _RatingLadder extends StatelessWidget {
-  const _RatingLadder({
-    required this.profile,
-    required this.selected,
-    required this.onSelected,
-  });
-
-  final PlayUserProfile profile;
-  final RatedTimeControl selected;
-  final ValueChanged<RatedTimeControl> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: _surface(),
-      child: Row(
-        children: [
-          for (final tc in _kTimeControls) ...[
-            Expanded(
-              child: _LadderCell(
-                tc: tc,
-                stats: profile.statsFor(tc),
-                selected: tc == selected,
-                onTap: () => onSelected(tc),
-              ),
-            ),
-            if (tc != _kTimeControls.last) const SizedBox(width: 6),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _LadderCell extends StatelessWidget {
-  const _LadderCell({
-    required this.tc,
-    required this.stats,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final RatedTimeControl tc;
-  final PlayRatingStats stats;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final unplayed = stats.gamesPlayed == 0;
-    return _Hoverable(
-      onTap: onTap,
-      builder:
-          (hovered) => AnimatedContainer(
-            duration: const Duration(milliseconds: 140),
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-            decoration: BoxDecoration(
-              color:
-                  selected
-                      ? kBlack3Color
-                      : hovered
-                      ? kBlack3Color.withValues(alpha: 0.5)
-                      : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    _TcMark(tc, dim: !selected),
-                    const SizedBox(width: 7),
-                    Text(
-                      tc.displayName,
-                      style: TextStyle(
-                        color: selected ? kWhiteColor : kSecondaryTextColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '${stats.rating}',
-                  style: TextStyle(
-                    color:
-                        selected
-                            ? kPrimaryColor
-                            : unplayed
-                            ? kWhiteColor70
-                            : kWhiteColor,
-                    fontSize: 26,
-                    fontWeight: FontWeight.w900,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                    height: 1.05,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  unplayed
-                      ? 'Provisional · no games'
-                      : 'Peak ${stats.peak} · ${stats.gamesPlayed} '
-                          '${stats.gamesPlayed == 1 ? 'game' : 'games'}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: _kMuted,
-                ),
-              ],
-            ),
-          ),
-    );
-  }
-}
-
-class _RatingChartPanel extends ConsumerStatefulWidget {
-  const _RatingChartPanel({required this.profile, required this.tc});
-
-  final PlayUserProfile profile;
-  final RatedTimeControl tc;
-
-  @override
-  ConsumerState<_RatingChartPanel> createState() => _RatingChartPanelState();
-}
-
-class _RatingChartPanelState extends ConsumerState<_RatingChartPanel> {
-  PlayRatingChartRange _range = PlayRatingChartRange.last90Days;
-
-  @override
-  Widget build(BuildContext context) {
-    final tc = widget.tc;
-    final stats = widget.profile.statsFor(tc);
-    final historyAsync = ref.watch(playRatingHistoryProvider(tc));
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-      decoration: _surface(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Text('${tc.displayName} rating', style: _kHeading),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '${stats.wins} won · ${stats.draws} drawn · '
-                  '${stats.losses} lost',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: _kMuted,
-                ),
-              ),
-              for (final range in PlayRatingChartRange.values)
-                _FilterChip(
-                  label: range.label,
-                  selected: range == _range,
-                  onTap: () => setState(() => _range = range),
-                ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            height: 260,
-            child: historyAsync.when(
-              loading: () => const _Loading(),
-              error:
-                  (e, _) => Center(
-                    child: Text(
-                      '$e',
-                      style: const TextStyle(color: kRedColor, fontSize: 12),
-                    ),
-                  ),
-              data:
-                  (points) => PlayRatingChart(
-                    points: points,
-                    accent: kPrimaryColor,
-                    range: _range,
-                    height: double.infinity,
-                  ),
-            ),
-          ),
         ],
       ),
     );
@@ -1390,11 +1126,6 @@ class _FactsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    var peak = 0;
-    for (final tc in _kTimeControls) {
-      final value = profile.statsFor(tc).peak;
-      if (value > peak) peak = value;
-    }
     final last = profile.lastGameAt;
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 10, 8, 10),
@@ -1406,7 +1137,6 @@ class _FactsPanel extends StatelessWidget {
             value: '${profile.gamesPlayedTotal}',
             onTap: onShowGames,
           ),
-          _FactRow(label: 'Peak rating', value: '$peak'),
           _FactRow(
             label: 'Badges',
             value:
@@ -1566,7 +1296,7 @@ extension on _GameResultFilter {
   }
 }
 
-enum _GameSort { newest, oldest, highRated, lowRated, longest, shortest }
+enum _GameSort { newest, oldest, longest, shortest }
 
 extension on _GameSort {
   String get label {
@@ -1575,10 +1305,6 @@ extension on _GameSort {
         return 'Newest';
       case _GameSort.oldest:
         return 'Oldest';
-      case _GameSort.highRated:
-        return 'Highest';
-      case _GameSort.lowRated:
-        return 'Lowest';
       case _GameSort.longest:
         return 'Longest';
       case _GameSort.shortest:
@@ -1690,12 +1416,6 @@ class _GamesBodyState extends State<_GamesBody> {
         break;
       case _GameSort.oldest:
         list.sort((a, b) => a.playedAt.compareTo(b.playedAt));
-        break;
-      case _GameSort.highRated:
-        list.sort((a, b) => (b.ratingAfter ?? 0).compareTo(a.ratingAfter ?? 0));
-        break;
-      case _GameSort.lowRated:
-        list.sort((a, b) => (a.ratingAfter ?? 0).compareTo(b.ratingAfter ?? 0));
         break;
       case _GameSort.longest:
         list.sort((a, b) => b.movesUci.length.compareTo(a.movesUci.length));
@@ -1896,7 +1616,6 @@ GameCardData _gameCardData(PlayGameRecord game) {
     resultLabel,
     if (tc != null) tc.displayName,
     _formatDate(game.playedAt),
-    if (game.ratingAfter != null) '${game.ratingAfter} rating',
   ].join(' · ');
   return GameCardData(
     id: game.localGameKey,

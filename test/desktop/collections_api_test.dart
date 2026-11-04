@@ -46,6 +46,26 @@ Map<String, Object?> _book(String slug) => {
 };
 
 void main() {
+  test('publication and game-addition dates stay distinct and optional', () {
+    final collection = Collection.fromJson({
+      ..._book('dated'),
+      'publishedAt': '2026-10-01T10:00:00Z',
+      'lastGameAddedAt': '2026-11-02T14:30:00Z',
+      'updatedAt': '2026-11-03T10:00:00Z',
+    });
+    expect(collection.publishedAt, DateTime.utc(2026, 10, 1, 10));
+    expect(collection.lastGameAddedAt, DateTime.utc(2026, 11, 2, 14, 30));
+    expect(Collection.fromJson(_book('legacy')).lastGameAddedAt, isNull);
+    expect(
+      Collection.fromJson({
+        ..._book('edited'),
+        'updatedAt': '2026-11-03T10:00:00Z',
+      }).lastGameAddedAt,
+      isNull,
+      reason: 'metadata edits do not prove a game was added',
+    );
+  });
+
   late _Adapter adapter;
   late GamebaseRepository api;
 

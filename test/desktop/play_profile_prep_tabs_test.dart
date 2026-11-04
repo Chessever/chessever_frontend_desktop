@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -14,6 +15,16 @@ import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 void main() {
+  setUpAll(() async {
+    final font = FontLoader(FThemes.zinc.dark.typography.defaultFontFamily);
+    for (final weight in ['Regular', 'SemiBold', 'Bold', 'Black']) {
+      font.addFont(
+        rootBundle.load('packages/forui/assets/fonts/inter/Inter-$weight.ttf'),
+      );
+    }
+    await font.load();
+  });
+
   Future<_MyPrep> pumpProfile(WidgetTester tester) async {
     tester.view.physicalSize = const Size(1600, 1100);
     tester.view.devicePixelRatio = 1;
@@ -70,25 +81,32 @@ void main() {
     expect(myPrep.linked, ['p1']);
   });
 
-  testWidgets('Play stats keeps the ratings, record and badges', (
-    tester,
-  ) async {
-    await pumpProfile(tester);
+  testWidgets(
+    'Play stats keeps the record and badges without personal ratings',
+    (tester) async {
+      await pumpProfile(tester);
 
-    await tester.tap(find.text('Play stats'));
-    await tester.pump();
+      await tester.tap(find.text('Play stats'));
+      await tester.pump();
 
-    expect(find.text('Record'), findsOneWidget);
-    expect(find.text('1157'), findsOneWidget);
-    expect(find.text('Bullet rating'), findsOneWidget);
+      expect(find.text('Record'), findsOneWidget);
+      expect(find.text('1157'), findsNothing);
+      expect(find.textContaining('rating'), findsNothing);
+      expect(find.text('ChessEver player'), findsNothing);
+      expect(find.text('Joined May 13, 2026'), findsOneWidget);
 
-    await tester.tap(find.text('Rapid'));
-    await tester.pump();
-    expect(find.text('Rapid rating'), findsOneWidget);
-    // Let the chart's entry animation finish before teardown.
-    await tester.pump(const Duration(seconds: 3));
-    expect(tester.takeException(), isNull);
-  });
+      await tester.tap(find.text('Achievements'));
+      await tester.pump();
+      expect(find.text('Record'), findsNothing);
+
+      await tester.tap(find.text('Games'));
+      await tester.pump();
+      expect(find.text('Highest'), findsNothing);
+      expect(find.text('Lowest'), findsNothing);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 final _profile = PlayUserProfile(

@@ -383,6 +383,12 @@ class CollectionAboutView extends ConsumerWidget {
                           if (isBook && edition != null) _AboutFact(edition),
                           if (!isBook && where.isNotEmpty) _AboutFact(where),
                           if (!locked) _AboutFact(contents),
+                          if (collectionCatalogDate(collection.publishedAt)
+                              case final date?)
+                            _AboutFact('Published $date'),
+                          if (collectionCatalogDate(collection.lastGameAddedAt)
+                              case final date?)
+                            _AboutFact('Last game added $date'),
                         ],
                       ),
                     ),

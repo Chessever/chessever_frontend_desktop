@@ -111,7 +111,7 @@ String collectionSortFailedMessage(
   CollectionCatalogSort asked, {
   required bool refused,
 }) {
-  final by = asked.column?.api ?? 'default';
+  final by = asked.column?.label ?? 'last game added';
   if (!refused) return 'Could not sort by $by. Try again.';
   return asked.isNatural
       ? 'Sorting by $by is not available yet.'
@@ -238,18 +238,8 @@ class CollectionsPane extends HookConsumerWidget {
       return null;
     }, [awaitingSort, asked.isLoading, asked.error, sort.value]);
 
-    final favorites = ref.watch(favoriteCollectionSlugsProvider);
-    final pinned = shownSort.value.isStandard;
-    final items = useMemoized(
-      () =>
-          pinned
-              ? pinStarredCollections(
-                catalog.items,
-                (collection) => favorites.contains(collection.slug),
-              )
-              : catalog.items,
-      [catalog.items, favorites, pinned],
-    );
+    // Keep the server's chronological order even when a collection is starred.
+    final items = catalog.items;
     // A new order can leave the open collection off the first page. It stays
     // open from what was last read of it until its row is paged in again.
     final lastSelected = useRef<Collection?>(null);
@@ -337,6 +327,8 @@ class CollectionsPane extends HookConsumerWidget {
                     activeFilters: _collectionFilterCount(filter.value),
                     onEditFilters: () => unawaited(editFilters()),
                     onRefresh: refresh,
+                    sort: sort.value,
+                    onSort: (order) => sort.value = order,
                   ),
                   Expanded(
                     child: ResizableSplitView(
@@ -355,9 +347,9 @@ class CollectionsPane extends HookConsumerWidget {
                             items: items,
                             // An order never empties the catalog.
                             searching:
-                                queryIn(
-                                  const CollectionCatalogSort.standard(),
-                                ).isActive,
+                                text.trim().isNotEmpty ||
+                                _collectionFilterCount(filter.value) > 0 ||
+                                shownAuthor != null,
                             sort: sort.value,
                             shownSort: shownSort.value,
                             onSort: pressSort,
@@ -609,6 +601,8 @@ class _CollectionsBar extends StatelessWidget {
     required this.activeFilters,
     required this.onEditFilters,
     required this.onRefresh,
+    required this.sort,
+    required this.onSort,
   });
 
   final CollectionAuthor? author;
@@ -619,72 +613,146 @@ class _CollectionsBar extends StatelessWidget {
   final int activeFilters;
   final VoidCallback onEditFilters;
   final VoidCallback onRefresh;
+  final CollectionCatalogSort sort;
+  final ValueChanged<CollectionCatalogSort> onSort;
 
   @override
   Widget build(BuildContext context) {
     final insideAuthor = author != null;
     return LibraryHomeBar(
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 28,
-            child: Icon(
-              Icons.auto_stories_outlined,
-              size: 17,
-              color: kPrimaryColor,
+      child: LayoutBuilder(
+        builder:
+            (context, constraints) => Row(
+              children: [
+                const SizedBox(
+                  width: 28,
+                  child: Icon(
+                    Icons.auto_stories_outlined,
+                    size: 17,
+                    color: kPrimaryColor,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                if (insideAuthor) ...[
+                  DesktopHeaderIconButton(
+                    icon: Icons.arrow_back_rounded,
+                    tooltip: 'Back to all collections',
+                    onPress: onBack,
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                if (constraints.maxWidth >= 650 || insideAuthor)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth:
+                          insideAuthor
+                              ? (constraints.maxWidth < 650 ? 100 : 220)
+                              : 110,
+                    ),
+                    child: Text(
+                      insideAuthor ? author!.name : 'Collections',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kWhiteColor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: DesktopSearchField(
+                      controller: searchController,
+                      hintText: 'Search collections',
+                      maxWidth: 260,
+                      onChanged: onQueryChanged,
+                      onClear: () {
+                        searchController.clear();
+                        onQueryChanged('');
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Builder(
+                  builder:
+                      (buttonContext) => DesktopToolbarPillButton(
+                        label: 'Sort',
+                        icon: Icons.sort_rounded,
+                        onPress: () async {
+                          final box =
+                              buttonContext.findRenderObject()! as RenderBox;
+                          const options = [
+                            (
+                              CollectionCatalogSort.standard(),
+                              'Last game added: newest first',
+                            ),
+                            (
+                              CollectionCatalogSort.by(
+                                CollectionSortColumn.lastGameAdded,
+                                ascending: true,
+                              ),
+                              'Last game added: oldest first',
+                            ),
+                            (
+                              CollectionCatalogSort.by(
+                                CollectionSortColumn.publishedAt,
+                                ascending: false,
+                              ),
+                              'Published: newest first',
+                            ),
+                            (
+                              CollectionCatalogSort.by(
+                                CollectionSortColumn.publishedAt,
+                                ascending: true,
+                              ),
+                              'Published: oldest first',
+                            ),
+                          ];
+                          final selected = await showDesktopContextMenu<
+                            CollectionCatalogSort
+                          >(
+                            context: buttonContext,
+                            position: box.localToGlobal(
+                              Offset(0, box.size.height),
+                            ),
+                            width: 285,
+                            entries: [
+                              for (final (option, label) in options)
+                                DesktopContextMenuItem(
+                                  value: option,
+                                  label: label,
+                                  icon:
+                                      sort.sort == option.sort &&
+                                              sort.ascending == option.ascending
+                                          ? Icons.check_rounded
+                                          : Icons.sort_rounded,
+                                ),
+                            ],
+                          );
+                          if (selected != null && buttonContext.mounted) {
+                            onSort(selected);
+                          }
+                        },
+                      ),
+                ),
+                const SizedBox(width: 4),
+                DesktopGameFilterButton(
+                  filter: filter,
+                  activeCountOverride: activeFilters,
+                  onPress: onEditFilters,
+                ),
+                const SizedBox(width: 4),
+                DesktopHeaderIconButton(
+                  icon: Icons.refresh_rounded,
+                  tooltip: 'Refresh collections',
+                  onPress: onRefresh,
+                ),
+              ],
             ),
-          ),
-          const SizedBox(width: 4),
-          if (insideAuthor) ...[
-            DesktopHeaderIconButton(
-              icon: Icons.arrow_back_rounded,
-              tooltip: 'Back to all collections',
-              onPress: onBack,
-            ),
-            const SizedBox(width: 4),
-          ],
-          ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: insideAuthor ? 220 : 110),
-            child: Text(
-              insideAuthor ? author!.name : 'Collections',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: DesktopSearchField(
-                controller: searchController,
-                hintText: 'Search collections',
-                maxWidth: 260,
-                onChanged: onQueryChanged,
-                onClear: () {
-                  searchController.clear();
-                  onQueryChanged('');
-                },
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          DesktopGameFilterButton(
-            filter: filter,
-            activeCountOverride: activeFilters,
-            onPress: onEditFilters,
-          ),
-          const SizedBox(width: 4),
-          DesktopHeaderIconButton(
-            icon: Icons.refresh_rounded,
-            tooltip: 'Refresh collections',
-            onPress: onRefresh,
-          ),
-        ],
       ),
     );
   }

@@ -9,8 +9,9 @@ import 'package:chessever/desktop/auth/desktop_guest_upgrade_dialog.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/state/desktop_account_identity.dart';
 
-/// Browser startup enables immediate sign-in on interaction. Native apps keep
-/// the phone's free guest access and its existing per-action account checks.
+/// Optional account-only interaction mode. Phone-style guest entry leaves this
+/// disabled in both the browser and native apps; account-required actions keep
+/// their own checks.
 final desktopGuestInteractionSignInProvider = Provider<bool>((ref) => false);
 
 /// Keeps the shell visible, but consumes guest interactions before a control

@@ -41,9 +41,10 @@ still need a manual pass.
 | Show in folder, window position | Not applicable | Hidden on the web |
 | Updates | Reload | Nothing to install: the tab compares its compiled `appBuildName`+`appBuildNumber` with the deploy's `/version.json` every 5 min and on refocus (`lib/web/web_release_watcher.dart`); a newer build shows the top-bar chip "New update available", and tapping it reloads the page. Settings has no Updates section on the web |
 | Google and Apple sign-in | Same tab | Supabase-hosted OAuth redirecting back to the page (PKCE) instead of the loopback server; a pending guest merge waits in IndexedDB (`AppDatabaseGuestMergePendingStore`). The origin must be on the Supabase Auth redirect list |
-| Guest interaction | Sign-in popup before each action | The browser enables `desktopGuestInteractionSignInProvider`: clicks and keyboard actions on the visible shell ask for a free account before executing. Dismissing the popup leaves the shell visible and the next action asks again. Native apps retain phone guest access and existing account-required actions; the day-7/28 guest schedule is shared |
 | Addresses and history | chessever.com paths | `lib/web/web_url_sync.dart` owns the address bar and Back/Forward; Flutter's URL strategy is off |
 | Startup page and How to use | Events at the bare domain; direct links keep their destination | Automatic How to use opens in a background tab on the web; native desktop onboarding keeps its existing focus behavior |
+| Events membership | Current and Calendar stay free; For You and Past require Premium | Shared admission gate keeps paid feeds unmounted until membership is verified; lookup failures offer Retry |
+| Guest sign-up | First browser visit offers sign-in or Not now | The persisted guest clock survives reloads; reminders start at day 7, repeat weekly, and require sign-in at day 28. Signing in clears guest stamps |
 | Sidebar number shortcuts | Same as desktop | Cmd/Ctrl+1 through 9, then 0 follow the primary sidebar routes from Events to Play; labels and bindings share `desktop_main_routes.dart` |
 
 ## Packages weighed (pub.dev, 2026-10-28)
@@ -68,3 +69,22 @@ still need a manual pass.
   detached`), unconfirmed in Safari.
 - Leela in the browser would need an ONNX-converted network and a search
   written in Dart.
+
+## Service dependencies for the ticket fixes
+
+Deploy the matching services before releasing the updated browser client:
+
+- Gamebase must accept the book catalog sorts `lastGameAdded` and `publishedAt`
+  and return nullable `lastGameAddedAt` in collection summaries. The default
+  catalog order is the latest game addition first. This date comes from the
+  creation time of games currently in the collection, independently of cover,
+  metadata or game edits. Apply the additive `collection_game_added_idx`
+  migration to keep those reads indexed. Older services reject the new sorts.
+- The feedback relay must accept the exact `https://app.chessever.com` origin,
+  answer its POST preflight, and include CORS headers on error responses as well
+  as successful deliveries. Native clients continue to omit Origin.
+- Botvinnik's chat service must recognize the browser client's
+  `desktop-shell-v1` capability as the app at app.chessever.com, distinct from
+  the public website. Its help lookup can select an explicitly requested phone,
+  tablet, desktop, browser app or website without changing the request's account
+  or device identity. AI-sharing consent remains per account in each browser.
