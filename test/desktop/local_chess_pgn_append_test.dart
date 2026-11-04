@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:dartchess/dartchess.dart' show Chess;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -204,10 +204,10 @@ void main() {
         await file.writeAsString(
           '${_existingPgn.trim()}\n\n${_secondPgn.trim()}\n',
         );
-        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        final db = await localsql.Database.open('${dir.path}/local_chess.db');
         addTearDown(db.close);
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         final source = await scanLocalChessPaths(<String>[file.path]);
         final fileNode = source.root.singlePlayableDatabaseInSubtree!;
         final writeRepo = LocalChessDatabaseRepository(
@@ -391,10 +391,10 @@ void main() {
         addTearDown(() => dir.delete(recursive: true));
         final file = File('${dir.path}/local.pgn');
         await file.writeAsString('${_existingPgn.trim()}\n');
-        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        final db = await localsql.Database.open('${dir.path}/local_chess.db');
         addTearDown(db.close);
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         final source = await scanLocalChessPaths(<String>[file.path]);
         final repo = _RollbackConflictRepository(
           file: file,
@@ -449,10 +449,10 @@ void main() {
         addTearDown(() => dir.delete(recursive: true));
         final file = File('${dir.path}/local.pgn');
         await file.writeAsString('${_existingPgn.trim()}\n');
-        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        final db = await localsql.Database.open('${dir.path}/local_chess.db');
         addTearDown(db.close);
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         final source = await scanLocalChessPaths(<String>[file.path]);
         final repo = _SuccessfulExternalEditRepository(
           file: file,
@@ -498,10 +498,10 @@ void main() {
         addTearDown(() => dir.delete(recursive: true));
         final file = File('${dir.path}/local.pgn');
         await file.writeAsString('${_existingPgn.trim()}\n');
-        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        final db = await localsql.Database.open('${dir.path}/local_chess.db');
         addTearDown(db.close);
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         final source = await scanLocalChessPaths(<String>[file.path]);
         final repo = LocalChessDatabaseRepository(database: () async => db);
         await repo.persistFileNode(
@@ -546,10 +546,10 @@ void main() {
       addTearDown(() => dir.delete(recursive: true));
       final file = File('${dir.path}/local.pgn');
       await file.writeAsString('${_existingPgn.trim()}\n');
-      final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+      final db = await localsql.Database.open('${dir.path}/local_chess.db');
       addTearDown(db.close);
       await db.execute('PRAGMA foreign_keys=ON');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       final originalSource = await scanLocalChessPaths(<String>[file.path]);
       final repo = LocalChessDatabaseRepository(database: () async => db);
       await repo.persistFileNode(
@@ -595,10 +595,10 @@ void main() {
         addTearDown(() => dir.delete(recursive: true));
         final file = File('${dir.path}/local.pgn');
         await file.writeAsString('${_existingPgn.trim()}\n');
-        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        final db = await localsql.Database.open('${dir.path}/local_chess.db');
         addTearDown(db.close);
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         final source = await scanLocalChessPaths(<String>[file.path]);
         final fileNode = source.root.singlePlayableDatabaseInSubtree!;
         final repo = LocalChessDatabaseRepository(database: () async => db);
@@ -699,10 +699,10 @@ void main() {
       await file.writeAsString(
         '${_existingPgn.trim()}\n\n${_secondPgn.trim()}\n',
       );
-      final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+      final db = await localsql.Database.open('${dir.path}/local_chess.db');
       addTearDown(db.close);
       await db.execute('PRAGMA foreign_keys=ON');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       final source = await scanLocalChessPaths(<String>[file.path]);
       final fileNode = source.root.singlePlayableDatabaseInSubtree!;
       final repo = LocalChessDatabaseRepository(database: () async => db);
@@ -746,10 +746,10 @@ void main() {
       await file.writeAsString(
         '${_existingPgn.trim()}\n\n${_secondPgn.trim()}\n',
       );
-      final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+      final db = await localsql.Database.open('${dir.path}/local_chess.db');
       addTearDown(db.close);
       await db.execute('PRAGMA foreign_keys=ON');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       final source = await scanLocalChessPaths(<String>[file.path]);
       final fileNode = source.root.singlePlayableDatabaseInSubtree!;
       final repo = LocalChessDatabaseRepository(database: () async => db);
@@ -791,10 +791,10 @@ void main() {
         await file.writeAsString(
           '${_existingPgn.trim()}\n\n${_secondPgn.trim()}\n',
         );
-        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        final db = await localsql.Database.open('${dir.path}/local_chess.db');
         addTearDown(db.close);
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         final source = await scanLocalChessPaths(<String>[file.path]);
         final fileNode = source.root.singlePlayableDatabaseInSubtree!;
         final repo = LocalChessDatabaseRepository(database: () async => db);
@@ -849,10 +849,10 @@ void main() {
         await file.writeAsString(
           '${_existingPgn.trim()}\n\n${_secondPgn.trim()}\n',
         );
-        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        final db = await localsql.Database.open('${dir.path}/local_chess.db');
         addTearDown(db.close);
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         final initialSource = await scanLocalChessPaths(<String>[file.path]);
         final initialNode = initialSource.root.singlePlayableDatabaseInSubtree!;
         final expectedFingerprint = initialNode.games.last.pgnFingerprint;
@@ -1129,6 +1129,6 @@ class _SuccessfulExternalEditRepository extends LocalChessDatabaseRepository {
   }
 }
 
-Future<resqlite.Database> _unusedDatabase() async {
+Future<localsql.Database> _unusedDatabase() async {
   throw StateError('test repository does not open a database');
 }

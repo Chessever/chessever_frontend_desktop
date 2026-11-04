@@ -21,7 +21,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 void main() {
   LiveTestWidgetsFlutterBinding.ensureInitialized();
@@ -34,10 +34,10 @@ void main() {
         'chessever-player-pane-delete-heartbeat-',
       );
       final databasePath = p.join(temp.path, 'local_chess.db');
-      final db = await resqlite.Database.open(databasePath);
+      final db = await localsql.Database.open(databasePath);
       await db.execute('PRAGMA foreign_keys=ON');
       await db.execute('PRAGMA journal_mode=WAL');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       // ignore: avoid_print
       print('[DELETE_PANE_LOOP] schema ${phaseWatch.elapsedMilliseconds}ms');
 
@@ -155,7 +155,7 @@ void main() {
       final localRepository = _ObservedLocalChessDatabaseRepository(
         database: () async => db,
         purgeDatabase: () async {
-          final connection = await resqlite.Database.open(databasePath);
+          final connection = await localsql.Database.open(databasePath);
           await connection.execute('PRAGMA foreign_keys=ON');
           await connection.execute('PRAGMA journal_mode=WAL');
           return connection;
@@ -608,7 +608,7 @@ String _chessComDownloadPgn(int gameCount) {
 }
 
 Future<void> _seedDerivedCache(
-  resqlite.Database db, {
+  localsql.Database db, {
   required String databasePath,
   required int rowCount,
   int? positionRowCount,
@@ -683,7 +683,7 @@ Future<void> _seedDerivedCache(
   );
 }
 
-Future<int> _count(resqlite.Database db, String table) async {
+Future<int> _count(localsql.Database db, String table) async {
   final rows = await db.select('SELECT COUNT(*) AS count FROM $table');
   return (rows.single['count'] as num).toInt();
 }

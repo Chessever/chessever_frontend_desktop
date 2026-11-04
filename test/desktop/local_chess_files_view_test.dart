@@ -1,4 +1,4 @@
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'dart:async';
 import 'package:chessever/theme/app_theme.dart';
 import 'dart:ui' as ui;
@@ -1519,9 +1519,9 @@ void main() {
       final catalog = await scanLocalChessPaths([pagingPgn!]);
       file = catalog.root.singlePlayableDatabaseInSubtree!;
       final temp = await Directory.systemTemp.createTemp('local-grid-sql-');
-      final db = await resqlite.Database.open('${temp.path}/pages.db');
+      final db = await localsql.Database.open('${temp.path}/pages.db');
       try {
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         final repo = LocalChessDatabaseRepository(database: () async => db);
         await repo.persistFileNode(file, sourceLabel: 'Paging acceptance copy');
         for (final field in [

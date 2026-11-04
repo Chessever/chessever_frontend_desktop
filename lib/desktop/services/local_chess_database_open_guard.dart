@@ -1,12 +1,10 @@
 /// Resilience, diagnostics and wording for local chess SQLite opens.
 ///
-/// resqlite's open path is all-or-nothing: `Database.open` either returns a
-/// handle or throws
-/// `ResqliteConnectionException('Failed to open database at "<path>"')`.
-/// That message is produced by resqlite 0.7.0
-/// (`lib/src/native/open_database.dart`, thrown when the native `resqlite_open`
-/// returns NULL). The native side returns NULL from exactly two places
-/// (`native/resqlite.c` → `open_connection`):
+/// The local SQLite driver (`lib/web/shims/local_sqlite.dart`) opens a file
+/// all-or-nothing: `Database.open` either returns a handle or throws a
+/// `LocalSqliteConnectionException` whose message starts with
+/// `Failed to open database at "<path>"`, followed by SQLite's own reason and
+/// result code. A writable open fails when:
 ///
 /// 1. `sqlite3_open_v2(READWRITE|CREATE)` failed. On Windows `winOpen` maps a
 ///    failing `CreateFileW` to `SQLITE_CANTOPEN` (missing parent directory,
@@ -15,10 +13,10 @@
 ///    into WAL needs a write transaction on the file header, and SQLite leaves
 ///    the mode unchanged when the pager cannot change journal modes at all.
 ///
-/// `busy_timeout` is applied *after* both steps, so an open that meets a
-/// transient lock, an antivirus scan, or a file that is being replaced or
-/// deleted right now fails **immediately, with no retry budget**, and the raw
-/// native string used to reach the UI as the whole error message.
+/// A read-only open fails when the file is missing or is not a readable
+/// database. The driver sets a busy timeout before the WAL switch, but a file
+/// that is being replaced or deleted right now, or held by an antivirus scan,
+/// still fails the open immediately.
 ///
 /// This file owns:
 ///
@@ -34,7 +32,7 @@ library;
 
 import 'dart:io';
 
-import 'package:chessever/web/shims/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 
@@ -71,7 +69,7 @@ const List<Duration> localChessDatabaseOpenRetryDelays = <Duration>[
 /// The open call, injectable so regression sources can drive failures without
 /// touching the filesystem.
 typedef LocalChessDatabaseOpenCall =
-    Future<resqlite.Database> Function(String path);
+    Future<localsql.Database> Function(String path);
 
 /// A local chess database file that exists but cannot be opened.
 ///
@@ -174,6 +172,7 @@ class LocalChessDatabaseUnavailableException implements Exception {
 /// is being rebuilt, replaced or written by another connection.
 bool isRetryableLocalChessDatabaseFailure(Object error) {
   if (error is LocalChessDatabaseUnavailableException) return error.retryable;
+  if (error is localsql.LocalSqliteException && error.isBusy) return true;
   if (isLocalChessDatabaseOpenFailure(error)) return true;
   final text = error.toString().toLowerCase();
   return text.contains('database is locked') ||
@@ -184,11 +183,10 @@ bool isRetryableLocalChessDatabaseFailure(Object error) {
 
 /// Wording for any failure surfaced next to a local database read.
 ///
-/// A raw resqlite open failure must never reach the user: it names an internal
-/// sidecar path and class, and the widget-level string surgery used to turn
-/// `ResqliteConnectionException: Failed to open database at "..."` into
-/// `ResqliteConnectionFailed to open database at "..."` (the text users
-/// actually saw) damaged it further. Everything else keeps its own message with
+/// A raw driver open failure must never reach the user: it names an internal
+/// sidecar path and class, and widget-level string surgery on
+/// `<Type>Exception: Failed to open database at "..."` once produced
+/// `<Type>Failed to open database at "..."` (the text users actually saw). Everything else keeps its own message with
 /// a leading `SomeException: ` type prefix removed, since that prefix is Dart
 /// framing rather than a user-facing explanation.
 String localChessDatabaseUserMessage(Object error) {
@@ -207,15 +205,15 @@ final RegExp _leadingExceptionType = RegExp(
   r'^(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*(?:Exception|Error)\s*:\s*',
 );
 
-/// True when [error] is SQLite/resqlite refusing to *open* a database file.
+/// True when [error] is SQLite refusing to *open* a database file.
 ///
 /// Distinct from `database is locked` / `database is busy`, which the
 /// repository already retries at the query level. Matching on the message keeps
-/// this usable from sources that cannot import resqlite's exception type.
+/// this usable for errors that crossed an isolate boundary as text.
 bool isLocalChessDatabaseOpenFailure(Object error) {
-  if (error is resqlite.ResqliteConnectionException) {
-    // resqlite also uses this type for "Database is closed." — only the open
-    // failure carries the path-qualified wording.
+  if (error is localsql.LocalSqliteConnectionException) {
+    // The driver also uses this type for "Database is closed." — only the
+    // open failure carries the path-qualified wording.
     return error.message.contains('Failed to open database at') ||
         error.message.contains('unable to open database file');
   }
@@ -223,19 +221,26 @@ bool isLocalChessDatabaseOpenFailure(Object error) {
   return text.contains('Failed to open database at') ||
       text.contains('unable to open database file') ||
       text.contains('SQLITE_CANTOPEN') ||
-      text.contains('sqlite code: 14');
+      text.toLowerCase().contains('sqlite code: 14');
 }
 
 /// The native error code, when the underlying failure carries one.
 ///
-/// resqlite discards `sqlite3_open_v2`'s result code before throwing, so an
-/// open failure usually has no code at all; a `dart:io` probe failure does
-/// (Win32 `ERROR_SHARING_VIOLATION` = 32, `ERROR_ACCESS_DENIED` = 5,
-/// `ERROR_PATH_NOT_FOUND` = 3), and a query failure carries `sqlite code: N`.
+/// A driver error carries SQLite's primary result code (14 = `CANTOPEN`,
+/// 5 = `BUSY`); a `dart:io` probe failure carries the OS code (Win32
+/// `ERROR_SHARING_VIOLATION` = 32, `ERROR_ACCESS_DENIED` = 5,
+/// `ERROR_PATH_NOT_FOUND` = 3). Errors that crossed an isolate boundary as
+/// text still expose `SQLite code: N`.
 Object? localChessDatabaseErrorCode(Object? error) {
   if (error is FileSystemException) return error.osError?.errorCode;
+  if (error is localsql.LocalSqliteException && error.sqliteCode != null) {
+    return '${error.sqliteCode}';
+  }
   final text = error?.toString() ?? '';
-  final match = RegExp(r'sqlite code: (\d+)').firstMatch(text);
+  final match = RegExp(
+    r'sqlite code: (\d+)',
+    caseSensitive: false,
+  ).firstMatch(text);
   return match?.group(1);
 }
 
@@ -250,7 +255,7 @@ Object? localChessDatabaseErrorCode(Object? error) {
 /// on a file that is present but unopenable, and rethrows any error that is not
 /// an open failure (a corrupt file, a bad query, a programming error) so real
 /// faults are never swallowed.
-Future<resqlite.Database?> openLocalChessDatabaseHandle({
+Future<localsql.Database?> openLocalChessDatabaseHandle({
   required String path,
   required LocalChessDatabaseOperation operation,
   String purpose = '',
@@ -260,14 +265,22 @@ Future<resqlite.Database?> openLocalChessDatabaseHandle({
   LocalChessDatabaseOpenCall? open,
   List<Duration> retryDelays = localChessDatabaseOpenRetryDelays,
   Future<bool> Function(String path)? pathExists,
+  bool readOnly = false,
+  bool onCurrentIsolate = false,
 }) {
-  return openLocalChessResourceWithRetry<resqlite.Database>(
+  return openLocalChessResourceWithRetry<localsql.Database>(
     path: path,
     operation: operation,
     purpose: purpose,
     label: label,
     absentPolicy: absentPolicy,
-    open: open ?? (String target) => resqlite.Database.open(target),
+    open:
+        open ??
+        (String target) => localsql.Database.open(
+          target,
+          readOnly: readOnly,
+          onCurrentIsolate: onCurrentIsolate,
+        ),
     retryDelays: retryDelays,
     pathExists: pathExists,
   );
@@ -407,7 +420,7 @@ Future<Map<String, Object?>> localChessDatabasePathProbe(String path) async {
 }
 
 /// Bytes 18/19 of a SQLite file hold the file-format write/read version; `2/2`
-/// means the file is in WAL mode. resqlite *requires* WAL — `open_connection`
+/// means the file is in WAL mode. A writable open *requires* WAL — the driver
 /// fails the whole open when `PRAGMA journal_mode=WAL` does not report `wal` —
 /// so this value at the moment of a failure is the single most useful piece of
 /// evidence for the next occurrence: `walMode: false` points at the

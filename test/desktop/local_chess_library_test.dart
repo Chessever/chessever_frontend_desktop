@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
@@ -57,11 +57,11 @@ void main() {
     test(
       'force refresh bypasses a warm cache and reads physical headers',
       () async {
-        final db = await resqlite.Database.open(
+        final db = await localsql.Database.open(
           '${temp.path}/force-refresh.db',
         );
         addTearDown(db.close);
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         final repo = LocalChessDatabaseRepository(database: () async => db);
         final file = File('${temp.path}/refresh.pgn');
         await file.writeAsString(_samplePgn);
@@ -647,9 +647,9 @@ void main() {
     test(
       'refreshFile updates one local database tree and persisted cache',
       () async {
-        final db = await resqlite.Database.open('${temp.path}/local_chess.db');
+        final db = await localsql.Database.open('${temp.path}/local_chess.db');
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         addTearDown(db.close);
         final repo = LocalChessDatabaseRepository(database: () async => db);
         final root = Directory('${temp.path}/workspace');
@@ -782,9 +782,9 @@ void main() {
     test(
       'openPaths recovers persisted games without auto rebuilding a missing tree',
       () async {
-        final db = await resqlite.Database.open('${temp.path}/recover_tree.db');
+        final db = await localsql.Database.open('${temp.path}/recover_tree.db');
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         addTearDown(db.close);
         final repo = LocalChessDatabaseRepository(database: () async => db);
         final file = File('${temp.path}/mini.pgn');
@@ -850,9 +850,9 @@ void main() {
     test(
       'openPaths restores the persisted compact tree without rebuilding',
       () async {
-        final db = await resqlite.Database.open('${temp.path}/restore_tree.db');
+        final db = await localsql.Database.open('${temp.path}/restore_tree.db');
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         addTearDown(db.close);
         final writeRepo = LocalChessDatabaseRepository(
           database: () async => db,
@@ -958,9 +958,9 @@ void main() {
     );
 
     test('rebuildOpeningTree coalesces dense worker progress', () async {
-      final db = await resqlite.Database.open('${temp.path}/progress_tree.db');
+      final db = await localsql.Database.open('${temp.path}/progress_tree.db');
       await db.execute('PRAGMA foreign_keys=ON');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       addTearDown(db.close);
       final repo = LocalChessDatabaseRepository(database: () async => db);
       final file = File('${temp.path}/mini.pgn');
@@ -1118,9 +1118,9 @@ void main() {
     test(
       'refreshFile uses a fresh persisted cache before rescanning',
       () async {
-        final db = await resqlite.Database.open('${temp.path}/cache_first.db');
+        final db = await localsql.Database.open('${temp.path}/cache_first.db');
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         addTearDown(db.close);
         final repo = LocalChessDatabaseRepository(database: () async => db);
         final file = File('${temp.path}/mini.pgn');
@@ -1159,9 +1159,9 @@ void main() {
     test(
       'refreshFile clears persisted cache after deleting last game',
       () async {
-        final db = await resqlite.Database.open('${temp.path}/delete_cache.db');
+        final db = await localsql.Database.open('${temp.path}/delete_cache.db');
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         addTearDown(db.close);
         final repo = LocalChessDatabaseRepository(database: () async => db);
         final file = File('${temp.path}/mini.pgn');
@@ -1474,7 +1474,7 @@ PlayerOpeningTreeIndex _fakeOpeningTreeIndex(String databasePath) {
   );
 }
 
-Future<resqlite.Database> _unusedDatabase() async {
+Future<localsql.Database> _unusedDatabase() async {
   throw UnsupportedError('unused test database');
 }
 
@@ -1483,7 +1483,7 @@ String _testDatabaseId(String path) {
   return Platform.isWindows ? normalized.toLowerCase() : normalized;
 }
 
-Future<int> _count(resqlite.Database db, String table) async {
+Future<int> _count(localsql.Database db, String table) async {
   final rows = await db.select('SELECT COUNT(*) AS count FROM $table');
   return rows.single['count'] as int;
 }

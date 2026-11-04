@@ -85,6 +85,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "associatechessfiles"; Description: "Associate PGN files with ChessEver"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
+[InstallDelete]
+; package:sqlite3 (sqlite3.dll) replaced package:resqlite. [Files] only adds
+; and overwrites, so an install over an older release would otherwise leave
+; the orphaned resqlite.dll behind.
+Type: files; Name: "{app}\resqlite.dll"
+
 [Files]
 ; Recursively pull in every file Flutter put in the Release directory —
 ; .exe, .dll, the data\flutter_assets tree, native plugin DLLs, etc.

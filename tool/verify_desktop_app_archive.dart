@@ -13,18 +13,22 @@ const _requiredArchivePaths = <String, List<String>>{
     'desktop_updater_plugin.dll',
     'flutter_onnxruntime_plugin.dll',
     'onnxruntime.dll',
-    'resqlite.dll',
     'sqlite3.dll',
   ],
   'linux': [
     'Chessever',
     'lib/libflutter_onnxruntime_plugin.so',
     'lib/libonnxruntime.so.1',
-    'lib/libresqlite.so',
+    'lib/libsqlite3.so',
   ],
 };
 
-const _macResqliteVersionPrefix = 'Frameworks/resqlite.framework/Versions/';
+const _macSqlite3VersionPrefix = 'Frameworks/sqlite3.framework/Versions/';
+
+// package:sqlite3 replaced package:resqlite. An archive that still hashes one
+// of these was published from a build directory reused from an older revision.
+const _staleResqliteFiles = <String>['resqlite.dll', 'lib/libresqlite.so'];
+const _staleResqliteMacPrefix = 'Frameworks/resqlite.framework/';
 
 Future<void> main() async {
   final current = _readPubspecVersion();
@@ -95,10 +99,16 @@ Future<void> main() async {
         }
       }
       if (platform.startsWith('macos') &&
-          !_hasVersionedMacResqliteBinary(paths)) {
+          !_hasVersionedMacSqlite3Binary(paths)) {
         errors.add(
-          '$platform: archive is missing a concrete versioned resqlite binary',
+          '$platform: archive is missing a concrete versioned sqlite3 binary',
         );
+      }
+      for (final path in paths) {
+        if (_staleResqliteFiles.contains(path) ||
+            path.startsWith(_staleResqliteMacPrefix)) {
+          errors.add('$platform: archive contains stale resqlite file $path');
+        }
       }
       stdout.writeln(
         '$platform: latest=$releaseVersion files=${paths.length} url=$url',
@@ -120,13 +130,13 @@ Future<void> main() async {
   stdout.writeln('Desktop app archive matches pubspec and latest archives.');
 }
 
-bool _hasVersionedMacResqliteBinary(Set<String> paths) {
+bool _hasVersionedMacSqlite3Binary(Set<String> paths) {
   return paths.any((path) {
-    if (!path.startsWith(_macResqliteVersionPrefix) ||
-        !path.endsWith('/resqlite')) {
+    if (!path.startsWith(_macSqlite3VersionPrefix) ||
+        !path.endsWith('/sqlite3')) {
       return false;
     }
-    final versionAndBinary = path.substring(_macResqliteVersionPrefix.length);
+    final versionAndBinary = path.substring(_macSqlite3VersionPrefix.length);
     final parts = versionAndBinary.split('/');
     return parts.length == 2 && parts.first.isNotEmpty;
   });

@@ -6,7 +6,7 @@ import 'dart:io';
 import 'package:dartchess/dartchess.dart' show Chess, NormalMove;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -29,7 +29,7 @@ const String _timeControlBackfill =
     'local_chess_source_time_control_backfill_v2';
 
 void main() {
-  late resqlite.Database db;
+  late localsql.Database db;
   late Directory temp;
 
   setUpAll(() {
@@ -39,10 +39,10 @@ void main() {
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('chessever-local-db-');
-    db = await resqlite.Database.open('${temp.path}/local_chess.db');
+    db = await localsql.Database.open('${temp.path}/local_chess.db');
     await db.execute('PRAGMA foreign_keys=ON');
     await db.execute('PRAGMA journal_mode=WAL');
-    await createLocalChessResqliteDatabaseSchema(db);
+    await createLocalChessCacheDatabaseSchema(db);
   });
 
   tearDown(() async {
@@ -205,7 +205,7 @@ void main() {
       "'local_chess_source_time_control_backfill_v2'",
     );
 
-    await createLocalChessResqliteDatabaseSchema(db);
+    await createLocalChessCacheDatabaseSchema(db);
 
     final rows = await db.select('''
       SELECT id, time_control_category
@@ -643,7 +643,7 @@ void main() {
         ''',
         const <Object?>['local_chess_resqlite_cache_generation_%'],
       );
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       expect(await _count(db, 'local_chess_databases'), 0);
       expect(
@@ -696,7 +696,7 @@ void main() {
       expect(await _count(db, 'local_chess_game_analysis'), 1);
 
       await db.execute('DELETE FROM local_chess_migrations');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       expect(await _count(db, 'local_chess_databases'), 0);
       expect(await _count(db, 'local_chess_games'), 0);
@@ -777,7 +777,7 @@ void main() {
         'DELETE FROM local_chess_migrations WHERE name IN (?, ?)',
         const <Object?>[_treeFen4Generation, _treeDepthGeneration],
       );
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       expect(await _count(db, 'local_chess_databases'), 1);
       expect(await _count(db, 'local_chess_games'), gameCount);
@@ -852,7 +852,7 @@ void main() {
     await queueEntered.future.timeout(const Duration(seconds: 5));
 
     var completed = false;
-    final schema = createLocalChessResqliteDatabaseSchema(db).then((_) {
+    final schema = createLocalChessCacheDatabaseSchema(db).then((_) {
       completed = true;
     });
     await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -885,7 +885,7 @@ void main() {
       await queueEntered.future.timeout(const Duration(seconds: 5));
 
       try {
-        await createLocalChessResqliteDatabaseSchema(
+        await createLocalChessCacheDatabaseSchema(
           db,
         ).timeout(const Duration(seconds: 2));
       } finally {
@@ -914,7 +914,7 @@ void main() {
         'DELETE FROM local_chess_migrations WHERE name = ?',
         const <Object?>[_treeFen4Generation],
       );
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       await db.execute(
         '''
         UPDATE local_chess_tree_moves
@@ -1378,7 +1378,7 @@ void main() {
         'DELETE FROM local_chess_migrations WHERE name = ?',
         const <Object?>['local_chess_tree_depth_50_v1'],
       );
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       expect(await _count(db, 'local_chess_games'), 1);
       expect(await _count(db, 'local_chess_tree_nodes'), 0);
@@ -1414,7 +1414,7 @@ void main() {
         'DELETE FROM local_chess_migrations WHERE name = ?',
         const <Object?>['local_chess_tree_depth_50_v1'],
       );
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       expect(await _count(db, 'local_chess_games'), fileNode.games.length);
       expect(await _count(db, 'local_chess_tree_nodes'), nodeCount);
@@ -1433,7 +1433,7 @@ void main() {
 
   test('development purge switch honors opt-ins in release mode', () {
     expect(
-      shouldPurgeLocalChessResqliteCacheForDevelopment(
+      shouldPurgeLocalChessCacheForDevelopment(
         isReleaseMode: true,
         dartDefineEnabled: true,
         environmentValue: null,
@@ -1442,7 +1442,7 @@ void main() {
       isTrue,
     );
     expect(
-      shouldPurgeLocalChessResqliteCacheForDevelopment(
+      shouldPurgeLocalChessCacheForDevelopment(
         isReleaseMode: true,
         dartDefineEnabled: false,
         environmentValue: 'true',
@@ -1451,7 +1451,7 @@ void main() {
       isTrue,
     );
     expect(
-      shouldPurgeLocalChessResqliteCacheForDevelopment(
+      shouldPurgeLocalChessCacheForDevelopment(
         isReleaseMode: true,
         dartDefineEnabled: false,
         environmentValue: null,
@@ -1460,7 +1460,7 @@ void main() {
       isTrue,
     );
     expect(
-      shouldPurgeLocalChessResqliteCacheForDevelopment(
+      shouldPurgeLocalChessCacheForDevelopment(
         isReleaseMode: true,
         dartDefineEnabled: false,
         environmentValue: null,
@@ -1472,7 +1472,7 @@ void main() {
 
   test('development purge switch accepts local flag and env opt-ins', () {
     expect(
-      shouldPurgeLocalChessResqliteCacheForDevelopment(
+      shouldPurgeLocalChessCacheForDevelopment(
         isReleaseMode: false,
         dartDefineEnabled: false,
         environmentValue: null,
@@ -1481,7 +1481,7 @@ void main() {
       isTrue,
     );
     expect(
-      shouldPurgeLocalChessResqliteCacheForDevelopment(
+      shouldPurgeLocalChessCacheForDevelopment(
         isReleaseMode: false,
         dartDefineEnabled: false,
         environmentValue: 'on',
@@ -1490,7 +1490,7 @@ void main() {
       isTrue,
     );
     expect(
-      shouldPurgeLocalChessResqliteCacheForDevelopment(
+      shouldPurgeLocalChessCacheForDevelopment(
         isReleaseMode: false,
         dartDefineEnabled: false,
         environmentValue: '0',
@@ -1522,7 +1522,7 @@ void main() {
       await File(path).writeAsString('cache');
     }
 
-    final deleted = await deleteLocalChessResqliteCacheFilesAt(dbPath);
+    final deleted = await deleteLocalChessCacheFilesAt(dbPath);
 
     expect(deleted, 4);
     for (final path in <String>[
@@ -1585,7 +1585,7 @@ void main() {
   test(
     'schema migrates existing resqlite cache missing delete tombstone',
     () async {
-      final oldDb = await resqlite.Database.open('${temp.path}/old_cache.db');
+      final oldDb = await localsql.Database.open('${temp.path}/old_cache.db');
       addTearDown(oldDb.close);
       await oldDb.execute('''
       CREATE TABLE local_chess_databases (
@@ -1604,7 +1604,7 @@ void main() {
       )
     ''');
 
-      await createLocalChessResqliteDatabaseSchema(oldDb);
+      await createLocalChessCacheDatabaseSchema(oldDb);
 
       final columns = await oldDb.select(
         'PRAGMA table_info(local_chess_databases)',
@@ -1646,17 +1646,17 @@ void main() {
   test(
     'schema upgrades pre-time-control cache before creating derived indexes',
     () async {
-      final oldDb = await resqlite.Database.open(
+      final oldDb = await localsql.Database.open(
         '${temp.path}/pre_time_control_cache.db',
       );
       addTearDown(oldDb.close);
-      await _createPreTimeControlResqliteCache(
+      await _createPreTimeControlCache(
         oldDb,
         databaseId: '/tmp/hikaru-chess-com.pgn',
       );
 
-      await createLocalChessResqliteDatabaseSchema(oldDb);
-      await createLocalChessResqliteDatabaseSchema(oldDb);
+      await createLocalChessCacheDatabaseSchema(oldDb);
+      await createLocalChessCacheDatabaseSchema(oldDb);
 
       final columns = await oldDb.select(
         'PRAGMA table_info(local_chess_games)',
@@ -1711,7 +1711,7 @@ void main() {
                   '', '', '', 0, 1)
         ''');
 
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       final rows = await db.select('''
         SELECT time_control_category, is_online
@@ -1747,7 +1747,7 @@ void main() {
         ''');
       await db.execute('DROP INDEX $localChessGamesOriginalOrderIndexName');
 
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       // Inspect the schema on the writer connection, which ran the DDL. A
       // pooled reader can answer EXPLAIN from its cached pre-DDL schema
@@ -2125,8 +2125,8 @@ void main() {
       final pgnFile = File('${temp.path}/worker-path-only.pgn');
       await pgnFile.writeAsString(_samplePgn);
       final workerDbPath = p.join(temp.path, 'worker-only-local-chess.db');
-      final legacyWorkerDb = await resqlite.Database.open(workerDbPath);
-      await _createPreTimeControlResqliteCache(
+      final legacyWorkerDb = await localsql.Database.open(workerDbPath);
+      await _createPreTimeControlCache(
         legacyWorkerDb,
         databaseId: pgnFile.path,
       );
@@ -2148,7 +2148,7 @@ void main() {
       final fileNode = source!.root.singlePlayableDatabaseInSubtree!;
       expect(fileNode.gameCount, 2);
       expect(fileNode.games, hasLength(1));
-      final workerDb = await resqlite.Database.open(workerDbPath);
+      final workerDb = await localsql.Database.open(workerDbPath);
       addTearDown(workerDb.close);
       expect(await _count(workerDb, 'local_chess_databases'), 1);
       expect(await _count(workerDb, 'local_chess_games'), 2);
@@ -2187,7 +2187,7 @@ void main() {
     );
     expect(stats.gameCount, 2);
     expect(openedAppCache, isFalse);
-    final workerDb = await resqlite.Database.open(workerDbPath);
+    final workerDb = await localsql.Database.open(workerDbPath);
     addTearDown(workerDb.close);
     expect(await _count(workerDb, 'local_chess_games'), 2);
   });
@@ -2267,7 +2267,7 @@ void main() {
     final pgnFile = File('${temp.path}/pending-cache-open.pgn');
     await pgnFile.writeAsString(_samplePgn);
     final openRequested = Completer<void>();
-    final openCache = Completer<resqlite.Database>();
+    final openCache = Completer<localsql.Database>();
     final repo = LocalChessDatabaseRepository(
       database: () {
         if (!openRequested.isCompleted) openRequested.complete();
@@ -2891,7 +2891,7 @@ void main() {
         <Object?>[pgnFile.path],
       );
 
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       final missingRows = await db.select(
         '''
@@ -3125,7 +3125,7 @@ void main() {
         ''',
         <Object?>[pgnFile.path],
       );
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       final backfilled = await readRepo.localMoveAggregatesForFen(
         databasePath: pgnFile.path,
         fen: Chess.initial.fen,
@@ -3390,7 +3390,7 @@ void main() {
       }
 
       expect(await storedCategory(), 'unknown');
-      await createLocalChessResqliteDatabaseSchema(
+      await createLocalChessCacheDatabaseSchema(
         db,
       ).timeout(const Duration(seconds: 2));
       expect(await storedCategory(), 'unknown');
@@ -3447,7 +3447,7 @@ void main() {
         'DELETE FROM local_chess_migrations WHERE name = ?',
         const <Object?>['local_chess_opening_name_backfill_v1'],
       );
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       final repaired = await repo.localDatabaseGamesPage(
         databasePath: pgnFile.path,
         pageNumber: 0,
@@ -4937,8 +4937,8 @@ void main() {
   );
 }
 
-Future<void> _createPreTimeControlResqliteCache(
-  resqlite.Database db, {
+Future<void> _createPreTimeControlCache(
+  localsql.Database db, {
   required String databaseId,
 }) async {
   await db.execute('''
@@ -5045,7 +5045,7 @@ Future<void> _createPreTimeControlResqliteCache(
   );
 }
 
-Future<int> _count(resqlite.Database db, String table) async {
+Future<int> _count(localsql.Database db, String table) async {
   final rows = await db.select('SELECT COUNT(*) AS count FROM $table');
   return rows.single['count'] as int;
 }
@@ -5070,7 +5070,7 @@ class _StatsGame {
 /// opponent, tagging each row with a caller-supplied `pgn_hash` so tests can
 /// exercise cross-source deduplication directly.
 Future<void> _seedStatsDatabase(
-  resqlite.Database db, {
+  localsql.Database db, {
   required String databaseId,
   required String player,
   String? playerFideId,
@@ -5179,7 +5179,7 @@ ${moves.toString().trim()} *
 }
 
 Future<void> _seedChunkedDeleteCache(
-  resqlite.Database db,
+  localsql.Database db,
   String databasePath,
 ) async {
   const gameCount = 23;
@@ -5297,7 +5297,7 @@ Future<void> _seedChunkedDeleteCache(
 }
 
 Future<void> _seedGeneratedCacheRows(
-  resqlite.Database db,
+  localsql.Database db,
   String databasePath, {
   required List<String> gameIds,
 }) async {

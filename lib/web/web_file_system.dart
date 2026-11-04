@@ -66,7 +66,7 @@ class WebFileSystem {
 
   _Node? _nodeAt(String path) => _nodes[normalize(path)];
 
-  // Byte-level access for the SQLite VFS (shims/resqlite_web.dart), so
+  // Byte-level access for the SQLite VFS (shims/local_sqlite_web.dart), so
   // database files live in this filesystem like any other file.
 
   bool fileExists(String path) => !(_nodeAt(path)?.isDirectory ?? true);

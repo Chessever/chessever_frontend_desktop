@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -25,7 +25,7 @@ import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 
 void main() {
-  late resqlite.Database db;
+  late localsql.Database db;
   late Directory temp;
 
   setUpAll(() {
@@ -35,10 +35,10 @@ void main() {
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('chessever-player-workspace-');
-    db = await resqlite.Database.open('${temp.path}/local_chess.db');
+    db = await localsql.Database.open('${temp.path}/local_chess.db');
     await db.execute('PRAGMA foreign_keys=ON');
     await db.execute('PRAGMA journal_mode=WAL');
-    await createLocalChessResqliteDatabaseSchema(db);
+    await createLocalChessCacheDatabaseSchema(db);
   });
 
   tearDown(() async {
@@ -973,7 +973,8 @@ void main() {
           expect(localRepository.purgeCalls, 0);
           await Future<void>.delayed(const Duration(milliseconds: 300));
           expect(localRepository.purgeCalls, 1);
-          expect(localRepository.requestedBatchSize, 64);
+          // 128 is the adaptive floor: batches grow while each stays short.
+          expect(localRepository.requestedBatchSize, 128);
         } finally {
           if (!gate.isCompleted) gate.complete();
           await removal;
@@ -1573,7 +1574,7 @@ void main() {
         // an unrelated Library import can write while old caches are purged.
         final concurrentFile = File('${temp.path}/unrelated-library.pgn');
         await concurrentFile.writeAsString(_mergeGameThree);
-        final concurrentDb = await resqlite.Database.open(
+        final concurrentDb = await localsql.Database.open(
           '${temp.path}/local_chess.db',
         );
         try {
@@ -4986,7 +4987,7 @@ String _largeChessEverPgn(int gameCount) {
   return buffer.toString();
 }
 
-Future<int> _count(resqlite.Database db, String table) async {
+Future<int> _count(localsql.Database db, String table) async {
   final rows = await db.select('SELECT COUNT(*) AS count FROM $table');
   return rows.single['count'] as int;
 }
@@ -5276,7 +5277,7 @@ class _PartialSourceUnionStatsRepository extends LocalChessDatabaseRepository {
 /// finishes. Emits one progress event before blocking to prove the progress
 /// plumbing reaches the removing indicator.
 class _BlockingPurgeLocalRepository extends LocalChessDatabaseRepository {
-  _BlockingPurgeLocalRepository(resqlite.Database db, this.gate)
+  _BlockingPurgeLocalRepository(localsql.Database db, this.gate)
     : super(database: (() async => db));
 
   final Completer<void> gate;

@@ -4,7 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
@@ -36,12 +36,12 @@ const _pgn = '''[Event "A"]
 
 void main() {
   late Directory temp;
-  late resqlite.Database db;
+  late localsql.Database db;
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('chessever-prepare-access-');
-    db = await resqlite.Database.open(p.join(temp.path, 'local_chess.db'));
-    await createLocalChessResqliteDatabaseSchema(db);
+    db = await localsql.Database.open(p.join(temp.path, 'local_chess.db'));
+    await createLocalChessCacheDatabaseSchema(db);
     desktopWindowIsForeground = () => true;
   });
 
@@ -312,7 +312,7 @@ class _SpyWorkspaceRepository extends PlayerWorkspaceRepository {
 }
 
 class _SpyLocalRepository extends LocalChessDatabaseRepository {
-  _SpyLocalRepository(resqlite.Database db) : super(database: () async => db);
+  _SpyLocalRepository(localsql.Database db) : super(database: () async => db);
 
   int resultStatsCalls = 0;
 

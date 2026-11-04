@@ -9,7 +9,6 @@ const _requiredFiles = <String>[
   'flutter_onnxruntime_plugin.dll',
   'flutter_soloud_plugin.dll',
   'onnxruntime.dll',
-  'resqlite.dll',
   'sqlite3.dll',
   'FLAC.dll',
   'ogg.dll',
@@ -18,11 +17,17 @@ const _requiredFiles = <String>[
   'vorbisfile.dll',
 ];
 
-const _requiredResqliteExports = <String>[
-  'resqlite_open',
-  'resqlite_open_with_extensions',
-  'strlen',
+// package:sqlite3's FFI bindings resolve these from sqlite3.dll at runtime.
+const _requiredSqlite3Exports = <String>[
+  'sqlite3_open_v2',
+  'sqlite3_prepare_v3',
+  'sqlite3_libversion',
+  'sqlite3_temp_directory',
 ];
+
+// package:sqlite3 replaced package:resqlite. A build directory reused from an
+// older revision can still carry its DLL, and it must never ship.
+const _forbiddenFiles = <String>['resqlite.dll'];
 
 void main() {
   final releaseDir = Directory(_releaseDirPath);
@@ -56,16 +61,32 @@ void main() {
     return;
   }
 
-  final resqlite = File(
-    '${releaseDir.path}${Platform.pathSeparator}resqlite.dll',
+  final stale = <String>[
+    for (final fileName in _forbiddenFiles)
+      if (File(
+        '${releaseDir.path}${Platform.pathSeparator}$fileName',
+      ).existsSync())
+        fileName,
+  ];
+  if (stale.isNotEmpty) {
+    stderr.writeln('Windows release bundle contains stale files:');
+    for (final fileName in stale) {
+      stderr.writeln('- $fileName');
+    }
+    exitCode = 1;
+    return;
+  }
+
+  final sqlite3 = File(
+    '${releaseDir.path}${Platform.pathSeparator}sqlite3.dll',
   );
-  final resqliteErrors = _validateAmd64PeExports(
-    resqlite,
-    _requiredResqliteExports,
+  final sqlite3Errors = _validateAmd64PeExports(
+    sqlite3,
+    _requiredSqlite3Exports,
   );
-  if (resqliteErrors.isNotEmpty) {
-    stderr.writeln('Windows resqlite.dll validation failed:');
-    for (final error in resqliteErrors) {
+  if (sqlite3Errors.isNotEmpty) {
+    stderr.writeln('Windows sqlite3.dll validation failed:');
+    for (final error in sqlite3Errors) {
       stderr.writeln('- $error');
     }
     exitCode = 1;
@@ -79,9 +100,10 @@ void main() {
     stdout.writeln('- $fileName ($length bytes)');
   }
   stdout.writeln(
-    '- resqlite.dll is PE32+ AMD64 and exposes '
-    '${_requiredResqliteExports.join(', ')}',
+    '- sqlite3.dll is PE32+ AMD64 and exposes '
+    '${_requiredSqlite3Exports.join(', ')}',
   );
+  stdout.writeln('- no stale ${_forbiddenFiles.join(', ')}');
 }
 
 List<String> _validateAmd64PeExports(File file, List<String> exports) {

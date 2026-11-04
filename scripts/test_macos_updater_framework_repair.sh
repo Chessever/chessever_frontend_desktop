@@ -9,7 +9,7 @@ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/chessever-framework-repair.XXXXXX")"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 CONTENTS="$WORKDIR/Chessever.app/Contents"
-FRAMEWORK="$CONTENTS/Frameworks/resqlite.framework"
+FRAMEWORK="$CONTENTS/Frameworks/sqlite3.framework"
 PRESERVED_FRAMEWORK="$CONTENTS/Frameworks/Preserved.framework"
 AMBIGUOUS_FRAMEWORK="$CONTENTS/Frameworks/Ambiguous.framework"
 BLOCKED_FRAMEWORK="$CONTENTS/Frameworks/Blocked.framework"
@@ -40,8 +40,8 @@ write_framework_plist() {
 PLIST
 }
 
-write_framework_plist "$FRAMEWORK/Versions/A/Resources/Info.plist" resqlite
-write_framework_plist "$FRAMEWORK/Versions/C/Resources/Info.plist" resqlite
+write_framework_plist "$FRAMEWORK/Versions/A/Resources/Info.plist" sqlite3
+write_framework_plist "$FRAMEWORK/Versions/C/Resources/Info.plist" sqlite3
 write_framework_plist "$FRAMEWORK/Versions/Z/Resources/Info.plist" missing_launcher
 write_framework_plist "$PRESERVED_FRAMEWORK/Versions/A/Resources/Info.plist" preserved
 write_framework_plist "$PRESERVED_FRAMEWORK/Versions/C/Resources/Info.plist" preserved
@@ -49,18 +49,18 @@ write_framework_plist "$AMBIGUOUS_FRAMEWORK/Versions/A/Resources/Info.plist" amb
 write_framework_plist "$AMBIGUOUS_FRAMEWORK/Versions/C/Resources/Info.plist" ambiguous
 write_framework_plist "$BLOCKED_FRAMEWORK/Versions/A/Resources/Info.plist" blocked
 
-printf '#!/bin/sh\nexit 0\n' > "$FRAMEWORK/Versions/C/resqlite"
+printf '#!/bin/sh\nexit 0\n' > "$FRAMEWORK/Versions/C/sqlite3"
 # A and Z do not contain the executable declared by their Info.plist, leaving C
 # as the only unambiguous recovery candidate for the missing Current link.
-printf '#!/bin/sh\nexit 0\n' > "$FRAMEWORK/Versions/Z/resqlite"
+printf '#!/bin/sh\nexit 0\n' > "$FRAMEWORK/Versions/Z/sqlite3"
 printf '#!/bin/sh\nexit 0\n' > "$PRESERVED_FRAMEWORK/Versions/A/preserved"
 printf '#!/bin/sh\nexit 0\n' > "$PRESERVED_FRAMEWORK/Versions/C/preserved"
 printf '#!/bin/sh\nexit 0\n' > "$AMBIGUOUS_FRAMEWORK/Versions/A/ambiguous"
 printf '#!/bin/sh\nexit 0\n' > "$AMBIGUOUS_FRAMEWORK/Versions/C/ambiguous"
 printf '#!/bin/sh\nexit 0\n' > "$BLOCKED_FRAMEWORK/Versions/A/blocked"
 chmod +x \
-  "$FRAMEWORK/Versions/C/resqlite" \
-  "$FRAMEWORK/Versions/Z/resqlite" \
+  "$FRAMEWORK/Versions/C/sqlite3" \
+  "$FRAMEWORK/Versions/Z/sqlite3" \
   "$PRESERVED_FRAMEWORK/Versions/A/preserved" \
   "$PRESERVED_FRAMEWORK/Versions/C/preserved" \
   "$AMBIGUOUS_FRAMEWORK/Versions/A/ambiguous" \
@@ -69,7 +69,7 @@ chmod +x \
 
 # Exercise repair of a broken link and of valid links with incorrect targets.
 ln -s Missing "$FRAMEWORK/Versions/Current"
-ln -s Versions/A/resqlite "$FRAMEWORK/resqlite"
+ln -s Versions/A/sqlite3 "$FRAMEWORK/sqlite3"
 ln -s Versions/Missing/Resources "$FRAMEWORK/Resources"
 
 # A valid Current target is authoritative even when another valid version is
@@ -122,9 +122,9 @@ fi
 
 test -L "$FRAMEWORK/Versions/Current"
 test "$(readlink "$FRAMEWORK/Versions/Current")" = "C"
-test -L "$FRAMEWORK/resqlite"
-test "$(readlink "$FRAMEWORK/resqlite")" = "Versions/Current/resqlite"
-test -x "$FRAMEWORK/resqlite"
+test -L "$FRAMEWORK/sqlite3"
+test "$(readlink "$FRAMEWORK/sqlite3")" = "Versions/Current/sqlite3"
+test -x "$FRAMEWORK/sqlite3"
 test -L "$FRAMEWORK/Resources"
 test "$(readlink "$FRAMEWORK/Resources")" = "Versions/Current/Resources"
 test "$(readlink "$PRESERVED_FRAMEWORK/Versions/Current")" = "A"
@@ -137,11 +137,11 @@ test "$(cat "$OUTSIDE_FRAMEWORK/marker")" = "outside-must-not-change"
 
 # A second pass must leave every already-correct link node untouched.
 current_inode="$(stat -f '%i' "$FRAMEWORK/Versions/Current")"
-executable_inode="$(stat -f '%i' "$FRAMEWORK/resqlite")"
+executable_inode="$(stat -f '%i' "$FRAMEWORK/sqlite3")"
 resources_inode="$(stat -f '%i' "$FRAMEWORK/Resources")"
 "$REPAIR" "$CONTENTS"
 test "$(stat -f '%i' "$FRAMEWORK/Versions/Current")" = "$current_inode"
-test "$(stat -f '%i' "$FRAMEWORK/resqlite")" = "$executable_inode"
+test "$(stat -f '%i' "$FRAMEWORK/sqlite3")" = "$executable_inode"
 test "$(stat -f '%i' "$FRAMEWORK/Resources")" = "$resources_inode"
 test "$(cat "$BLOCKED_FRAMEWORK/blocked")" = "do-not-delete"
 test "$(cat "$OUTSIDE_FRAMEWORK/marker")" = "outside-must-not-change"

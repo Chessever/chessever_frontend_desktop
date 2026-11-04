@@ -1,0 +1,29 @@
+{
+  "writer": "resqlite 0.7.0 (SQLite 3.53.2 via sqlite3mc 2.3.5)",
+  "pgnPaths": [
+    "fixture_a.pgn",
+    "fixture_b.pgn"
+  ],
+  "analysisGameId": "local_4b078a0eae3a62df144493de5e1d8b449115d547",
+  "counts": {
+    "local_chess_databases": 2,
+    "local_chess_games": 6,
+    "local_chess_players": 4,
+    "local_chess_events": 3,
+    "local_chess_sites": 2,
+    "local_chess_tree_nodes": 0,
+    "local_chess_tree_moves": 0,
+    "local_chess_position_games": 0,
+    "local_chess_game_analysis": 1,
+    "local_chess_migrations": 5
+  },
+  "migrations": [
+    "local_chess_opening_name_backfill_v1",
+    "local_chess_resqlite_cache_generation_20260628_safe_streaming_v1",
+    "local_chess_source_time_control_backfill_v2",
+    "local_chess_tree_depth_50_v1",
+    "local_chess_tree_position_identity_fen4_v1"
+  ],
+  "walBytes": 510912,
+  "note": "Written by resqlite 0.7.0 through LocalChessDatabaseRepository.importSingleFileSource, then copied while the handle was still open (the app never closes its cache), so every committed row lives only in the -wal file. Database ids are the absolute PGN paths of the generating run."
+}

@@ -387,6 +387,10 @@ void deleteCompactLocalTreeIndexBestEffort(String databasePath) {
     '${compactLocalTreeIndexPath(databasePath)}.previous',
     compactLocalTreeGameIndexPath(databasePath),
     '${compactLocalTreeGameIndexPath(databasePath)}.previous',
+    // SQLite sidecars of the tree store, removed with it.
+    '${compactLocalTreeGameIndexPath(databasePath)}-wal',
+    '${compactLocalTreeGameIndexPath(databasePath)}-shm',
+    '${compactLocalTreeGameIndexPath(databasePath)}-journal',
   ]) {
     try {
       final file = File(path);

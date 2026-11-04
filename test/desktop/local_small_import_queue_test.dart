@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
@@ -13,12 +13,12 @@ String games(int count) => List.generate(
 ).join('\n');
 void main() {
   late Directory temp;
-  late resqlite.Database db;
+  late localsql.Database db;
   late LocalChessDatabaseRepository repo;
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('small-import-queue-');
-    db = await resqlite.Database.open('${temp.path}/cache.db');
-    await createLocalChessResqliteDatabaseSchema(db);
+    db = await localsql.Database.open('${temp.path}/cache.db');
+    await createLocalChessCacheDatabaseSchema(db);
     repo = LocalChessDatabaseRepository(database: () async => db);
   });
   tearDown(() async {
@@ -225,7 +225,7 @@ void main() {
     },
   );
   test('different-path imports on two handles share the same writer', () async {
-    final other = await resqlite.Database.open('${temp.path}/cache.db');
+    final other = await localsql.Database.open('${temp.path}/cache.db');
     final secondRepo = LocalChessDatabaseRepository(
       database: () async => other,
     );

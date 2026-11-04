@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -58,15 +58,15 @@ const _resolvable = <int, LocalPlayerEnrichment>{
 
 void main() {
   late Directory temp;
-  late resqlite.Database db;
+  late localsql.Database db;
   late LocalChessDatabaseRepository repo;
   late File pgnFile;
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('chessever_enrich_');
-    db = await resqlite.Database.open('${temp.path}/local_chess.db');
+    db = await localsql.Database.open('${temp.path}/local_chess.db');
     await db.execute('PRAGMA foreign_keys=ON');
-    await createLocalChessResqliteDatabaseSchema(db);
+    await createLocalChessCacheDatabaseSchema(db);
     repo = LocalChessDatabaseRepository(database: () async => db);
     pgnFile = File('${temp.path}/mixed.pgn');
     await pgnFile.writeAsString(_mixedPgn);

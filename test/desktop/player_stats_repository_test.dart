@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -16,7 +16,7 @@ import 'package:chessever/desktop/services/player_stats_repository.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart';
 
 void main() {
-  late resqlite.Database db;
+  late localsql.Database db;
   late Directory temp;
   late String databasePath;
   late String databaseId;
@@ -28,8 +28,8 @@ void main() {
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('chessever-player-stats-');
-    db = await resqlite.Database.open('${temp.path}/local_chess.db');
-    await createLocalChessResqliteDatabaseSchema(db);
+    db = await localsql.Database.open('${temp.path}/local_chess.db');
+    await createLocalChessCacheDatabaseSchema(db);
     // Insert games directly without seeding the database/event/site parent
     // rows — this test exercises the aggregation SQL, not referential integrity.
     await db.execute('PRAGMA foreign_keys=OFF');

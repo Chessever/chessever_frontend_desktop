@@ -9,7 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:chessever/web/shims/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
@@ -59,24 +59,24 @@ final class LocalChessPgnSourceChangedDuringAppend implements Exception {
       'Local PGN changed before its incremental cache update: $path';
 }
 
-class LocalChessResqliteDatabase {
-  LocalChessResqliteDatabase._();
+class LocalChessCacheDatabase {
+  LocalChessCacheDatabase._();
 
-  static final LocalChessResqliteDatabase instance =
-      LocalChessResqliteDatabase._();
+  static final LocalChessCacheDatabase instance =
+      LocalChessCacheDatabase._();
 
   static const String _dbFileName = 'chessever_local_chess.db';
 
-  resqlite.Database? _database;
-  Completer<resqlite.Database>? _initCompleter;
+  localsql.Database? _database;
+  Completer<localsql.Database>? _initCompleter;
   String? _cachedPath;
   bool _didApplyDevelopmentPurge = false;
 
-  Future<resqlite.Database> get database async {
+  Future<localsql.Database> get database async {
     return databaseWithProgress();
   }
 
-  Future<resqlite.Database> databaseWithProgress({
+  Future<localsql.Database> databaseWithProgress({
     LocalChessScanProgressSink? onProgress,
   }) async {
     final opened = _database;
@@ -85,18 +85,18 @@ class LocalChessResqliteDatabase {
     final pending = _initCompleter;
     if (pending != null) return pending.future;
 
-    final completer = _initCompleter = Completer<resqlite.Database>();
+    final completer = _initCompleter = Completer<localsql.Database>();
     try {
       final db = await _open(onProgress: onProgress);
       _database = db;
       completer.complete(db);
       return db;
     } catch (error, stackTrace) {
-      // Report unconditionally: a failure to open the local-chess resqlite
+      // Report unconditionally: a failure to open the local-chess cache
       // database is exactly the kind of Windows issue that otherwise gets
       // swallowed by a UI .when(error:) and never reaches Sentry.
       localChessLog.error(
-        'Failed to open local chess resqlite database',
+        'Failed to open local chess cache database',
         error,
         stackTrace,
         tag: 'local-chess.open',
@@ -108,7 +108,7 @@ class LocalChessResqliteDatabase {
     }
   }
 
-  Future<resqlite.Database> openDedicatedConnection() async {
+  Future<localsql.Database> openDedicatedConnection() async {
     final path = await _resolvePath();
     final db = await openLocalChessDatabaseHandle(
       path: path,
@@ -132,7 +132,7 @@ class LocalChessResqliteDatabase {
 
   Future<String> get path async => _resolvePath();
 
-  Future<resqlite.Database> _open({
+  Future<localsql.Database> _open({
     LocalChessScanProgressSink? onProgress,
   }) async {
     onProgress?.call(
@@ -165,7 +165,7 @@ class LocalChessResqliteDatabase {
     }
     await LocalChessDatabaseRepository._runLocalCacheWriteQueued(() async {
       await _configure(db);
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       if (purgedForDevelopment) {
         localChessLog.warning(
           'Skipping legacy sqflite local chess migration for development purge',
@@ -199,7 +199,7 @@ class LocalChessResqliteDatabase {
     return _cachedPath = p.join(dir.path, _dbFileName);
   }
 
-  Future<void> _configure(resqlite.Database db) async {
+  Future<void> _configure(localsql.Database db) async {
     await _executePragmaSafe(db, 'PRAGMA foreign_keys=ON');
     await _executePragmaSafe(db, 'PRAGMA journal_mode=WAL');
     await _executePragmaSafe(db, 'PRAGMA synchronous=NORMAL');
@@ -213,14 +213,14 @@ class LocalChessResqliteDatabase {
   }
 
   Future<void> _executePragmaSafe(
-    resqlite.Database db,
+    localsql.Database db,
     String statement,
   ) async {
     try {
       await db.execute(statement);
     } catch (error) {
       if (kDebugMode) {
-        debugPrint('Local chess resqlite pragma failed ($statement): $error');
+        debugPrint('Local chess cache pragma failed ($statement): $error');
       }
     }
   }
@@ -236,7 +236,7 @@ class LocalChessResqliteDatabase {
   Future<void> reset() async {
     await close();
     final dbPath = await _resolvePath();
-    await deleteLocalChessResqliteCacheFilesAt(dbPath);
+    await deleteLocalChessCacheFilesAt(dbPath);
   }
 
   Future<bool> _maybePurgeDevelopmentCacheOnOpen(String dbPath) async {
@@ -249,7 +249,7 @@ class LocalChessResqliteDatabase {
     final environmentValue =
         hostEnvironment[_localChessDevelopmentPurgeEnv];
     final flagFileExists = await flagFile.exists();
-    final shouldPurge = shouldPurgeLocalChessResqliteCacheForDevelopment(
+    final shouldPurge = shouldPurgeLocalChessCacheForDevelopment(
       isReleaseMode: kReleaseMode,
       dartDefineEnabled: dartDefineEnabled,
       environmentValue: environmentValue,
@@ -259,13 +259,13 @@ class LocalChessResqliteDatabase {
     if (_didApplyDevelopmentPurge) return true;
 
     _didApplyDevelopmentPurge = true;
-    final deleted = await deleteLocalChessResqliteCacheFilesAt(dbPath);
+    final deleted = await deleteLocalChessCacheFilesAt(dbPath);
     final consumedFlag =
         flagFileExists
             ? await consumeLocalChessDevelopmentPurgeFlagAt(flagFile.path)
             : false;
     localChessLog.warning(
-      'Purged local chess resqlite cache for development startup',
+      'Purged local chess cache for development startup',
       context: <String, Object?>{
         'deletedFiles': deleted,
         'path': dbPath,
@@ -303,7 +303,7 @@ Future<bool> consumeLocalChessDevelopmentPurgeFlagAt(String path) async {
 }
 
 @visibleForTesting
-bool shouldPurgeLocalChessResqliteCacheForDevelopment({
+bool shouldPurgeLocalChessCacheForDevelopment({
   required bool isReleaseMode,
   required bool dartDefineEnabled,
   required String? environmentValue,
@@ -335,7 +335,7 @@ bool _isTruthyDevelopmentFlag(String? value) {
 }
 
 @visibleForTesting
-Future<int> deleteLocalChessResqliteCacheFilesAt(String dbPath) async {
+Future<int> deleteLocalChessCacheFilesAt(String dbPath) async {
   var deleted = 0;
   for (final path in <String>[
     dbPath,
@@ -358,8 +358,13 @@ const int _kSqlWriteBatchSize = 4096;
 // Keep a margin below that limit while still turning large tree saves into a
 // few hundred SQL statements instead of one statement per row.
 const int _kTreeMultiRowBindLimit = 24000;
-const int _kCooperativePurgeBatchSize = 64;
-const int _kMaximumAdaptivePurgeBatchSize = 64;
+// Purge deletes start at 128 rows and double while a batch takes <= 4 ms (up
+// to 4096), halving again past 24 ms, so each batch holds the writer briefly
+// and queued writes interleave. The deletes run on the driver's writer
+// isolate with non-leaf FFI calls, so batch size never stalls the UI isolate;
+// the old resqlite driver's leaf calls did, which is why this was pinned to 64.
+const int _kCooperativePurgeBatchSize = 128;
+const int _kMaximumAdaptivePurgeBatchSize = 4096;
 const Duration _kSlowPurgeBatchThreshold = Duration(milliseconds: 100);
 // Move parsing happens on the import worker, so the caller isolate only packs
 // compact metadata and UCI strings. A moderate batch sharply reduces SQLite
@@ -382,6 +387,9 @@ const String _legacySqfliteMigrationV1Name = 'legacy_sqflite_local_chess_v1';
 const String _legacySqfliteMigrationName =
     'legacy_sqflite_local_chess_v2_desktop_path_scan';
 const String _localChessMigrationsTable = 'local_chess_migrations';
+// Persisted in every user's cache. Never rename it (the "resqlite" in it names
+// the driver that wrote the first generation): a missing marker makes
+// `_ensureLocalChessCacheGeneration` wipe the generated cache tables.
 const String _localChessCacheGenerationName =
     'local_chess_resqlite_cache_generation_20260628_safe_streaming_v1';
 const String _localChessTreeDepthGenerationName =
@@ -403,7 +411,7 @@ typedef LocalChessLegacySqfliteDatabaseFactory =
 typedef LocalChessScanProgressSink =
     void Function(LocalChessScanProgress progress);
 typedef LocalChessDatabaseWithProgress =
-    Future<resqlite.Database> Function({
+    Future<localsql.Database> Function({
       LocalChessScanProgressSink? onProgress,
     });
 typedef LocalChessDatabaseFilePathResolver = Future<String?> Function();
@@ -473,7 +481,7 @@ Future<T> _cancelableLocalChessFuture<T>(
   ]);
 }
 
-/// Production legacy source for the sqflite→resqlite migration.
+/// Production legacy source for the sqflite→local cache migration.
 ///
 /// Reuses the already-open, WAL-mode [AppDatabase] connection instead of
 /// opening a second `readOnly` connection to the same file. A read-only open
@@ -484,8 +492,8 @@ Future<T> _cancelableLocalChessFuture<T>(
 Future<sqflite.Database> _defaultLegacyLocalChessSqfliteDatabase() =>
     AppDatabase.instance.database;
 
-Future<void> createLocalChessResqliteDatabaseSchema(
-  resqlite.Database db,
+Future<void> createLocalChessCacheDatabaseSchema(
+  localsql.Database db,
 ) async {
   // Opening an already-current cache is a hot path for Player downloads and
   // stats. Re-entering the schema transaction used to run the PGN-hash and
@@ -493,12 +501,12 @@ Future<void> createLocalChessResqliteDatabaseSchema(
   // gigabytes of raw PGN text before a download could begin, even when there
   // was nothing to migrate. Keep the upgrade path below, but avoid taking the
   // writer queue at all when the required schema and migrations are present.
-  if (await _localChessResqliteSchemaIsCurrent(db)) {
+  if (await _localChessCacheSchemaIsCurrent(db)) {
     await _ensureLocalChessGamesOriginalOrderIndex(db);
     return;
   }
   await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
-    () => _createLocalChessResqliteDatabaseSchemaUnlocked(db),
+    () => _createLocalChessCacheDatabaseSchemaUnlocked(db),
   );
 }
 
@@ -517,13 +525,13 @@ const String _localChessGamesOriginalOrderIndexSql =
 
 /// Adds the original-order index to an otherwise current cache.
 ///
-/// Deliberately not part of `_localChessResqliteSchemaIsCurrent`: a missing
+/// Deliberately not part of `_localChessCacheSchemaIsCurrent`: a missing
 /// additive index must not send every existing cache through the full upgrade
 /// transaction (which rescans games and position refs for backfills). One
 /// `sqlite_master` probe per open, and a single queued CREATE INDEX the first
 /// time an upgraded install opens its cache.
 Future<void> _ensureLocalChessGamesOriginalOrderIndex(
-  resqlite.Database db,
+  localsql.Database db,
 ) async {
   final rows = await db.select(
     "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ? LIMIT 1",
@@ -535,7 +543,7 @@ Future<void> _ensureLocalChessGamesOriginalOrderIndex(
   );
 }
 
-Future<bool> _localChessResqliteSchemaIsCurrent(resqlite.Database db) async {
+Future<bool> _localChessCacheSchemaIsCurrent(localsql.Database db) async {
   try {
     const requiredTables = <String>{
       _localChessMigrationsTable,
@@ -651,8 +659,8 @@ Future<bool> _localChessResqliteSchemaIsCurrent(resqlite.Database db) async {
   }
 }
 
-Future<void> _createLocalChessResqliteDatabaseSchemaUnlocked(
-  resqlite.Database db,
+Future<void> _createLocalChessCacheDatabaseSchemaUnlocked(
+  localsql.Database db,
 ) async {
   await db.transaction((tx) async {
     for (var i = 0; i < _localChessSchemaStatements.length; i++) {
@@ -786,7 +794,7 @@ Future<void> _createLocalChessResqliteDatabaseSchemaUnlocked(
 }
 
 Future<void> _ensureColumn(
-  resqlite.Transaction tx, {
+  localsql.Transaction tx, {
   required String table,
   required String column,
   required String ddl,
@@ -799,7 +807,7 @@ Future<void> _ensureColumn(
   await tx.execute('ALTER TABLE $table ADD COLUMN $column $ddl');
 }
 
-Future<void> _backfillGamePgnHashes(resqlite.Transaction tx) async {
+Future<void> _backfillGamePgnHashes(localsql.Transaction tx) async {
   while (true) {
     final rows = await tx.select('''
       SELECT database_id, id, raw_pgn
@@ -829,7 +837,7 @@ Future<void> _backfillGamePgnHashes(resqlite.Transaction tx) async {
   }
 }
 
-Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
+Future<void> _backfillGameDerivedFilters(localsql.Transaction tx) async {
   // The v2 time-control migration is recorded only after this older derived
   // filter backfill has completed. Once that marker exists, every legacy row
   // has both derived fields and all current import paths populate them on
@@ -881,7 +889,7 @@ Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
   }
 }
 
-Future<void> _backfillTimeControlCategories(resqlite.Transaction tx) async {
+Future<void> _backfillTimeControlCategories(localsql.Transaction tx) async {
   final markerRows = await tx.select(
     'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
     const <Object?>[_localChessTimeControlBackfillName],
@@ -936,7 +944,7 @@ Future<void> _backfillTimeControlCategories(resqlite.Transaction tx) async {
   );
 }
 
-Future<void> _backfillGameOpeningNames(resqlite.Transaction tx) async {
+Future<void> _backfillGameOpeningNames(localsql.Transaction tx) async {
   final markerRows = await tx.select(
     'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
     const <Object?>[_localChessOpeningNameBackfillName],
@@ -995,7 +1003,7 @@ Future<void> _backfillGameOpeningNames(resqlite.Transaction tx) async {
   );
 }
 
-Future<void> _backfillPositionGameNextUci(resqlite.Transaction tx) async {
+Future<void> _backfillPositionGameNextUci(localsql.Transaction tx) async {
   await tx.execute('''
     UPDATE $localChessPositionGamesTable
     SET next_uci = (
@@ -1008,7 +1016,7 @@ Future<void> _backfillPositionGameNextUci(resqlite.Transaction tx) async {
   ''');
 }
 
-Future<void> _ensureLocalChessCacheGeneration(resqlite.Transaction tx) async {
+Future<void> _ensureLocalChessCacheGeneration(localsql.Transaction tx) async {
   final markerRows = await tx.select(
     'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
     const <Object?>[_localChessCacheGenerationName],
@@ -1021,7 +1029,7 @@ Future<void> _ensureLocalChessCacheGeneration(resqlite.Transaction tx) async {
   final databaseCount = _readInt(databaseRows.single['count']);
   if (databaseCount > 0) {
     localChessLog.info(
-      'Invalidating stale local chess resqlite cache',
+      'Invalidating stale local chess cache',
       context: <String, Object?>{
         'databases': databaseCount,
         'generation': _localChessCacheGenerationName,
@@ -1062,7 +1070,7 @@ Future<void> _ensureLocalChessCacheGeneration(resqlite.Transaction tx) async {
 }
 
 Future<void> _ensureLocalChessTreePositionIdentityGeneration(
-  resqlite.Transaction tx, {
+  localsql.Transaction tx, {
   bool invalidateExisting = false,
 }) async {
   final markerRows = await tx.select(
@@ -1112,7 +1120,7 @@ Future<void> _ensureLocalChessTreePositionIdentityGeneration(
 }
 
 Future<void> _ensureLocalChessTreeDepthGeneration(
-  resqlite.Transaction tx,
+  localsql.Transaction tx,
 ) async {
   final markerRows = await tx.select(
     'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
@@ -1193,7 +1201,7 @@ Future<void> _ensureLocalChessTreeDepthGeneration(
   );
 }
 
-Future<void> _clearLocalChessTreeCache(resqlite.Transaction tx) async {
+Future<void> _clearLocalChessTreeCache(localsql.Transaction tx) async {
   await tx.execute('DELETE FROM $localChessPositionGamesTable');
   await tx.execute('DELETE FROM $localChessTreeMovesTable');
   await tx.execute('DELETE FROM $localChessTreeNodesTable');
@@ -1210,7 +1218,7 @@ Future<void> _clearLocalChessTreeCache(resqlite.Transaction tx) async {
 }
 
 Future<void> migrateLegacyLocalChessSqfliteCache(
-  resqlite.Database target, {
+  localsql.Database target, {
   LocalChessLegacySqfliteDatabaseFactory? legacyDatabase,
   Iterable<LocalChessLegacySqfliteDatabaseFactory>? legacyDatabaseCandidates,
   @visibleForTesting Iterable<String>? legacyDatabasePathCandidates,
@@ -1228,7 +1236,7 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
 }
 
 Future<void> _migrateLegacyLocalChessSqfliteCacheUnlocked(
-  resqlite.Database target, {
+  localsql.Database target, {
   LocalChessLegacySqfliteDatabaseFactory? legacyDatabase,
   Iterable<LocalChessLegacySqfliteDatabaseFactory>? legacyDatabaseCandidates,
   Iterable<String>? legacyDatabasePathCandidates,
@@ -1575,7 +1583,7 @@ class _LegacySqfliteCandidate {
   }
 }
 
-Future<bool> _hasMigrationMarker(resqlite.Database db, String name) async {
+Future<bool> _hasMigrationMarker(localsql.Database db, String name) async {
   final rows = await db.select(
     'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
     <Object?>[name],
@@ -1583,7 +1591,7 @@ Future<bool> _hasMigrationMarker(resqlite.Database db, String name) async {
   return rows.isNotEmpty;
 }
 
-Future<void> _markMigration(resqlite.Database db, String name) async {
+Future<void> _markMigration(localsql.Database db, String name) async {
   await db.execute(
     '''
     INSERT OR REPLACE INTO $_localChessMigrationsTable(name, completed_at_ms)
@@ -1593,7 +1601,7 @@ Future<void> _markMigration(resqlite.Database db, String name) async {
   );
 }
 
-Future<bool> _targetHasLocalChessData(resqlite.Database db) async {
+Future<bool> _targetHasLocalChessData(localsql.Database db) async {
   final rows = await db.select(
     'SELECT COUNT(*) AS count FROM $localChessDatabasesTable',
   );
@@ -1626,7 +1634,7 @@ Future<Set<String>> _legacyColumnNames(
 }
 
 Future<void> _copyLegacyTable(
-  resqlite.Transaction tx,
+  localsql.Transaction tx,
   sqflite.Database legacy,
   String table, {
   void Function(int copiedRows)? onCopiedRows,
@@ -1654,7 +1662,7 @@ Future<void> _copyLegacyTable(
 }
 
 Future<void> _copyLegacyGames(
-  resqlite.Transaction tx,
+  localsql.Transaction tx,
   sqflite.Database legacy,
   Set<String> legacyColumns, {
   void Function(int copiedRows)? onCopiedRows,
@@ -1904,7 +1912,7 @@ const List<String> _localChessSchemaStatements = <String>[
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_result ON $localChessGamesTable(result)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_result ON $localChessGamesTable(database_id, result)',
   // Indexes that depend on upgrade-added columns must be created only after
-  // their `_ensureColumn` calls in createLocalChessResqliteDatabaseSchema.
+  // their `_ensureColumn` calls in createLocalChessCacheDatabaseSchema.
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_white_elo ON $localChessGamesTable(white_elo)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_black_elo ON $localChessGamesTable(black_elo)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_date ON $localChessGamesTable(database_id, date)',
@@ -1916,7 +1924,8 @@ const List<String> _localChessSchemaStatements = <String>[
   // foreign key. Without it, deleting each `local_chess_games` row forces a full
   // scan of `local_chess_tree_moves` to null out referencing rows, so a
   // player-deletion purge of 512 games could take >5s on a large opening tree
-  // and froze the UI isolate (resqlite runs the delete synchronously). See the
+  // and stalled the UI isolate (the old resqlite driver ran every statement as
+  // a leaf FFI call, which blocks GC across the isolate group). See the
   // already-present `idx_local_chess_position_games_game` for the CASCADE twin.
   'CREATE INDEX IF NOT EXISTS idx_local_chess_tree_moves_sample_game ON $localChessTreeMovesTable(sample_game_id)',
   // Covers the `tree_moves(database_id, child_node_id) -> tree_nodes ON DELETE
@@ -2119,10 +2128,10 @@ class LocalChessCacheDeletionLease {
 
 class LocalChessDatabaseRepository {
   LocalChessDatabaseRepository({
-    required Future<resqlite.Database> Function() database,
+    required Future<localsql.Database> Function() database,
     LocalChessDatabaseWithProgress? databaseWithProgress,
     LocalChessDatabaseFilePathResolver? databaseFilePath,
-    Future<resqlite.Database> Function()? purgeDatabase,
+    Future<localsql.Database> Function()? purgeDatabase,
     this.slowPurgeBatchThreshold = _kSlowPurgeBatchThreshold,
     this.onSlowPurgeBatch,
     this.debugPostMutationImport,
@@ -2134,10 +2143,10 @@ class LocalChessDatabaseRepository {
        _databaseFilePathResolver = databaseFilePath,
        _purgeDatabase = purgeDatabase;
 
-  final Future<resqlite.Database> Function() _database;
+  final Future<localsql.Database> Function() _database;
   final LocalChessDatabaseWithProgress? _databaseWithProgress;
   final LocalChessDatabaseFilePathResolver? _databaseFilePathResolver;
-  final Future<resqlite.Database> Function()? _purgeDatabase;
+  final Future<localsql.Database> Function()? _purgeDatabase;
   @visibleForTesting
   final Future<LocalChessSource> Function(String path)? debugPostMutationImport;
   final Duration slowPurgeBatchThreshold;
@@ -2221,7 +2230,7 @@ class LocalChessDatabaseRepository {
     }
   }
 
-  Future<resqlite.Database> _openDatabase({
+  Future<localsql.Database> _openDatabase({
     LocalChessScanProgressSink? onProgress,
   }) {
     final withProgress = _databaseWithProgress;
@@ -2279,7 +2288,7 @@ class LocalChessDatabaseRepository {
             message: 'Checking local database schema...',
           ),
         );
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
       });
       onProgress?.call(
         LocalChessScanProgress(
@@ -2311,57 +2320,45 @@ class LocalChessDatabaseRepository {
     return _databaseFilePath(db);
   }
 
-  Future<resqlite.Database?> _openDirectReadDatabase() async {
+  Future<localsql.Database?> _openDirectReadDatabase() async {
     final resolver = _databaseFilePathResolver;
     if (resolver == null) return null;
     final path = await resolver();
     if (path == null || path.trim().isEmpty) return null;
-    final db = await openLocalChessDatabaseHandle(
+    // Read-only: one pooled read connection, no writer isolate, and SQLite
+    // itself rejects any write sent through it.
+    return openLocalChessDatabaseHandle(
       path: path,
       operation: LocalChessDatabaseOperation.open,
       purpose: 'shared cache read connection',
       absentPolicy: LocalChessDatabaseAbsentPolicy.fallBackToExistingConnection,
+      readOnly: true,
     );
-    if (db == null) return null;
-    try {
-      await db.execute('PRAGMA busy_timeout=5000');
-      await db.execute('PRAGMA query_only=ON');
-      return db;
-    } catch (_) {
-      await db.close();
-      rethrow;
-    }
   }
 
-  Future<resqlite.Database?> _openCompactGameReadDatabase(
+  Future<localsql.Database?> _openCompactGameReadDatabase(
     String databasePath,
   ) async {
     final path = compactLocalTreeGameIndexPath(databasePath);
     if (!await File(path).exists()) return null;
     // The tree store is written by the tree build (`_publishCompactPgnGameIndex`
     // replaces the file through `.previous`) while position queries open it for
-    // reading. Opening it inside that replace window fails with resqlite's
-    // all-or-nothing `Failed to open database at "<path>"`, because
-    // `sqlite3_open_v2` and the `journal_mode=WAL` probe inside resqlite's
-    // `open_connection` run with no busy timeout at all. A bounded retry (the
-    // guard) covers that window; a store that is present but unopenable after
-    // the retries fails loudly instead of silently answering from the main
-    // cache database.
-    final db = await openLocalChessDatabaseHandle(
+    // reading. Opening it inside that replace window can fail with
+    // `Failed to open database at "<path>"` (the file is briefly absent). A
+    // bounded retry (the guard) covers that window; a store that is present
+    // but unopenable after the retries fails loudly instead of silently
+    // answering from the main cache database. The handle is read-only: one
+    // pooled read connection and no writer isolate. Stores built since the
+    // package:sqlite3 switch are rollback-journal files, so reading creates no
+    // sidecars; an older WAL-mode store gets its -wal / -shm files removed
+    // when its last connection closes.
+    return openLocalChessDatabaseHandle(
       path: path,
       operation: LocalChessDatabaseOperation.open,
       purpose: 'opening-tree game index',
       absentPolicy: LocalChessDatabaseAbsentPolicy.fallBackToExistingConnection,
+      readOnly: true,
     );
-    if (db == null) return null;
-    try {
-      await db.execute('PRAGMA busy_timeout=5000');
-      await db.execute('PRAGMA query_only=ON');
-      return db;
-    } catch (_) {
-      await db.close();
-      rethrow;
-    }
   }
 
   Future<void> persistSource(LocalChessSource source) async {
@@ -3206,9 +3203,9 @@ class LocalChessDatabaseRepository {
     }
   }
 
-  /// The single, process-global write lock for the local-chess resqlite cache.
+  /// The single, process-global write lock for the local-chess cache.
   ///
-  /// resqlite opens one writer per database file and every transaction runs
+  /// The driver opens one writer per database handle and every transaction runs
   /// `BEGIN IMMEDIATE` (it acquires the write lock upfront on the assumption
   /// that its connection is the only writer). This app, however, opens several
   /// connections to the same `chessever_local_chess.db` — the shared main
@@ -3274,15 +3271,15 @@ class LocalChessDatabaseRepository {
   /// races another connection's writer. Use for every main-connection write
   /// that is not already nested inside a queued action.
   Future<T> _lockedTransaction<T>(
-    resqlite.Database db,
-    Future<T> Function(resqlite.Transaction txn) body,
+    localsql.Database db,
+    Future<T> Function(localsql.Transaction txn) body,
   ) {
     return _runLocalCacheWriteQueued(() => db.transaction(body));
   }
 
   /// Runs a single write [statement] serialized through the global write lock.
   Future<void> _lockedExecute(
-    resqlite.Database db,
+    localsql.Database db,
     String statement, [
     List<Object?> parameters = const <Object?>[],
   ]) {
@@ -3757,8 +3754,8 @@ class LocalChessDatabaseRepository {
   ///
   /// Removing a player that owns several generated sources used to enqueue one
   /// fire-and-forget [scheduleCachedSourceDelete] per source, and each of those
-  /// opened (and closed) its own dedicated resqlite connection — spawning a
-  /// reader pool + writer isolate every time. Doing the whole player in one
+  /// opened (and closed) its own dedicated writer connection — spawning a
+  /// writer isolate every time. Doing the whole player in one
   /// marked-then-purged pass collapses that to a single connection open, and
   /// because it is awaitable, background cleanup can retain its persisted
   /// tombstone until every owned cache record is gone.
@@ -4010,7 +4007,7 @@ class LocalChessDatabaseRepository {
     final stopwatch = Stopwatch()..start();
     final effectiveBatchSize =
         batchSize <= 0 ? _kCooperativePurgeBatchSize : batchSize;
-    resqlite.Database? dedicatedDb;
+    localsql.Database? dedicatedDb;
     final slowDiagnostics = _LocalChessPurgeDiagnostics();
     try {
       cancellationToken?.throwIfCanceled();
@@ -4331,6 +4328,7 @@ class LocalChessDatabaseRepository {
   }
 
   static bool _isSqliteBusy(Object error) {
+    if (error is localsql.LocalSqliteException && error.isBusy) return true;
     final message = error.toString().toLowerCase();
     return message.contains('database is locked') ||
         message.contains('database table is locked') ||
@@ -5456,7 +5454,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<List<MoveAggregate>> _localCompactTreeMoveAggregatesForFen(
-    resqlite.Database db, {
+    localsql.Database db, {
     required String databaseId,
     required String databasePath,
     required String fen,
@@ -5566,7 +5564,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<List<MoveAggregate>> _localMoveAggregatesForMovePrefix(
-    resqlite.Database db, {
+    localsql.Database db, {
     required String databaseId,
     required List<String> moves,
     required PlayerOpeningTreeFilterCriteria filters,
@@ -5628,7 +5626,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<List<MoveAggregate>> _localTreeMoveAggregatesForFen(
-    resqlite.Database db, {
+    localsql.Database db, {
     required String databaseId,
     required String fen,
   }) async {
@@ -5863,7 +5861,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<GamebaseSearchQueryResponse> _localCompactPositionGamesResponse(
-    resqlite.Database db, {
+    localsql.Database db, {
     required String databaseId,
     required String databasePath,
     required String fen,
@@ -6040,7 +6038,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<GamebaseSearchQueryResponse> _localPositionGamesResponseFromMovePrefix(
-    resqlite.Database db, {
+    localsql.Database db, {
     required String databaseId,
     required String fen,
     required List<String> moves,
@@ -6115,7 +6113,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<int> _localPositionGamesTotalCount(
-    resqlite.Database db, {
+    localsql.Database db, {
     required String databaseId,
     required String fenKey,
     required String? pinnedUci,
@@ -6417,7 +6415,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _replaceFileNode(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     LocalChessFileNode file, {
     required String sourceLabel,
   }) async {
@@ -6497,7 +6495,7 @@ class LocalChessDatabaseRepository {
     }
   }
 
-  Future<void> _deleteFileCache(resqlite.Transaction txn, String path) async {
+  Future<void> _deleteFileCache(localsql.Transaction txn, String path) async {
     final databaseId = _databaseId(path);
     await _deleteDatabaseRows(txn, databaseId);
     await txn.execute(
@@ -6508,7 +6506,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _deleteDatabaseRows(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     String databaseId,
   ) async {
     await _deleteOpeningTreeRows(txn, databaseId);
@@ -6524,7 +6522,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<bool> _purgeDeletedDatabaseCache(
-    resqlite.Database db,
+    localsql.Database db,
     String databaseId, {
     required int batchSize,
     OperationCancellationToken? cancellationToken,
@@ -6613,7 +6611,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<bool> _databaseIsMarkedDeleted(
-    resqlite.Database db,
+    localsql.Database db,
     String databaseId,
   ) async {
     final rows = await db.select(
@@ -6629,7 +6627,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _deleteDatabaseRowsInChunks(
-    resqlite.Database db,
+    localsql.Database db,
     String table,
     String databaseId, {
     required int batchSize,
@@ -6739,17 +6737,19 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _checkpointLocalChessCacheBestEffort(
-    resqlite.Database db,
+    localsql.Database db,
   ) async {
     try {
-      await db.select('PRAGMA wal_checkpoint(PASSIVE)');
+      // PASSIVE never waits for readers; it must run on the writer connection
+      // (a read-only connection cannot checkpoint).
+      await db.execute('PRAGMA wal_checkpoint(PASSIVE)');
     } catch (_) {
       // Checkpointing is only a disk-size optimization after a successful
       // purge. It must never turn delete into a user-visible failure.
     }
   }
 
-  Future<void> _deleteOrphanLocalMetadata(resqlite.Transaction txn) async {
+  Future<void> _deleteOrphanLocalMetadata(localsql.Transaction txn) async {
     await txn.execute('''
       DELETE FROM $localChessPlayersTable
       WHERE id <> 0
@@ -6776,7 +6776,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _deleteOrphanLocalMetadataInChunks(
-    resqlite.Database db, {
+    localsql.Database db, {
     required int batchSize,
     OperationCancellationToken? cancellationToken,
     void Function(
@@ -6849,7 +6849,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _deleteOrphanLocalRowsInChunks(
-    resqlite.Database db, {
+    localsql.Database db, {
     required String table,
     required String idSql,
     required int batchSize,
@@ -6906,7 +6906,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _deleteOpeningTreeRows(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     String databaseId,
   ) async {
     await _deleteDatabaseRowsInTransactionChunks(
@@ -6927,7 +6927,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _deleteDatabaseRowsInTransactionChunks(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     String table,
     String databaseId, {
     int batchSize = _kSqlWriteBatchSize,
@@ -6955,7 +6955,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _insertGameRows(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     String databaseId,
     List<LocalChessGame> games,
     Map<String, Map<String, dynamic>> treeRowsById, {
@@ -7065,7 +7065,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<Map<String, int>> _idsForNames(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     String table,
     Set<String> names,
   ) async {
@@ -7103,7 +7103,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<Set<String>> _localGameIds(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     String databaseId,
   ) async {
     final rows = await txn.select(
@@ -7117,7 +7117,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _insertTree(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     String databaseId,
     PlayerOpeningTreeIndex index,
   ) async {
@@ -7186,7 +7186,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _upsertTreeDelta(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     String databaseId,
     PlayerOpeningTreeIndex index,
   ) async {
@@ -7321,7 +7321,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _insertPositionGameRefs(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     String databaseId,
     PlayerOpeningTreeIndex index,
     Set<String> gameIds,
@@ -7369,7 +7369,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<PlayerOpeningTreeIndex> _loadOpeningTreeIndex(
-    resqlite.Database db,
+    localsql.Database db,
     String databaseId, {
     required String databasePath,
     required Object? treeSnapshot,
@@ -7635,7 +7635,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<int> _currentTreeMaxPly(
-    resqlite.Database db,
+    localsql.Database db,
     String databaseId,
   ) async {
     final databaseRows = await db.select(
@@ -7661,7 +7661,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<bool> _databaseHasUsableOpeningTreeMetadata(
-    resqlite.Database db,
+    localsql.Database db,
     String databaseId,
   ) async {
     final rows = await db.select(
@@ -7682,7 +7682,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<CompactLocalTreeIndexMetadata?> _compactTreeMetadataForDatabase(
-    resqlite.Database db, {
+    localsql.Database db, {
     required String databaseId,
     required String databasePath,
   }) async {
@@ -7711,7 +7711,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<bool> _transactionHasUsableOpeningTreeMetadata(
-    resqlite.Transaction txn,
+    localsql.Transaction txn,
     String databaseId,
   ) async {
     final rows = await txn.select(
@@ -8142,13 +8142,13 @@ class LocalChessDatabaseRepository {
 final localChessDatabaseRepositoryProvider =
     Provider<LocalChessDatabaseRepository>((_) {
       return LocalChessDatabaseRepository(
-        database: () => LocalChessResqliteDatabase.instance.database,
+        database: () => LocalChessCacheDatabase.instance.database,
         databaseWithProgress:
-            ({onProgress}) => LocalChessResqliteDatabase.instance
+            ({onProgress}) => LocalChessCacheDatabase.instance
                 .databaseWithProgress(onProgress: onProgress),
-        databaseFilePath: () async => LocalChessResqliteDatabase.instance.path,
+        databaseFilePath: () async => LocalChessCacheDatabase.instance.path,
         purgeDatabase:
-            () => LocalChessResqliteDatabase.instance.openDedicatedConnection(),
+            () => LocalChessCacheDatabase.instance.openDedicatedConnection(),
       );
     });
 
@@ -8168,7 +8168,7 @@ class _LocalChessInlineImportSession {
   });
 
   final LocalChessDatabaseRepository repository;
-  final resqlite.Database? ownedDatabase;
+  final localsql.Database? ownedDatabase;
 
   Future<void> close() async {
     await ownedDatabase?.close();
@@ -8182,7 +8182,7 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
     request.sendPort.send(progress);
   }
 
-  resqlite.Database? db;
+  localsql.Database? db;
   CompactLocalTreeIndexBuilder? builder;
   try {
     emit(LocalChessScanProgress(fraction: 0.01, message: 'Opening cache...'));
@@ -8191,6 +8191,8 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
       operation: LocalChessDatabaseOperation.open,
       purpose: 'opening-tree cache rebuild (worker)',
       absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+      // Already on a worker isolate: run SQLite here instead of spawning more.
+      onCurrentIsolate: true,
     );
     if (db == null) {
       throw LocalChessDatabaseUnavailableException(
@@ -8430,12 +8432,12 @@ class _LocalTreePositionRefStage {
     required this.path,
   });
 
-  final resqlite.Database database;
+  final localsql.Database database;
   final String path;
 
   Future<void> close() async {
     await database.close();
-    await deleteLocalChessResqliteCacheFilesAt(path);
+    await deleteLocalChessCacheFilesAt(path);
   }
 }
 
@@ -8446,8 +8448,8 @@ Future<_LocalTreePositionRefStage> _openLocalTreePositionRefStage(
   // Keep the per-position game fan-out out of the Dart heap. The stage is
   // stored in a disposable sidecar database so even a dense 10k-game tree
   // stays bounded while the aggregate nodes are built. It is deliberately not
-  // a TEMP table: resqlite may serve reads and writes from different pooled
-  // connections, while a normal table is visible to the entire stage pool.
+  // a TEMP table: the driver serves reads and writes from different
+  // connections, while a normal table is visible to all of them.
   final path = p.join(
     Directory.systemTemp.path,
     'chessever-tree-stage-${_stableId(databaseId)}-'
@@ -8482,7 +8484,7 @@ Future<_LocalTreePositionRefStage> _openLocalTreePositionRefStage(
 
 // ignore: unused_element
 Future<void> _stageLocalTreePositionRefs(
-  resqlite.Database db,
+  localsql.Database db,
   List<LocalOpeningTreePositionGameRef> refs,
 ) async {
   if (refs.isEmpty) return;
@@ -8507,11 +8509,11 @@ Future<void> _stageLocalTreePositionRefs(
 
 // ignore: unused_element
 Future<bool> _persistCachedOpeningTreeInBatches({
-  required resqlite.Database db,
+  required localsql.Database db,
   required String databaseId,
   required PlayerOpeningTreeIndex index,
   required int generatedAtMs,
-  required resqlite.Database? positionRefStageDatabase,
+  required localsql.Database? positionRefStageDatabase,
   required void Function(LocalChessScanProgress progress) emit,
 }) async {
   final persistStopwatch = Stopwatch()..start();
@@ -8634,7 +8636,7 @@ Future<bool> _persistCachedOpeningTreeInBatches({
 }
 
 Future<void> _deleteCachedTreeRows(
-  resqlite.Database db,
+  localsql.Database db,
   String table,
   String databaseId,
 ) async {
@@ -8644,7 +8646,7 @@ Future<void> _deleteCachedTreeRows(
 }
 
 Future<void> _deleteCachedTreeRowsInAutocommitBatches(
-  resqlite.Database db,
+  localsql.Database db,
   String table,
   String databaseId, {
   required String label,
@@ -8677,7 +8679,7 @@ Future<void> _deleteCachedTreeRowsInAutocommitBatches(
 }
 
 Future<void> _insertCachedTreeNodesInAutocommitBatches(
-  resqlite.Database db,
+  localsql.Database db,
   String databaseId,
   PlayerOpeningTreeIndex index, {
   required void Function(LocalChessScanProgress progress) emit,
@@ -8716,7 +8718,7 @@ Future<void> _insertCachedTreeNodesInAutocommitBatches(
 }
 
 Future<void> _insertCachedTreeMovesInAutocommitBatches(
-  resqlite.Database db,
+  localsql.Database db,
   String databaseId,
   PlayerOpeningTreeIndex index, {
   required void Function(LocalChessScanProgress progress) emit,
@@ -8777,7 +8779,7 @@ Future<void> _insertCachedTreeMovesInAutocommitBatches(
 }
 
 Future<void> _executeMultiRowInsert(
-  resqlite.Database db,
+  localsql.Database db,
   String insertPrefix,
   List<List<Object?>> rows,
 ) async {
@@ -8790,9 +8792,9 @@ Future<void> _executeMultiRowInsert(
 }
 
 Future<void> _insertStagedPositionRefsInAutocommitBatches(
-  resqlite.Database db,
+  localsql.Database db,
   String databaseId, {
-  required resqlite.Database positionRefStageDatabase,
+  required localsql.Database positionRefStageDatabase,
   required void Function(LocalChessScanProgress progress) emit,
 }) async {
   final countRows = await positionRefStageDatabase.select(
@@ -8870,7 +8872,7 @@ String _databaseId(String path) {
 }
 
 Future<void> _refreshLocalChessDatabaseFileStat(
-  resqlite.Database db, {
+  localsql.Database db, {
   required String databaseId,
   required int sizeBytes,
   required int modifiedAtMs,
@@ -8891,7 +8893,7 @@ Future<void> _refreshLocalChessDatabaseFileStat(
 }
 
 Future<void> _refreshLocalChessDatabaseFileStatIfUnchanged(
-  resqlite.Database db, {
+  localsql.Database db, {
   required String databaseId,
   required int sizeBytes,
   required int modifiedAtMs,
@@ -8926,7 +8928,7 @@ Future<void> _refreshLocalChessDatabaseFileStatIfUnchanged(
   );
 }
 
-Future<String?> _databaseFilePath(resqlite.Database db) async {
+Future<String?> _databaseFilePath(localsql.Database db) async {
   final rows = await db.select('PRAGMA database_list');
   for (final row in rows) {
     final name = row['name']?.toString();
@@ -8939,7 +8941,7 @@ Future<String?> _databaseFilePath(resqlite.Database db) async {
 }
 
 Future<void> _configureStandaloneLocalChessDatabase(
-  resqlite.Database db,
+  localsql.Database db,
 ) async {
   for (final statement in const <String>[
     'PRAGMA foreign_keys=ON',
@@ -9676,7 +9678,7 @@ void _addNormalizedName(Set<String> names, Object? value) {
 }
 
 Future<void> _insertOrReplace(
-  resqlite.Transaction txn,
+  localsql.Transaction txn,
   String table,
   Map<String, Object?> row,
 ) async {
@@ -9684,7 +9686,7 @@ Future<void> _insertOrReplace(
 }
 
 Future<void> _insertOrReplaceBatch(
-  resqlite.Transaction txn,
+  localsql.Transaction txn,
   String table,
   List<Map<String, Object?>> rows,
 ) async {
@@ -9704,7 +9706,7 @@ Future<void> _insertOrReplaceBatch(
 }
 
 Future<void> _upsertLocalChessDatabaseRow(
-  resqlite.Transaction txn,
+  localsql.Transaction txn,
   Map<String, Object?> row,
 ) async {
   final columns = row.keys.toList(growable: false);
@@ -9724,7 +9726,7 @@ Future<void> _upsertLocalChessDatabaseRow(
 }
 
 Future<void> _executeBatchChunked(
-  resqlite.Transaction txn,
+  localsql.Transaction txn,
   String sql,
   List<List<Object?>> rows, {
   int size = _kSqlWriteBatchSize,

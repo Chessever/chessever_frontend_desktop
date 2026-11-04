@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
@@ -20,15 +20,15 @@ String _game(int n, {String annotation = ''}) =>
 void main() {
   late Directory dir;
   late File file;
-  late resqlite.Database db;
+  late localsql.Database db;
   late LocalChessDatabaseRepository repo;
 
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('local-pgn-persistence-');
     file = File('${dir.path}/fixture.pgn');
-    db = await resqlite.Database.open('${dir.path}/cache.db');
+    db = await localsql.Database.open('${dir.path}/cache.db');
     await db.execute('PRAGMA foreign_keys=ON');
-    await createLocalChessResqliteDatabaseSchema(db);
+    await createLocalChessCacheDatabaseSchema(db);
     repo = LocalChessDatabaseRepository(database: () async => db);
   });
   tearDown(() async {

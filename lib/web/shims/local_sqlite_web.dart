@@ -4,102 +4,148 @@ import 'dart:typed_data';
 
 import 'package:sqlite3/wasm.dart' as sqlite;
 
+import 'package:chessever/desktop/services/local_sqlite/local_sqlite_types.dart';
 import 'package:chessever/web/web_file_system.dart';
 
-/// Web stand-in for `package:resqlite` (a native SQLite binding), with the
-/// same surface the local library uses: [Database.open], `select`, `execute`,
-/// `executeBatch`, `transaction` and [WriteResult].
+export 'package:chessever/desktop/services/local_sqlite/local_sqlite_types.dart';
+
+/// Browser implementation of the local SQLite driver, with the same surface
+/// as the native one (`local_sqlite_native.dart`): [Database.open],
+/// `select`, `execute`, `executeBatch`, `transaction` and `close`.
 ///
 /// It runs SQLite compiled to WebAssembly (`web/sqlite/`) on this thread.
 /// Database files are ordinary files in the browser filesystem
 /// (web_file_system.dart), so the code that renames, deletes or checks them
-/// sees the same files SQLite writes. Writes are serialized, as
-/// with resqlite's single writer; calls made inside a transaction body run
-/// directly instead of waiting for the lock they already hold.
-class ResqliteException implements Exception {
-  ResqliteException(this.message);
+/// sees the same files SQLite writes. Writes are serialized per handle; calls
+/// made inside a transaction body run directly instead of waiting for the
+/// lock they already hold.
+///
+/// The browser has one thread and one connection per handle, so unlike the
+/// native driver a `select` made outside a running transaction on the same
+/// handle can see that transaction's uncommitted rows.
 
-  final String message;
-
-  @override
-  String toString() => 'ResqliteException: $message';
-}
-
-class ResqliteConnectionException extends ResqliteException {
-  ResqliteConnectionException(super.message);
-
-  ResqliteConnectionException.databaseClosed() : super('Database is closed.');
-}
-
-class ResqliteQueryException extends ResqliteException {
-  ResqliteQueryException(super.message);
-}
-
-class ResqliteTransactionException extends ResqliteException {
-  ResqliteTransactionException(super.message);
-}
-
-final class WriteResult {
-  const WriteResult(this.affectedRows, this.lastInsertId);
-
-  final int affectedRows;
-  final int lastInsertId;
-}
+/// Must match the `sqlite3` version locked in pubspec.lock: the module's
+/// imports are generated with the Dart bindings of that exact release.
+const String _wasmAsset = 'sqlite/sqlite3-3.8.0.wasm';
 
 Future<sqlite.WasmSqlite3>? _engine;
 
 Future<sqlite.WasmSqlite3> _loadEngine() {
-  return _engine ??= () async {
-    final engine = await sqlite.WasmSqlite3.loadFromUrl(
-      Uri.parse('sqlite/sqlite3-3.3.3.wasm'),
-    );
-    engine.registerVirtualFileSystem(_WebFsVfs(), makeDefault: true);
-    return engine;
-  }();
+  final pending =
+      _engine ??= () async {
+        final engine = await sqlite.WasmSqlite3.loadFromUrl(
+          Uri.parse(_wasmAsset),
+        );
+        engine.registerVirtualFileSystem(_WebFsVfs(), makeDefault: true);
+        return engine;
+      }();
+  // A failed load (offline, a deploy swapping assets) must not be cached:
+  // the next open retries it instead of failing until the page reloads.
+  pending.then<void>(
+    (_) {},
+    onError: (Object _) {
+      if (identical(_engine, pending)) _engine = null;
+    },
+  );
+  return pending;
 }
 
-T _guard<T>(T Function() body) {
+T _guard<T>(T Function() body, {String? sql}) {
   try {
     return body();
   } on sqlite.SqliteException catch (e) {
-    throw ResqliteQueryException(e.toString());
+    final explanation = e.explanation;
+    throw LocalSqliteQueryException(
+      explanation == null || explanation == e.message
+          ? e.message
+          : '${e.message}, $explanation',
+      sql: sql,
+      sqliteCode: e.resultCode,
+      extendedCode: e.extendedResultCode,
+    );
   }
 }
 
-List<Map<String, Object?>> _rows(sqlite.ResultSet result) => [
-  for (final row in result) Map<String, Object?>.of(row),
-];
+void _control(sqlite.CommonDatabase db, String sql, String operation) {
+  try {
+    db.execute(sql);
+  } on sqlite.SqliteException catch (e) {
+    throw LocalSqliteTransactionException(
+      e.message,
+      operation: operation,
+      sqliteCode: e.resultCode,
+      extendedCode: e.extendedResultCode,
+    );
+  }
+}
+
+LocalSqliteRows _rows(sqlite.ResultSet result) =>
+    LocalSqliteRows(result.columnNames, result.rows);
 
 final Object _transactionKey = Object();
 
 final class Database {
-  Database._(this._db, this.path);
+  Database._(this._db, this.path, this.readOnly);
 
   final sqlite.CommonDatabase _db;
   final String path;
+  final bool readOnly;
   bool _closed = false;
   Future<void> _writeTail = Future<void>.value();
-  final StreamController<void> _changes = StreamController.broadcast();
+  int _savepoints = 0;
 
+  /// [onCurrentIsolate] is accepted for parity with the native driver; the
+  /// browser always runs on the calling thread.
   static Future<Database> open(
     String path, {
-    String? encryptionKey,
-    Iterable<Object> extensions = const [],
+    bool readOnly = false,
+    bool onCurrentIsolate = false,
   }) async {
+    final sqlite.WasmSqlite3 engine;
     try {
-      final engine = await _loadEngine();
-      return Database._(engine.open(path), path);
+      engine = await _loadEngine();
     } catch (e) {
-      throw ResqliteConnectionException('Cannot open $path: $e');
+      throw LocalSqliteConnectionException.openFailed(
+        path,
+        'could not load SQLite ($e)',
+      );
+    }
+    try {
+      final db = engine.open(
+        path,
+        mode:
+            readOnly
+                ? sqlite.OpenMode.readOnly
+                : sqlite.OpenMode.readWriteCreate,
+      );
+      try {
+        // Proves the file is a readable database now, not at first query.
+        db.select('PRAGMA schema_version');
+        if (!readOnly) db.execute('PRAGMA foreign_keys = ON');
+      } catch (_) {
+        db.close();
+        rethrow;
+      }
+      return Database._(db, path, readOnly);
+    } on sqlite.SqliteException catch (e) {
+      throw LocalSqliteConnectionException.openFailed(
+        path,
+        e.message,
+        sqliteCode: e.resultCode,
+        extendedCode: e.extendedResultCode,
+      );
+    } catch (e) {
+      throw LocalSqliteConnectionException.openFailed(path, '$e');
     }
   }
 
+  bool get isClosed => _closed;
+
   void _ensureOpen() {
-    if (_closed) throw ResqliteConnectionException.databaseClosed();
+    if (_closed) throw LocalSqliteConnectionException.databaseClosed();
   }
 
-  bool get _insideTransaction =>
-      identical(Zone.current[_transactionKey], this);
+  bool get _insideTransaction => identical(Zone.current[_transactionKey], this);
 
   /// Runs [write] after earlier writes, unless already inside one of this
   /// database's transactions.
@@ -115,7 +161,6 @@ final class Database {
     await _writeTail;
     _closed = true;
     _db.close();
-    await _changes.close();
   }
 
   Future<List<Map<String, Object?>>> select(
@@ -123,29 +168,28 @@ final class Database {
     List<Object?> parameters = const [],
   ]) async {
     _ensureOpen();
-    return _guard(() => _rows(_db.select(sql, parameters)));
-  }
-
-  Stream<List<Map<String, Object?>>> stream(
-    String sql, [
-    List<Object?> parameters = const [],
-  ]) async* {
-    yield await select(sql, parameters);
-    await for (final _ in _changes.stream) {
-      yield await select(sql, parameters);
-    }
+    return _guard(() => _rows(_db.select(sql, parameters)), sql: sql);
   }
 
   WriteResult _executeNow(String sql, List<Object?> parameters) {
     _ensureOpen();
     return _guard(() {
+      if (parameters.isNotEmpty && localSqliteHasMultipleStatements(sql)) {
+        throw ArgumentError.value(
+          sql,
+          'sql',
+          'Multiple statements cannot take parameters',
+        );
+      }
       _db.execute(sql, parameters);
       return WriteResult(_db.updatedRows, _db.lastInsertRowId);
-    });
+    }, sql: sql);
   }
 
   void _batchNow(String sql, List<List<Object?>> paramSets) {
     _ensureOpen();
+    checkUniformLocalSqliteParamSets(sql, paramSets);
+    if (paramSets.isEmpty) return;
     _guard(() {
       final statement = _db.prepare(sql);
       try {
@@ -155,21 +199,13 @@ final class Database {
       } finally {
         statement.close();
       }
-    });
-  }
-
-  void _notify() {
-    if (!_changes.isClosed) _changes.add(null);
+    }, sql: sql);
   }
 
   Future<WriteResult> execute(
     String sql, [
     List<Object?> parameters = const [],
-  ]) => _serialized(() {
-    final result = _executeNow(sql, parameters);
-    _notify();
-    return result;
-  });
+  ]) => _serialized(() => _executeNow(sql, parameters));
 
   Future<void> executeBatch(String sql, List<List<Object?>> paramSets) =>
       _serialized(() async {
@@ -177,20 +213,22 @@ final class Database {
           _batchNow(sql, paramSets);
           return;
         }
+        checkUniformLocalSqliteParamSets(sql, paramSets);
+        if (paramSets.isEmpty) return;
         await _inTransaction((_) async => _batchNow(sql, paramSets));
       });
 
   Future<T> transaction<T>(Future<T> Function(Transaction tx) body) =>
       _serialized(() => _inTransaction(body));
 
-  int _savepoints = 0;
-
   Future<T> _inTransaction<T>(Future<T> Function(Transaction tx) body) async {
     _ensureOpen();
     final nested = _insideTransaction;
-    final savepoint = 'resqlite_web_${_savepoints++}';
-    _guard(
-      () => _db.execute(nested ? 'SAVEPOINT $savepoint' : 'BEGIN IMMEDIATE'),
+    final savepoint = 's${++_savepoints}';
+    _control(
+      _db,
+      nested ? 'SAVEPOINT $savepoint' : 'BEGIN IMMEDIATE',
+      nested ? 'savepoint' : 'begin',
     );
     final tx = Transaction._(this);
     try {
@@ -198,22 +236,27 @@ final class Database {
         () => body(tx),
         zoneValues: {_transactionKey: this},
       );
-      _guard(
-        () => _db.execute(nested ? 'RELEASE $savepoint' : 'COMMIT'),
+      tx._active = false;
+      _control(
+        _db,
+        nested ? 'RELEASE $savepoint' : 'COMMIT',
+        nested ? 'release' : 'commit',
       );
-      if (!nested) _notify();
       return result;
     } catch (_) {
+      tx._active = false;
       try {
-        _db.execute(
-          nested
-              ? 'ROLLBACK TO $savepoint; RELEASE $savepoint'
-              : 'ROLLBACK',
-        );
+        if (!_db.autocommit) {
+          if (nested) {
+            _db.execute('ROLLBACK TO $savepoint');
+            _db.execute('RELEASE $savepoint');
+          } else {
+            _db.execute('ROLLBACK');
+          }
+        }
       } catch (_) {}
       rethrow;
     } finally {
-      tx._active = false;
       _savepoints--;
     }
   }
@@ -227,7 +270,10 @@ final class Transaction {
 
   void _ensureActive() {
     if (!_active) {
-      throw StateError('Transaction used after its body returned.');
+      throw StateError(
+        'Transaction is no longer active. Use the transaction object only '
+        'inside its body.',
+      );
     }
   }
 
@@ -259,8 +305,6 @@ final class Transaction {
       zoneValues: {_transactionKey: _database},
     );
   }
-
-  void close() => _active = false;
 }
 
 /// SQLite VFS over [WebFileSystem]: every database, journal and temp file

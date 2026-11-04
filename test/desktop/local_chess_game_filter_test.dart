@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -62,7 +62,7 @@ void main() {
   });
 
   group('localDatabaseGamesPage structured filters', () {
-    late resqlite.Database db;
+    late localsql.Database db;
     late Directory temp;
     late String databasePath;
     late String databaseId;
@@ -75,8 +75,8 @@ void main() {
 
     setUp(() async {
       temp = await Directory.systemTemp.createTemp('chessever-local-filter-');
-      db = await resqlite.Database.open('${temp.path}/local_chess.db');
-      await createLocalChessResqliteDatabaseSchema(db);
+      db = await localsql.Database.open('${temp.path}/local_chess.db');
+      await createLocalChessCacheDatabaseSchema(db);
       await db.execute('PRAGMA foreign_keys=OFF');
       databasePath = p.join(temp.path, 'player.pgn');
       databaseId = p.normalize(databasePath);
@@ -265,7 +265,7 @@ class PlayerStatsRepositoryHarness {
     required this.databasePath,
   });
 
-  final resqlite.Database db;
+  final localsql.Database db;
   final String databaseId;
   final String databasePath;
   var gameSeq = 0;

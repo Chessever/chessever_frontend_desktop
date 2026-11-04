@@ -8,7 +8,7 @@ import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 /// Player-centric outcome relative to the workspace / profile player.
 enum LocalPlayerOutcomeFilter { all, win, draw, loss }
 
-/// Structured filters for local resqlite game lists (players Games tab + library).
+/// Structured filters for local cache game lists (players Games tab + library).
 ///
 /// Wraps the shared [GameFilter] dialog model plus player-centric outcome,
 /// opponent name, and exact local time-control category (including bullet).

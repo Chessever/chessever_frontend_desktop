@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:dartchess/dartchess.dart' show Chess, NormalMove;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -49,13 +49,13 @@ const String _divergingPgn = '''
 1. d4 Nf6 2. c4 e6 3. Nf3 b6 1/2-1/2
 ''';
 
-Future<int> _count(resqlite.Database db, String table) async {
+Future<int> _count(localsql.Database db, String table) async {
   final rows = await db.select('SELECT COUNT(*) AS c FROM $table');
   return (rows.single['c'] as num).toInt();
 }
 
 void main() {
-  late resqlite.Database db;
+  late localsql.Database db;
   late Directory temp;
 
   setUpAll(() {
@@ -65,10 +65,10 @@ void main() {
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('chessever-move-prefix-');
-    db = await resqlite.Database.open('${temp.path}/local_chess.db');
+    db = await localsql.Database.open('${temp.path}/local_chess.db');
     await db.execute('PRAGMA foreign_keys=ON');
     await db.execute('PRAGMA journal_mode=WAL');
-    await createLocalChessResqliteDatabaseSchema(db);
+    await createLocalChessCacheDatabaseSchema(db);
   });
 
   tearDown(() async {

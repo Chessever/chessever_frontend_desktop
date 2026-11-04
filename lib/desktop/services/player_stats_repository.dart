@@ -3,11 +3,11 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:path/path.dart' as p;
-import 'package:chessever/web/shims/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/desktop/models/player_stats.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart'
-    show LocalChessDatabaseRepository, LocalChessResqliteDatabase;
+    show LocalChessDatabaseRepository, LocalChessCacheDatabase;
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart'
     show LocalChessGame;
 import 'package:chessever/desktop/services/operation_cancellation.dart';
@@ -23,13 +23,13 @@ import 'package:chessever/utils/host_platform.dart';
 
 typedef PlayerStatsSelect =
     Future<List<Map<String, Object?>>> Function(
-      resqlite.Database database,
+      localsql.Database database,
       String sql,
       List<Object?> parameters,
     );
 
 /// Computes rich per-player statistics locally from the player's combined
-/// resqlite database.
+/// local cache database.
 ///
 /// Everything runs as GROUP BY aggregates against the single cached WAL
 /// connection, scoped to one `database_id` (the normalized pgn path). No games
@@ -40,21 +40,21 @@ typedef PlayerStatsSelect =
 /// only for rows whose PGN side has no FIDE header.
 class PlayerStatsRepository {
   PlayerStatsRepository({
-    Future<resqlite.Database> Function()? database,
+    Future<localsql.Database> Function()? database,
     LocalChessDatabaseRepository? localRepository,
     PlayerStatsSelect? select,
   }) : _database =
-           database ?? (() => LocalChessResqliteDatabase.instance.database),
+           database ?? (() => LocalChessCacheDatabase.instance.database),
        _localRepository = localRepository,
        _select = select ?? _defaultSelect;
 
-  final Future<resqlite.Database> Function() _database;
+  final Future<localsql.Database> Function() _database;
   final LocalChessDatabaseRepository? _localRepository;
   final PlayerStatsSelect _select;
   Future<void> _statsComputationTail = Future<void>.value();
 
   static Future<List<Map<String, Object?>>> _defaultSelect(
-    resqlite.Database database,
+    localsql.Database database,
     String sql,
     List<Object?> parameters,
   ) => database.select(sql, parameters);
@@ -203,7 +203,7 @@ class PlayerStatsRepository {
             ];
 
     // Each aggregate scans the same player's database. Dispatching all ten at
-    // once occupies every resqlite reader isolate and creates a short, severe
+    // once occupies every pooled reader isolate and creates a short, severe
     // CPU burst while the Combined overview opens. Keep the reads serial: the
     // work still happens off the UI isolate, while one reader at a time leaves
     // enough CPU headroom for Flutter to keep presenting frames smoothly.
@@ -540,8 +540,8 @@ class PlayerStatsRepository {
     );
   }
 
-  /// resqlite 0.7 lets a dispatched read finish; it does not expose a safe
-  /// per-query interrupt. Keep one Players stats computation active per
+  /// The local SQLite driver lets a dispatched read finish; it does not
+  /// expose a per-query interrupt. Keep one Players stats computation active per
   /// repository so a source switch waits for the obsolete read to finish
   /// instead of saturating another reader in parallel. Cancellation checks
   /// then discard the obsolete request before it can dispatch its next query.
@@ -627,7 +627,7 @@ class PlayerStatsRepository {
   /// single-player workspace database that is the player. Returned normalized
   /// to match the alias comparison.
   Future<String?> _dominantPlayerName(
-    resqlite.Database db,
+    localsql.Database db,
     String databaseId,
   ) async {
     final rows = await db.select(

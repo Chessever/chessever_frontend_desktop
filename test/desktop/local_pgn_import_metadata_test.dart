@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -204,10 +204,10 @@ void main() {
     });
 
     test('repository import + page query keep every header tag', () async {
-      final db = await resqlite.Database.open('${temp.path}/local_chess.db');
+      final db = await localsql.Database.open('${temp.path}/local_chess.db');
       addTearDown(db.close);
       await db.execute('PRAGMA foreign_keys=ON');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       final pgnFile = File('${temp.path}/full_tags.pgn');
       await pgnFile.writeAsString(_fullTagPgn);
@@ -236,10 +236,10 @@ void main() {
     });
 
     test('repository persists Lichess source-specific speed buckets', () async {
-      final db = await resqlite.Database.open('${temp.path}/lichess.db');
+      final db = await localsql.Database.open('${temp.path}/lichess.db');
       addTearDown(db.close);
       await db.execute('PRAGMA foreign_keys=ON');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       final pgnFile = File('${temp.path}/lichess-speeds.pgn');
       await pgnFile.writeAsString(_lichessSpeedPgn);
@@ -268,10 +268,10 @@ void main() {
     test(
       'repository persists Chess.com Bullet and UltraBullet buckets',
       () async {
-        final db = await resqlite.Database.open('${temp.path}/chesscom.db');
+        final db = await localsql.Database.open('${temp.path}/chesscom.db');
         addTearDown(db.close);
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
 
         final pgnFile = File('${temp.path}/chesscom-speeds.pgn');
         await pgnFile.writeAsString(_chessComSpeedPgn);

@@ -25,7 +25,7 @@ const Color _kUnclassified = Color(0xFF465160);
 
 /// One selectable data source feeding the dashboard — a connected account's
 /// local PGN database or the deduped combined set. Selecting one re-scopes the
-/// entire dashboard to that resqlite database (all queries are already indexed
+/// entire dashboard to that local cache database (all queries are already indexed
 /// on `database_id`).
 @immutable
 class PlayerStatsSource {

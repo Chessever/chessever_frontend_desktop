@@ -5,7 +5,7 @@ import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:crypto/crypto.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
@@ -34,12 +34,12 @@ void main() {
     'real cache coordinator invalidates old identity and reopens renamed PGN',
     () async {
       final root = await Directory.systemTemp.createTemp('rename-cache-');
-      final cache = await resqlite.Database.open('${root.path}/cache.db');
+      final cache = await localsql.Database.open('${root.path}/cache.db');
       addTearDown(() async {
         await cache.close();
         await root.delete(recursive: true);
       });
-      await createLocalChessResqliteDatabaseSchema(cache);
+      await createLocalChessCacheDatabaseSchema(cache);
       final repo = LocalChessDatabaseRepository(database: () async => cache);
       final file = File('${root.path}/old.pgn')..writeAsStringSync(
         '[Event "Rename"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 e5 *\n',

@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
@@ -20,10 +20,10 @@ void main() {
         'chessever-player-delete-heartbeat-',
       );
       final databasePath = p.join(temp.path, 'local_chess.db');
-      final db = await resqlite.Database.open(databasePath);
+      final db = await localsql.Database.open(databasePath);
       await db.execute('PRAGMA foreign_keys=ON');
       await db.execute('PRAGMA journal_mode=WAL');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
 
       const playerId = 'cache-heavy-player';
       final workspaceDirectory = Directory(
@@ -62,7 +62,7 @@ void main() {
       final localRepository = LocalChessDatabaseRepository(
         database: () async => db,
         purgeDatabase: () async {
-          final connection = await resqlite.Database.open(databasePath);
+          final connection = await localsql.Database.open(databasePath);
           await connection.execute('PRAGMA foreign_keys=ON');
           await connection.execute('PRAGMA journal_mode=WAL');
           return connection;
@@ -199,7 +199,7 @@ class _StoredSnapshotWorkspaceRepository extends PlayerWorkspaceRepository {
 }
 
 Future<void> _seedDerivedCache(
-  resqlite.Database db, {
+  localsql.Database db, {
   required String databasePath,
   required int rowCount,
 }) async {
@@ -272,7 +272,7 @@ Future<void> _seedDerivedCache(
   );
 }
 
-Future<int> _count(resqlite.Database db, String table) async {
+Future<int> _count(localsql.Database db, String table) async {
   final rows = await db.select('SELECT COUNT(*) AS count FROM $table');
   return (rows.single['count'] as num).toInt();
 }

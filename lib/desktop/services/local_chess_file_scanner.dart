@@ -11,7 +11,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:libcompress/libcompress.dart';
-import 'package:chessever/web/shims/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 
@@ -875,7 +875,7 @@ Future<LocalChessFileNode> scanLocalChessFileNodeForImportWithProgress({
 
   // Only CPU/file work crosses this isolate boundary. Import callbacks stay on
   // the caller isolate because they own the already-open, globally serialized
-  // resqlite writer. Each callback must finish before its ACK lets the worker
+  // local cache writer. Each callback must finish before its ACK lets the worker
   // parse and enqueue another batch.
   final receivePort = ReceivePort();
   final completer = Completer<LocalChessFileNode>();
@@ -2226,7 +2226,7 @@ Future<void> _buildCompactPgnTreeWorker(
 
   _PgnRangeScanResult? scan;
   CompactLocalTreeIndexBuilder? builder;
-  resqlite.Database? gameDatabase;
+  localsql.Database? gameDatabase;
   String? temporaryGameIndexPath;
   var gameIndexPublished = false;
   final cancellationPort = ReceivePort();
@@ -2282,6 +2282,9 @@ Future<void> _buildCompactPgnTreeWorker(
       operation: LocalChessDatabaseOperation.write,
       purpose: 'opening-tree game index build',
       absentPolicy: LocalChessDatabaseAbsentPolicy.fail,
+      // This worker isolate exists to do this build: run SQLite on it
+      // directly, with no message hop per statement.
+      onCurrentIsolate: true,
     );
     if (gameDatabase == null) {
       throw LocalChessDatabaseUnavailableException(
@@ -2370,9 +2373,15 @@ Future<void> _buildCompactPgnTreeWorker(
     // `.ceti` metadata that makes a reader treat the tree as fresh. The store is
     // replaced through `.previous` (`_publishCompactPgnGameIndex`), so a reader
     // that saw fresh metadata could otherwise open the store inside that replace
-    // window and fail with resqlite's all-or-nothing
+    // window and fail with the driver's all-or-nothing
     // `Failed to open database at "<path>"`. Committing and releasing the store
     // handle before the rename keeps the window as short as the OS allows.
+    //
+    // Publish the store in rollback-journal mode: it is only ever replaced by
+    // rename, never written in place, and readers of a non-WAL file create no
+    // -wal / -shm files next to the user's PGN. Only this connection has the
+    // temporary file open, so the switch checkpoints and removes its WAL.
+    await gameDatabase.execute('PRAGMA journal_mode = DELETE');
     await gameDatabase.close();
     gameDatabase = null;
     _publishCompactPgnGameIndex(
@@ -2428,7 +2437,7 @@ const String _compactPgnGameInsertSql = '''
   )
 ''';
 
-Future<void> _createCompactPgnGameDatabase(resqlite.Database db) async {
+Future<void> _createCompactPgnGameDatabase(localsql.Database db) async {
   await db.execute('''
     CREATE TABLE local_chess_players (
       id INTEGER PRIMARY KEY,

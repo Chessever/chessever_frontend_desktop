@@ -206,7 +206,7 @@ class PlayerTimeControlStat {
 }
 
 /// Everything the Stats dashboard needs, computed locally from the player's
-/// combined resqlite database in a handful of GROUP BY queries.
+/// combined local cache database in a handful of GROUP BY queries.
 @immutable
 class PlayerStatsSnapshot {
   const PlayerStatsSnapshot({

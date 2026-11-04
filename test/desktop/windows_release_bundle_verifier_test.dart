@@ -10,7 +10,6 @@ const _requiredFiles = <String>[
   'flutter_onnxruntime_plugin.dll',
   'flutter_soloud_plugin.dll',
   'onnxruntime.dll',
-  'resqlite.dll',
   'sqlite3.dll',
   'FLAC.dll',
   'ogg.dll',
@@ -80,8 +79,8 @@ void main() {
       for (final name in _requiredFiles) {
         File('${release.path}/$name').writeAsBytesSync(const [1]);
       }
-      final resqlite = File('${release.path}/resqlite.dll');
-      resqlite.writeAsBytesSync(_syntheticResqliteDll());
+      final sqlite3 = File('${release.path}/sqlite3.dll');
+      sqlite3.writeAsBytesSync(_syntheticSqlite3Dll());
 
       final valid = await _runVerifier(repository: repository, cwd: temp);
       expect(
@@ -90,7 +89,7 @@ void main() {
         reason: 'stdout:\n${valid.stdout}\nstderr:\n${valid.stderr}',
       );
 
-      resqlite.writeAsBytesSync(_syntheticResqliteDll(machine: 0x014c));
+      sqlite3.writeAsBytesSync(_syntheticSqlite3Dll(machine: 0x014c));
       final wrongArchitecture = await _runVerifier(
         repository: repository,
         cwd: temp,
@@ -98,8 +97,14 @@ void main() {
       expect(wrongArchitecture.exitCode, isNot(0));
       expect(wrongArchitecture.stderr, contains('expected AMD64 machine'));
 
-      resqlite.writeAsBytesSync(
-        _syntheticResqliteDll(exports: const ['resqlite_open', 'strlen']),
+      sqlite3.writeAsBytesSync(
+        _syntheticSqlite3Dll(
+          exports: const [
+            'sqlite3_open_v2',
+            'sqlite3_libversion',
+            'sqlite3_temp_directory',
+          ],
+        ),
       );
       final missingExport = await _runVerifier(
         repository: repository,
@@ -108,8 +113,39 @@ void main() {
       expect(missingExport.exitCode, isNot(0));
       expect(
         missingExport.stderr,
-        contains('missing exported symbol name resqlite_open_with_extensions'),
+        contains('missing exported symbol name sqlite3_prepare_v3'),
       );
+    } finally {
+      await temp.delete(recursive: true);
+    }
+  });
+
+  test('Windows release verifier rejects a stale resqlite.dll', () async {
+    final repository = Directory.current;
+    final temp = await Directory.systemTemp.createTemp(
+      'chessever_windows_bundle_verifier_stale_',
+    );
+    try {
+      final release = Directory('${temp.path}/build/windows/x64/runner/Release')
+        ..createSync(recursive: true);
+      for (final name in _requiredFiles) {
+        File('${release.path}/$name').writeAsBytesSync(const [1]);
+      }
+      File(
+        '${release.path}/sqlite3.dll',
+      ).writeAsBytesSync(_syntheticSqlite3Dll());
+      // An incremental build directory from before the package:sqlite3
+      // migration still holds the old native library.
+      File('${release.path}/resqlite.dll').writeAsBytesSync(const [1]);
+
+      final stale = await _runVerifier(repository: repository, cwd: temp);
+      expect(
+        stale.exitCode,
+        isNot(0),
+        reason: 'stdout:\n${stale.stdout}\nstderr:\n${stale.stderr}',
+      );
+      expect(stale.stderr, contains('contains stale files'));
+      expect(stale.stderr, contains('- resqlite.dll'));
     } finally {
       await temp.delete(recursive: true);
     }
@@ -202,12 +238,13 @@ File _createFakeFlutterExecutable(Directory flutterRoot) {
   )..createSync(recursive: true);
 }
 
-Uint8List _syntheticResqliteDll({
+Uint8List _syntheticSqlite3Dll({
   int machine = 0x8664,
   List<String> exports = const [
-    'resqlite_open',
-    'resqlite_open_with_extensions',
-    'strlen',
+    'sqlite3_open_v2',
+    'sqlite3_prepare_v3',
+    'sqlite3_libversion',
+    'sqlite3_temp_directory',
   ],
 }) {
   final bytes = Uint8List(512);

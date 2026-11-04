@@ -11,7 +11,9 @@ void main() {
       // --dart-define (reserved). desktop_updater:release must pass first-class
       // --build-name / --build-number instead or Codemagic beta builds fail.
       final release =
-          File('third_party/desktop_updater/bin/release.dart').readAsStringSync();
+          File(
+            'third_party/desktop_updater/bin/release.dart',
+          ).readAsStringSync();
       expect(release, contains('--build-name=\$buildName'));
       expect(release, contains('--build-number=\$buildNumber'));
       expect(release, isNot(contains('FLUTTER_BUILD_NAME=\$buildName')));
@@ -66,9 +68,27 @@ void main() {
       expect(script, contains('validate_versioned_frameworks'));
       expect(
         script,
-        contains(r'lipo "$RESQLITE_BIN" -verify_arch arm64 x86_64'),
+        contains(
+          r'SQLITE3_FRAMEWORK="$APP/Contents/Frameworks/sqlite3.framework"',
+        ),
       );
-      expect(script, contains('"_resqlite_open"'));
+      expect(script, contains(r'SQLITE3_BIN="$SQLITE3_FRAMEWORK/sqlite3"'));
+      expect(script, contains('for arch in arm64 x86_64; do'));
+      expect(script, contains(r'lipo "$SQLITE3_BIN" -verify_arch "$arch"'));
+      expect(script, contains(r'nm -gU -arch "$arch" "$SQLITE3_BIN"'));
+      // package:sqlite3's prebuilt dylib ships as 0644; an exec-bit gate
+      // would fail every macOS release lane.
+      expect(script, isNot(contains(r'[ -x "$SQLITE3_BIN" ]')));
+      expect(script, contains('"_sqlite3_open_v2"'));
+      expect(
+        script,
+        contains(
+          r'[ ! -e "$APP/Contents/Frameworks/resqlite.framework" ] || '
+          'die "stale resqlite.framework in app bundle"',
+        ),
+      );
+      expect(script, isNot(contains('RESQLITE_BIN')));
+      expect(script, isNot(contains('_resqlite_open')));
       expect(
         script,
         contains(r'validate_desktop_updater_archive "$ARCHIVE_DIR"'),
@@ -85,8 +105,7 @@ void main() {
       _expectInstallerUploadsBeforePrune(
         script: script,
         platform: r'$UPDATE_PLATFORM',
-        versionedUpload:
-            r'desktop/downloads/${VERSIONED_DMG_NAME}',
+        versionedUpload: r'desktop/downloads/${VERSIONED_DMG_NAME}',
         stableUpload: r'desktop/downloads/${STABLE_DMG_NAME}',
       );
       expect(script, isNot(contains('SUPARKLE')));
@@ -119,21 +138,24 @@ void main() {
       // No manual Impeller flags — default on Flutter beta; stable path omits too.
       expect(codemagic, isNot(contains('--enable-impeller')));
       expect(codemagic, isNot(contains('--no-enable-impeller')));
-      final armBlock = codemagic
-          .split('macos-desktop-release-arm64:')
-          .last
-          .split('macos-desktop-release-x64:')
-          .first;
-      final x64Block = codemagic
-          .split('macos-desktop-release-x64:')
-          .last
-          .split('windows-desktop-release:')
-          .first;
-      final windowsBlock = codemagic
-          .split('windows-desktop-release:')
-          .last
-          .split('linux-desktop-release:')
-          .first;
+      final armBlock =
+          codemagic
+              .split('macos-desktop-release-arm64:')
+              .last
+              .split('macos-desktop-release-x64:')
+              .first;
+      final x64Block =
+          codemagic
+              .split('macos-desktop-release-x64:')
+              .last
+              .split('windows-desktop-release:')
+              .first;
+      final windowsBlock =
+          codemagic
+              .split('windows-desktop-release:')
+              .last
+              .split('linux-desktop-release:')
+              .first;
       final linuxBlock = codemagic.split('linux-desktop-release:').last;
       expect(armBlock, contains('flutter: beta'));
       expect(armBlock, contains('ARCH=arm64'));
@@ -253,15 +275,30 @@ void main() {
         contains(r'Invoke-ReleaseEnvCheck -DirectoryPath $stagedDir'),
       );
       expect(script, contains(r'dart run desktop_updater:archive windows'));
-      expect(bundleVerifier, contains("'resqlite.dll'"));
-      expect(bundleVerifier, contains("'sqlite3.dll'"));
+      final requiredWindowsFiles =
+          bundleVerifier
+              .split('const _requiredFiles = <String>[')
+              .last
+              .split('];')
+              .first;
+      expect(requiredWindowsFiles, contains("'sqlite3.dll'"));
+      expect(requiredWindowsFiles, isNot(contains('resqlite')));
+      expect(
+        bundleVerifier,
+        contains("const _forbiddenFiles = <String>['resqlite.dll'];"),
+      );
+      expect(bundleVerifier, contains('contains stale files'));
       expect(bundleVerifier, contains("'onnxruntime.dll'"));
       expect(bundleVerifier, contains("'flutter_onnxruntime_plugin.dll'"));
       expect(bundleVerifier, contains("'desktop_updater_plugin.dll'"));
       expect(bundleVerifier, contains('expected AMD64 machine 0x8664'));
       expect(bundleVerifier, contains('expected PE32+ optional header 0x20b'));
-      expect(bundleVerifier, contains("'resqlite_open_with_extensions'"));
-      expect(bundleVerifier, contains("'strlen'"));
+      expect(bundleVerifier, contains("'sqlite3_open_v2'"));
+      expect(bundleVerifier, contains("'sqlite3_prepare_v3'"));
+      expect(bundleVerifier, contains("'sqlite3_libversion'"));
+      expect(bundleVerifier, contains("'sqlite3_temp_directory'"));
+      expect(bundleVerifier, isNot(contains("'strlen'")));
+      expect(bundleVerifier, isNot(contains('resqlite_open')));
       expect(
         script,
         contains(
@@ -399,6 +436,10 @@ void main() {
           'OutputBaseFilename=chessever-{#AppVersion}+{#AppBuild}-setup',
         ),
       );
+      // [Files] only adds and overwrites; an install over a pre-sqlite3
+      // release must remove the orphaned resqlite.dll explicitly.
+      expect(installer, contains('[InstallDelete]'));
+      expect(installer, contains(r'Type: files; Name: "{app}\resqlite.dll"'));
     });
 
     test('Linux Debian launcher matches GTK application id', () {
@@ -459,9 +500,19 @@ void main() {
       expect(publish, contains('validate_linux_native_archive'));
       expect(publish, contains('lib/libflutter_onnxruntime_plugin.so'));
       expect(publish, contains('lib/libonnxruntime.so.1'));
-      expect(publish, contains('lib/libresqlite.so'));
+      expect(publish, contains('"lib/libsqlite3.so"; do'));
       expect(publish, contains('ELF 64-bit LSB shared object'));
-      expect(publish, contains('resqlite_open_with_extensions'));
+      expect(publish, contains(r'$NF == "sqlite3_open_v2"'));
+      expect(publish, contains(r'$NF == "sqlite3_libversion"'));
+      expect(
+        publish,
+        contains(r'[ ! -e "$archive_dir/lib/libresqlite.so" ] ||'),
+      );
+      expect(
+        publish,
+        contains('die "stale lib/libresqlite.so in Linux updater archive"'),
+      );
+      expect(publish, isNot(contains('resqlite_open')));
       expect(
         publish,
         contains("grep -Fq 'Shared library: [libonnxruntime.so.1]'"),
@@ -486,9 +537,27 @@ void main() {
       final verifier =
           File('tool/verify_desktop_app_archive.dart').readAsStringSync();
 
-      expect(verifier, contains("'Frameworks/resqlite.framework/Versions/'"));
-      expect(verifier, contains("'resqlite.dll'"));
-      expect(verifier, contains("'lib/libresqlite.so'"));
+      expect(verifier, contains("'Frameworks/sqlite3.framework/Versions/'"));
+      expect(verifier, contains("'sqlite3.dll'"));
+      expect(verifier, contains("'lib/libsqlite3.so'"));
+      expect(verifier, contains('_hasVersionedMacSqlite3Binary'));
+      final requiredArchivePaths =
+          verifier.split('const _requiredArchivePaths').last.split('};').first;
+      expect(requiredArchivePaths, isNot(contains('resqlite')));
+      expect(
+        verifier,
+        contains(
+          "const _staleResqliteFiles = <String>['resqlite.dll', "
+          "'lib/libresqlite.so'];",
+        ),
+      );
+      expect(
+        verifier,
+        contains(
+          "const _staleResqliteMacPrefix = 'Frameworks/resqlite.framework/';",
+        ),
+      );
+      expect(verifier, contains('archive contains stale resqlite file'));
       expect(verifier, contains("'lib/libonnxruntime.so.1'"));
     });
 
@@ -530,14 +599,8 @@ void main() {
           File('scripts/r2_publish_release.py').readAsStringSync();
 
       expect(publisher, contains('KEEP_RELEASES_PER_PLATFORM = 1'));
-      expect(
-        publisher,
-        contains('candidates[:KEEP_RELEASES_PER_PLATFORM]'),
-      );
-      expect(
-        publisher,
-        contains('candidates[KEEP_RELEASES_PER_PLATFORM:]'),
-      );
+      expect(publisher, contains('candidates[:KEEP_RELEASES_PER_PLATFORM]'));
+      expect(publisher, contains('candidates[KEEP_RELEASES_PER_PLATFORM:]'));
       expect(publisher, contains('publisher.list_keys(archive_root)'));
       expect(publisher, isNot(contains('candidates[:2]')));
       expect(publisher, isNot(contains('candidates[2:]')));

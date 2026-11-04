@@ -2308,12 +2308,13 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         storedPaths: paths,
       );
       await _workspaceRepository.deletePlayerWorkspaceDirectory(player.id);
-      // Purge exactly this player's tombstoned sources in one connection. Small
-      // batches trade throughput for predictable foreground frame times.
+      // Purge exactly this player's tombstoned sources in one connection.
+      // Batches start small and grow only while each stays a few ms long, so
+      // other queued cache writes keep interleaving with the purge.
       stage = 'purge_cache';
       await _localRepository.deleteCachedSourcesAwaitingPurge(
         sourcePaths: cacheScopes,
-        batchSize: 64,
+        batchSize: 128,
         cleanupOrphanMetadata: false,
         checkpoint: false,
       );

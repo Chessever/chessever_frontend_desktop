@@ -191,24 +191,29 @@ validate_linux_native_archive() {
     "Chessever" \
     "lib/libflutter_onnxruntime_plugin.so" \
     "lib/libonnxruntime.so.1" \
-    "lib/libresqlite.so"; do
+    "lib/libsqlite3.so"; do
     [ -s "$archive_dir/$relative" ] ||
       die "Linux updater archive is missing required native file $relative"
   done
 
-  local resqlite="$archive_dir/lib/libresqlite.so"
-  local resqlite_info
-  resqlite_info="$(LC_ALL=C file "$resqlite")" ||
-    die "unable to inspect $resqlite"
-  case "$resqlite_info" in
+  # package:sqlite3 replaced package:resqlite. A build directory reused from an
+  # older revision can still carry the old library, and it must never ship.
+  [ ! -e "$archive_dir/lib/libresqlite.so" ] ||
+    die "stale lib/libresqlite.so in Linux updater archive"
+
+  local sqlite3="$archive_dir/lib/libsqlite3.so"
+  local sqlite3_info
+  sqlite3_info="$(LC_ALL=C file "$sqlite3")" ||
+    die "unable to inspect $sqlite3"
+  case "$sqlite3_info" in
     *"ELF 64-bit LSB shared object"*"x86-64"*) ;;
-    *) die "libresqlite.so must be an x86-64 ELF shared object: $resqlite_info" ;;
+    *) die "libsqlite3.so must be an x86-64 ELF shared object: $sqlite3_info" ;;
   esac
-  nm -D --defined-only "$resqlite" | awk '
-    $NF == "resqlite_open" { open = 1 }
-    $NF == "resqlite_open_with_extensions" { extensions = 1 }
-    END { exit !(open && extensions) }
-  ' || die "libresqlite.so is missing required resqlite exports"
+  nm -D --defined-only "$sqlite3" | awk '
+    $NF == "sqlite3_open_v2" { open = 1 }
+    $NF == "sqlite3_libversion" { version = 1 }
+    END { exit !(open && version) }
+  ' || die "libsqlite3.so is missing required sqlite3 exports"
 
   readelf -d "$archive_dir/lib/libflutter_onnxruntime_plugin.so" |
     grep -Fq 'Shared library: [libonnxruntime.so.1]' ||

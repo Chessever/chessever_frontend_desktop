@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/models/player_download_preferences.dart';
@@ -17,14 +17,14 @@ import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 
 void main() {
   late Directory temp;
-  late resqlite.Database db;
+  late localsql.Database db;
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp(
       'chessever-player-delete-tombstone-',
     );
-    db = await resqlite.Database.open(p.join(temp.path, 'local_chess.db'));
-    await createLocalChessResqliteDatabaseSchema(db);
+    db = await localsql.Database.open(p.join(temp.path, 'local_chess.db'));
+    await createLocalChessCacheDatabaseSchema(db);
   });
 
   tearDown(() async {
@@ -424,7 +424,7 @@ Future<
     PlayerWorkspaceAccount account,
   })
 >
-_activeChessComSyncHarness(Directory root, resqlite.Database db) async {
+_activeChessComSyncHarness(Directory root, localsql.Database db) async {
   final player = await _playerWithGeneratedChessComFile(root);
   final account = player.account(PlayerWorkspaceSource.chesscom)!;
   final repository = _TrackingWorkspaceRepository(
@@ -540,7 +540,7 @@ class _TrackingWorkspaceRepository extends PlayerWorkspaceRepository {
 }
 
 class _FailOnceLocalRepository extends LocalChessDatabaseRepository {
-  _FailOnceLocalRepository(resqlite.Database db)
+  _FailOnceLocalRepository(localsql.Database db)
     : super(database: () async => db);
 
   var _shouldFail = true;
@@ -604,7 +604,7 @@ class _SupersededSyncWorkspaceRepository extends _TrackingWorkspaceRepository {
 }
 
 Future<void> _seedCachedDatabase(
-  resqlite.Database db,
+  localsql.Database db,
   String databasePath,
 ) async {
   final now = DateTime.now().millisecondsSinceEpoch;

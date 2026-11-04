@@ -40,6 +40,7 @@ import 'package:chessever/desktop/auth/desktop_player_profile_access.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/mac_sandbox_file_picker.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
+import 'package:chessever/desktop/services/stale_native_asset_cleanup.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/auth/desktop_apple_credential_lifecycle.dart';
 import 'package:chessever/desktop/services/desktop_ui_stall_monitor.dart';
@@ -367,6 +368,12 @@ Future<void> _desktopBoot({
   // verified update is staged.
   if (DesktopBuildIdentity.current.updatesEnabled) {
     _updaterStartup.schedule();
+    // An in-app update cannot remove a framework's symlinks, so a framework
+    // that left the app (resqlite) stays behind as a skeleton outside the
+    // code seal. Independent of the updater; macOS direct downloads only.
+    unawaited(
+      removeStaleMacNativeAssets(log: (message) => print('[desktop] $message')),
+    );
   } else {
     print('[desktop] production updater disabled for development build');
   }

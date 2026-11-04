@@ -328,23 +328,33 @@ APP="dist/${BUILD}/${PACKAGE_NAME}-${RELEASE_VERSION}-${UPDATE_PLATFORM}/${PACKA
 [ -d "$APP" ] || die "missing desktop_updater release app at $APP"
 validate_versioned_frameworks "$APP/Contents/Frameworks"
 
-RESQLITE_FRAMEWORK="$APP/Contents/Frameworks/resqlite.framework"
-RESQLITE_BIN="$RESQLITE_FRAMEWORK/resqlite"
-[ -d "$RESQLITE_FRAMEWORK" ] || die "missing resqlite.framework from macOS app"
-[ -L "$RESQLITE_BIN" ] || die "missing resqlite framework launcher at $RESQLITE_BIN"
-[ -x "$RESQLITE_BIN" ] || die "resqlite framework launcher is not executable at $RESQLITE_BIN"
-RESQLITE_FILE_INFO="$(file "$RESQLITE_BIN")" || die "unable to inspect $RESQLITE_BIN"
-echo "$RESQLITE_FILE_INFO"
-case "$RESQLITE_FILE_INFO" in
+# package:sqlite3 replaced package:resqlite. A build directory reused from an
+# older revision can still carry the old framework, and it must never ship.
+[ ! -e "$APP/Contents/Frameworks/resqlite.framework" ] || die "stale resqlite.framework in app bundle"
+
+SQLITE3_FRAMEWORK="$APP/Contents/Frameworks/sqlite3.framework"
+SQLITE3_BIN="$SQLITE3_FRAMEWORK/sqlite3"
+[ -d "$SQLITE3_FRAMEWORK" ] || die "missing sqlite3.framework from macOS app"
+[ -L "$SQLITE3_BIN" ] || die "missing sqlite3 framework launcher at $SQLITE3_BIN"
+# No exec-bit check: package:sqlite3's prebuilt dylib ships as mode 0644, dyld
+# loads it without +x, and the Mach-O / per-arch symbol checks below plus the
+# strict codesign verification prove the binary.
+SQLITE3_FILE_INFO="$(file "$SQLITE3_BIN")" || die "unable to inspect $SQLITE3_BIN"
+echo "$SQLITE3_FILE_INFO"
+case "$SQLITE3_FILE_INFO" in
   *Mach-O*) ;;
-  *) die "resqlite framework launcher is not a Mach-O binary" ;;
+  *) die "sqlite3 framework launcher is not a Mach-O binary" ;;
 esac
-lipo -info "$RESQLITE_BIN"
-lipo "$RESQLITE_BIN" -verify_arch arm64 x86_64 ||
-  die "resqlite framework must contain arm64 and x86_64 slices"
-nm -gU "$RESQLITE_BIN" | awk '$NF == "_resqlite_open" { found = 1 } END { exit !found }' ||
-  die "resqlite_open is not exported"
-otool -L "$RESQLITE_BIN"
+lipo -info "$SQLITE3_BIN"
+# One arch per -verify_arch call: newer lipo releases reject a list of archs
+# ("-verify_arch requires exactly one input file").
+for arch in arm64 x86_64; do
+  lipo "$SQLITE3_BIN" -verify_arch "$arch" ||
+    die "sqlite3 framework must contain arm64 and x86_64 slices (missing $arch)"
+  nm -gU -arch "$arch" "$SQLITE3_BIN" | awk '$NF == "_sqlite3_open_v2" { found = 1 } END { exit !found }' ||
+    die "sqlite3_open_v2 is not exported from the $arch slice"
+done
+otool -L "$SQLITE3_BIN"
 
 require_env APP_STORE_CONNECT_KEY_IDENTIFIER
 require_env APP_STORE_CONNECT_ISSUER_ID

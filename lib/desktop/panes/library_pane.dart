@@ -11837,7 +11837,7 @@ class LocalDatabaseWorkspaceKey {
 /// Loads a persisted local database source and keeps it cached for the session.
 ///
 /// A source that was already imported and persisted loads from its warm
-/// resqlite cache and is then pinned with [KeepAliveLink] so re-opening the
+/// local cache and is then pinned with [KeepAliveLink] so re-opening the
 /// same database (Library tab, Players "Games" tab) is instant — never
 /// re-showing a loading indicator. Content changes flow through the key's
 /// [LocalDatabaseWorkspaceKey.revision]; explicit refresh invalidates the entry.

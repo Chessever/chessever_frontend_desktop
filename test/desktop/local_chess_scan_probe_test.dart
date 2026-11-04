@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -76,10 +76,10 @@ void main() {
           final file = File('${dbFile.path}$suffix');
           if (file.existsSync()) file.deleteSync();
         }
-        final db = await resqlite.Database.open(dbFile.path);
+        final db = await localsql.Database.open(dbFile.path);
         addTearDown(db.close);
         await db.execute('PRAGMA foreign_keys=ON');
-        await createLocalChessResqliteDatabaseSchema(db);
+        await createLocalChessCacheDatabaseSchema(db);
         final repo = LocalChessDatabaseRepository(database: () async => db);
         final persistSw = Stopwatch()..start();
         await repo.persistFileNode(fileNode, sourceLabel: source.label);
@@ -152,10 +152,10 @@ void main() {
           if (file.existsSync()) file.deleteSync();
         }
       }
-      final db = await resqlite.Database.open(dbFile.path);
+      final db = await localsql.Database.open(dbFile.path);
       addTearDown(db.close);
       await db.execute('PRAGMA foreign_keys=ON');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       final repo = LocalChessDatabaseRepository(database: () async => db);
 
       var progressEvents = 0;
@@ -226,10 +226,10 @@ void main() {
         final file = File('${dbFile.path}$suffix');
         if (file.existsSync()) file.deleteSync();
       }
-      final db = await resqlite.Database.open(dbFile.path);
+      final db = await localsql.Database.open(dbFile.path);
       addTearDown(db.close);
       await db.execute('PRAGMA foreign_keys=ON');
-      await createLocalChessResqliteDatabaseSchema(db);
+      await createLocalChessCacheDatabaseSchema(db);
       final repo = LocalChessDatabaseRepository(database: () async => db);
 
       final importSw = Stopwatch()..start();
@@ -314,13 +314,13 @@ void main() {
       final dbFile = File(dbPath);
       expect(dbFile.existsSync(), isTrue, reason: 'DB not found: $dbPath');
 
-      final db = await resqlite.Database.open(dbPath);
+      final db = await localsql.Database.open(dbPath);
       addTearDown(db.close);
       await db.execute('PRAGMA foreign_keys=ON');
       final repo = LocalChessDatabaseRepository(
         database: () async => db,
         purgeDatabase: () async {
-          final purgeDb = await resqlite.Database.open(dbPath);
+          final purgeDb = await localsql.Database.open(dbPath);
           await purgeDb.execute('PRAGMA foreign_keys=ON');
           await purgeDb.execute('PRAGMA journal_mode=WAL');
           await purgeDb.execute('PRAGMA synchronous=NORMAL');

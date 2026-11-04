@@ -61,10 +61,17 @@ if [ -e "$APP" ]; then
   exit 1
 fi
 ditto "$REPO_ROOT/build/macos/Build/Products/Release/chessever.app" "$APP"
+# package:sqlite3 replaced package:resqlite. A build directory reused from an
+# older revision can still carry the old framework, and it must never ship.
+if [ -e "$APP/Contents/Frameworks/resqlite.framework" ]; then
+  echo "Stale resqlite.framework in $APP; remove build/macos and rebuild." >&2
+  exit 1
+fi
 # An App Store package must run on both supported Mac architectures.
 for binary in "$APP/Contents/MacOS/chessever" \
   "$APP/Contents/Frameworks/App.framework/App" \
-  "$APP/Contents/Frameworks/FlutterMacOS.framework/FlutterMacOS"; do
+  "$APP/Contents/Frameworks/FlutterMacOS.framework/FlutterMacOS" \
+  "$APP/Contents/Frameworks/sqlite3.framework/sqlite3"; do
   for architecture in arm64 x86_64; do
     lipo "$binary" -verify_arch "$architecture"
   done

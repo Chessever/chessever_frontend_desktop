@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:dartchess/dartchess.dart' show Chess;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resqlite/resqlite.dart' as resqlite;
+import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
@@ -49,7 +49,7 @@ void main() {
     'SQL and Dart keys agree on explicit name conventions and whitespace',
     () async {
       final dir = await Directory.systemTemp.createTemp('player-name-parity-');
-      final db = await resqlite.Database.open('${dir.path}/names.db');
+      final db = await localsql.Database.open('${dir.path}/names.db');
       addTearDown(() async {
         await db.close();
         await dir.delete(recursive: true);
@@ -109,12 +109,12 @@ void main() {
 
 Future<({int moves, int games})> _sqlCounts(String pgn) async {
   final dir = await Directory.systemTemp.createTemp('player-source-sql-');
-  final db = await resqlite.Database.open('${dir.path}/isolated.db');
+  final db = await localsql.Database.open('${dir.path}/isolated.db');
   addTearDown(() async {
     await db.close();
     await dir.delete(recursive: true);
   });
-  await createLocalChessResqliteDatabaseSchema(db);
+  await createLocalChessCacheDatabaseSchema(db);
   final file = File('${dir.path}/unique-source.pgn');
   await file.writeAsString(pgn);
   final source = await scanLocalChessPaths([file.path]);

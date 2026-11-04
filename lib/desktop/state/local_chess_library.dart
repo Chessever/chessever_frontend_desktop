@@ -326,7 +326,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       return true;
     }
     // Do NOT enter the scanning state up front. A source that was already
-    // imported and persisted loads from its warm resqlite cache instantly and
+    // imported and persisted loads from its warm local cache instantly and
     // must open without ever re-showing the loading popup. Only a genuine cache
     // miss (import/scan) or a slow restore/migration — which emits progress —
     // flips `isScanning` on below.
@@ -923,7 +923,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     );
   }
 
-  /// Imports pure PGN/file lists through the same resqlite cache path single
+  /// Imports pure PGN/file lists through the same local cache path single
   /// file import uses. Multi-file picks used to fall straight into the slower
   /// scanner path and skip `importSingleFileSource`, which made large multi-PGN
   /// imports feel stuck and left the cache colder than a single-file import.
