@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
@@ -17,14 +19,22 @@ import 'package:chessever/widgets/paywall/premium_paywall_sheet.dart';
 ///
 /// * allowed: returns true.
 /// * checking: progress copy, returns false. Never an upsell.
-/// * premiumRequired: explains the specific rule ([title], [body]) and only
-///   opens the paywall if the user asks for it.
+/// * premiumRequired: webapp opens the compact paywall directly; native desktop
+///   retains the explanation ([title], [body]) before offering Premium.
 /// * anything else: Retry copy, never a purchase prompt.
 Future<bool> resolveDesktopDateGate(
   BuildContext context, {
   required DesktopAccessDecision Function() evaluate,
   required String title,
   required String body,
+  DesktopAccessContext? accessContext,
+  bool isWebApp = kIsWeb,
+  // Injectable presentation boundary for tests; never grants access itself.
+  Future<bool> Function(
+    BuildContext context,
+    DesktopAccessDecision decision,
+    DesktopAccessContext? accessContext,
+  )? presentPaywall,
 }) async {
   final decision = evaluate();
   switch (decision.outcome) {
@@ -37,6 +47,19 @@ Future<bool> resolveDesktopDateGate(
       );
       return false;
     case DesktopAccess.premiumRequired:
+      if (isWebApp) {
+        if (presentPaywall != null) {
+          await presentPaywall(context, decision, accessContext);
+        } else {
+          await showPremiumPaywallSheet(
+            context: context,
+            desktopDecision: decision,
+            desktopAccessContext: accessContext,
+          );
+        }
+        // Closing the dialog, or a claimed purchase result, is not admission.
+        return context.mounted && evaluate().isAllowed;
+      }
       final wantsPremium =
           await showDesktopDialog<bool>(
             context,

@@ -145,6 +145,10 @@ DesktopPaywallCopy _unavailableCopy(
 String _sourceName(DesktopAccessContext? context) {
   final origin = context?.origin;
   switch (origin) {
+    case DesktopDiscoveryOrigin.favorites:
+      return 'Favorites';
+    case DesktopDiscoveryOrigin.miniatures:
+      return 'Miniatures';
     case DesktopDiscoveryOrigin.countrymen:
       return 'Countrymen';
     case DesktopDiscoveryOrigin.smartCollection:

@@ -92,6 +92,7 @@ Future<void> openCommunityLikesGame(
                 "from today's ranking; Premium opens every day."
             : 'Browsing every ranking is free. Free opens games from '
                 "today's ranking; Premium opens every week, month and year.",
+    accessContext: communityLikesAccessContext(query, DesktopAction.openContent),
   );
   if (!admitted || !context.mounted) return;
 

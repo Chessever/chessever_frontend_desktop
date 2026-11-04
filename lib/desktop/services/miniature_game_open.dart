@@ -73,6 +73,7 @@ Future<void> openMiniatureGame(
     evaluate: evaluate,
     title: miniatureGateTitle(game),
     body: miniatureGateBody(game),
+    accessContext: miniatureGameAccessContext(game, DesktopAction.openContent),
   );
   if (!admitted || !context.mounted) return;
 
