@@ -508,12 +508,13 @@ class EventRailGamesNotifier
   /// row-derived headings instead of failing the whole load.
   Future<List<EventRailRoundMetadata>> _loadRoundCatalogOrEmpty(
     GameRepository repository,
-    String tourId,
-  ) async {
+    String tourId, {
+    List<EventRailRoundMetadata> fallback = const <EventRailRoundMetadata>[],
+  }) async {
     try {
       return await repository.getEventRailRoundsByTourId(tourId);
     } catch (_) {
-      return const <EventRailRoundMetadata>[];
+      return fallback;
     }
   }
 
@@ -949,10 +950,14 @@ class EventRailGamesNotifier
     var result = false;
     try {
       final repository = ref.read(gameRepositoryProvider);
-      final newestStartedRoundFuture = _loadNewestStartedRoundPage(
+      final roundCatalogFuture = _loadRoundCatalogOrEmpty(
         repository,
-        current.roundCatalog,
-        current.games,
+        tourId,
+        fallback: current.roundCatalog,
+      );
+      final newestStartedRoundFuture = roundCatalogFuture.then(
+        (catalog) =>
+            _loadNewestStartedRoundPage(repository, catalog, current.games),
       );
       final canonicalFuture = repository.getEventRailGamesByTourId(
         tourId,
@@ -979,6 +984,7 @@ class EventRailGamesNotifier
       final selectedRoundGames = pages[1];
       final sampledPageGames = pages[2];
       final newestStartedRoundGames = await newestStartedRoundFuture;
+      final roundCatalog = await roundCatalogFuture;
       final fetchedTotalCount = await totalCountFuture;
       if (_disposed ||
           !_isActive ||
@@ -1056,9 +1062,8 @@ class EventRailGamesNotifier
         games: refreshedGames,
         nextOffset: nextOffset,
         totalCount: totalCount,
-        // Same reason as in loadMore: the periodic refresh must not erase the
-        // round catalog, or the rail reshuffles on its own timer.
-        roundCatalog: current.roundCatalog,
+        // Discover appended rounds even when the retained game pages are stable.
+        roundCatalog: roundCatalog,
         hasMore:
             gameSetChanged
                 ? resetHasMore
@@ -1395,8 +1400,20 @@ bool _eventRailStatesEqual(
       current.hasMore != incoming.hasMore ||
       current.isLoadingMore != incoming.isLoadingMore ||
       current.loadMoreError != incoming.loadMoreError ||
-      current.games.length != incoming.games.length) {
+      current.games.length != incoming.games.length ||
+      current.roundCatalog.length != incoming.roundCatalog.length) {
     return false;
+  }
+
+  for (var index = 0; index < current.roundCatalog.length; index++) {
+    final left = current.roundCatalog[index];
+    final right = incoming.roundCatalog[index];
+    if (left.id != right.id ||
+        left.name != right.name ||
+        left.startsAt != right.startsAt ||
+        left.createdAt != right.createdAt) {
+      return false;
+    }
   }
 
   for (var index = 0; index < current.games.length; index++) {

@@ -1868,6 +1868,70 @@ void main() {
       expect(failed.loadMoreError, contains('page unavailable'));
     });
 
+    test(
+      'refresh publishes new headings without game changes and survives catalog errors',
+      () async {
+        const firstRound = EventRailRoundMetadata(
+          id: 'round-1',
+          name: 'Round 1',
+          startsAt: null,
+          createdAt: null,
+        );
+        const nextRound = EventRailRoundMetadata(
+          id: 'round-2',
+          name: 'Round 2',
+          startsAt: null,
+          createdAt: null,
+        );
+        final game = _game(id: 'game-1', roundId: 'round-1', boardNumber: 1);
+        final repository = _FakeGameRepository(
+          firstTourPage: <Games>[game],
+          selectedRoundPage: <Games>[game],
+          selectedGame: game,
+          totalCount: 1,
+          roundCatalog: <EventRailRoundMetadata>[firstRound],
+        );
+        final container = _container(repository);
+        addTearDown(container.dispose);
+        const key = BoardTabEventGamesKey(
+          tourId: 'tour-1',
+          selectedGameId: 'game-1',
+          selectedRoundId: 'round-1',
+          selectedBoardNumber: 1,
+        );
+        final provider = eventRailGamesProvider(_providerKey(key));
+        final subscription = container.listen(provider, (_, __) {});
+        addTearDown(subscription.close);
+        final initial = await container.read(provider.future);
+        repository.roundCatalog = <EventRailRoundMetadata>[
+          firstRound,
+          nextRound,
+        ];
+        expect(
+          await container.read(provider.notifier).refreshLoadedMetadata(),
+          isTrue,
+        );
+        final refreshed = container.read(provider).requireValue;
+        expect(refreshed.roundCatalog.map((round) => round.id), <String>[
+          'round-1',
+          'round-2',
+        ]);
+        expect(
+          refreshed.games.map((game) => game.id),
+          initial.games.map((game) => game.id),
+        );
+        repository.roundCatalogError = StateError('catalog unavailable');
+        expect(
+          await container.read(provider.notifier).refreshLoadedMetadata(),
+          isTrue,
+        );
+        expect(
+          container.read(provider).requireValue.roundCatalog,
+          same(refreshed.roundCatalog),
+        );
+      },
+    );
+
     test('bounded safety refresh discovers set changes atomically', () async {
       final firstTourPage = List<Games>.generate(
         kEventRailGamesPageSize,
@@ -1975,15 +2039,12 @@ void main() {
           totalCount: kEventRailGamesPageSize,
           allRoundGames: roundEightGames,
           roundCatalog: <EventRailRoundMetadata>[
-            for (var round = 8; round <= 11; round++)
-              EventRailRoundMetadata(
-                id: 'round-$round',
-                name: 'Round $round',
-                // The source can publish higher round numbers with timestamps
-                // older than the current round's timestamp.
-                startsAt: DateTime.utc(2026, 9, 3, 20 - round),
-                createdAt: DateTime.utc(2026, 9, 3, 20 - round),
-              ),
+            EventRailRoundMetadata(
+              id: 'round-8',
+              name: 'Round 8',
+              startsAt: DateTime.utc(2026, 9, 3, 12),
+              createdAt: DateTime.utc(2026, 9, 3, 12),
+            ),
           ],
         );
         final container = _container(repository);
@@ -2009,6 +2070,16 @@ void main() {
           isNot(contains(roundNine.id)),
         );
 
+        repository.roundCatalog = <EventRailRoundMetadata>[
+          ...repository.roundCatalog,
+          for (var round = 9; round <= 11; round++)
+            EventRailRoundMetadata(
+              id: 'round-$round',
+              name: 'Round $round',
+              startsAt: DateTime.utc(2026, 9, 3, 20 - round),
+              createdAt: DateTime.utc(2026, 9, 3, 20 - round),
+            ),
+        ];
         repository
           ..allRoundGames = <Games>[...roundEightGames, roundNine]
           ..totalCount = kEventRailGamesPageSize + 1;
@@ -2020,7 +2091,8 @@ void main() {
 
         final refreshed = container.read(provider).requireValue;
         expect(refreshed.games.map((game) => game.id), contains(roundNine.id));
-        expect(repository.roundCatalogCalls, <String>['tour-1']);
+        expect(refreshed.roundCatalog, hasLength(4));
+        expect(repository.roundCatalogCalls, <String>['tour-1', 'tour-1']);
         expect(
           repository.roundIdsPageCalls,
           contains(
@@ -3121,6 +3193,7 @@ class _FakeGameRepository implements GameRepository {
   List<Games> smartGames;
   Object? roundPageError;
   Object? countError;
+  Object? roundCatalogError;
 
   final List<_PageCall> tourPageCalls = <_PageCall>[];
   final List<_PageCall> roundPageCalls = <_PageCall>[];
@@ -3206,6 +3279,7 @@ class _FakeGameRepository implements GameRepository {
     String tourId,
   ) async {
     roundCatalogCalls.add(tourId);
+    if (roundCatalogError != null) throw roundCatalogError!;
     return roundCatalog;
   }
 
