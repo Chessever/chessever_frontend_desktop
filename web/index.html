@@ -22,6 +22,62 @@
   <title>ChessEver</title>
   <link rel="manifest" href="manifest.json">
 
+  <script id="chessever-web-analytics">
+    // Browser-only, coarse page-load measurement. Never bridge the native
+    // AnalyticsService: its account/chess metadata must not enter this stream.
+    (function () {
+      var id = 'G-06TRX0SNEF';
+      if (window.__chesseverWebAnalyticsStarted ||
+          location.origin !== 'https://app.chessever.com' ||
+          // Do not load third-party analytics on OAuth callbacks or any URL
+          // carrying query/fragment data. Leave the URL intact for auth.
+          location.search || location.hash ||
+          navigator.globalPrivacyControl === true ||
+          navigator.doNotTrack === '1' || window.doNotTrack === '1' ||
+          window['ga-disable-' + id] === true) return;
+      window.__chesseverWebAnalyticsStarted = true;
+      window.dataLayer = window.dataLayer || [];
+      function gtag() { window.dataLayer.push(arguments); }
+      // No new consent UI or inferred analytics consent. Keep the existing
+      // site's basic analytics behavior, but never enable advertising consent.
+      gtag('consent', 'default', {
+        ad_storage: 'denied', ad_user_data: 'denied',
+        ad_personalization: 'denied'
+      });
+      var page = {
+        page_location: 'https://app.chessever.com/',
+        page_referrer: '',
+        page_title: 'ChessEver Web App'
+      };
+      gtag('set', Object.assign({}, page, {
+        allow_google_signals: false,
+        allow_ad_personalization_signals: false,
+        ads_data_redaction: true,
+        url_passthrough: false,
+        ignore_referrer: true,
+        campaign_id: '', campaign_source: '', campaign_medium: '',
+        campaign_name: '', campaign_term: '', campaign_content: ''
+      }));
+      gtag('js', new Date());
+      gtag('config', id, Object.assign({}, page, {
+        send_page_view: false,
+        allow_google_signals: false,
+        allow_ad_personalization_signals: false,
+        // Host-only cookie: do not mix website and browser-app visitors.
+        cookie_domain: 'app.chessever.com',
+        cookie_prefix: 'ce_web',
+        cookie_flags: 'SameSite=Lax;Secure'
+      }));
+      gtag('event', 'page_view', Object.assign({ send_to: id }, page));
+      var script = document.createElement('script');
+      script.async = true;
+      // Prevent the script request's Referer header leaking an arrival path.
+      script.referrerPolicy = 'no-referrer';
+      script.src = 'https://www.googletagmanager.com/gtag/js?id=' + id;
+      document.head.appendChild(script);
+    })();
+  </script>
+
   <style>
     html, body { margin: 0; height: 100%; background: #0c0c0e; }
     #boot {
