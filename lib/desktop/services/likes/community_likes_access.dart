@@ -3,7 +3,6 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
-import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/services/likes/community_likes_models.dart';
@@ -47,23 +46,6 @@ DesktopAccessDecision communityLikesOpenDecision(
   );
 }
 
-/// Whether this ranking's cards are drawn locked at rest. A loading
-/// membership is not drawn locked.
-bool communityLikesLockedAtRest(
-  CommunityLikesQuery query, {
-  required SubscriptionState subscription,
-  required DesktopEntitlementSnapshot entitlement,
-  DateTime? now,
-}) {
-  return communityLikesOpenDecision(
-        query,
-        subscription: subscription,
-        entitlement: entitlement,
-        now: now,
-      ).outcome ==
-      DesktopAccess.premiumRequired;
-}
-
 /// Opens a ranked game after checking access at the moment of the click. A
 /// denied open starts no work (no tab, no PGN fetch).
 Future<void> openCommunityLikesGame(
@@ -92,7 +74,10 @@ Future<void> openCommunityLikesGame(
                 "from today's ranking; Premium opens every day."
             : 'Browsing every ranking is free. Free opens games from '
                 "today's ranking; Premium opens every week, month and year.",
-    accessContext: communityLikesAccessContext(query, DesktopAction.openContent),
+    accessContext: communityLikesAccessContext(
+      query,
+      DesktopAction.openContent,
+    ),
   );
   if (!admitted || !context.mounted) return;
 

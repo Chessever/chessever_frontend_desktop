@@ -6,7 +6,7 @@ import 'package:chessever/desktop/panes/desktop_likes_pane.dart';
 import 'package:chessever/desktop/services/likes/community_likes_models.dart';
 import 'package:chessever/desktop/services/likes/community_likes_repository.dart';
 import 'package:chessever/desktop/state/community_likes_providers.dart';
-import 'package:chessever/desktop/widgets/desktop_lock_reasons.dart';
+import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_like_count_heart.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
@@ -251,12 +251,21 @@ void main() {
         .widgetList<DesktopGameCard>(find.byType(DesktopGameCard))
         .map((card) => card.layout);
     expect(layouts, everyElement(DesktopCardLayout.compact));
-    // Week is the default: a weekly ranking is browsable but locked to open.
+    // Week is the default. A free user sees the weekly cards exactly as
+    // Premium does (no lock, no tint, menu on); the open shows the paywall.
     expect(repository.queries.single.period, CommunityLikesPeriod.week);
-    final card = tester.widget<DesktopGameCard>(
-      find.byType(DesktopGameCard).first,
+    expect(
+      tester
+          .widgetList<DesktopGameCard>(find.byType(DesktopGameCard))
+          .map((card) => card.lockedReason),
+      everyElement(isNull),
     );
-    expect(card.lockedReason, kCommunityLikesLockedReason);
+    expect(
+      tester
+          .widgetList<LiveDesktopGameCard>(find.byType(LiveDesktopGameCard))
+          .map((card) => card.enableContextMenu),
+      everyElement(isTrue),
+    );
   });
 
   testWidgets('grid view sets each like count on its board', (tester) async {
@@ -278,7 +287,7 @@ void main() {
             .map((heart) => heart.likes)
             .toList();
     expect(hearts, [1240, 31, 4]);
-    expect(cards.first.lockedReason, kCommunityLikesLockedReason);
+    expect(cards.map((card) => card.lockedReason), everyElement(isNull));
   });
 
   testWidgets('list view follows the choice and gates at the click', (
@@ -294,8 +303,7 @@ void main() {
       cards.map((card) => card.layout),
       everyElement(DesktopCardLayout.list),
     );
-    // The list card has no locked treatment; the open stays gated.
-    expect(cards.first.lockedReason, isNull);
+    expect(cards.map((card) => card.lockedReason), everyElement(isNull));
     expect(find.byType(DesktopLikeCountHeart), findsNWidgets(3));
   });
 

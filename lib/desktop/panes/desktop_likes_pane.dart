@@ -3,7 +3,6 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
-import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/services/desktop_local_day_clock.dart';
 import 'package:chessever/desktop/services/likes/community_likes_access.dart';
 import 'package:chessever/desktop/services/likes/community_likes_models.dart';
@@ -12,7 +11,6 @@ import 'package:chessever/desktop/state/community_likes_providers.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
-import 'package:chessever/desktop/widgets/desktop_lock_reasons.dart';
 import 'package:chessever/desktop/widgets/desktop_keyboard_action.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
@@ -23,7 +21,6 @@ import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show LiveDesktopGameCard;
-import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -405,12 +402,6 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
           entry,
     ];
     final games = [for (final entry in entries) entry.game];
-    final locked = communityLikesLockedAtRest(
-      query,
-      subscription: ref.watch(subscriptionProvider),
-      entitlement: ref.watch(desktopEntitlementProvider),
-      now: now,
-    );
     final accessContext = communityLikesAccessContext(
       query,
       DesktopAction.openContent,
@@ -420,7 +411,7 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
       ref,
       game,
       query: query,
-      routeGames: locked ? <GamesTourModel>[game] : games,
+      routeGames: games,
     );
 
     final active = ref.watch(
@@ -428,12 +419,6 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
     );
     final metrics = DesktopGameCardsFlow.metricsFor(layout);
     final compact = layout == DesktopCardLayout.compact;
-    // The list card has no locked treatment; its open is still gated at the
-    // click, as every layout's is.
-    final lockedReason =
-        locked && layout != DesktopCardLayout.list
-            ? kCommunityLikesLockedReason
-            : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -502,12 +487,11 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
                                           'Likes',
                                       layout: layout,
                                       selected: selectedId == game.gameId,
-                                      lockedReason: lockedReason,
+                                      // Drawn as Premium sees it, like
+                                      // Countrymen; a denied open (click or
+                                      // menu) shows the paywall instead.
                                       accessContext: accessContext,
                                       onTap: () => open(game),
-                                      // A locked card's Open entries would
-                                      // skip the click-time gate.
-                                      enableContextMenu: !locked,
                                       streamingEnabled: active,
                                     );
                                     return DesktopGameKeyboardItem(

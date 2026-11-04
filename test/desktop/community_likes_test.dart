@@ -220,15 +220,6 @@ void main() {
     test("today's ranking opens free", () {
       final today = CommunityLikesQuery(CommunityLikesPeriod.today, now);
       expect(decide(today).outcome, DesktopAccess.allowed);
-      expect(
-        communityLikesLockedAtRest(
-          today,
-          subscription: free,
-          entitlement: member,
-          now: now,
-        ),
-        isFalse,
-      );
     });
 
     test('earlier days and longer periods are Premium to open', () {
