@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show immutable;
+import 'package:flutter/foundation.dart' show immutable, kIsWeb;
 
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
@@ -180,6 +180,7 @@ DesktopAccessDecision evaluateDesktopAccess({
   required SubscriptionState subscription,
   required DesktopEntitlementSnapshot entitlement,
   DateTime? now,
+  bool isWebApp = kIsWeb,
 }) {
   final at = now ?? DateTime.now();
 
@@ -213,7 +214,7 @@ DesktopAccessDecision evaluateDesktopAccess({
     );
   }
 
-  final requirement = _requirementFor(context, at);
+  final requirement = _requirementFor(context, at, isWebApp: isWebApp);
   final premium = _premiumStatus(subscription, entitlement, at);
 
   final blocked = requirement.blocked;
@@ -292,7 +293,27 @@ const Set<DesktopDiscoveryOrigin> _paidOrigins = {
   DesktopDiscoveryOrigin.playerProfile,
 };
 
-_Requirement _requirementFor(DesktopAccessContext context, DateTime now) {
+_Requirement _requirementFor(
+  DesktopAccessContext context,
+  DateTime now, {
+  required bool isWebApp,
+}) {
+  // Webapp-only paid discovery. Browsing and favorite-player/event management
+  // stay free; game content keeps its source gate through rails and restores.
+  // A retained personal-library copy remains the user's own document.
+  final webappPaidSource =
+      context.feature == DesktopFeature.miniatures ||
+      context.origin == DesktopDiscoveryOrigin.miniatures ||
+      context.origin == DesktopDiscoveryOrigin.favorites;
+  if (isWebApp &&
+      webappPaidSource &&
+      !_paidSourceFreeActions.contains(context.action) &&
+      context.action != DesktopAction.create) {
+    return context.ownershipCovers
+        ? _owned
+        : const _Requirement.premium(DesktopAccessReason.premiumPaidSource);
+  }
+
   // Likes: the 7-day window decides, and owning the like row does NOT
   // short-circuit it (every like is an owned saved row).
   if (context.feature == DesktopFeature.likes ||
