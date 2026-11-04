@@ -90,7 +90,9 @@ jobs:
     needs: preflight
     if: inputs.macos_arm64 || inputs.macos_x64
     runs-on: macos-26
-    timeout-minutes: 90
+    # Signing and notarization precede thousands of individually verified R2
+    # uploads. Leave room for publishing and the always-run cleanup steps.
+    timeout-minutes: 180
     environment: release
     strategy:
       fail-fast: false
@@ -243,7 +245,7 @@ jobs:
             GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
 
       - name: Build and publish macOS package
-        timeout-minutes: 75
+        timeout-minutes: 150
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
