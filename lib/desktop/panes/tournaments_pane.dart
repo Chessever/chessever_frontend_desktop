@@ -63,7 +63,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_pr
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/location_service_provider.dart';
-import 'package:chessever/widgets/event_card/event_image_provider.dart';
+import 'package:chessever/desktop/state/event_artwork_provider.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/logo_pattern_fallback.dart';
 import 'package:chessever/widgets/search/enhanced_group_broadcast_local_storage.dart';
@@ -1079,7 +1079,7 @@ class _DesktopEventVisual extends ConsumerWidget {
             // axis keeps the source aspect intact through decode.
             final cacheWidth =
                 (logicalWidth * dpr).round().clamp(96, 900).toInt();
-            final image = ref.watch(eventImageProvider(event.id));
+            final image = ref.watch(eventArtworkProvider(event.id));
 
             return image.when(
               data: (data) {

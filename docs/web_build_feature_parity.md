@@ -25,6 +25,7 @@ still need a manual pass.
 | Desktop feature | In the browser | How |
 |---|---|---|
 | Live events, games, players, calendar, rankings | Same | Shared code; images from hosts without CORS go through the `/_img` relay (`web_worker/index.js`, `web/index.html`) |
+| Event card artwork | Same | `event_artwork_provider.dart` batches artwork-only tour queries, retains successful covers for 10 minutes across scrolling and tab switches, and retries a failed lookup once. Player metadata no longer delays cover requests; raw tour IDs still resolve sibling artwork |
 | Likes (community ranking from the phone's Discovery) | Same | Library > My Likes > Most liked (free) and the Events > For You shelf open `TabKind.likes` (`desktop_likes_pane.dart`); the `most_liked_ranking_page` RPC plus Gamebase lookups, no platform code. Shared `/app/likes/<period>` links route through `DesktopDeepLinkRouter` in both builds |
 | Like a game from the board | Same | Heart button first in the board's action row (`board_like_button.dart`): writes the same Liked Games row as the phone, shows the `game_like_count` RPC count, and asks a guest to sign in (`showDesktopAccountSignIn`) before liking |
 | Board, notation, explorer, keyboard shortcuts | Same | Browser-reserved chords (Cmd/Ctrl+W, T, Tab) also answer to Alt (`browser_safe_shortcuts.dart`) |
