@@ -3,6 +3,7 @@ import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
+import 'package:chessever/desktop/state/desktop_web_board_position.dart';
 import 'package:chessever/desktop/widgets/library/game_video_submission.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -927,6 +928,38 @@ class _BoardPaneContent extends HookConsumerWidget {
     final flipped = useState<bool>(
       restoredSession?.flipped ?? boardArgs?.initialBoardFlipped ?? false,
     );
+    final webPosition = ref.watch(
+      desktopWebBoardPositionByTabIdProvider.select(
+        (positions) => positions[activeTabId],
+      ),
+    );
+    final appliedWebPosition = useRef<DesktopWebBoardPosition?>(null);
+    useEffect(() {
+      if (webPosition == null ||
+          identical(webPosition, appliedWebPosition.value)) {
+        return null;
+      }
+      if ((webPosition.ply ?? 0) > 0 && chessGame.value.mainline.isEmpty) {
+        return null;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted ||
+            identical(webPosition, appliedWebPosition.value)) {
+          return;
+        }
+        final game = chessGame.value;
+        final fenPointer = _pointerForInitialFen(game, webPosition.fen);
+        if (fenPointer != null) {
+          pointer.value = fenPointer;
+        } else if (webPosition.ply != null) {
+          final ply = webPosition.ply!.clamp(0, game.mainline.length);
+          pointer.value = ply == 0 ? const <int>[] : <int>[ply - 1];
+        }
+        flipped.value = webPosition.flipped;
+        appliedWebPosition.value = webPosition;
+      });
+      return null;
+    }, [webPosition, chessGame.value.mainline.length]);
     final autoReplay = useState<bool>(false);
     final focusNode = useFocusNode();
     final explorerPreviewUci = useState<String?>(null);

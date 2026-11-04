@@ -7,6 +7,8 @@ import 'package:web/web.dart' as web;
 import 'package:chessever/desktop/services/desktop_web_location.dart';
 import 'package:chessever/desktop/services/desktop_web_navigation.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/active_tournament.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
 
 class _HistoryPage {
   const _HistoryPage(this.tabId, this.path, this.restore);
@@ -21,6 +23,8 @@ class WebUrlSync {
   WebUrlSync._();
 
   static ProviderSubscription<String>? _location;
+  static ProviderSubscription<({String id, bool userSelected})?>? _round;
+  static Future<void> _restores = Future<void>.value();
   static JSFunction? _onPopState;
   static final Map<int, _HistoryPage> _pages = {};
   static bool _restoring = false;
@@ -112,9 +116,38 @@ class WebUrlSync {
     }
 
     _location = container.listen(desktopWebLocationProvider, (_, _) => sync());
+    _round = container.listen<({String id, bool userSelected})?>(
+      userSelectedRoundProvider,
+      (_, next) {
+        final tab = container.read(desktopTabsProvider).active;
+        if (_restoring ||
+            next == null ||
+            !next.userSelected ||
+            tab?.kind != TabKind.tournamentDetail) {
+          return;
+        }
+        final event = container.read(tournamentByTabIdProvider)[tab!.id];
+        if (event == null) return;
+        container
+            .read(desktopWebRoundByTabIdProvider.notifier)
+            .update(
+              (rounds) => {
+                ...rounds,
+                tab.id: (eventId: event.id, roundId: next.id),
+              },
+            );
+      },
+    );
     _onPopState =
         ((web.PopStateEvent event) {
-          unawaited(_restore(container, event.state));
+          final uri = Uri.parse(web.window.location.href);
+          final state = event.state;
+          _restores = _restores.catchError((Object _) {}).then((_) async {
+            if (generation == _generation) {
+              await _restore(container, state, uri);
+            }
+          });
+          unawaited(_restores);
         }).toJS;
     web.window.addEventListener('popstate', _onPopState);
   }
@@ -122,13 +155,14 @@ class WebUrlSync {
   static Future<void> _restore(
     ProviderContainer container,
     JSAny? state,
+    Uri uri,
   ) async {
     final decoded = state?.dartify();
     final index =
         decoded is Map && decoded['chessever'] == true
             ? decoded['index']
             : null;
-    final path = _browserPath();
+    final path = uri.hasQuery ? '${uri.path}?${uri.query}' : uri.path;
     final page = index is num ? _pages[index.toInt()] : null;
     _restoring = true;
     try {
@@ -142,10 +176,7 @@ class WebUrlSync {
       if (exists) {
         page.restore();
       } else {
-        await openDesktopWebLocation(
-          Uri.parse(web.window.location.href),
-          container,
-        );
+        await openDesktopWebLocation(uri, container);
       }
       _pin(container, path);
       _pages[_index] = _capture(container, path);
@@ -159,6 +190,8 @@ class WebUrlSync {
     _generation++;
     _location?.close();
     _location = null;
+    _round?.close();
+    _round = null;
     final listener = _onPopState;
     if (listener != null) web.window.removeEventListener('popstate', listener);
     _onPopState = null;

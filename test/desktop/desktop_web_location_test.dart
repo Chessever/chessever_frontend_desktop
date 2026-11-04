@@ -1,3 +1,8 @@
+import 'package:chessever/desktop/state/board_pane_session.dart';
+import 'package:chessever/desktop/state/desktop_web_board_position.dart';
+import 'package:chessever/desktop/state/desktop_calendar_location.dart';
+import 'package:chessever/repository/supabase/calendar_event/calendar_event.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -240,4 +245,130 @@ void main() {
       );
     },
   );
+  test('public player section suffixes keep the player identity', () {
+    for (final view in ['games', 'events', 'about', 'overview']) {
+      final link = parseDesktopIncomingLink(
+        Uri.parse(
+          'https://app.chessever.com/player/magnus-carlsen/1503014/$view',
+        ),
+      );
+      expect(link?.profileId, '1503014');
+      expect(
+        link?.profileSection,
+        view == 'games'
+            ? PlayerProfileSection.games
+            : view == 'events'
+            ? PlayerProfileSection.events
+            : PlayerProfileSection.about,
+      );
+    }
+  });
+
+  test(
+    'analysis FEN and orientation round-trip without exposing a PGN',
+    () async {
+      const fen = '8/8/8/8/8/2k5/8/2K5 w - - 0 1';
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      expect(
+        await openDesktopWebLocation(
+          Uri(path: '/analysis', queryParameters: {'fen': fen, 'flip': '1'}),
+          container,
+        ),
+        true,
+      );
+      final id = container.read(desktopTabsProvider).activeId!;
+      expect(
+        container.read(boardTabGameArgsByTabIdProvider)[id]?.initialFen,
+        fen,
+      );
+      expect(
+        container.read(desktopWebBoardPositionByTabIdProvider)[id]?.flipped,
+        true,
+      );
+      expect(
+        await openDesktopWebLocation(
+          Uri.parse('/analysis?fen=broken'),
+          container,
+        ),
+        false,
+      );
+    },
+  );
+
+  test('board cursor and orientation use the public game query format', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final id = container.read(desktopTabsProvider.notifier).open(TabKind.board);
+    container.read(boardTabGameArgsByTabIdProvider.notifier).state = {
+      id: game('EjfscMGB-1ct01mo'),
+    };
+    final chess = ChessGame.fromPgn('EjfscMGB-1ct01mo', '1. e4 e5 2. Nf3 *');
+    container.read(boardPaneSessionByTabIdProvider.notifier).state = {
+      id: BoardPaneSession(
+        game: chess,
+        pointer: [0],
+        pgnHeaders: {},
+        flipped: true,
+        loadedFrom: null,
+        lastAppliedPgn: null,
+        lastAppliedGameId: 'EjfscMGB-1ct01mo',
+        lastAppliedInitialFenKey: null,
+        dirtySinceLoad: false,
+        hasUnseenMoves: false,
+        undoStack: [],
+      ),
+    };
+    expect(
+      container.read(desktopWebLocationProvider),
+      '/games/EjfscMGB-1ct01mo?ply=1&flip=1',
+    );
+    final back = captureDesktopWebPage(container);
+    back();
+    expect(
+      container.read(desktopWebBoardPositionByTabIdProvider)[id]?.fen,
+      chess.mainline.first.fen,
+    );
+  });
+
+  test(
+    'calendar details have the same FIDE path as Next.js and restore from history',
+    () async {
+      final event = CalendarEvent(
+        name: 'European Team Championship',
+        fideEventId: '54321',
+        createdAt: DateTime(2026),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          desktopCalendarWebEventLoaderProvider.overrideWithValue(
+            (_) async => event,
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      const path = '/calendar/european-team-championship/fide-54321';
+      expect(await openDesktopWebLocation(Uri.parse(path), container), true);
+      expect(container.read(desktopWebLocationProvider), path);
+      final detail = captureDesktopWebPage(container);
+      await openDesktopWebLocation(Uri.parse('/calendar'), container);
+      expect(
+        container.read(desktopWebLocationProvider),
+        startsWith('/calendar?'),
+      );
+      detail();
+      expect(container.read(desktopWebLocationProvider), path);
+    },
+  );
+
+  test('the Likes About surface has its own public URL', () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await openDesktopWebLocation(Uri.parse('/app/likes'), container);
+    expect(
+      container.read(communityLikesSectionProvider),
+      CommunityLikesSection.about,
+    );
+    expect(container.read(desktopWebLocationProvider), '/app/likes');
+  });
 }

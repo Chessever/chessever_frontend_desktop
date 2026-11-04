@@ -1,4 +1,10 @@
+import 'package:chessever/desktop/state/community_likes_providers.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:dartchess/dartchess.dart';
+import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/desktop_web_board_position.dart';
+import 'package:chessever/desktop/state/opening_explorer_seed.dart';
+import 'package:chessever/screens/board_editor/board_editor_state.dart';
 import 'package:chessever/desktop/panes/library_pane.dart';
 import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
 import 'package:chessever/desktop/services/desktop_web_location.dart';
@@ -6,6 +12,7 @@ import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/desktop_calendar_directory.dart';
 import 'package:chessever/desktop/state/desktop_calendar_directory_provider.dart';
+import 'package:chessever/desktop/state/desktop_calendar_location.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/screens/calendar/calendar_screen.dart';
 import 'package:chessever/screens/group_event/group_event_screen.dart';
@@ -18,9 +25,81 @@ Future<bool> openDesktopWebLocation(
   Uri current,
   ProviderContainer container,
 ) async {
-  final kind = desktopWebListKind(current);
+  final segments = current.pathSegments;
+  if (current.path == '/app/likes' || current.path == '/likes') {
+    container.read(desktopTabsProvider.notifier).open(TabKind.likes);
+    container.read(communityLikesSectionProvider.notifier).state =
+        CommunityLikesSection.about;
+    return true;
+  }
+  final isAnalysis = segments.isNotEmpty && segments.first == 'analysis';
+  final kind =
+      isAnalysis
+          ? desktopWebListKind(current.replace(path: '/analysis'))
+          : desktopWebListKind(current);
+  String? fen = current.queryParameters['fen'];
+  if (isAnalysis && fen == null && segments.length > 1) {
+    final ranks = segments.sublist(
+      const ['standard', 'fromPosition'].contains(segments[1]) ? 2 : 1,
+    );
+    if (ranks.isNotEmpty) fen = ranks.join('/');
+  }
+  fen = fen?.replaceAll(RegExp(r'[_+\s]+'), ' ').trim();
+  if (fen != null) {
+    if (fen.isEmpty || fen.length > 200) return false;
+    try {
+      Chess.fromSetup(Setup.parseFen(fen), ignoreImpossibleCheck: true);
+    } catch (_) {
+      return false;
+    }
+  }
+  final rawPly = int.tryParse(current.queryParameters['ply'] ?? '');
+  final ply = rawPly != null && rawPly >= 0 && rawPly <= 100000 ? rawPly : null;
+  final flipped =
+      const ['1', 'true'].contains(current.queryParameters['flip']) ||
+      current.queryParameters['pov'] == 'black' ||
+      current.queryParameters['color'] == 'black';
+  void requestPosition(String id) {
+    if (ply == null && fen == null && !flipped) return;
+    container
+        .read(desktopWebBoardPositionByTabIdProvider.notifier)
+        .update(
+          (positions) => {
+            ...positions,
+            id: DesktopWebBoardPosition(ply: ply, fen: fen, flipped: flipped),
+          },
+        );
+  }
+
   if (kind != null) {
     final id = container.read(desktopTabsProvider.notifier).open(kind);
+    if (kind == TabKind.board) {
+      if (fen != null) {
+        container
+            .read(boardTabGameArgsByTabIdProvider.notifier)
+            .update(
+              (games) => {
+                ...games,
+                id: BoardTabGameArgs(
+                  pgn: '[SetUp "1"]\n[FEN "$fen"]\n\n*',
+                  label: 'Analysis',
+                  whiteName: 'White',
+                  blackName: 'Black',
+                  fenSeed: fen,
+                  initialFen: fen,
+                  initialBoardFlipped: flipped,
+                ),
+              },
+            );
+      }
+      requestPosition(id);
+    } else if (kind == TabKind.boardEditor && fen != null) {
+      container.read(boardEditorProvider.notifier).loadFen(fen);
+    } else if (kind == TabKind.openingExplorer && fen != null) {
+      container
+          .read(openingExplorerSeedProvider.notifier)
+          .state = OpeningExplorerSeed(fen: fen, exactFenSearch: true);
+    }
     if (kind == TabKind.smartGames) {
       final name = current.queryParameters['collection'];
       final type =
@@ -45,6 +124,9 @@ Future<bool> openDesktopWebLocation(
       };
     }
     if (kind == TabKind.calendar) {
+      container
+          .read(desktopCalendarDetailByTabIdProvider.notifier)
+          .update((items) => {...items}..remove(id));
       final mode =
           DesktopCalendarMode.values
               .where((mode) => mode.name == current.queryParameters['mode'])
@@ -66,7 +148,24 @@ Future<bool> openDesktopWebLocation(
     }
     return true;
   }
-  final segments = current.pathSegments;
+  if (segments.length >= 3 && segments[0] == 'calendar') {
+    final event = await container.read(desktopCalendarWebEventLoaderProvider)(
+      current,
+    );
+    if (event == null) return false;
+    final id = container
+        .read(desktopTabsProvider.notifier)
+        .open(TabKind.calendar);
+    container
+        .read(desktopCalendarDetailByTabIdProvider.notifier)
+        .update(
+          (items) => {
+            ...items,
+            id: DesktopCalendarDetail(events: [event], index: 0),
+          },
+        );
+    return true;
+  }
   if (segments.length >= 2 &&
       segments[0] == 'app' &&
       segments[1] == 'miniatures') {
@@ -106,7 +205,15 @@ Future<bool> openDesktopWebLocation(
   final opened = await DesktopDeepLinkRouter.instance.handle(
     website,
     container,
+    browserNavigation: true,
   );
+  if (opened && segments.isNotEmpty && segments.first == 'games') {
+    final id = container.read(desktopTabsProvider).activeId;
+    if (id != null &&
+        container.read(desktopTabsProvider).active?.kind == TabKind.board) {
+      requestPosition(id);
+    }
+  }
   if (opened && segments.isNotEmpty && segments[0] == 'broadcast') {
     final id = container.read(desktopTabsProvider).activeId;
     final segment =
@@ -123,6 +230,17 @@ Future<bool> openDesktopWebLocation(
         id: segments[4],
         userSelected: true,
       );
+      final event = container.read(tournamentByTabIdProvider)[id];
+      if (id != null && event != null) {
+        container
+            .read(desktopWebRoundByTabIdProvider.notifier)
+            .update(
+              (rounds) => {
+                ...rounds,
+                id: (eventId: event.id, roundId: segments[4]),
+              },
+            );
+      }
     }
   }
   return opened;

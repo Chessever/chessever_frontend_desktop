@@ -190,6 +190,7 @@ class DesktopIncomingLink {
     this.fideId,
     this.teamName,
     this.profileId,
+    this.profileSection,
     this.likes,
   });
 
@@ -213,6 +214,7 @@ class DesktopIncomingLink {
   /// `/player/<fideId>` and the SEO form `/player/<name-slug>/<identity>`
   /// resolve to the same identity.
   final String? profileId;
+  final PlayerProfileSection? profileSection;
 }
 
 String? _trimmedOrNull(String? value) {
@@ -256,6 +258,26 @@ DesktopIncomingLink? parseDesktopIncomingLink(Uri uri) {
   int? fideId;
   String? teamName;
   String? profileId;
+  PlayerProfileSection? profileSection;
+  String profileIdentity(List<String> path) {
+    final suffix = path.last;
+    if (path.length >= 3 &&
+        const [
+          'about',
+          'overview',
+          'games',
+          'events',
+          'news',
+        ].contains(suffix)) {
+      profileSection = switch (suffix) {
+        'games' => PlayerProfileSection.games,
+        'events' => PlayerProfileSection.events,
+        _ => PlayerProfileSection.about,
+      };
+      return path[path.length - 2];
+    }
+    return suffix;
+  }
 
   if (isWeb) {
     if (segs.length >= 2 && segs[0] == 'books') shareToken = segs[1];
@@ -279,11 +301,11 @@ DesktopIncomingLink? parseDesktopIncomingLink(Uri uri) {
       }
     }
     if (segs.length >= 2 && segs[0] == 'player') {
-      profileId = _trimmedOrNull(segs.last);
+      profileId = _trimmedOrNull(profileIdentity(segs));
     }
   } else {
     if (uri.host == 'player' && segs.isNotEmpty) {
-      profileId = _trimmedOrNull(segs.last);
+      profileId = _trimmedOrNull(profileIdentity(['player', ...segs]));
     }
     if (uri.host == 'books' && segs.isNotEmpty) shareToken = segs[0];
     if ((uri.host == 'databases' || uri.host == 'folders') && segs.isNotEmpty) {
@@ -367,6 +389,7 @@ DesktopIncomingLink? parseDesktopIncomingLink(Uri uri) {
     return DesktopIncomingLink._(
       DesktopIncomingLinkTarget.playerProfile,
       profileId: profileId,
+      profileSection: profileSection,
     );
   }
   return null;
@@ -403,7 +426,16 @@ class DesktopDeepLinkRouter {
   DateTime? _lastHandledAt;
   bool _routing = false;
 
-  Future<bool> handle(Uri uri, ProviderContainer container) async {
+  Future<bool> handle(
+    Uri uri,
+    ProviderContainer container, {
+    bool browserNavigation = false,
+  }) async {
+    // Browser history is an explicit revisit, including a tab just closed.
+    // Keep the native duplicate-delivery guard for app links and OS events.
+    if (browserNavigation) {
+      _lastHandledUri = null;
+    }
     final link = parseDesktopIncomingLink(uri);
     if (link == null) {
       _trackDeepLink(
@@ -455,11 +487,16 @@ class DesktopDeepLinkRouter {
           () => _openTeamScoreCard(link.broadcast!, link.teamName!, container),
         );
       case DesktopIncomingLinkTarget.playerProfile:
-        return _route(
-          uri,
-          'player_profile',
-          () => _openPlayerProfile(link.profileId!, container),
-        );
+        return _route(uri, 'player_profile', () async {
+          final miss = await _openPlayerProfile(link.profileId!, container);
+          final id = container.read(desktopTabsProvider).activeId;
+          if (miss == null && id != null && link.profileSection != null) {
+            container
+                .read(playerProfileSectionByTabIdProvider.notifier)
+                .update((sections) => {...sections, id: link.profileSection!});
+          }
+          return miss;
+        });
     }
   }
 

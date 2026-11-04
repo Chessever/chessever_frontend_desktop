@@ -11,11 +11,15 @@ class DesktopCalendarEventDetailScreen extends StatefulWidget {
     required this.event,
     required this.eventSequence,
     required this.initialEventIndex,
+    this.onBack,
+    this.onEventChanged,
   });
 
   final CalendarEvent event;
   final List<CalendarEvent> eventSequence;
   final int initialEventIndex;
+  final VoidCallback? onBack;
+  final ValueChanged<int>? onEventChanged;
 
   @override
   State<DesktopCalendarEventDetailScreen> createState() =>
@@ -34,7 +38,11 @@ class _DesktopCalendarEventDetailScreenState
   void _showEvent(int offset) {
     final nextIndex = _eventIndex + offset;
     if (nextIndex < 0 || nextIndex >= _eventSequence.length) return;
-    setState(() => _eventIndex = nextIndex);
+    if (widget.onEventChanged != null) {
+      widget.onEventChanged!(nextIndex);
+    } else {
+      setState(() => _eventIndex = nextIndex);
+    }
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
@@ -71,7 +79,28 @@ class _DesktopCalendarEventDetailScreenState
       child: Stack(
         fit: StackFit.expand,
         children: [
-          CalendarEventDetailScreen(event: _eventSequence[_eventIndex]),
+          Column(
+            children: [
+              if (widget.onBack != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: DesktopDialogButton(
+                      label: 'Back to calendar',
+                      onPress: widget.onBack,
+                      tone: DesktopDialogButtonTone.ghost,
+                      icon: Icons.arrow_back,
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: CalendarEventDetailScreen(
+                  event: _eventSequence[_eventIndex],
+                ),
+              ),
+            ],
+          ),
           Positioned(
             left: 18,
             top: 0,

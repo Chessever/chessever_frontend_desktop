@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/state/desktop_calendar_location.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/desktop_calendar_directory.dart';
 import 'package:chessever/desktop/state/desktop_calendar_directory_provider.dart';
 import 'package:chessever/desktop/state/desktop_calendar_listing_mapper.dart';
@@ -51,6 +53,34 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
 
   @override
   Widget build(BuildContext context) {
+    final tabId = ref.watch(
+      desktopTabsProvider.select((tabs) => tabs.activeId),
+    );
+    final detail = ref.watch(desktopCalendarDetailByTabIdProvider)[tabId];
+    if (detail != null && tabId != null) {
+      return DesktopCalendarEventDetailScreen(
+        key: ValueKey('$tabId:${detail.index}:${detail.event.name}'),
+        event: detail.event,
+        eventSequence: detail.events,
+        initialEventIndex: detail.index,
+        onBack:
+            () => ref
+                .read(desktopCalendarDetailByTabIdProvider.notifier)
+                .update((items) => {...items}..remove(tabId)),
+        onEventChanged:
+            (index) => ref
+                .read(desktopCalendarDetailByTabIdProvider.notifier)
+                .update(
+                  (items) => {
+                    ...items,
+                    tabId: DesktopCalendarDetail(
+                      events: detail.events,
+                      index: index,
+                    ),
+                  },
+                ),
+      );
+    }
     final mode = ref.watch(desktopCalendarModeProvider);
     final selectedYear = ref.watch(selectedYearProvider);
     final selectedMonth = ref.watch(selectedMonthProvider);
@@ -183,16 +213,20 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
           initialEventIndex = eventSequence.length;
           eventSequence.add(event);
         }
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder:
-                (_) => DesktopCalendarEventDetailScreen(
-                  event: event!,
-                  eventSequence: eventSequence,
-                  initialEventIndex: initialEventIndex,
-                ),
-          ),
-        );
+        final tabId = ref.read(desktopTabsProvider).activeId;
+        if (tabId != null) {
+          ref
+              .read(desktopCalendarDetailByTabIdProvider.notifier)
+              .update(
+                (items) => {
+                  ...items,
+                  tabId: DesktopCalendarDetail(
+                    events: eventSequence,
+                    index: initialEventIndex,
+                  ),
+                },
+              );
+        }
         return;
       }
 

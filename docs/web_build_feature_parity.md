@@ -44,7 +44,7 @@ still need a manual pass.
 | Show in folder, window position | Not applicable | Hidden on the web |
 | Updates | Reload | Nothing to install: the tab compares its compiled `appBuildName`+`appBuildNumber` with the deploy's `/version.json` every 5 min and on refocus (`lib/web/web_release_watcher.dart`); a newer build shows the top-bar chip "New update available", and tapping it reloads the page. Settings has no Updates section on the web |
 | Google and Apple sign-in | Same tab | Supabase-hosted OAuth redirecting back to the page (PKCE) instead of the loopback server; a pending guest merge waits in IndexedDB (`AppDatabaseGuestMergePendingStore`). The origin must be on the Supabase Auth redirect list |
-| Addresses and history | chessever.com paths | `lib/web/web_url_sync.dart` owns the address bar and Back/Forward; Flutter's URL strategy is off |
+| Addresses and history | Shared paths and exact page state | Every shell surface has an explicit address; games, player sections, event rounds/scorecards, collections, calendar details, Likes and Miniatures mirror public paths. `WebUrlSync` owns Back/Forward, including same-tab game changes and board cursor/orientation. Flutter URL reporting stays off. See the Browser URL contract below |
 | Startup page and How to use | Events at the bare domain; direct links keep their destination | Automatic How to use opens in a background tab on the web; native desktop onboarding keeps its existing focus behavior |
 | Events membership | Event browsing stays free; archived event/game opens require Premium | Each opening resolves canonical Past membership and broadcast dates. Current events remain free unless another protected source applies; restored boards recheck access |
 | Guest sign-up | First browser visit offers sign-in or Not now | The persisted guest clock survives reloads; reminders start at day 7, repeat weekly, and require sign-in at day 28. Signing in clears guest stamps |
@@ -93,3 +93,48 @@ Deploy the matching services before releasing the updated browser client:
   the public website. Its help lookup can select an explicitly requested phone,
   tablet, desktop, browser app or website without changing the request's account
   or device identity. AI-sharing consent remains per account in each browser.
+
+## Browser URL contract
+
+The Flutter shell uses the same paths as chessever.com wherever the two sites
+have the same destination. `app.` changes the renderer, not the game, player,
+event, collection or calendar identity. Flutter's Navigator URL reporting stays
+disabled; `WebUrlSync` is the sole browser-history owner.
+
+| Surface | Path |
+| --- | --- |
+| Events and its discovery modes | `/broadcast?tab=current`, `for-you`, `past`, `search` |
+| Event, selected round and event sections | `/broadcast/<slug>/<id>[/round/<roundId>][?tab=about|standings|bracket]` |
+| Game and move cursor | `/games/<id>[?ply=<half-move>&flip=1]` |
+| Standalone position or variation | `/analysis?fen=<FEN>[&flip=1]` |
+| Player profile sections | `/player/<slug>/<identity>[/about|games|events]` |
+| Historical player About | `/player/<slug>/<historical-identity>` |
+| Event player and team scorecards | `/broadcast/<slug>/<id>/player/<fideId>`, `/team/<teamName>` |
+| Calendar mode/month | `/calendar?mode=major|live|fide&month=YYYY-MM` |
+| Calendar event | `/calendar/<slug>/fide-<id>` or `/calendar/<slug>/date-YYYY-MM-DD` |
+| Published collection | `/collections/<slug>` |
+| Database | `/databases/<folderId>`, `/databases/twic` |
+| Likes | `/app/likes` (About), `/app/likes/<period>[?date=YYYY-MM-DD&view=players]` |
+| Miniatures | `/app/miniatures/about`, `/games`, `/players` |
+| Settings | `/broadcast/settings`, `/broadcast/settings?section=board` |
+| Rankings, Play, Inbox, account, help | `/rankings`, `/play`, `/app/inbox`, `/account`, `/learn` |
+
+App-only surfaces keep explicit addresses too: Library (`/databases`), Prepare
+(`/players`), Favorites (`/favorites`), Countrymen (`/countrymen`), smart game
+collections (`/games/search?collection=<kind>`), standalone opening explorer
+(`/analysis?explorer=1`) and position editor (`/analysis?editor=1`). Local device
+file paths and private PGNs never enter URLs.
+
+`desktopWebBasePath` exhaustively covers every `TabKind`. New surfaces cannot
+silently inherit `/`. Reserved list/tool words are dispatched before legacy
+id-based deep links, so `settings` and `search` cannot become event/game ids.
+
+One user action gets one browser entry, even when opening its tab and attaching
+its arguments update different providers. Entries retain exact per-tab identities
+and view state, not just tab ids. Back/Forward restores the board session as well
+as its route; a closed tab reopens from its address. Native tab navigation and the
+shell's global search shortcuts remain in their existing owners.
+
+Tests: `flutter test test/desktop/desktop_web_location_test.dart
+ test/desktop/desktop_tabs_test.dart test/desktop/desktop_deep_link_router_test.dart
+ test/desktop/desktop_deep_link_incoming_test.dart`.

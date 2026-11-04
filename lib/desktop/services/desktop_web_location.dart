@@ -6,14 +6,21 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_team.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
+import 'package:chessever/desktop/state/board_pane_session.dart';
+import 'package:chessever/desktop/state/desktop_web_board_position.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/desktop/state/community_likes_providers.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/desktop_calendar_directory_provider.dart';
+import 'package:chessever/desktop/state/desktop_calendar_location.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/collections/collection_actions.dart';
 import 'package:chessever/screens/calendar/calendar_screen.dart';
 import 'package:chessever/screens/group_event/group_event_screen.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
+
+final desktopWebRoundByTabIdProvider =
+    StateProvider<Map<String, ({String eventId, String roundId})>>((_) => {});
 
 /// Every shell surface owns an address, including app-only tools. Keep shared
 /// paths identical to the Next.js site; adding a TabKind makes this exhaustive
@@ -106,21 +113,54 @@ final desktopWebLocationProvider = Provider<String>((ref) {
   switch (tab.kind) {
     case TabKind.board:
       final args = ref.watch(boardTabGameArgsByTabIdProvider)[tab.id];
-      if (args == null) return '/analysis';
+      final session = ref.watch(
+        boardPaneSessionByTabIdProvider.select((sessions) => sessions[tab.id]),
+      );
       final url =
-          args.sourceGame != null
-              ? buildDesktopGameShareUrl(game: args.sourceGame)
-              : buildDesktopGameShareUrl(gameId: args.gameId);
-      return url == null ? '/analysis' : _pathOf(url);
+          args?.sourceGame != null
+              ? buildDesktopGameShareUrl(game: args!.sourceGame)
+              : buildDesktopGameShareUrl(gameId: args?.gameId);
+      final query = <String, String>{};
+      final currentSession =
+          session != null &&
+                  (args?.gameId == null ||
+                      args!.gameId == session.lastAppliedGameId)
+              ? session
+              : null;
+      if (currentSession != null) {
+        final navigator = ChessGameNavigatorState(
+          game: currentSession.game,
+          movePointer: currentSession.pointer,
+        );
+        if (url == null || currentSession.pointer.length > 1) {
+          query['fen'] = navigator.currentFen;
+        } else {
+          final ply =
+              currentSession.pointer.isEmpty
+                  ? 0
+                  : currentSession.pointer.first + 1;
+          if (ply != currentSession.game.mainline.length) query['ply'] = '$ply';
+        }
+        if (currentSession.flipped) query['flip'] = '1';
+      } else if (args?.initialBoardFlipped == true) {
+        query['flip'] = '1';
+      }
+      return Uri(
+        path:
+            url == null || (currentSession?.pointer.length ?? 0) > 1
+                ? '/analysis'
+                : Uri.parse(url).path,
+        queryParameters: query.isEmpty ? null : query,
+      ).toString();
     case TabKind.tournamentDetail:
       final event = ref.watch(tournamentForTabProvider(tab.id));
       if (event == null) return '/broadcast';
       var path = _pathOf(
         buildDesktopEventShareUrl(id: event.id, title: event.title),
       );
-      final round = ref.watch(userSelectedRoundProvider);
-      if (round != null && round.userSelected) {
-        path = '$path/round/${Uri.encodeComponent(round.id)}';
+      final round = ref.watch(desktopWebRoundByTabIdProvider)[tab.id];
+      if (round != null && round.eventId == event.id) {
+        path = '$path/round/${Uri.encodeComponent(round.roundId)}';
       }
       final segment = ref.watch(tournamentDetailSegmentByTabIdProvider(tab.id));
       return segment == TournamentDetailSegment.games
@@ -132,9 +172,15 @@ final desktopWebLocationProvider = Provider<String>((ref) {
           player?.memorialRouteId ??
           player?.fideId?.toString() ??
           player?.gamebasePlayerId;
-      return player == null || identity == null
-          ? '/chess-players'
-          : desktopWebPlayerPath(player.playerName, identity);
+      if (player == null || identity == null) return '/chess-players';
+      final path = desktopWebPlayerPath(player.playerName, identity);
+      final section =
+          ref.watch(playerProfileSectionByTabIdProvider)[tab.id] ??
+          PlayerProfileSection.about;
+      return section == PlayerProfileSection.about &&
+              player.memorialRouteId != null
+          ? path
+          : '$path/${section.name}';
     case TabKind.playerScoreCard:
       final player = ref.watch(playerScoreCardByTabIdProvider)[tab.id];
       final context = ref.watch(playerScoreCardContextByTabIdProvider)[tab.id];
@@ -172,6 +218,7 @@ final desktopWebLocationProvider = Provider<String>((ref) {
       final period = ref.watch(communityLikesPeriodProvider);
       final day = ref.watch(communityLikesDayProvider);
       final section = ref.watch(communityLikesSectionProvider);
+      if (section == CommunityLikesSection.about) return '/app/likes';
       final query = <String, String>{
         if (day != null)
           'date':
@@ -194,6 +241,8 @@ final desktopWebLocationProvider = Provider<String>((ref) {
       final category = ref.watch(selectedGroupCategoryProvider);
       return '/broadcast?tab=${category == GroupEventCategory.forYou ? 'for-you' : category.name}';
     case TabKind.calendar:
+      final detail = ref.watch(desktopCalendarDetailByTabIdProvider)[tab.id];
+      if (detail != null) return desktopCalendarEventPath(detail.event);
       final mode = ref.watch(desktopCalendarModeProvider);
       final year = ref.watch(selectedYearProvider);
       final month = ref.watch(selectedMonthProvider);
@@ -216,8 +265,10 @@ void Function() captureDesktopWebPage(ProviderContainer container) {
   final tabs = container.read(desktopTabsProvider);
   final tab = tabs.active;
   final boards = container.read(boardTabGameArgsByTabIdProvider);
+  final sessions = container.read(boardPaneSessionByTabIdProvider);
   final events = container.read(tournamentByTabIdProvider);
   final players = container.read(playerProfileByTabIdProvider);
+  final playerSections = container.read(playerProfileSectionByTabIdProvider);
   final scorecards = container.read(playerScoreCardByTabIdProvider);
   final scorecardContexts = container.read(
     playerScoreCardContextByTabIdProvider,
@@ -234,6 +285,8 @@ void Function() captureDesktopWebPage(ProviderContainer container) {
   final year = container.read(selectedYearProvider);
   final month = container.read(selectedMonthProvider);
   final round = container.read(userSelectedRoundProvider);
+  final scopedRounds = container.read(desktopWebRoundByTabIdProvider);
+  final calendarDetails = container.read(desktopCalendarDetailByTabIdProvider);
   final miniatureSection =
       tab == null
           ? null
@@ -249,22 +302,63 @@ void Function() captureDesktopWebPage(ProviderContainer container) {
       Map<String, T> values,
     ) {
       final value = values[tab.id];
-      if (value != null) {
-        container
-            .read(provider.notifier)
-            .update((current) => {...current, tab.id: value});
-      }
+      container
+          .read(provider.notifier)
+          .update(
+            (current) =>
+                value == null
+                    ? ({...current}..remove(tab.id))
+                    : {...current, tab.id: value},
+          );
     }
 
     restore(boardTabGameArgsByTabIdProvider, boards);
+    restore(boardPaneSessionByTabIdProvider, sessions);
+    final session = sessions[tab.id];
+    if (tab.kind == TabKind.board && session != null) {
+      final fen =
+          ChessGameNavigatorState(
+            game: session.game,
+            movePointer: session.pointer,
+          ).currentFen;
+      container
+          .read(desktopWebBoardPositionByTabIdProvider.notifier)
+          .update(
+            (positions) => {
+              ...positions,
+              tab.id: DesktopWebBoardPosition(
+                fen: fen,
+                flipped: session.flipped,
+              ),
+            },
+          );
+    }
+    if (tab.kind == TabKind.board) {
+      container
+          .read(desktopWebBoardRestorationEpochProvider.notifier)
+          .update((epochs) => {...epochs, tab.id: (epochs[tab.id] ?? 0) + 1});
+    }
     restore(tournamentByTabIdProvider, events);
+    restore(desktopWebRoundByTabIdProvider, scopedRounds);
     restore(playerProfileByTabIdProvider, players);
+    restore(playerProfileSectionByTabIdProvider, playerSections);
     restore(playerScoreCardByTabIdProvider, scorecards);
     restore(playerScoreCardContextByTabIdProvider, scorecardContexts);
     restore(teamScoreCardByTabIdProvider, teams);
     restore(collectionWorkspaceArgsByTabIdProvider, collections);
     restore(databaseWorkspaceArgsByTabIdProvider, databases);
     restore(desktopSmartGamesTypeByTabIdProvider, smartTypes);
+    if (tab.kind == TabKind.calendar) {
+      final detail = calendarDetails[tab.id];
+      container
+          .read(desktopCalendarDetailByTabIdProvider.notifier)
+          .update(
+            (current) =>
+                detail == null
+                    ? ({...current}..remove(tab.id))
+                    : {...current, tab.id: detail},
+          );
+    }
     if (tab.kind == TabKind.likes) {
       container.read(communityLikesPeriodProvider.notifier).state = period;
       container.read(communityLikesDayProvider.notifier).state = day;

@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/desktop_web_board_position.dart';
 import 'package:chessever/desktop/panes/inbox_pane.dart';
 import 'dart:async';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
@@ -1045,7 +1046,19 @@ Widget resolveDesktopTabContent(
     case TabKind.inbox:
       return InboxPane(tabId: tab.id);
     case TabKind.board:
-      return BoardPane(tabId: tab.id);
+      return Consumer(
+        builder: (context, ref, _) {
+          final epoch = ref.watch(
+            desktopWebBoardRestorationEpochProvider.select(
+              (epochs) => epochs[tab.id] ?? 0,
+            ),
+          );
+          return BoardPane(
+            key: ValueKey('${tab.id}:browser-history:$epoch'),
+            tabId: tab.id,
+          );
+        },
+      );
     case TabKind.tournaments:
       return TournamentsPane(tabId: tab.id);
     case TabKind.tournamentDetail:
