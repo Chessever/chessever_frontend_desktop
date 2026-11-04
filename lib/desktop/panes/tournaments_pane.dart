@@ -2076,10 +2076,12 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                               Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  // Category badge, moved off the photo onto the
-                                  // solid body where its colours read.
-                                  _StatusBadge(category: t.tourEventCategory),
-                                  const SizedBox(width: 8),
+                                  if (_shouldShowStatusBadge(
+                                    t.tourEventCategory,
+                                  )) ...[
+                                    _StatusBadge(category: t.tourEventCategory),
+                                    const SizedBox(width: 8),
+                                  ],
                                   Expanded(
                                     child: Text(
                                       t.title,
@@ -2271,7 +2273,7 @@ class _TournamentTilePill extends StatelessWidget {
 Color _categoryColor(TourEventCategory category) {
   return switch (category) {
     TourEventCategory.live => kPrimaryColor,
-    TourEventCategory.ongoing => kGreenColor,
+    TourEventCategory.ongoing => kLightGreyColor,
     TourEventCategory.upcoming => kPrimaryColor,
     TourEventCategory.completed => kLightGreyColor,
   };
@@ -2306,12 +2308,14 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (label, color) = switch (category) {
+    final status = switch (category) {
       TourEventCategory.live => ('LIVE', kPrimaryColor),
-      TourEventCategory.ongoing => ('Ongoing', kGreenColor),
+      TourEventCategory.ongoing => null,
       TourEventCategory.upcoming => ('Upcoming', kPrimaryColor),
       TourEventCategory.completed => ('Completed', kLightGreyColor),
     };
+    if (status == null) return const SizedBox.shrink();
+    final (label, color) = status;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
