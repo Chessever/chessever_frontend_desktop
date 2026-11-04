@@ -24,10 +24,12 @@ const _kFen =
     'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
 
 class _FakeRepository implements CommunityLikesRepository {
-  _FakeRepository(this.result);
+  _FakeRepository(this.result, {this.laterPages = const []});
 
   final CommunityLikesResult result;
+  final List<CommunityLikesResult> laterPages;
   final List<CommunityLikesQuery> queries = [];
+  final List<CommunityLikesCursor> cursors = [];
 
   @override
   Future<CommunityLikesResult> fetch(
@@ -36,6 +38,10 @@ class _FakeRepository implements CommunityLikesRepository {
     CommunityLikesCursor? after,
   }) async {
     queries.add(query);
+    if (after != null) {
+      cursors.add(after);
+      return laterPages[cursors.length - 1];
+    }
     return result;
   }
 
@@ -126,6 +132,7 @@ CommunityLikesEntry _entry(int rank, int likes, PlayerCard w, PlayerCard b) =>
 Future<_FakeRepository> _pump(
   WidgetTester tester, {
   CommunityLikesResult? result,
+  List<CommunityLikesResult> laterPages = const [],
   SubscriptionState? subscription,
   GamesListViewMode viewMode = GamesListViewMode.gamesCard,
   double width = 1440,
@@ -146,6 +153,7 @@ Future<_FakeRepository> _pump(
           _entry(2, 31, gukesh, carlsen),
           _entry(3, 4, caruana, gukesh),
         ]),
+    laterPages: laterPages,
   );
   await tester.pumpWidget(
     ProviderScope(
@@ -176,6 +184,81 @@ Future<_FakeRepository> _pump(
 }
 
 void main() {
+  for (final mode in GamesListViewMode.values) {
+    testWidgets(
+      '${mode.name} keeps every slot filled after overlapping pages',
+      (tester) async {
+        final white = _player('White', 1);
+        final black = _player('Black', 2);
+        final entries = [
+          for (var i = 1; i <= 6; i++) _entry(i, 10 - i, white, black),
+        ];
+        const firstCursor = (likes: 7, gameId: 'game-3', rank: 3);
+        const overlapCursor = (likes: 6, gameId: 'game-3', rank: 6);
+        const nextCursor = (likes: 5, gameId: 'game-5', rank: 10);
+        final repository = await _pump(
+          tester,
+          viewMode: mode,
+          result: CommunityLikesResult.ranked(
+            entries.take(3).toList(),
+            nextCursor: firstCursor,
+          ),
+          laterPages: [
+            CommunityLikesResult.ranked(
+              entries.take(3).toList(),
+              nextCursor: overlapCursor,
+            ),
+            CommunityLikesResult.ranked([
+              entries[1],
+              entries[2],
+              entries[3],
+              entries[4],
+            ], nextCursor: nextCursor),
+            CommunityLikesResult.ranked([
+              entries[0],
+              entries[3],
+              entries[5],
+              entries[5],
+            ]),
+          ],
+        );
+
+        for (final count in [3, 5, 6]) {
+          await tester.scrollUntilVisible(
+            find.text('Show more'),
+            300,
+            scrollable: find.descendant(
+              of: find.byType(CustomScrollView),
+              matching: find.byType(Scrollable),
+            ),
+          );
+          await tester.tap(find.text('Show more'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+
+          expect(tester.takeException(), isNull);
+          final cards = tester.widgetList<LiveDesktopGameCard>(
+            find.byType(LiveDesktopGameCard),
+          );
+          expect(cards.map((card) => card.game.gameId), [
+            for (var i = 1; i <= count; i++) 'game-$i',
+          ]);
+          final grid = tester.widget<SliverGrid>(find.byType(SliverGrid));
+          expect(grid.delegate.estimatedChildCount, count);
+        }
+        expect(repository.cursors, [firstCursor, overlapCursor, nextCursor]);
+        expect(find.text('Show more'), findsNothing);
+
+        await tester.tap(find.text('Players'));
+        await tester.pump();
+        // Each side played six distinct games with 9+8+7+6+5+4 likes.
+        expect(find.text('39'), findsNWidgets(2));
+        expect(tester.takeException(), isNull);
+        await tester.pump(const Duration(seconds: 2));
+      },
+    );
+  }
+
   testWidgets('top-right view controls update the shared saved choice', (
     tester,
   ) async {

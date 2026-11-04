@@ -71,15 +71,21 @@ final communityLikesPagesProvider = StateNotifierProvider.autoDispose.family<
   final first = ref.watch(communityLikesProvider(query));
   final initial = first.isLoading || first.hasError ? null : first.valueOrNull;
   return CommunityLikesPages(
-    initial?.nextCursor,
+    initial,
     (cursor) =>
         ref.read(communityLikesRepositoryProvider).fetch(query, after: cursor),
   );
 });
 
 class CommunityLikesPages extends StateNotifier<CommunityLikesPagingState> {
-  CommunityLikesPages(CommunityLikesCursor? cursor, this._fetch)
-    : super(CommunityLikesPagingState(cursor: cursor));
+  CommunityLikesPages(CommunityLikesResult? first, this._fetch)
+    : _firstPageGameIds = {
+        for (final entry in first?.entries ?? <CommunityLikesEntry>[])
+          entry.game.gameId,
+      },
+      super(CommunityLikesPagingState(cursor: first?.nextCursor));
+
+  final Set<String> _firstPageGameIds;
 
   final Future<CommunityLikesResult> Function(CommunityLikesCursor cursor)
   _fetch;
@@ -99,7 +105,13 @@ class CommunityLikesPages extends StateNotifier<CommunityLikesPagingState> {
       if (page.status != CommunityLikesStatus.ranked) {
         throw StateError('Ranking unavailable');
       }
-      final seen = {for (final entry in previous) entry.game.gameId};
+      // Live like counts can move a game past the cursor between requests.
+      // Include page one too: duplicate cards share a keyboard GlobalKey,
+      // which can reparent a card out of its earlier grid slot.
+      final seen = {
+        ..._firstPageGameIds,
+        for (final entry in previous) entry.game.gameId,
+      };
       state = CommunityLikesPagingState(
         entries: [
           ...previous,
