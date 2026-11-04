@@ -11,7 +11,7 @@ import 'package:chessever/repository/liked_games/liked_games_provider.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/library/utils/saved_analysis_converters.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
-import 'package:flutter/foundation.dart' show immutable;
+import 'package:flutter/foundation.dart' show immutable, kIsWeb;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
@@ -244,8 +244,62 @@ LikedGamesExportSlice likedGamesExportSlice(
   required SubscriptionState subscription,
   required DesktopEntitlementSnapshot entitlement,
   DateTime? now,
+  Iterable<SavedAnalysis>? allLikes,
+  bool isWebApp = kIsWeb,
 }) {
   final at = now ?? DateTime.now();
+  if (isWebApp) {
+    // Bulk export is the phone's one remaining free Likes content allowance.
+    // Rank the entire collection, not the filtered/sorted visible subset.
+    final premium = evaluateDesktopAccess(
+      context: const DesktopAccessContext(
+        feature: DesktopFeature.likes,
+        action: DesktopAction.export,
+        origin: DesktopDiscoveryOrigin.likes,
+      ),
+      subscription: subscription,
+      entitlement: entitlement,
+      now: at,
+      isWebApp: true,
+    );
+    if (premium.isAllowed) {
+      return LikedGamesExportSlice(
+        accessible: List.unmodifiable(analyses),
+        locked: 0,
+        undetermined: 0,
+      );
+    }
+    if (allLikes == null) {
+      return LikedGamesExportSlice(
+        accessible: const [],
+        locked: 0,
+        undetermined: analyses.length,
+      );
+    }
+    final newest =
+        allLikes.toList()..sort((a, b) {
+          final byTime = b.createdAt.compareTo(a.createdAt);
+          return byTime != 0 ? byTime : b.id.compareTo(a.id);
+        });
+    final freeIds = {for (final like in newest.take(20)) like.id};
+    final accessible = <SavedAnalysis>[];
+    var locked = 0;
+    var undetermined = 0;
+    for (final analysis in analyses) {
+      if (freeIds.contains(analysis.id)) {
+        accessible.add(analysis);
+      } else if (premium.mayOfferPurchase) {
+        locked++;
+      } else {
+        undetermined++;
+      }
+    }
+    return LikedGamesExportSlice(
+      accessible: List.unmodifiable(accessible),
+      locked: locked,
+      undetermined: undetermined,
+    );
+  }
   final accessible = <SavedAnalysis>[];
   var locked = 0;
   var undetermined = 0;

@@ -408,6 +408,27 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
     return activeId;
   }
 
+  /// Restores an exact browser-history route without adding a shell-history
+  /// entry. Page-specific providers are restored by the URL coordinator first.
+  void restoreBrowserRoute(String tabId, DesktopTabRoute route) {
+    if (!state.tabs.any((tab) => tab.id == tabId)) return;
+    state = DesktopTabsState(
+      tabs: [
+        for (final tab in state.tabs)
+          if (tab.id == tabId)
+            tab.withRoute(
+              route,
+              backHistory: tab.backHistory,
+              forwardHistory: tab.forwardHistory,
+            )
+          else
+            tab,
+      ],
+      activeId: tabId,
+      activationHistory: state.activationHistory,
+    );
+  }
+
   /// Move the active tab one shell route back, Chrome-style. No-op when the
   /// active tab has no back stack.
   void goBack() {

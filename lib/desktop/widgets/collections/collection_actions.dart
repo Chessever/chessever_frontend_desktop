@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
 import 'package:chessever/desktop/panes/library_pane.dart'
     show libraryReadOnlyBoardArgs;
 import 'package:chessever/desktop/services/collections_reader.dart';
@@ -19,6 +21,7 @@ import 'package:chessever/desktop/widgets/collections/collection_text.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
+import 'package:chessever/screens/library/utils/saved_analysis_converters.dart';
 
 /// The provenance a board tab carries for a game opened from a collection.
 /// It is what keeps the game from being copied, saved or exported there.
@@ -108,24 +111,51 @@ String openCollectionTab(WidgetRef ref, Collection collection) =>
 /// Puts [row] on the board. [displayed] is the list the reader was looking
 /// at, in its order: the board's previous and next walk exactly that. The
 /// board replays each game's text as it was published.
-void openCollectionGame(
+Future<void> openCollectionGame(
   WidgetRef ref, {
   required String collectionTitle,
   required List<CollectionGame> games,
   required SavedAnalysis row,
   required List<SavedAnalysis> displayed,
   String? initialFen,
-}) {
+}) async {
+  final container = ProviderScope.containerOf(ref.context, listen: false);
+  final sourceGame = savedAnalysisToCardGame(row);
+  final access = await resolveDesktopGameEventAccess(
+    container,
+    game: sourceGame,
+    access: collectionAccessContext,
+  );
+  if (!ref.context.mounted ||
+      !await requireDesktopAction(
+        container,
+        access,
+        surface: 'collection_game',
+      ) ||
+      !ref.context.mounted) {
+    return;
+  }
+  // A published collection can mix unrelated event editions. Like the phone,
+  // a free reader opens one admitted game; list navigation remains available
+  // for Premium after the usual server-authoritative collection access.
+  final singleGame =
+      container.read(desktopPastEventAccessEnabledProvider) &&
+      !readDesktopAccess(container.read, desktopPastEventOpenContext).isAllowed;
   final pgnById = {for (final game in games) game.id: game.pgn};
   openBoardGameTab(
     ref,
     libraryReadOnlyBoardArgs(
       row,
       databaseTitle: collectionTitle,
-      displayed: displayed,
+      displayed: singleGame ? [row] : displayed,
       sourcePgnById: pgnById,
       initialFen: initialFen,
-      accessContext: collectionAccessContext,
+      accessContext: access,
+    ).copyWith(
+      sourceGame:
+          container.read(desktopPastEventAccessEnabledProvider)
+              ? sourceGame
+              : null,
     ),
     reuseExisting: false,
   );

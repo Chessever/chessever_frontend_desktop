@@ -4,6 +4,8 @@ import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/auth/web_prep_access.dart';
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -187,40 +189,45 @@ typedef PlayerWorkspaceLocalDatabaseUnregistrar =
 typedef PlayerWorkspaceLocalDatabasePlayerUnregistrar =
     Future<void> Function(String playerId, {required Iterable<String> paths});
 
-final playerWorkspaceProvider =
-    StateNotifierProvider<PlayerWorkspaceNotifier, PlayerWorkspaceState>((ref) {
-      return PlayerWorkspaceNotifier(
-        // Explicit create/source/compute actions present the decision in the
-        // window that owns this container; implicit load-time work asks
-        // silently and simply skips.
-        accessGuard:
-            (action, {required interactive}) => admitDesktopAction(
-              ref.container,
-              DesktopAccessContext(
-                feature: DesktopFeature.prepare,
-                action: action,
-                origin: DesktopDiscoveryOrigin.localFile,
-              ),
-              surface: 'prepare_${action.name}',
-              interactive: interactive,
-            ),
-        workspaceRepository: ref.watch(playerWorkspaceRepositoryProvider),
-        gamebaseRepository: ref.watch(gamebaseRepositoryProvider),
-        localRepository: ref.watch(localChessDatabaseRepositoryProvider),
-        localDatabaseRegistrar:
-            (paths, {required metadataByPath}) => ref
-                .read(localLibraryRegistryProvider.notifier)
-                .registerAll(paths, metadataByPath: metadataByPath),
-        localDatabaseUnregistrar:
-            (path) => ref
-                .read(localLibraryRegistryProvider.notifier)
-                .unregister(path),
-        localDatabasePlayerUnregistrar:
-            (playerId, {required paths}) => ref
-                .read(localLibraryRegistryProvider.notifier)
-                .unregisterPlayerWorkspace(playerId, paths: paths),
-      );
-    });
+final playerWorkspaceProvider = StateNotifierProvider<
+  PlayerWorkspaceNotifier,
+  PlayerWorkspaceState
+>((ref) {
+  return PlayerWorkspaceNotifier(
+    capacityGuard:
+        (player, {required ownProfile}) =>
+            admitWebPrepCapacity(ref.container, player, ownProfile: ownProfile),
+    pgnImportGuard: () => requireWebPgnImport(ref.container),
+    // Explicit create/source/compute actions present the decision in the
+    // window that owns this container; implicit load-time work asks
+    // silently and simply skips.
+    accessGuard:
+        (action, {required interactive}) => admitDesktopAction(
+          ref.container,
+          DesktopAccessContext(
+            feature: DesktopFeature.prepare,
+            action: action,
+            origin: DesktopDiscoveryOrigin.localFile,
+          ),
+          surface: 'prepare_${action.name}',
+          interactive: interactive,
+        ),
+    workspaceRepository: ref.watch(playerWorkspaceRepositoryProvider),
+    gamebaseRepository: ref.watch(gamebaseRepositoryProvider),
+    localRepository: ref.watch(localChessDatabaseRepositoryProvider),
+    localDatabaseRegistrar:
+        (paths, {required metadataByPath}) => ref
+            .read(localLibraryRegistryProvider.notifier)
+            .registerAll(paths, metadataByPath: metadataByPath),
+    localDatabaseUnregistrar:
+        (path) =>
+            ref.read(localLibraryRegistryProvider.notifier).unregister(path),
+    localDatabasePlayerUnregistrar:
+        (playerId, {required paths}) => ref
+            .read(localLibraryRegistryProvider.notifier)
+            .unregisterPlayerWorkspace(playerId, paths: paths),
+  );
+});
 
 class _PlayerWorkspaceOperationScope {
   _PlayerWorkspaceOperationScope({
@@ -246,9 +253,14 @@ class _PlayerWorkspaceOperationScope {
 typedef PlayerWorkspaceAccessGuard =
     bool Function(DesktopAction action, {required bool interactive});
 
+typedef PlayerWorkspaceCapacityGuard =
+    bool Function(PlayerWorkspacePlayer player, {required bool ownProfile});
+
 class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   PlayerWorkspaceNotifier({
     PlayerWorkspaceAccessGuard? accessGuard,
+    PlayerWorkspaceCapacityGuard? capacityGuard,
+    Future<bool> Function()? pgnImportGuard,
     required PlayerWorkspaceRepository workspaceRepository,
     required GamebaseRepository gamebaseRepository,
     required LocalChessDatabaseRepository localRepository,
@@ -257,6 +269,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     PlayerWorkspaceLocalDatabasePlayerUnregistrar?
     localDatabasePlayerUnregistrar,
   }) : _accessGuard = accessGuard,
+       _capacityGuard = capacityGuard,
+       _pgnImportGuard = pgnImportGuard,
        _workspaceRepository = workspaceRepository,
        _gamebaseRepository = gamebaseRepository,
        _localRepository = localRepository,
@@ -272,6 +286,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// free; creating targets, acquiring sources and computed analysis are
   /// Premium. There is no whole-pane gate.
   final PlayerWorkspaceAccessGuard? _accessGuard;
+  final PlayerWorkspaceCapacityGuard? _capacityGuard;
+  final Future<bool> Function()? _pgnImportGuard;
 
   bool _admits(DesktopAction action, {bool interactive = true}) =>
       _accessGuard?.call(action, interactive: interactive) ?? true;
@@ -439,20 +455,25 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
 
   /// Adds a free-text prep target and returns its new player id so callers can
   /// open it and chain straight into connecting online usernames.
-  Future<String> addManualPlayer(String name) async {
+  Future<String> addManualPlayer(String name, {bool ownProfile = false}) async {
+    await _initialLoadFuture;
     if (!_admits(DesktopAction.create)) {
       throw DesktopPremiumRequiredException(
         DesktopAccessReason.premiumPrepareTarget.code,
       );
     }
     final player = _workspaceRepository.manualPlayer(name);
-    await _upsertPlayer(player, select: false);
+    await _upsertPlayer(player, select: false, ownProfile: ownProfile);
     return player.id;
   }
 
   /// Adds a ChessEver-indexed player and returns its new player id (see
   /// [addManualPlayer]).
-  Future<String> addChessEverPlayer(GamebasePlayer gamebasePlayer) async {
+  Future<String> addChessEverPlayer(
+    GamebasePlayer gamebasePlayer, {
+    bool ownProfile = false,
+  }) async {
+    await _initialLoadFuture;
     if (!_admits(DesktopAction.create)) {
       throw DesktopPremiumRequiredException(
         DesktopAccessReason.premiumPrepareTarget.code,
@@ -464,7 +485,35 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       return existing.id;
     }
     final player = _workspaceRepository.playerFromChessEver(gamebasePlayer);
-    await _upsertPlayer(player, select: false);
+    await _upsertPlayer(player, select: false, ownProfile: ownProfile);
+    return player.id;
+  }
+
+  /// Creates the own profile and its accounts in one admitted mutation.
+  /// A rejected batch leaves no empty profile behind.
+  Future<String> addOwnProfileWithAccounts(
+    String name,
+    List<PlayerWorkspaceAccount> accounts,
+  ) async {
+    await _initialLoadFuture;
+    if (!_admits(DesktopAction.create) ||
+        !_admits(DesktopAction.acquireSource)) {
+      throw const DesktopPremiumRequiredException('prep_capacity');
+    }
+    var player = _workspaceRepository.manualPlayer(name);
+    final identities = <String>{};
+    for (final account in accounts) {
+      if (!_isExternalPlayerAccountSource(account.source) ||
+          !identities.add(account.identityKey)) {
+        continue;
+      }
+      _ensureExternalAccountCanAttach(account, playerId: player.id);
+      player = player.withAccount(account);
+    }
+    if (identities.isEmpty) {
+      throw ArgumentError('Attach at least one account.');
+    }
+    await _upsertPlayer(player, select: true, ownProfile: true);
     return player.id;
   }
 
@@ -1511,6 +1560,13 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     required String label,
     required String pgn,
   }) async {
+    final importAllowed = await (_pgnImportGuard?.call() ?? Future.value(true));
+    if (!mounted) return;
+    if (!importAllowed) {
+      throw DesktopPremiumRequiredException(
+        DesktopAccessReason.premiumPgnImport.code,
+      );
+    }
     if (!_admits(DesktopAction.acquireSource)) return;
     final cleanLabel = label.trim().isEmpty ? 'Manual PGN' : label.trim();
     await _importManualDownloadedPgn(
@@ -1524,6 +1580,13 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> importManualPgnPaths({required List<String> paths}) async {
+    final importAllowed = await (_pgnImportGuard?.call() ?? Future.value(true));
+    if (!mounted) return;
+    if (!importAllowed) {
+      throw DesktopPremiumRequiredException(
+        DesktopAccessReason.premiumPgnImport.code,
+      );
+    }
     if (!_admits(DesktopAction.acquireSource)) return;
     final player = state.selectedPlayer;
     if (player == null) return;
@@ -1896,8 +1959,12 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   Future<void> _upsertPlayer(
     PlayerWorkspacePlayer player, {
     required bool select,
+    bool ownProfile = false,
   }) async {
     if (_isPlayerDeleted(player.id)) return;
+    if (!(_capacityGuard?.call(player, ownProfile: ownProfile) ?? true)) {
+      throw const DesktopPremiumRequiredException('prep_capacity');
+    }
     final players = <PlayerWorkspacePlayer>[
       for (final existing in state.players)
         if (existing.id != player.id) existing,

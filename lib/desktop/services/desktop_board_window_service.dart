@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
 import 'package:chessever/desktop/services/desktop_board_window_readiness.dart';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -571,12 +572,21 @@ final desktopBoardWindowServiceProvider = Provider<DesktopBoardWindowService>((
 /// user clicked. The child re-admits on boot without a paywall.
 Future<void> openBoardGameWindow(WidgetRef ref, BoardTabGameArgs args) async {
   final container = ProviderScope.containerOf(ref.context, listen: false);
+  if (args.sourceGame != null) {
+    final access = await resolveDesktopGameEventAccess(
+      container,
+      game: args.sourceGame!,
+      access: args.admissionContext,
+      eventBroadcastId: args.eventBroadcastId,
+    );
+    args = args.copyWith(accessContext: access);
+  }
   if (!admitBoardGameOpen(container, args, surface: 'board_window_open')) {
     return;
   }
-  await container.read(desktopBoardWindowServiceProvider).openBoardGameWindow(
-    args,
-  );
+  await container
+      .read(desktopBoardWindowServiceProvider)
+      .openBoardGameWindow(args);
 }
 
 Future<void> openPictureInPictureWindow(WidgetRef ref, BoardTabGameArgs args) {

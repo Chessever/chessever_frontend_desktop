@@ -6,7 +6,8 @@ import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 
 import 'package:chessever/desktop/services/engine/pv_san_formatter.dart';
-import 'package:flutter/foundation.dart' show compute, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show compute, kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -272,7 +273,12 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         widget.onReportRunningChanged?.call(running);
       });
     }
-    final report = reportState.report;
+    final report =
+        !kIsWeb ||
+                desktopPremiumAccess(ref.read(subscriptionProvider)) ==
+                    DesktopAccess.allowed
+            ? reportState.report
+            : null;
     final reportChanged =
         !_requesting &&
         (_reportOwnerIsCurrent?.call() ?? true) &&
@@ -334,11 +340,16 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             if (!ownsRequest()) return false;
             return showDesktopPaywall(
               context,
-              const DesktopAccessDecision(
-                DesktopAccess.quotaExceeded,
-                DesktopAccessReason.quotaGameReportsPerUtcDay,
-              ),
-              surface: 'lifetime_report_limit',
+              kIsWeb
+                  ? const DesktopAccessDecision(
+                    DesktopAccess.premiumRequired,
+                    DesktopAccessReason.premiumGameReport,
+                  )
+                  : const DesktopAccessDecision(
+                    DesktopAccess.quotaExceeded,
+                    DesktopAccessReason.quotaGameReportsPerUtcDay,
+                  ),
+              surface: kIsWeb ? 'game_reports' : 'lifetime_report_limit',
             );
           },
           refreshEntitlement: () async {
@@ -389,6 +400,18 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       if (before != null && before != after) _reportController.invalidate();
     });
     ref.watch(desktopAccountIdentityProvider);
+    final reportAccess =
+        !kIsWeb ||
+        desktopPremiumAccess(ref.watch(subscriptionProvider)) ==
+            DesktopAccess.allowed;
+    if (kIsWeb) {
+      ref.listen<SubscriptionState>(subscriptionProvider, (before, after) {
+        if (desktopPremiumAccess(after) == DesktopAccess.premiumRequired) {
+          _reportController.invalidate();
+        }
+        _onReport();
+      });
+    }
     final asyncSettings = ref.watch(engineSettingsProviderNew);
     final settings = asyncSettings.valueOrNull;
     final engineOn =
@@ -396,7 +419,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         const EngineSettings().showEngineAnalysis;
     final reportOn = widget.reportVisible;
     final reportState =
-        (_reportOwnerIsCurrent?.call() ?? true)
+        reportAccess && (_reportOwnerIsCurrent?.call() ?? true)
             ? _reportController.state
             : const GameReportState();
     final liveAnalysisPausedForReport = reportOn && reportState.isRunning;
@@ -837,6 +860,13 @@ class _GameReportViewState extends State<GameReportView> {
 
   Widget _requestNoticeMessage(GameReportRequestResult notice) {
     return switch (notice.outcome) {
+      GameReportRequestOutcome.premiumRequired => _ReportMessage(
+        icon: Icons.lock_outline_rounded,
+        title: 'Game reports are Premium',
+        body: 'Upgrade to analyze games and open saved reports.',
+        actionLabel: 'See Premium',
+        onAction: widget.onAnalyze,
+      ),
       GameReportRequestOutcome.quotaExceeded => _ReportMessage(
         icon: Icons.hourglass_bottom_rounded,
         title: 'Your free report is used',

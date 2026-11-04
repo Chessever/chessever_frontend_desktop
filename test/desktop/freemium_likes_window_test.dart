@@ -52,6 +52,69 @@ DesktopAccess _open(
 void main() {
   final now = DateTime(2026, 9, 12, 15, 0);
 
+  group('web latest-20 Likes bulk export', () {
+    final all = List.generate(
+      25,
+      (i) => _like(
+        'like-${i.toString().padLeft(2, '0')}',
+        DateTime(2020, 1, 1).add(Duration(minutes: i)),
+      ),
+    );
+    LikedGamesExportSlice slice(
+      Iterable<SavedAnalysis> visible, {
+      SubscriptionState? subscription,
+      Iterable<SavedAnalysis>? global,
+    }) => likedGamesExportSlice(
+      visible,
+      allLikes: global ?? all,
+      subscription: subscription ?? _free,
+      entitlement: _guest,
+      now: now,
+      isWebApp: true,
+    );
+
+    test('exports latest 20 even if years old, retaining requested order', () {
+      final result = slice(all);
+      expect(result.accessible.map((a) => a.id), all.skip(5).map((a) => a.id));
+      expect(result.locked, 5);
+    });
+    test('filtering to older likes does not create a new free allowance', () {
+      final result = slice([all[0], all[6], all[2]]);
+      expect(result.accessible.map((a) => a.id), [all[6].id]);
+      expect(result.locked, 2);
+    });
+    test('same-time ties follow phone descending id ordering', () {
+      final tied = [for (final like in all) _like(like.id, now)];
+      expect(
+        slice(tied.reversed, global: tied).accessible.map((a) => a.id),
+        tied.reversed.take(20).map((a) => a.id),
+      );
+    });
+    test(
+      'confirmed Premium exports everything; unknown only permits proven free slice',
+      () {
+        expect(slice(all, subscription: _premium).accessible, hasLength(25));
+        final unknown = slice(all, subscription: _unknown);
+        expect(unknown.accessible, hasLength(20));
+        expect(unknown.locked, 0);
+        expect(unknown.undetermined, 5);
+      },
+    );
+    test(
+      'missing global history does not guess entitlement from a filtered list',
+      () {
+        final result = likedGamesExportSlice(
+          all.take(2),
+          subscription: _free,
+          entitlement: _guest,
+          isWebApp: true,
+        );
+        expect(result.accessible, isEmpty);
+        expect(result.undetermined, 2);
+      },
+    );
+  });
+
   group('Likes seven-day window (liked-at, local calendar days)', () {
     test('liked on day 6 opens free, day 7 is locked', () {
       final day6 = _like('a', DateTime(2026, 9, 6, 9, 0));

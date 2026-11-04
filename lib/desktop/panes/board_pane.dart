@@ -1,3 +1,8 @@
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/desktop/widgets/library/game_video_submission.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -251,8 +256,12 @@ bool shouldUsePristineEventSourceForLibrarySave({
   required bool hasUserNags,
   required bool hasCompletedReport,
   bool hasCommittedSave = false,
-}) => canSaveSource && !hasCommittedSave && !dirtySinceLoad &&
-    !hasUserNags && !hasCompletedReport;
+}) =>
+    canSaveSource &&
+    !hasCommittedSave &&
+    !dirtySinceLoad &&
+    !hasUserNags &&
+    !hasCompletedReport;
 
 @visibleForTesting
 String? resolveInitialBoardPgnLiveStatus({
@@ -870,7 +879,11 @@ class _BoardPaneContent extends HookConsumerWidget {
             );
     final eventPlayerScope = boardArgs?.eventPlayerScope;
     if (eventPlayerScope is EventPlayerBoardScope && activeTabId != null) {
-      ref.watch(eventPlayerBoardGamesProvider(eventPlayerBoardGamesKey(eventPlayerScope, activeTabId)));
+      ref.watch(
+        eventPlayerBoardGamesProvider(
+          eventPlayerBoardGamesKey(eventPlayerScope, activeTabId),
+        ),
+      );
     }
     final attachedLibrarySaveOrigin =
         activeTabId == null
@@ -1003,10 +1016,13 @@ class _BoardPaneContent extends HookConsumerWidget {
     final reportActivation = useRef<Object>(Object());
     final savedSourceSeedPgn = useRef(restoredSession?.savedSourceSeedPgn);
     final hasCommittedSave = useRef(restoredSession?.hasCommittedSave ?? false);
-    final lastSavedAnalysisPgn = useState(restoredSession?.lastSavedAnalysisPgn);
+    final lastSavedAnalysisPgn = useState(
+      restoredSession?.lastSavedAnalysisPgn,
+    );
     final lastBroadcastPgn = useRef(
       restoredSession?.lastBroadcastPgn ??
-          restoredSession?.savedSourceSeedPgn ?? restoredSession?.lastAppliedPgn,
+          restoredSession?.savedSourceSeedPgn ??
+          restoredSession?.lastAppliedPgn,
     );
     final reportRevealState = useRef(const GameReportRevealState());
     // Listen synchronously: even coalesced A -> B -> A replacements invalidate
@@ -1025,8 +1041,10 @@ class _BoardPaneContent extends HookConsumerWidget {
         reportRevealState.value = const GameReportRevealState();
       },
     );
-    ref.listen(desktopTabsProvider.select((tabs) => tabs.activeId),
-        (previous, next) {
+    ref.listen(desktopTabsProvider.select((tabs) => tabs.activeId), (
+      previous,
+      next,
+    ) {
       if (previous != next) {
         reportRevealState.value = const GameReportRevealState();
       }
@@ -1043,8 +1061,18 @@ class _BoardPaneContent extends HookConsumerWidget {
     final reportRunning = useState(false);
     final gameReport = useState<GameAnalysisReport?>(null);
     final reportResetRevision = useState(0);
+    const reportAccessContext = DesktopAccessContext(
+      feature: DesktopFeature.gameReport,
+      action: DesktopAction.view,
+      origin: DesktopDiscoveryOrigin.ownedDocument,
+      quota: DesktopQuota.none,
+    );
+    final reportAccessAllowed =
+        !kIsWeb ||
+        ref.watch(desktopAccessDecisionProvider(reportAccessContext)).isAllowed;
     final gameReportVisible =
         allowGameAnalysis &&
+        reportAccessAllowed &&
         activeReportReveal.isVisibleFor(currentReportRevealKey);
     final runLiveBoardAnalysis = shouldRunLiveBoardAnalysis(
       isForeground: isForegroundTab,
@@ -1274,9 +1302,12 @@ class _BoardPaneContent extends HookConsumerWidget {
     final boardRenderKey =
         '${_boardRenderKey(activeTabId: activeTabId, activeGameId: activeGameId, boardArgs: boardArgs, latestPgnImport: latestPgnImport, lastAppliedGameId: lastAppliedGameId.value, lastAppliedPgn: lastAppliedPgn.value)}:cut${boardCutEpoch.value}';
 
-    final sessionUserNags = ref.watch(userMoveNagsProvider.select(
-      (state) => state[activeTabId ?? 'board-default'] ?? const <int, List<int>>{},
-    ));
+    final sessionUserNags = ref.watch(
+      userMoveNagsProvider.select(
+        (state) =>
+            state[activeTabId ?? 'board-default'] ?? const <int, List<int>>{},
+      ),
+    );
     // What a remount restores. The NAG overlay rides beside the tree, never
     // inside it: the restored pane reads the overlay from the provider again.
     BoardPaneSession retainedBoardSession(Map<int, List<int>> userNags) =>
@@ -1427,7 +1458,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           LocalPgnPerformanceLog.event(
             'board_parse',
             'elapsedMs=${parseClock!.elapsedMilliseconds} '
-            'pgnChars=${trimmed.length} mainline=${parsed.mainline.length}',
+                'pgnChars=${trimmed.length} mainline=${parsed.mainline.length}',
           );
         }
       } catch (e) {
@@ -1435,7 +1466,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           LocalPgnPerformanceLog.event(
             'board_parse_failed',
             'elapsedMs=${parseClock!.elapsedMilliseconds} '
-            'errorType=${e.runtimeType}',
+                'errorType=${e.runtimeType}',
           );
         }
         // Silent failure swallows the empty-notation bug if a malformed
@@ -1472,7 +1503,9 @@ class _BoardPaneContent extends HookConsumerWidget {
               tabArgs.gameId == gameId)) {
         // Paste/import may have no bound game id while old tab context remains.
         // Only an owner-matched event parse may consume that source control.
-        if (gameId != null && gameId.trim().isNotEmpty && tabArgs.gameId == gameId) {
+        if (gameId != null &&
+            gameId.trim().isNotEmpty &&
+            tabArgs.gameId == gameId) {
           enrichPgnTimeControlMetadata(
             updatedMetadata,
             timeControlText: tabArgs.timeControlText,
@@ -1550,7 +1583,8 @@ class _BoardPaneContent extends HookConsumerWidget {
       final localAnnotations =
           isCanonicalBroadcastSource
               ? _reconcileCanonicalBroadcastLocalAnnotations(
-                previousBroadcastPgn: lastBroadcastPgn.value ?? lastAppliedPgn.value,
+                previousBroadcastPgn:
+                    lastBroadcastPgn.value ?? lastAppliedPgn.value,
                 currentGame: oldGame,
                 freshGame: freshGame,
                 userNags: currentUserNags,
@@ -1688,7 +1722,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         LocalPgnPerformanceLog.event(
           'board_apply_complete',
           'elapsedMs=${applyClock!.elapsedMilliseconds} '
-          'mainline=${game.mainline.length}',
+              'mainline=${game.mainline.length}',
         );
       }
     }
@@ -2453,8 +2487,8 @@ class _BoardPaneContent extends HookConsumerWidget {
           reportActivation.value = Object();
           savedSourceSeedPgn.value = null;
           hasCommittedSave.value = false;
-        lastSavedAnalysisPgn.value = null;
-        lastBroadcastPgn.value = null;
+          lastSavedAnalysisPgn.value = null;
+          lastBroadcastPgn.value = null;
           reportRevealState.value = const GameReportRevealState();
         }
         lastAppliedGameId.value = activeGameId;
@@ -2540,7 +2574,8 @@ class _BoardPaneContent extends HookConsumerWidget {
     final position = currentPly.position;
     final canBack = pointer.value.isNotEmpty;
     final canForward = _nextPointer(chessGame.value, pointer.value) != null;
-    final canStepForward = _nextManualPointer(chessGame.value, pointer.value) != null;
+    final canStepForward =
+        _nextManualPointer(chessGame.value, pointer.value) != null;
     // ---- Per-side clocks at the active pointer ---------------------
     // Walk the active line *backwards* once and pick up the most
     // recent `[%clk …]` annotation we find for each colour. Clock
@@ -3043,7 +3078,8 @@ class _BoardPaneContent extends HookConsumerWidget {
     // A game read from a published collection is the author's work: it is
     // replayed and analysed here, and never copied or saved out of the app.
     // Same rule as the phone, and it holds for every reader.
-    final collectionGame = boardArgs?.accessContext?.isCollectionContent ?? false;
+    final collectionGame =
+        boardArgs?.accessContext?.isCollectionContent ?? false;
     bool refuseCollectionExport() {
       if (!collectionGame) return false;
       showToast("Games in a collection can't be copied or saved.");
@@ -3106,7 +3142,10 @@ class _BoardPaneContent extends HookConsumerWidget {
         eligibleBoardOutputReport(
           game: chessGame.value,
           report: gameReport.value,
-          explicitlyVisibleForActivation: allowGameAnalysis &&
+          explicitlyVisibleForActivation:
+              allowGameAnalysis &&
+              (!kIsWeb ||
+                  readDesktopAccess(ref.read, reportAccessContext).isAllowed) &&
               reportRevealState.value.isVisibleFor((
                 reportActivation.value,
                 gameReportFingerprint(chessGame.value),
@@ -3162,12 +3201,13 @@ class _BoardPaneContent extends HookConsumerWidget {
     // Captured before any picker/dialog/write await. Successful completion
     // promotes precisely those bytes, not a newer report or today's edits.
     ({bool Function() ownsActivation, void Function(String) commit})
-        captureBoardSaveCompletion() {
+    captureBoardSaveCompletion() {
       final activation = reportActivation.value;
 
       final seed = boardArgs?.retainedSeedIdentity ?? boardArgs;
       final before = mergeUserMainlineNagsForGif(
-        chessGame.value, currentUserNags(),
+        chessGame.value,
+        currentUserNags(),
       );
       bool ownsActivation() {
         if (!context.mounted ||
@@ -3180,16 +3220,20 @@ class _BoardPaneContent extends HookConsumerWidget {
         return tabs.tabs.any((tab) => tab.id == activeTabId) &&
             identical(seed, args?.retainedSeedIdentity ?? args);
       }
+
       void commit(String pgn) {
         if (!ownsActivation()) {
           return;
         }
         final saved = ChessGame.fromPgn(before.gameId, pgn);
         final current = mergeUserMainlineNagsForGif(
-          chessGame.value, currentUserNags(),
+          chessGame.value,
+          currentUserNags(),
         );
         final rebased = rebaseBoardAfterSavedSnapshot(
-          before: before, saved: saved, current: current,
+          before: before,
+          saved: saved,
+          current: current,
         );
         hasCommittedSave.value = true;
         savedSourceSeedPgn.value ??= lastAppliedPgn.value;
@@ -3220,11 +3264,13 @@ class _BoardPaneContent extends HookConsumerWidget {
           }
         }
       }
+
       return (ownsActivation: ownsActivation, commit: commit);
     }
 
     Future<void> copyPgnAction() async {
       if (refuseCollectionExport()) return;
+      if (!await ensureWebPgnAccess(context, importing: false)) return;
       if (!gameHasMainline()) {
         showToast('No PGN to copy yet — load a game first.');
         return;
@@ -3240,7 +3286,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         } else {
           pgn = boardClipboardPgn(
             game: chessGame.value,
-            dirtySinceLoad: dirtySinceLoad.value || lastSavedAnalysisPgn.value != null,
+            dirtySinceLoad:
+                dirtySinceLoad.value || lastSavedAnalysisPgn.value != null,
             lastAppliedPgn: lastAppliedPgn.value,
           );
         }
@@ -3258,6 +3305,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     Future<void> pastePgnAction() async {
+      if (!await ensureWebPgnAccess(context, importing: true)) return;
       try {
         final data = await Clipboard.getData(Clipboard.kTextPlain);
         final text = data?.text?.trim();
@@ -3310,7 +3358,8 @@ class _BoardPaneContent extends HookConsumerWidget {
       final tournamentTitle = boardArgs?.tournamentTitle ?? '';
       try {
         final saveCompletion = captureBoardSaveCompletion();
-        final useOpeningSource = source != null &&
+        final useOpeningSource =
+            source != null &&
             shouldUsePristineEventSourceForLibrarySave(
               canSaveSource: canSaveDesktopGameToLibrary(source),
               dirtySinceLoad: dirtySinceLoad.value,
@@ -3322,8 +3371,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         final outputGame = await resolveBoardLibrarySaveGame(
           useOpeningSource: useOpeningSource,
           workingGame: hydrateGameForUserOutput(chessGame.value),
-          resolveOpeningSource: () =>
-              resolveDesktopChessGameForLibrary(ref, source!),
+          resolveOpeningSource:
+              () => resolveDesktopChessGameForLibrary(ref, source!),
         );
         if (!context.mounted || !saveCompletion.ownsActivation()) return;
         final pgn = exportGameToPgn(outputGame);
@@ -3361,7 +3410,6 @@ class _BoardPaneContent extends HookConsumerWidget {
         }
         final eventLabel = headers['Event']?.trim();
         final gameSnapshot = snapshot.copyWith(metadata: metadata);
-
 
         final outcome = await showLibrarySaveToFolderDialog(
           context: context,
@@ -3903,8 +3951,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       );
     }
 
-    void navigatePreviousGameManually() =>
-        unawaited(navigateGameManually(-1));
+    void navigatePreviousGameManually() => unawaited(navigateGameManually(-1));
 
     void navigateNextGameManually() => unawaited(navigateGameManually(1));
 
@@ -4236,18 +4283,15 @@ class _BoardPaneContent extends HookConsumerWidget {
       });
     }
 
-    useEffect(
-      () {
-        if (explorerPreviewUci.value != null && explorerPreview == null) {
-          Future.microtask(() {
-            if (!context.mounted) return;
-            explorerPreviewUci.value = null;
-          });
-        }
-        return null;
-      },
-      [position.fen, explorerPreviewUci.value],
-    );
+    useEffect(() {
+      if (explorerPreviewUci.value != null && explorerPreview == null) {
+        Future.microtask(() {
+          if (!context.mounted) return;
+          explorerPreviewUci.value = null;
+        });
+      }
+      return null;
+    }, [position.fen, explorerPreviewUci.value]);
 
     useEffect(() {
       final line = explorerPreviewLine.value;
@@ -4718,7 +4762,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       bool hasLocalNotationEdits() {
         return shouldConfirmBoardTabCloseForLocalNotationEdits(
           dirtySinceLoad: dirtySinceLoad.value,
-          currentPgn: exportGameToPgn(hydrateGameForUserOutput(chessGame.value)),
+          currentPgn: exportGameToPgn(
+            hydrateGameForUserOutput(chessGame.value),
+          ),
           lastAppliedPgn: lastAppliedPgn.value,
           lastSavedAnalysisPgn: lastSavedAnalysisPgn.value,
         );
@@ -5193,8 +5239,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         lichessAnnotations: moveAnnotations,
         userNags:
             ref.watch(
-            userMoveNagsProvider.select((m) => m[activeTabId ?? '__none__']),
-          ) ??
+              userMoveNagsProvider.select((m) => m[activeTabId ?? '__none__']),
+            ) ??
             const <int, List<int>>{},
         onSetUserQualityNag: (ply, nag) {
           final id = activeTabId;
@@ -5350,7 +5396,11 @@ class _BoardPaneContent extends HookConsumerWidget {
       ),
       tourId: broadcastTourId,
       gameId: boardArgs?.gameListSelectedId ?? boardArgs?.gameId ?? '',
-      completed:const {'1-0','0-1','1/2-1/2'}.contains(pgnHeaders.value['Result']),
+      completed: const {
+        '1-0',
+        '0-1',
+        '1/2-1/2',
+      }.contains(pgnHeaders.value['Result']),
       gamePgn:
           broadcastSourceGame != null && pgnHeaders.value['Result'] == '*'
               ? null
@@ -5380,11 +5430,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     // consulted on first mount, and a dependency rebuilt this whole pane
     // (and every hidden Board tab) on each window-resize frame.
     final screenWidth =
-        context
-            .getInheritedWidgetOfExactType<MediaQuery>()
-            ?.data
-            .size
-            .width ??
+        context.getInheritedWidgetOfExactType<MediaQuery>()?.data.size.width ??
         double.infinity;
     const smallScreenWidthThreshold = 1400.0;
     final gameRailInitialCollapsed = screenWidth < smallScreenWidthThreshold;
@@ -5773,8 +5819,26 @@ class _BoardPaneContent extends HookConsumerWidget {
                                 reportSelected: gameReportVisible,
                                 reportEnabled: true,
                                 showReport: allowGameAnalysis,
-                                onToggleReport: () {
+                                onToggleReport: () async {
                                   if (!allowGameAnalysis) return;
+                                  if (kIsWeb &&
+                                      !await showDesktopPremiumPaywall(
+                                        context,
+                                        accessContext: reportAccessContext,
+                                        surface: 'board_game_report',
+                                      )) {
+                                    return;
+                                  }
+                                  if (!context.mounted ||
+                                      currentReportRevealKey !=
+                                          (
+                                            reportActivation.value,
+                                            gameReportFingerprint(
+                                              chessGame.value,
+                                            ),
+                                          )) {
+                                    return;
+                                  }
                                   reportRevealState.value =
                                       reportRevealState.value
                                           .activate(currentReportRevealKey)
@@ -7846,10 +7910,11 @@ void clearBoardPlyReplaysForTesting() => _recentPlyReplays.clear();
 Square? boardMoveBadgeSquareForTesting(
   ChessGame game,
   ChessMovePointer pointer,
-) => _pliesFromPath(
-  game.startingFen,
-  _pathFromPointer(game, pointer),
-).last.lastMoveSquare;
+) =>
+    _pliesFromPath(
+      game.startingFen,
+      _pathFromPointer(game, pointer),
+    ).last.lastMoveSquare;
 
 @visibleForTesting
 Widget boardMoveBadgeWidgetForTesting({
@@ -8034,9 +8099,14 @@ String boardVariationForkScopeKey({
   String? sourceGameId,
 }) {
   final next = _nextManualPointer(game, pointer);
-  final options = next == null
-      ? null
-      : resolveVariationForkOptions(game: game, current: pointer, next: next);
+  final options =
+      next == null
+          ? null
+          : resolveVariationForkOptions(
+            game: game,
+            current: pointer,
+            next: next,
+          );
   return jsonEncode(<Object?>[
     sourceGameId ?? game.gameId,
     game.startingFen,
@@ -8047,7 +8117,10 @@ String boardVariationForkScopeKey({
       for (final option in options)
         <Object?>[
           option.pointer,
-          _pathFromPointer(game, option.pointer).map((move) => move.uci).toList(),
+          _pathFromPointer(
+            game,
+            option.pointer,
+          ).map((move) => move.uci).toList(),
         ],
   ]);
 }
@@ -9039,6 +9112,7 @@ class _BoardArea extends ConsumerWidget {
   final VoidCallback onRestoreMainWindow;
   final VoidCallback onDismissPictureInPicture;
   final VoidCallback onNextGame;
+
   /// Listened to inside the board's layout only, so a resize-grip drag
   /// rebuilds the board area and not the pane that owns it.
   final ValueListenable<double?> boardSizePreference;
@@ -9402,8 +9476,7 @@ class _BoardArea extends ConsumerWidget {
                   // click. The overlay is a sibling of the annotation layer;
                   // exclude it here too so starting a drag/reset cannot
                   // erase annotations.
-                  final cornerRight =
-                      (constraints.maxWidth + boardWithBar) / 2;
+                  final cornerRight = (constraints.maxWidth + boardWithBar) / 2;
                   final cornerBottom =
                       (constraints.maxHeight + boardSize + extraVertical) / 2 -
                       bottomRowHeight -
@@ -9727,6 +9800,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
   final Square? boardAnnotationSquare;
   final _GameEndingData? gameEnding;
   final ValueChanged<int> onWheelStep;
+
   /// Position whose engine lines draw arrows, or null when arrows are off.
   final String? engineArrowFen;
 
@@ -10024,9 +10098,12 @@ EventPlayerGamesKey? boardPlayerHistoryKey({
   GamesTourModel? sourceGame,
   bool allowSourceFallback = false,
 }) {
-  final primaryTourId = eventKey?.tourId.trim() ??
+  final primaryTourId =
+      eventKey?.tourId.trim() ??
       (allowSourceFallback && sourceGame?.source == GameSource.supabase
-          ? sourceGame?.tourId.trim() : null) ?? '';
+          ? sourceGame?.tourId.trim()
+          : null) ??
+      '';
   if (primaryTourId.isEmpty || playerName.trim().isEmpty) return null;
 
   final additionalTourIds = <String>{};
@@ -10058,12 +10135,15 @@ double? boardPlayerAwardedPoints({
 }) {
   final source = sourceGame ?? args?.sourceGame;
   if (source != null) {
-    return isWhite ? source.whitePlayer.customPoints : source.blackPlayer.customPoints;
+    return isWhite
+        ? source.whitePlayer.customPoints
+        : source.blackPlayer.customPoints;
   }
   if (args == null) return null;
   final id = args.gameId ?? args.gameListSelectedId;
   if (id == null) return null;
-  final summary = _findSummaryById(args.eventGames, id) ??
+  final summary =
+      _findSummaryById(args.eventGames, id) ??
       _findSummaryById(args.routeGames, id) ??
       _findSummaryById(args.databaseGames, id);
   return isWhite ? summary?.whiteCustomPoints : summary?.blackCustomPoints;
@@ -10165,22 +10245,35 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     // ids. Live clocks now rebuild below this header, while other header state
     // changes still avoid an O(eventGames) scan plus a UI-isolate string join.
     final historyKey = useMemoized(
-      () => boardArgs?.eventPlayerScope is EventPlayerBoardScope
-          ? EventPlayerGamesKey(
-              tourId: (boardArgs!.eventPlayerScope!).tourIds.first,
-              additionalTourIds: (boardArgs!.eventPlayerScope!).tourIds.skip(1),
-              playerName: name, fideId: fideId, ownerId: historyOwnerId ?? '',
-            )
-          : boardPlayerHistoryKey(
-        eventKey: eventKey,
-        eventGames: hydratedEventGames,
-        sourceGame: sourceGame,
-        allowSourceFallback: _canOpenEventPlayerGames,
-        playerName: name,
-        fideId: fideId,
-        ownerId: historyOwnerId ?? '',
-      ),
-      [boardArgs?.eventPlayerScope, eventKey, hydratedEventGames, sourceGame, name, fideId, historyOwnerId],
+      () =>
+          boardArgs?.eventPlayerScope is EventPlayerBoardScope
+              ? EventPlayerGamesKey(
+                tourId: (boardArgs!.eventPlayerScope!).tourIds.first,
+                additionalTourIds: (boardArgs!.eventPlayerScope!).tourIds.skip(
+                  1,
+                ),
+                playerName: name,
+                fideId: fideId,
+                ownerId: historyOwnerId ?? '',
+              )
+              : boardPlayerHistoryKey(
+                eventKey: eventKey,
+                eventGames: hydratedEventGames,
+                sourceGame: sourceGame,
+                allowSourceFallback: _canOpenEventPlayerGames,
+                playerName: name,
+                fideId: fideId,
+                ownerId: historyOwnerId ?? '',
+              ),
+      [
+        boardArgs?.eventPlayerScope,
+        eventKey,
+        hydratedEventGames,
+        sourceGame,
+        name,
+        fideId,
+        historyOwnerId,
+      ],
     );
     final requestedHistoryContext = useState<String?>(null);
     final historyRequestContext = useMemoized(
@@ -10206,9 +10299,11 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
                 requestedHistoryContext.value != historyRequestContext
             ? const <PlayerHoverRound>[]
             : ref
-                    .watch(playerHoverRoundsProvider(
-                      playerHoverRoundsKey(historyKey.tourIds),
-                    ))
+                    .watch(
+                      playerHoverRoundsProvider(
+                        playerHoverRoundsKey(historyKey.tourIds),
+                      ),
+                    )
                     .valueOrNull ??
                 const <PlayerHoverRound>[];
 
@@ -10295,7 +10390,8 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           onOpenOpponentInNewTab:
               (opponent) => _openProfileInNewTab(ref, opponent),
           onOpenGameInNewTab:
-              (game) => _openPreviewGameInNewTab(ref, game, hoverGames, historyKey),
+              (game) =>
+                  _openPreviewGameInNewTab(ref, game, hoverGames, historyKey),
         );
       },
       [
@@ -10346,7 +10442,9 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
                     decoration: BoxDecoration(
                       color: kBlack3Color,
                       borderRadius: BorderRadius.circular(7),
-                      border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
+                      border: Border.all(
+                        color: kWhiteColor.withValues(alpha: 0.24),
+                      ),
                     ),
                     child:
                         hasPhoto
@@ -10411,7 +10509,9 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
                                   color: kWhiteColor.withValues(alpha: 0.82),
                                   fontSize: 13,
                                   fontWeight: FontWeight.w500,
-                                  fontFeatures: const [FontFeature.tabularFigures()],
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
                                 ),
                               ),
                             ],
@@ -10428,13 +10528,18 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
                     result: result,
                     fallbackText: clockText ?? '',
                   )
-                else if (hasUsableClockDisplay(clockText) || result != null) ...[
+                else if (hasUsableClockDisplay(clockText) ||
+                    result != null) ...[
                   const SizedBox(width: 10),
                   _PlayerClock(
                     text: clockText ?? '',
                     isToMove: isToMove,
                     result: result,
-                    customPoints: boardPlayerAwardedPoints(isWhite: isWhite, sourceGame: sourceGame, args: boardArgs),
+                    customPoints: boardPlayerAwardedPoints(
+                      isWhite: isWhite,
+                      sourceGame: sourceGame,
+                      args: boardArgs,
+                    ),
                   ),
                 ],
                 if (trailingControl != null) ...[
@@ -10626,14 +10731,13 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
           reuseExisting: false,
           replaceActive: false,
         ).catchError((Object error) {
-          if (openContext.mounted)
-            {
+          if (openContext.mounted) {
             showDesktopToast(
               openContext,
               'Could not open event games. Please retry.',
               error: true,
             );
-            }
+          }
         }),
       );
       return;
@@ -10842,7 +10946,9 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
         .state = _scoreCardGamesContextForBoardTap(eventGame, boardArgs);
 
     openPlayerScoreCard(
-      ref, player, fromTournamentContext: true,
+      ref,
+      player,
+      fromTournamentContext: true,
       accessContext: boardArgs?.sourceAccessContext,
     );
   }
@@ -11069,8 +11175,10 @@ TournamentGameSummary _summaryWithLiveState(
     blackTeam: playersChanged ? blackPlayer.team ?? '' : null,
     whiteCustomPoints: whitePlayer?.customPoints,
     blackCustomPoints: blackPlayer?.customPoints,
-    clearWhiteCustomPoints: whitePlayer != null && whitePlayer.customPoints == null,
-    clearBlackCustomPoints: blackPlayer != null && blackPlayer.customPoints == null,
+    clearWhiteCustomPoints:
+        whitePlayer != null && whitePlayer.customPoints == null,
+    clearBlackCustomPoints:
+        blackPlayer != null && blackPlayer.customPoints == null,
   );
 }
 
@@ -11573,11 +11681,7 @@ bool _shouldPlaySounds(WidgetRef ref, String? tabId) {
 /// Castling in dartchess is encoded as king-captures-rook; remap to the
 /// king's actual landing square so badge anchors and last-move feedback
 /// land where the king ends up rather than on the rook.
-Square? _normaliseLastMoveSquare(
-  Position before,
-  Position after,
-  Move? move,
-) {
+Square? _normaliseLastMoveSquare(Position before, Position after, Move? move) {
   if (move == null) return null;
   if (move is NormalMove) {
     // A king-to-rook UCI castle must anchor to the resulting king, not its

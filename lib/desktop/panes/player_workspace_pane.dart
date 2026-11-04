@@ -5,6 +5,9 @@ import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/web_prep_access.dart';
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
+import 'package:chessever/desktop/widgets/desktop_paywall_button.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'dart:io';
 
@@ -341,7 +344,11 @@ class PlayerWorkspacePane extends HookConsumerWidget {
         (tabs) => activeTabId == null || tabs.activeId == activeTabId,
       ),
     );
-    final tab = useState(_PlayerWorkspaceTab.overview);
+    _PlayerWorkspaceTab initialProfileTab() =>
+        !kIsWeb || readDesktopAccess(ref.read, webPrepContentAccess).isAllowed
+            ? _PlayerWorkspaceTab.overview
+            : _PlayerWorkspaceTab.accounts;
+    final tab = useState(initialProfileTab());
     final gamesFilter = useState(LocalChessGameFilter());
     final gamesSourcePath = useState<String?>(null);
     final gamesFilterNonce = useState(0);
@@ -374,7 +381,7 @@ class PlayerWorkspacePane extends HookConsumerWidget {
               subtitle: playerWorkspaceRouteSubtitle(playerId),
             );
       }
-      tab.value = _PlayerWorkspaceTab.overview;
+      tab.value = initialProfileTab();
       gamesFilter.value = LocalChessGameFilter();
       gamesSourcePath.value = null;
       gamesFilterNonce.value = 0;
@@ -2283,7 +2290,7 @@ Color _sourceLabelColor(PlayerWorkspaceSource source) {
   };
 }
 
-class _PlayerWorkspaceMain extends StatelessWidget {
+class _PlayerWorkspaceMain extends ConsumerWidget {
   const _PlayerWorkspaceMain({
     required this.selectedTab,
     required this.onTabChanged,
@@ -2307,7 +2314,15 @@ class _PlayerWorkspaceMain extends StatelessWidget {
   final ValueChanged<LocalChessGameFilter> onGamesFilterChanged;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final decision =
+        kIsWeb
+            ? ref.watch(desktopAccessDecisionProvider(webPrepContentAccess))
+            : null;
+    final contentLocked =
+        selectedTab != _PlayerWorkspaceTab.accounts &&
+        decision != null &&
+        !decision.isAllowed;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: kBlack2Color,
@@ -2325,7 +2340,18 @@ class _PlayerWorkspaceMain extends StatelessWidget {
                   child: DesktopSegmentedTabs<_PlayerWorkspaceTab>(
                     expand: true,
                     selected: selectedTab,
-                    onChanged: onTabChanged,
+                    onChanged: (next) async {
+                      if (kIsWeb &&
+                          next != _PlayerWorkspaceTab.accounts &&
+                          !await showDesktopPremiumPaywall(
+                            context,
+                            accessContext: webPrepContentAccess,
+                            surface: 'prep_${next.name}',
+                          )) {
+                        return;
+                      }
+                      if (context.mounted) onTabChanged(next);
+                    },
                     tabs: const [
                       DesktopSegmentedTab(
                         value: _PlayerWorkspaceTab.overview,
@@ -2355,25 +2381,46 @@ class _PlayerWorkspaceMain extends StatelessWidget {
           ),
           const Divider(height: 1, color: kDividerColor),
           Expanded(
-            child: switch (selectedTab) {
-              _PlayerWorkspaceTab.overview => _OverviewTab(
-                player: player,
-                onGoToAccounts: onGoToAccounts,
-                onOverviewFilter: onOverviewFilter,
-              ),
-              _PlayerWorkspaceTab.accounts => _AccountsTab(player: player),
-              _PlayerWorkspaceTab.games => _GamesTab(
-                player: player,
-                gamesFilter: gamesFilter,
-                preferredSourcePath: gamesSourcePath,
-                filterNonce: gamesFilterNonce,
-                onFilterChanged: onGamesFilterChanged,
-              ),
-              _PlayerWorkspaceTab.buildTree => _BuildTreeTab(
-                player: player,
-                onGoToAccounts: onGoToAccounts,
-              ),
-            },
+            child:
+                contentLocked
+                    ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: DesktopPaywallButton(
+                          label:
+                              decision.mayOfferPurchase
+                                  ? 'Unlock preparation with Premium'
+                                  : 'Check membership',
+                          onPress:
+                              () => showDesktopPremiumPaywall(
+                                context,
+                                accessContext: webPrepContentAccess,
+                                surface: 'prep_${selectedTab.name}',
+                              ),
+                        ),
+                      ),
+                    )
+                    : switch (selectedTab) {
+                      _PlayerWorkspaceTab.overview => _OverviewTab(
+                        player: player,
+                        onGoToAccounts: onGoToAccounts,
+                        onOverviewFilter: onOverviewFilter,
+                      ),
+                      _PlayerWorkspaceTab.accounts => _AccountsTab(
+                        player: player,
+                      ),
+                      _PlayerWorkspaceTab.games => _GamesTab(
+                        player: player,
+                        gamesFilter: gamesFilter,
+                        preferredSourcePath: gamesSourcePath,
+                        filterNonce: gamesFilterNonce,
+                        onFilterChanged: onGamesFilterChanged,
+                      ),
+                      _PlayerWorkspaceTab.buildTree => _BuildTreeTab(
+                        player: player,
+                        onGoToAccounts: onGoToAccounts,
+                      ),
+                    },
           ),
         ],
       ),
@@ -4778,6 +4825,7 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
 
   Future<void> _pickFiles() async {
     if (_working) return;
+    if (!await ensureWebPgnAccess(context, importing: true)) return;
     if (kIsWeb) {
       final paths = await pickWebChessFilesIntoAppStorage(
         dialogTitle: 'Import player PGN',
@@ -4807,6 +4855,7 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
 
   Future<void> _pickFolder() async {
     if (_working) return;
+    if (!await ensureWebPgnAccess(context, importing: true)) return;
     if (kIsWeb) {
       final directory = await pickWebChessFolderIntoAppStorage();
       if (directory != null) await _importPaths(<String>[directory]);
@@ -4821,6 +4870,7 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
   }
 
   Future<void> _importPaths(List<String> paths) async {
+    if (!mounted) return;
     setState(() {
       _working = true;
       _error = null;
@@ -4921,27 +4971,27 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
                 ),
               ],
               const SizedBox(height: 18),
-              Row(
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   DesktopDialogButton(
                     label: 'Choose files',
                     icon: Icons.file_open_outlined,
                     onPress: _working ? null : () => unawaited(_pickFiles()),
                   ),
-                  const SizedBox(width: 8),
                   DesktopDialogButton(
                     label: 'Choose folder',
                     icon: Icons.folder_open_outlined,
                     onPress: _working ? null : () => unawaited(_pickFolder()),
                   ),
-                  const Spacer(),
                   DesktopDialogButton(
                     label: 'Cancel',
                     icon: Icons.close_rounded,
                     onPress:
                         _working ? null : () => Navigator.of(context).pop(),
                   ),
-                  const SizedBox(width: 8),
                   DesktopDialogButton(
                     label: _working ? 'Importing' : 'Import pasted PGN',
                     icon: Icons.note_add_outlined,
@@ -6147,7 +6197,9 @@ Future<void> showAttachOwnUsernamesFlow(
             offerConnect: true,
             searchAccess: _prepareCreateAccess,
             onSearch: notifier.searchChessEverPlayers,
-            onAddChessEver: notifier.addChessEverPlayer,
+            onAddChessEver:
+                (player) =>
+                    notifier.addChessEverPlayer(player, ownProfile: true),
           ),
     );
     if (result != null) onCreated(result.playerId);
@@ -6174,11 +6226,10 @@ Future<void> showAttachOwnUsernamesFlow(
             if (accounts.isEmpty) return;
             final first = accounts.first;
             final name = first.displayName?.trim();
-            final playerId = await notifier.addManualPlayer(
+            final playerId = await notifier.addOwnProfileWithAccounts(
               name == null || name.isEmpty ? first.username : name,
+              accounts,
             );
-            await notifier.selectPlayer(playerId);
-            await notifier.attachFetchedAccounts(accounts);
             onCreated(playerId);
           },
         ),

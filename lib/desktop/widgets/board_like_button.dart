@@ -23,7 +23,8 @@ import 'package:chessever/theme/app_theme.dart';
 /// heart flies into Save, so the two belong together. The heart is red in
 /// both states, as every like heart in the app is; the fill says whether the
 /// game is liked. The community count rides beside it once the server knows
-/// it. A guest is asked to sign in first (see [toggleDesktopGameLike]).
+/// it. Native desktop asks guests to sign in first; web follows the phone's
+/// anonymous-account policy (see [toggleDesktopGameLike]).
 class DesktopBoardLikeButton extends ConsumerStatefulWidget {
   const DesktopBoardLikeButton({super.key, required this.game});
 

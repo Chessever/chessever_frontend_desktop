@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'dart:convert';
 import 'package:chessever/web/shims/isolate.dart';
 import 'dart:math' as math;
@@ -62,6 +63,9 @@ Future<int> quickImportPathsToFolder({
     return 0;
   }
   if (paths.isEmpty) return 0;
+  if (!await ensureWebPgnAccess(context, importing: true) || !context.mounted) {
+    return 0;
+  }
   final parsed = await _parseChessGamesFromPaths(paths);
   final games = parsed.games;
   _quickImportLog('paths import parsed games=${games.length}');
@@ -108,6 +112,9 @@ Future<int> quickImportClipboardToFolder({
   if (!isWritableLibraryFolder(folder)) {
     _quickImportLog('clipboard import abort read-only folder=${folder.id}');
     showDesktopToast(context, '"${folder.name}" is read-only.', error: true);
+    return 0;
+  }
+  if (!await ensureWebPgnAccess(context, importing: true) || !context.mounted) {
     return 0;
   }
   final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
@@ -179,6 +186,7 @@ Future<int> copyPgnTextsAsPgn({
   required BuildContext context,
   required Iterable<String?> pgns,
 }) async {
+  if (!await ensureWebPgnAccess(context, importing: false)) return 0;
   final rawPgns = pgns.toList(growable: false);
   final parts = copyablePgnTextParts(rawPgns);
   if (parts.isEmpty) {
@@ -263,10 +271,7 @@ Future<int> _bulkSave({
   required List<ChessGame> games,
   bool Function()? isCurrentOwner,
 }) async {
-  final quota = await requestSaveGamesQuota(
-    context,
-    gamesToAdd: games.length,
-  );
+  final quota = await requestSaveGamesQuota(context, gamesToAdd: games.length);
   if (!context.mounted || isCurrentOwner?.call() == false) return 0;
   if (!quota.isAllowed) {
     showDesktopToast(context, freemiumQuotaBlockedMessage(quota), error: true);
@@ -416,9 +421,7 @@ Future<({List<ChessGame> games, String? fileError})> _gamesFromFile(
 // its stdout throws "The handle is invalid" and that aborted the import it
 // was logging (CHESSEVER-1K7).
 void _quickImportLog(String message) {
-  debugPrint(
-    '[PGN_QUICK_IMPORT ${DateTime.now().toIso8601String()}] $message',
-  );
+  debugPrint('[PGN_QUICK_IMPORT ${DateTime.now().toIso8601String()}] $message');
 }
 
 String _titleFor(ChessGame game) {

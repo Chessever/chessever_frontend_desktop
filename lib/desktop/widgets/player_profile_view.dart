@@ -2,12 +2,14 @@ import 'dart:async';
 import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
@@ -3838,21 +3840,30 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
       _RowAction.share || _RowAction.copyShareLink => DesktopAction.share,
       _ => null,
     };
-    if (contentAction != null &&
-        !admitDesktopAction(
-          ProviderScope.containerOf(context, listen: false),
-          const DesktopAccessContext(
-            feature: DesktopFeature.playerProfile,
-            action: DesktopAction.share,
-            origin: DesktopDiscoveryOrigin.playerProfile,
-          ).copyWith(
-            action: contentAction,
-            quota: DesktopQuota.none,
-            additions: 0,
-          ),
-          surface: 'player_profile_context_menu',
-        )) {
-      return;
+    if (contentAction != null) {
+      final container = ProviderScope.containerOf(context, listen: false);
+      final access = await resolveDesktopGameEventAccess(
+        container,
+        game: game,
+        access: const DesktopAccessContext(
+          feature: DesktopFeature.playerProfile,
+          action: DesktopAction.share,
+          origin: DesktopDiscoveryOrigin.playerProfile,
+        ).copyWith(
+          action: contentAction,
+          quota: DesktopQuota.none,
+          additions: 0,
+        ),
+      );
+      if (!mounted ||
+          !await requireDesktopAction(
+            container,
+            access,
+            surface: 'player_profile_context_menu',
+          ) ||
+          !mounted) {
+        return;
+      }
     }
     switch (picked) {
       case _RowAction.open:
@@ -3939,15 +3950,17 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
   Future<void> _selectAllFilteredGames(PlayerProfileGamesState state) async {
     // Selecting every game of a profile (and paging the rest in) is a bulk
     // operation: denied => no page loads.
-    if (!admitDesktopAction(
-      ProviderScope.containerOf(context, listen: false),
-      const DesktopAccessContext(
-        feature: DesktopFeature.playerProfile,
-        action: DesktopAction.bulkSelect,
-        origin: DesktopDiscoveryOrigin.playerProfile,
-      ),
-      surface: 'player_profile_select_all',
-    )) {
+    final totalCount = state.totalCount ?? state.filteredGames.length;
+    if ((!kIsWeb || totalCount > 1) &&
+        !admitDesktopAction(
+          ProviderScope.containerOf(context, listen: false),
+          const DesktopAccessContext(
+            feature: DesktopFeature.playerProfile,
+            action: DesktopAction.bulkSelect,
+            origin: DesktopDiscoveryOrigin.playerProfile,
+          ),
+          surface: 'player_profile_select_all',
+        )) {
       return;
     }
     if (_isLoadingAllPagesForSelection) return;
@@ -4016,6 +4029,29 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
     if (selected.isEmpty) {
       _showToast('Select at least one game.');
       return;
+    }
+    if (selected.length == 1) {
+      final container = ProviderScope.containerOf(context, listen: false);
+      final access = await resolveDesktopGameEventAccess(
+        container,
+        game: selected.single,
+        access: const DesktopAccessContext(
+          feature: DesktopFeature.playerProfile,
+          action: DesktopAction.save,
+          origin: DesktopDiscoveryOrigin.playerProfile,
+          quota: DesktopQuota.none,
+          additions: 0,
+        ),
+      );
+      if (!mounted ||
+          !await requireDesktopAction(
+            container,
+            access,
+            surface: 'player_profile_save_game',
+          ) ||
+          !mounted) {
+        return;
+      }
     }
     await _saveGamesToLibrary(
       context: context,

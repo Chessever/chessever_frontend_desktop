@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/cbh_conversion_service.dart';
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
+import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 
 /// Lets the user pick PGN files for the Library local-database import flow.
@@ -43,7 +45,11 @@ Future<String?> openLibraryPgnDatabasePaths(
 /// Picks PGN files from the Library Import action and opens them as a local
 /// desktop database.
 Future<String?> pickAndOpenLibraryPgnDatabase(WidgetRef ref) async {
-  final paths = await pickLibraryPgnDatabasePaths();
+  if (!await ensureWebPgnAccess(ref.context, importing: true)) return null;
+  final paths =
+      kIsWeb
+          ? await pickWebChessFilesIntoAppStorage(dialogTitle: 'Import PGN')
+          : await pickLibraryPgnDatabasePaths();
   if (paths == null) return null;
   return openLibraryPgnDatabasePaths(ref, paths);
 }

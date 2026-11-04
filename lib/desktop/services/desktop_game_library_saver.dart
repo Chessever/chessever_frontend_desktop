@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:flutter/material.dart';
 import 'package:chessever/utils/pgn_time_control.dart';
 import 'package:flutter/services.dart';
@@ -28,6 +29,8 @@ Future<int> copyDesktopGamesAsResolvedPgn({
     showDesktopToast(context, 'Nothing to copy.', error: true);
     return 0;
   }
+
+  if (!await ensureWebPgnAccess(context, importing: false)) return 0;
 
   final pgns = <String>[];
   var skipped = 0;

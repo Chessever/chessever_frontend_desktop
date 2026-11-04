@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -288,9 +289,11 @@ class MyLikesView extends HookConsumerWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
                 child: Text(
-                  'Likes from the last 7 days open free. '
-                  '${data.lockedCount == 1 ? '1 older like stays' : '${data.lockedCount} older likes stay'} '
-                  'here, locked, until you go Premium.',
+                  kIsWeb
+                      ? 'Open liked games with Premium. Liking, browsing and organizing stay free.'
+                      : 'Likes from the last 7 days open free. '
+                          '${data.lockedCount == 1 ? '1 older like stays' : '${data.lockedCount} older likes stay'} '
+                          'here, locked, until you go Premium.',
                   style: const TextStyle(
                     color: kWhiteColor70,
                     fontSize: 12.5,
@@ -557,10 +560,27 @@ Future<void> _exportLikes(
   WidgetRef ref,
   List<SavedAnalysis> visible,
 ) async {
+  List<SavedAnalysis>? allLikes;
+  if (kIsWeb) {
+    try {
+      allLikes = await ref.read(likedGamesProvider.future);
+    } catch (_) {
+      if (context.mounted) {
+        showDesktopToast(
+          context,
+          "Couldn't load your likes. Try again.",
+          error: true,
+        );
+      }
+      return;
+    }
+    if (!context.mounted) return;
+  }
   LikedGamesExportSlice evaluate() => likedGamesExportSlice(
     visible,
     subscription: ref.read(subscriptionProvider),
     entitlement: ref.read(desktopEntitlementProvider),
+    allLikes: allLikes,
   );
 
   var slice = evaluate();
@@ -593,7 +613,7 @@ Future<void> _exportLikes(
       );
       if (!context.mounted) return;
       // Re-evaluated after the sheet: a purchase exports everything, a
-      // declined upgrade exports the free seven-day slice.
+      // declined upgrade exports the free slice (latest 20 on the web).
       slice = evaluate();
       if (slice.undetermined > 0) {
         showDesktopToast(
@@ -885,7 +905,11 @@ class _MyLikesColumnsHeader extends StatelessWidget {
           const SizedBox(width: _kColumnGap),
           SizedBox(
             width: _kEcoColumn,
-            child: Text('ECO', textAlign: TextAlign.center, style: _headerStyle),
+            child: Text(
+              'ECO',
+              textAlign: TextAlign.center,
+              style: _headerStyle,
+            ),
           ),
           const SizedBox(width: _kColumnGap),
           Expanded(flex: 3, child: Text('Tags', style: _headerStyle)),
@@ -1252,7 +1276,9 @@ class _ExportSliceDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const rule =
-        'The free plan exports likes from today and the 6 days before.';
+        kIsWeb
+            ? 'The free plan exports your 20 most recently liked games.'
+            : 'The free plan exports likes from today and the 6 days before.';
     // Non-breaking spaces keep each count on the same line as its noun.
     if (accessible == 0) {
       return DesktopDateGateDialog(
@@ -1262,7 +1288,7 @@ class _ExportSliceDialog extends StatelessWidget {
                 : 'These likes need Premium to export',
         body:
             '$rule ${locked == 1 ? 'This like is' : 'All $locked likes here are'} '
-            'older. Premium exports your full like history.',
+            '${kIsWeb ? 'outside that set' : 'older'}. Premium exports your full like history.',
         onDismiss: () => Navigator.of(context).pop(),
         onPremium: () => Navigator.of(context).pop(_ExportChoice.premium),
       );

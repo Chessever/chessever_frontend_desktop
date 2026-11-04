@@ -43,6 +43,13 @@ enum DesktopAccessReason {
   premiumMiniatureNotToday('premium_miniature_not_today'),
   premiumCommunityLikesNotToday('premium_community_likes_not_today'),
   premiumBotvinnikAllowance('premium_botvinnik_allowance'),
+  premiumGameReport('premium_game_report'),
+  premiumPgnImport('premium_pgn_import'),
+  premiumPgnCopy('premium_pgn_copy'),
+  premiumLikes('premium_likes'),
+  premiumCommunityLikes('premium_community_likes'),
+  quotaPrepOwnAccounts('quota_prep_own_accounts'),
+  quotaPrepOpponents('quota_prep_opponents'),
   quotaFavoritePlayers('quota_favorite_players'),
   quotaCloudDatabases('quota_cloud_databases'),
   quotaCloudSavedGames('quota_cloud_saved_games'),
@@ -298,6 +305,31 @@ _Requirement _requirementFor(
   DateTime now, {
   required bool isWebApp,
 }) {
+  if (context.feature == DesktopFeature.pgnImport) {
+    return const _Requirement.premium(DesktopAccessReason.premiumPgnImport);
+  }
+  if (context.feature == DesktopFeature.pgnCopy) {
+    return const _Requirement.premium(DesktopAccessReason.premiumPgnCopy);
+  }
+  // The current phone gates every report, including the first and cached
+  // reports. Native desktop retains its existing lifetime allowance.
+  if (isWebApp && context.feature == DesktopFeature.gameReport) {
+    return const _Requirement.premium(DesktopAccessReason.premiumGameReport);
+  }
+  if (isWebApp &&
+      (context.feature == DesktopFeature.likes ||
+          context.origin == DesktopDiscoveryOrigin.likes) &&
+      !_likesFreeActions.contains(context.action)) {
+    return const _Requirement.premium(DesktopAccessReason.premiumLikes);
+  }
+  if (isWebApp &&
+      (context.feature == DesktopFeature.communityLikes ||
+          context.origin == DesktopDiscoveryOrigin.communityLikes) &&
+      !_paidSourceFreeActions.contains(context.action)) {
+    return const _Requirement.premium(
+      DesktopAccessReason.premiumCommunityLikes,
+    );
+  }
   // Webapp-only paid discovery. Browsing and favorite-player/event management
   // stay free; game content keeps its source gate through rails and restores.
   // A retained personal-library copy remains the user's own document.
@@ -322,13 +354,27 @@ _Requirement _requirementFor(
   }
 
   switch (context.feature) {
+    case DesktopFeature.pgnImport:
+    case DesktopFeature.pgnCopy:
+      throw StateError('PGN access is resolved before feature dispatch.');
     case DesktopFeature.eventDiscovery:
+      if (isWebApp && context.action == DesktopAction.view) return _free;
       return const _Requirement.premium(
         DesktopAccessReason.premiumEventDiscovery,
       );
     case DesktopFeature.play:
       return const _Requirement.premium(DesktopAccessReason.premiumPlay);
     case DesktopFeature.prepare:
+      if (isWebApp) {
+        return switch (context.action) {
+          DesktopAction.openContent ||
+          DesktopAction.previewNavigate ||
+          DesktopAction.recompute => const _Requirement.premium(
+            DesktopAccessReason.premiumPrepareComputed,
+          ),
+          _ => _free,
+        };
+      }
       return _prepareRequirement(context.action);
     case DesktopFeature.engineTournament:
       return _engineTournamentRequirement(context.action);
@@ -359,7 +405,7 @@ _Requirement _requirementFor(
           DesktopAccessReason.premiumStructuredSort,
         );
       }
-      return _provenanceRequirement(context, now);
+      return _provenanceRequirement(context, now, isWebApp: isWebApp);
 
     case DesktopFeature.gamebase:
     case DesktopFeature.twic:
@@ -383,6 +429,9 @@ _Requirement _requirementFor(
         );
       }
       if (context.ownershipCovers) return _owned;
+      // The phone admits current-event games from profiles. The archive
+      // classifier stamps past games with eventDiscovery before opening.
+      if (isWebApp) return _free;
       return _paidSourceFreeActions.contains(context.action)
           ? _free
           : const _Requirement.premium(DesktopAccessReason.premiumPaidSource);
@@ -399,7 +448,7 @@ _Requirement _requirementFor(
       // for the client to gate once a game is on screen. Favourites and reports spend quota (resolved after
       // this). Botvinnik and purchase were resolved before this switch, and
       // likes above it. Content keeps the gate of wherever it was found.
-      return _provenanceRequirement(context, now);
+      return _provenanceRequirement(context, now, isWebApp: isWebApp);
   }
 }
 
@@ -407,14 +456,19 @@ _Requirement _requirementFor(
 /// Miniatures keeps that gate on any surface it is carried to (a board tab,
 /// a detached window, restored state). Ownership of the retained row is the
 /// one thing that neutralises a provenance gate.
-_Requirement _provenanceRequirement(DesktopAccessContext context, DateTime now) {
+_Requirement _provenanceRequirement(
+  DesktopAccessContext context,
+  DateTime now, {
+  required bool isWebApp,
+}) {
   if (context.origin == DesktopDiscoveryOrigin.miniatures) {
     return _miniatureRequirement(context, now);
   }
   if (context.origin == DesktopDiscoveryOrigin.communityLikes) {
     return _communityLikesRequirement(context, now);
   }
-  if (_paidOrigins.contains(context.origin)) {
+  if (_paidOrigins.contains(context.origin) &&
+      !(isWebApp && context.origin == DesktopDiscoveryOrigin.playerProfile)) {
     if (context.ownershipCovers) return _owned;
     if (_paidSourceFreeActions.contains(context.action)) return _free;
     // Favouriting a player found on a profile is a favourites quota
@@ -429,8 +483,7 @@ _Requirement _provenanceRequirement(DesktopAccessContext context, DateTime now) 
 }
 
 bool _isQuotaOnlyFeature(DesktopFeature feature) =>
-    feature == DesktopFeature.favorites ||
-    feature == DesktopFeature.gameReport;
+    feature == DesktopFeature.favorites || feature == DesktopFeature.gameReport;
 
 /// Free regardless of the window: seeing, sorting and filtering the
 /// collection, and liking a game. (Tagging and removing are never gated.)
@@ -454,8 +507,8 @@ _Requirement _likesRequirement(DesktopAccessContext context, DateTime now) {
   return desktopLikeIsInFreeWindow(likedAt, now: now)
       ? _free
       : const _Requirement.premium(
-          DesktopAccessReason.premiumLikesOutsideWindow,
-        );
+        DesktopAccessReason.premiumLikesOutsideWindow,
+      );
 }
 
 /// Free: browsing, sorting and filtering the About, Players and Games
@@ -467,8 +520,8 @@ _Requirement _miniatureRequirement(DesktopAccessContext context, DateTime now) {
   return desktopMiniatureIsInFreeWindow(context.contentDate, now: now)
       ? _free
       : const _Requirement.premium(
-          DesktopAccessReason.premiumMiniatureNotToday,
-        );
+        DesktopAccessReason.premiumMiniatureNotToday,
+      );
 }
 
 /// Free: browsing every ranking (Today, Week, Month, Year, earlier dates and
@@ -488,8 +541,8 @@ _Requirement _communityLikesRequirement(
   return free
       ? _free
       : const _Requirement.premium(
-          DesktopAccessReason.premiumCommunityLikesNotToday,
-        );
+        DesktopAccessReason.premiumCommunityLikesNotToday,
+      );
 }
 
 /// Free: browse the saved roster, account metadata and retained game files;
@@ -576,8 +629,8 @@ _Requirement _localFilesRequirement(DesktopAccessContext context) {
     case DesktopAction.filter:
       return context.filterCriteriaCount > 0
           ? const _Requirement.premium(
-              DesktopAccessReason.premiumStructuredFilter,
-            )
+            DesktopAccessReason.premiumStructuredFilter,
+          )
           : _free;
     case DesktopAction.sort:
       return context.sortKeyCount >= 2

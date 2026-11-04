@@ -1,4 +1,5 @@
 import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
+import 'package:chessever/desktop/services/billing/web_intro_offer.dart';
 import 'package:chessever/desktop/widgets/paywall/web_premium_paywall.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:flutter/material.dart';
@@ -55,6 +56,7 @@ void main() {
     DesktopResolvedPricing? pricing,
     String interval = 'year',
     ValueChanged<String>? onChanged,
+    WebIntroOffer? introOffer,
   }) => tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
@@ -66,12 +68,36 @@ void main() {
               interval: interval,
               showsTrial: false,
               onChanged: onChanged,
+              introOffer: introOffer,
             ),
           ),
         ),
       ),
     ),
   );
+
+  testWidgets('monthly intro discloses renewal and leaves annual unchanged', (
+    tester,
+  ) async {
+    await pumpPlans(
+      tester,
+      pricing: DesktopPricing.resolveForCountry('US'),
+      interval: 'month',
+      introOffer: const WebIntroOffer(renewalAmountCents: 1099),
+    );
+    expect(find.textContaining(r'$0.99', findRichText: true), findsOneWidget);
+    expect(find.text(r'First month, then $10.99 per month'), findsOneWidget);
+    expect(find.text(r'$99.99 billed yearly'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await pumpPlans(
+      tester,
+      pricing: DesktopPricing.resolveForCountry('US'),
+      introOffer: const WebIntroOffer(renewalAmountCents: 899),
+    );
+    expect(find.textContaining(r'$0.99', findRichText: true), findsNothing);
+    expect(find.textContaining(r'$10.99', findRichText: true), findsOneWidget);
+  });
 
   testWidgets(
     'regional annual equivalent and full annual charge, not USD examples',
@@ -174,13 +200,16 @@ void main() {
                     children: [
                       WebPremiumPlans(
                         pricing: DesktopPricing.resolveForCountry('US'),
-                        interval: 'year',
+                        introOffer: const WebIntroOffer(
+                          renewalAmountCents: 1099,
+                        ),
+                        interval: 'month',
                         showsTrial: false,
                         onChanged: (_) {},
                       ),
                       const SizedBox(height: 20),
                       WebPremiumCheckoutButton(
-                        label: 'Continue to checkout',
+                        label: r'Continue with $0.99 first month',
                         onPress: () => purchased = true,
                       ),
                     ],
@@ -206,7 +235,7 @@ void main() {
       expect(tester.getRect(close).top, greaterThan(0));
       await tester.ensureVisible(find.byType(WebPremiumCheckoutButton));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Continue to checkout'));
+      await tester.tap(find.text(r'Continue with $0.99 first month'));
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pumpAndSettle();
       expect(purchased, isTrue);

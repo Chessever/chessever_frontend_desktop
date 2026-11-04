@@ -5,6 +5,8 @@ import 'package:flutter/widgets.dart' show BuildContext;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
 import 'package:chessever/desktop/desktop_app.dart'
     show desktopRootNavigatorKey;
 import 'package:chessever/desktop/panes/library_pane.dart'
@@ -79,7 +81,9 @@ class DesktopGameDeepLink {
 
 bool _isChesseverWebUri(Uri uri) {
   return (uri.scheme == 'https' || uri.scheme == 'http') &&
-      (uri.host == 'chessever.com' || uri.host == 'www.chessever.com');
+      (uri.host == 'chessever.com' ||
+          uri.host == 'www.chessever.com' ||
+          uri.host == 'app.chessever.com');
 }
 
 bool _isChesseverSchemeUri(Uri uri) {
@@ -609,11 +613,12 @@ class DesktopDeepLinkRouter {
     int fideId,
     ProviderContainer container,
   ) async {
-    await _openBroadcast(
+    final tabId = await _openBroadcast(
       broadcastLink,
       container,
       segment: TournamentDetailSegment.standings,
     );
+    if (tabId == null) return 'access_denied';
     final player = await _awaitInStandings<PlayerStandingModel>(
       container,
       playerTourScreenProvider,
@@ -644,6 +649,7 @@ class DesktopDeepLinkRouter {
       container,
       segment: TournamentDetailSegment.standings,
     );
+    if (tabId == null) return 'access_denied';
     container.read(teamStandingsModeByTabIdProvider(tabId).notifier).state =
         DesktopTeamStandingsMode.teams;
     final target = teamName.trim().toLowerCase();
@@ -854,7 +860,7 @@ class DesktopDeepLinkRouter {
     _routing = true;
   }
 
-  Future<String> _openBroadcast(
+  Future<String?> _openBroadcast(
     DesktopBroadcastDeepLink link,
     ProviderContainer container, {
     TournamentDetailSegment segment = TournamentDetailSegment.games,
@@ -863,6 +869,15 @@ class DesktopDeepLinkRouter {
         .read(groupBroadcastRepositoryProvider)
         .getGroupBroadcastById(link.id)
         .timeout(const Duration(seconds: 12));
+
+    if (!await requireDesktopPastEventAccess(container, (
+      id: broadcast.id,
+      start: broadcast.dateStart,
+      end: broadcast.dateEnd,
+      fromPastList: false,
+    ))) {
+      return null;
+    }
 
     await _preselectTourIfSharedLinkUsesTourId(
       container,
@@ -930,6 +945,18 @@ class DesktopDeepLinkRouter {
         .timeout(const Duration(seconds: 12));
     final game = GamesTourModel.fromGame(gameRow);
     final pgn = game.pgn?.trim() ?? '';
+    final access = await resolveDesktopGameEventAccess(
+      container,
+      game: game,
+      access: const DesktopAccessContext(
+        feature: DesktopFeature.broadcast,
+        action: DesktopAction.openContent,
+        origin: DesktopDiscoveryOrigin.deepLink,
+      ),
+    );
+    if (!await requireDesktopAction(container, access, surface: 'game_link')) {
+      return;
+    }
 
     final args = BoardTabGameArgs(
       gameId: game.gameId,
@@ -951,13 +978,8 @@ class DesktopDeepLinkRouter {
       tournamentTitle: link.tour ?? game.tourSlug ?? game.tourId,
       eventGames: [TournamentGameSummary.fromGamesTourModel(game)],
       gameListSelectedId: game.gameId,
-      // A website share link resolves to an ordinary broadcast game: free.
-      // The provenance is still recorded so the tab carries it everywhere.
-      accessContext: const DesktopAccessContext(
-        feature: DesktopFeature.broadcast,
-        action: DesktopAction.openContent,
-        origin: DesktopDiscoveryOrigin.deepLink,
-      ),
+      // Archived links retain their gate through restored tabs and rails.
+      accessContext: access,
     );
 
     container.read(chessboardViewFromProviderNew.notifier).state =

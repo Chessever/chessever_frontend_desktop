@@ -28,6 +28,9 @@ enum GameReportRequestOutcome {
   /// The account's lifetime free report is spent and no upgrade completed.
   quotaExceeded,
 
+  /// Browser reports require Premium, including first and cached reports.
+  premiumRequired,
+
   /// The claim could not be answered. Retry, never a purchase prompt.
   temporarilyUnavailable,
 }
@@ -47,6 +50,7 @@ class GameReportRequestResult {
     GameReportRequestOutcome.unavailable ||
     GameReportRequestOutcome.accountRequired ||
     GameReportRequestOutcome.quotaExceeded ||
+    GameReportRequestOutcome.premiumRequired ||
     GameReportRequestOutcome.temporarilyUnavailable => true,
     _ => false,
   };
@@ -96,6 +100,11 @@ bool gameReportHasFinalResult(ChessGame game, Map<String, String> headers) {
 ///    still unused. Failed/cancelled analysis writes no success marker;
 /// 5. after an upgrade, refresh the entitlement and re-check before
 ///    generating.
+///
+/// The browser follows the phone's report gate without the rewarded-ad
+/// option: every explicit report request needs Premium before reading any
+/// session, cached or embedded PGN report. Native desktop retains its one
+/// free successful report and previously admitted reports.
 class GameReportRequestCoordinator {
   GameReportRequestCoordinator({
     required String? Function() accountId,
@@ -104,10 +113,12 @@ class GameReportRequestCoordinator {
     bool Function()? entitlementKnown,
     GameAnalysisReportStore? store,
     GameReportAllowanceStore? allowanceStore,
+    bool premiumRequired = kIsWeb,
   }) : _accountId = accountId,
        _isPremium = isPremium,
        _accountEpoch = accountEpoch ?? accountId,
        _entitlementKnown = entitlementKnown ?? _alwaysCurrent,
+       _premiumRequired = premiumRequired,
        _store = store ?? GameAnalysisReportStore.instance,
        _allowanceStore = allowanceStore ?? GameReportAllowanceStore.instance;
 
@@ -115,6 +126,7 @@ class GameReportRequestCoordinator {
   final bool Function() _isPremium;
   final Object? Function() _accountEpoch;
   final bool Function() _entitlementKnown;
+  final bool _premiumRequired;
   final GameAnalysisReportStore _store;
   final GameReportAllowanceStore _allowanceStore;
   static final Map<String, Future<void>> _accountChains = {};
@@ -180,6 +192,19 @@ class GameReportRequestCoordinator {
     return _runSerialized(owner, () async {
       try {
         if (!current()) return _stale;
+        var premiumAdmission = _premiumRequired && _isPremium();
+        if (_premiumRequired && !premiumAdmission) {
+          if (!_entitlementKnown()) return _retry;
+          final upgraded = await ui.requestUpgrade?.call() ?? false;
+          if (!current()) return _stale;
+          if (!upgraded) return _premiumDenied;
+          await ui.refreshEntitlement?.call();
+          if (!current()) return _stale;
+          premiumAdmission = _isPremium();
+          if (!premiumAdmission) {
+            return _entitlementKnown() ? _premiumDenied : _retry;
+          }
+        }
         final admitted = await _allowanceStore.hasAdmittedReport(
           owner,
           fingerprint,
@@ -219,7 +244,7 @@ class GameReportRequestCoordinator {
 
         // Previously admitted reports may be recomputed after cache eviction;
         // new fingerprints require the lifetime allowance or verified Premium.
-        var premiumAdmission = _isPremium();
+        if (!_premiumRequired) premiumAdmission = _isPremium();
         if (!admitted && !premiumAdmission) {
           final spent = await _allowanceStore.hasLifetimeSuccess(owner);
           if (!current()) return _stale;
@@ -298,6 +323,12 @@ class GameReportRequestCoordinator {
       }
     });
   }
+
+  static const _premiumDenied = GameReportRequestResult(
+    GameReportRequestOutcome.premiumRequired,
+    reason: 'premium_game_report',
+    message: 'Game reports require Premium.',
+  );
 
   static Future<T> _runSerialized<T>(
     String account,

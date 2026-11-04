@@ -2,18 +2,32 @@ import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
+import 'package:chessever/desktop/auth/web_prep_access.dart';
+import 'package:chessever/desktop/auth/web_prep_source_access.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 
+final _restoredEventAccessProvider = FutureProvider.autoDispose
+    .family<DesktopAccessContext, BoardTabGameArgs>((ref, args) {
+      return resolveDesktopGameEventAccess(
+        ref.container,
+        game: args.sourceGame!,
+        access: args.admissionContext,
+        eventBroadcastId: args.eventBroadcastId,
+      );
+    });
+
 /// Board admission that belongs to a GAME's lifetime, not to an entitlement
 /// poll.
 ///
-/// * A game admitted in this tab (by the central open, or by this gate the
-///   first time it saw an allowed decision) stays mounted for as long as the
-///   tab holds that game. A routine refresh, an expiry or a downgrade never
-///   unmounts it, so an unsaved draft survives.
+/// * Native games retain their admitted lifetime. Web protected clean boards
+///   recheck membership, so an old admission cannot outlive paid access.
 /// * A tab with a draft or a committed save (restored session, detached
 ///   hand-off) is kept too: data is never hidden after downgrade.
 /// * Anything else (restored state, detached boot, PiP restore, legacy
@@ -57,8 +71,6 @@ class _DesktopBoardAccessGateState
     );
     if (args == null) return widget.child;
     final key = boardAdmissionKey(args);
-    if (_admittedKey == key) return widget.child;
-
     final latched = ref.watch(
       boardTabAdmissionByTabIdProvider.select((m) => m[tabId] == key),
     );
@@ -69,15 +81,57 @@ class _DesktopBoardAccessGateState
             (session.dirtySinceLoad || session.hasCommittedSave);
       }),
     );
-    if (latched || retainedWork) {
+    if (retainedWork) {
       _admittedKey = key;
       return widget.child;
     }
 
-    final accessContext = args.admissionContext;
+    final sourcePath = args.librarySaveOrigin?.sourcePath;
+    if (sourcePath != null) {
+      final prepDecision = ref.watch(
+        webPrepSourceAccessDecisionProvider(sourcePath),
+      );
+      if (prepDecision != null && !prepDecision.isAllowed) {
+        return DesktopAccessLockedSurface(
+          decision: prepDecision,
+          accessContext: webPrepContentAccess,
+          surface: 'prep_game',
+        );
+      }
+    }
+
+    var accessContext = args.admissionContext;
+    final classifyEvent =
+        ref.watch(desktopPastEventAccessEnabledProvider) &&
+        desktopGameNeedsEventClassification(accessContext, args.sourceGame);
+    if (classifyEvent) {
+      final resolved = ref.watch(_restoredEventAccessProvider(args));
+      final value = resolved.valueOrNull;
+      if (value == null) {
+        return DesktopAccessLockedSurface(
+          decision: DesktopAccessDecision(
+            resolved.hasError
+                ? DesktopAccess.temporarilyUnavailable
+                : DesktopAccess.checking,
+            DesktopAccessReason.entitlementChecking,
+          ),
+          accessContext: desktopPastEventOpenContext,
+          surface: 'event_game_access',
+        );
+      }
+      accessContext = value;
+    }
+    final freeDecision = desktopAccessWithoutMembership(accessContext);
+    final recheckProtectedWeb =
+        ref.watch(desktopPastEventAccessEnabledProvider) &&
+        !freeDecision.isAllowed;
+    if (!recheckProtectedWeb &&
+        (_admittedKey == key || (latched && !classifyEvent))) {
+      _admittedKey = key;
+      return widget.child;
+    }
     // Free for everyone (an ordinary broadcast, a local file, an owned copy):
     // no membership read, no rebuild on entitlement polls.
-    final freeDecision = desktopAccessWithoutMembership(accessContext);
     final decision =
         freeDecision.isAllowed
             ? freeDecision

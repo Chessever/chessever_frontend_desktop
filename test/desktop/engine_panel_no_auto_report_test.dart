@@ -7,6 +7,7 @@ import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -104,6 +105,9 @@ void main() {
       await tester.tap(find.text('Analyze Game'));
       await tester.pump();
       await tester.pump();
+      expect(find.text('Your free game report is used'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
 
       expect(engineRuns, 0);
       expect(find.text('Your free report is used'), findsOneWidget);

@@ -134,9 +134,10 @@ DesktopPaywallCopy _unavailableCopy(
         title: 'Membership could not be verified',
         // Only a refused add or save (a quota decision) has anything to
         // reassure about; search and the explorer changed nothing.
-        body: capacityLine == null
-            ? 'Check your connection, then retry.'
-            : 'Nothing was changed. Check your connection, then retry.',
+        body:
+            capacityLine == null
+                ? 'Check your connection, then retry.'
+                : 'Nothing was changed. Check your connection, then retry.',
         capacityLine: capacityLine,
       );
   }
@@ -204,6 +205,41 @@ DesktopPaywallCopy _premiumCopy(
   String? capacityLine,
 ) {
   switch (reason) {
+    case DesktopAccessReason.premiumGameReport:
+      return const DesktopPaywallCopy(
+        title: 'Game Reports are Premium',
+        body: 'Upgrade to create and open Game Reports.',
+      );
+    case DesktopAccessReason.quotaPrepOwnAccounts:
+      return const DesktopPaywallCopy(
+        title: 'Your three prep accounts are in use',
+        body:
+            'Upgrade to attach more of your own accounts. Existing accounts stay available.',
+      );
+    case DesktopAccessReason.quotaPrepOpponents:
+      return const DesktopPaywallCopy(
+        title: 'Your free opponent profile is in use',
+        body:
+            'Upgrade to prepare against more opponents. Your existing profile stays available.',
+      );
+    case DesktopAccessReason.premiumPgnImport:
+      return const DesktopPaywallCopy(
+        title: 'Importing PGN is Premium',
+        body: 'Upgrade to import games from files or your clipboard.',
+      );
+    case DesktopAccessReason.premiumPgnCopy:
+      return const DesktopPaywallCopy(
+        title: 'Copying PGN is Premium',
+        body:
+            'Upgrade to copy games as PGN. Copying a position as FEN stays free.',
+      );
+    case DesktopAccessReason.premiumLikes:
+    case DesktopAccessReason.premiumCommunityLikes:
+      return const DesktopPaywallCopy(
+        title: 'Opening liked games is Premium',
+        body:
+            'Upgrade to open liked games. Browsing and liking games stay free.',
+      );
     case DesktopAccessReason.premiumEventDiscovery:
       return const DesktopPaywallCopy(
         title: 'Past events are Premium',
@@ -250,7 +286,8 @@ DesktopPaywallCopy _premiumCopy(
     case DesktopAccessReason.premiumPlay:
       return const DesktopPaywallCopy(
         title: 'Play is Premium',
-        body: 'Play against engines and enter tournaments with Premium. Your existing games remain yours.',
+        body:
+            'Play against engines and enter tournaments with Premium. Your existing games remain yours.',
       );
     case DesktopAccessReason.premiumEngineTournament:
       return const DesktopPaywallCopy(

@@ -1,3 +1,6 @@
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
+import 'package:chessever/desktop/auth/web_prep_source_access.dart';
+import 'package:chessever/desktop/widgets/web_prep_source_access_gate.dart';
 import '../services/converted_database_names.dart';
 import 'package:chessever/desktop/state/library_destination.dart';
 import 'package:chessever/desktop/services/shared_books.dart';
@@ -17,6 +20,9 @@ import 'package:chessever/desktop/widgets/library/local_database_rename_dialog.d
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/desktop_collection_game_access.dart';
+import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
+import 'package:chessever/desktop/widgets/collections/collection_preview_access_gate.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
 
@@ -245,6 +251,10 @@ class LibraryPane extends HookConsumerWidget {
     }
 
     Future<void> openClipboardPgnDatabase() async {
+      if (!await ensureWebPgnAccess(context, importing: true) ||
+          !context.mounted) {
+        return;
+      }
       try {
         final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
         if (!context.mounted) return;
@@ -393,6 +403,10 @@ class LibraryPane extends HookConsumerWidget {
     }
 
     Future<void> importLocalPgnFiles() async {
+      if (!await ensureWebPgnAccess(context, importing: true) ||
+          !context.mounted) {
+        return;
+      }
       final paths =
           kIsWeb
               ? await pickWebChessFilesIntoAppStorage(
@@ -2491,6 +2505,13 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     }
 
     Future<void> previewLocalEntry(LocalLibraryEntry entry) async {
+      if (!await requireWebPrepSourceAccess(
+            ProviderScope.containerOf(context, listen: false),
+            entry.path,
+          ) ||
+          !context.mounted) {
+        return;
+      }
       final opened = await ref
           .read(localChessLibraryProvider.notifier)
           .openPaths(<String>[entry.path], sourceLabel: entry.displayName);
@@ -2499,8 +2520,16 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       if (selected != null) onSelectLocalPath(selected);
     }
 
-    Future<void> openLocalEntry(LocalLibraryEntry entry) =>
-        activateLibraryLocalEntry(entry, onOpenLocalPath);
+    Future<void> openLocalEntry(LocalLibraryEntry entry) async {
+      if (!await requireWebPrepSourceAccess(
+            ProviderScope.containerOf(context, listen: false),
+            entry.path,
+          ) ||
+          !context.mounted) {
+        return;
+      }
+      await activateLibraryLocalEntry(entry, onOpenLocalPath);
+    }
 
     Future<({bool sourceDeleted})> deleteLocalEntryData(
       LocalLibraryEntry entry, {
@@ -5797,7 +5826,7 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
   }
 }
 
-class _LocalDatabaseMiniPreview extends HookConsumerWidget {
+class _LocalDatabaseMiniPreview extends ConsumerWidget {
   const _LocalDatabaseMiniPreview({
     required this.source,
     required this.selectedNode,
@@ -5810,6 +5839,16 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final content = HookConsumer(
+      builder: (context, ref, _) => _buildContents(context, ref),
+    );
+    final path = selectedPath;
+    return path == null
+        ? content
+        : WebPrepSourceAccessGate(path: path, child: content);
+  }
+
+  Widget _buildContents(BuildContext context, WidgetRef ref) {
     final node = selectedNode;
     final scrollController = useScrollController();
     final query = useState<String>('');
@@ -9146,6 +9185,7 @@ Future<void> _onCopyPgn({
   required BuildContext context,
   required SavedAnalysis analysis,
 }) async {
+  if (!await ensureWebPgnAccess(context, importing: false)) return;
   // Leaves the app: standard NAGs only, wrapped movetext, terminated file.
   // The exact ChessEver class travels in the private
   // `[ChessEverClassification …]` header tag.
@@ -11435,9 +11475,9 @@ class DatabaseWorkspacePane extends HookConsumerWidget {
             tabId: tabId,
             args: args,
           ),
-          DatabaseWorkspaceSource.local => _LocalDatabaseWorkspace(
-            tabId: tabId,
-            args: args,
+          DatabaseWorkspaceSource.local => WebPrepSourceAccessGate(
+            path: args.localPath!,
+            child: _LocalDatabaseWorkspace(tabId: tabId, args: args),
           ),
         },
       ),
@@ -14621,6 +14661,29 @@ class LibraryReadOnlyGamesPreview extends HookConsumerWidget {
     bool setPly(int next) {
       final clamped = _clampLibraryPreviewPly(selected?.chessGame, next);
       if (clamped == plyIndex.value) return true;
+      if (selected != null && ref.read(desktopPastEventAccessEnabledProvider)) {
+        final current = selected;
+        unawaited(() async {
+          final container = ProviderScope.containerOf(context, listen: false);
+          final access = await container.read(
+            desktopCollectionGameAccessProvider(current).future,
+          );
+          if (!context.mounted ||
+              !await requireDesktopAction(
+                container,
+                access,
+                surface: 'collection_preview',
+              ) ||
+              !context.mounted ||
+              selectedId.value != current.id) {
+            return;
+          }
+          plyIndex.value = clamped;
+          _playLibraryPreviewSfxForPly(ref, current.chessGame, clamped);
+          _requestDatabaseWorkspaceFocus(shortcutsFocusNode);
+        }());
+        return false;
+      }
       plyIndex.value = clamped;
       _playLibraryPreviewSfxForPly(ref, selected?.chessGame, clamped);
       _requestDatabaseWorkspaceFocus(shortcutsFocusNode);
@@ -14721,17 +14784,21 @@ class LibraryReadOnlyGamesPreview extends HookConsumerWidget {
             label: 'Preview',
             // Read, not taken: the notation of a read-only source never
             // hands out its PGN.
-            child: NotationExportScope(
-              allowPgnCopy: false,
-              child: _SavedAnalysisPreviewPanel(
-                analysis: selected,
-                plyIndex: plyIndex.value,
-                onPlyChanged: setPly,
-                onOpen:
-                    selected == null
-                        ? null
-                        : () => open(selected, fromPreview: true),
-              ),
+            child: CollectionPreviewAccessGate(
+              row: selected,
+              builder:
+                  (_) => NotationExportScope(
+                    allowPgnCopy: false,
+                    child: _SavedAnalysisPreviewPanel(
+                      analysis: selected,
+                      plyIndex: plyIndex.value,
+                      onPlyChanged: setPly,
+                      onOpen:
+                          selected == null
+                              ? null
+                              : () => open(selected, fromPreview: true),
+                    ),
+                  ),
             ),
           ),
         ],

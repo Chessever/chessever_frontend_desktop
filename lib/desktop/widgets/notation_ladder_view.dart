@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
@@ -480,6 +481,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   }
 
   Future<void> _copyPgnToClipboard() async {
+    if (!await ensureWebPgnAccess(context, importing: false)) return;
     await Clipboard.setData(
       ClipboardData(
         text: toExternalCompatiblePgn(exportGameToPgn(widget.game)),
@@ -646,7 +648,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
         LocalPgnPerformanceLog.event(
           'notation_index',
           'elapsedMs=${indexClock.elapsedMilliseconds} '
-          'positions=${_cachedTranspositions.length}',
+              'positions=${_cachedTranspositions.length}',
         );
       }
     }
@@ -724,59 +726,62 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                           // on every step) then moves a recorded layer
                           // instead of repainting every move in the list.
                           child: RepaintBoundary(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (!_annotationsHidden &&
-                                  widget.game.rootComments.isNotEmpty)
-                                _MoveComments(
-                                  depth: 0,
-                                  comments: _cleanPgnComments(
-                                    widget.game.rootComments,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (!_annotationsHidden &&
+                                    widget.game.rootComments.isNotEmpty)
+                                  _MoveComments(
+                                    depth: 0,
+                                    comments: _cleanPgnComments(
+                                      widget.game.rootComments,
+                                    ),
+                                  ),
+                                KeyedSubtree(
+                                  key: _inlineNotationKey,
+                                  child: _InlineNotationBlock(
+                                    line: mainline,
+                                    pointerPrefix: const <int>[],
+                                    depth: 0,
+                                    isMainlineRoot: true,
+                                    startPly: startingPly,
+                                    activePointer: displayActivePointer,
+                                    activeKey: _activeKey,
+                                    onJump: widget.onJump,
+                                    lichessAnnotations:
+                                        widget.lichessAnnotations,
+                                    userNags: widget.userNags,
+                                    onSetUserQualityNag:
+                                        widget.onSetUserQualityNag,
+                                    onToggleUserNag: widget.onToggleUserNag,
+                                    onToggleMoveNag: widget.onToggleMoveNag,
+                                    onClearUserNags: widget.onClearUserNags,
+                                    onClearMoveNags: widget.onClearMoveNags,
+                                    onSetMoveComment: widget.onSetMoveComment,
+                                    onPromoteVariation:
+                                        widget.onPromoteVariation,
+                                    onDeleteVariation: widget.onDeleteVariation,
+                                    onTrimContinuation:
+                                        widget.onTrimContinuation,
+                                    forcedOpenIds: forcedOpenIds,
+                                    collapsedIds: _collapsed,
+                                    expandedIds: _expanded,
+                                    onToggleCollapsed: _toggleCollapsed,
+                                    autoCollapseDepth: autoCollapseDepth,
+                                    autoCollapseMoveThreshold:
+                                        widget.autoCollapseMoveThreshold,
+                                    useFigurine: widget.useFigurine,
+                                    pieceAssets: widget.pieceAssets,
                                   ),
                                 ),
-                              KeyedSubtree(
-                                key: _inlineNotationKey,
-                                child: _InlineNotationBlock(
-                                  line: mainline,
-                                  pointerPrefix: const <int>[],
-                                  depth: 0,
-                                  isMainlineRoot: true,
-                                  startPly: startingPly,
-                                  activePointer: displayActivePointer,
-                                  activeKey: _activeKey,
-                                  onJump: widget.onJump,
-                                  lichessAnnotations: widget.lichessAnnotations,
-                                  userNags: widget.userNags,
-                                  onSetUserQualityNag:
-                                      widget.onSetUserQualityNag,
-                                  onToggleUserNag: widget.onToggleUserNag,
-                                  onToggleMoveNag: widget.onToggleMoveNag,
-                                  onClearUserNags: widget.onClearUserNags,
-                                  onClearMoveNags: widget.onClearMoveNags,
-                                  onSetMoveComment: widget.onSetMoveComment,
-                                  onPromoteVariation: widget.onPromoteVariation,
-                                  onDeleteVariation: widget.onDeleteVariation,
-                                  onTrimContinuation: widget.onTrimContinuation,
-                                  forcedOpenIds: forcedOpenIds,
-                                  collapsedIds: _collapsed,
-                                  expandedIds: _expanded,
-                                  onToggleCollapsed: _toggleCollapsed,
-                                  autoCollapseDepth: autoCollapseDepth,
-                                  autoCollapseMoveThreshold:
-                                      widget.autoCollapseMoveThreshold,
-                                  useFigurine: widget.useFigurine,
-                                  pieceAssets: widget.pieceAssets,
-                                ),
-                              ),
-                              if (gameResult != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 14),
-                                  child: _GameResultRow(result: gameResult),
-                                ),
-                            ],
-                          ),
+                                if (gameResult != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 14),
+                                    child: _GameResultRow(result: gameResult),
+                                  ),
+                              ],
+                            ),
                           ),
                         )
                         : SingleChildScrollView(
@@ -784,37 +789,37 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                           physics: const DesktopScrollPhysics(),
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           child: RepaintBoundary(
-                          child: _LineBlock(
-                            line: mainline,
-                            pointerPrefix: const <int>[],
-                            depth: 0,
-                            isMainlineRoot: true,
-                            startPly: startingPly,
-                            activePointer: displayActivePointer,
-                            activeKey: _activeKey,
-                            onJump: widget.onJump,
-                            lichessAnnotations: widget.lichessAnnotations,
-                            userNags: widget.userNags,
-                            onSetUserQualityNag: widget.onSetUserQualityNag,
-                            onToggleUserNag: widget.onToggleUserNag,
-                            onToggleMoveNag: widget.onToggleMoveNag,
-                            onClearUserNags: widget.onClearUserNags,
-                            onClearMoveNags: widget.onClearMoveNags,
-                            onSetMoveComment: widget.onSetMoveComment,
-                            onPromoteVariation: widget.onPromoteVariation,
-                            onDeleteVariation: widget.onDeleteVariation,
-                            onTrimContinuation: widget.onTrimContinuation,
-                            forcedOpenIds: forcedOpenIds,
-                            collapsedIds: _collapsed,
-                            expandedIds: _expanded,
-                            onToggleCollapsed: _toggleCollapsed,
-                            autoCollapseDepth: autoCollapseDepth,
-                            autoCollapseMoveThreshold:
-                                widget.autoCollapseMoveThreshold,
-                            useFigurine: widget.useFigurine,
-                            pieceAssets: widget.pieceAssets,
-                            gameResult: gameResult,
-                          ),
+                            child: _LineBlock(
+                              line: mainline,
+                              pointerPrefix: const <int>[],
+                              depth: 0,
+                              isMainlineRoot: true,
+                              startPly: startingPly,
+                              activePointer: displayActivePointer,
+                              activeKey: _activeKey,
+                              onJump: widget.onJump,
+                              lichessAnnotations: widget.lichessAnnotations,
+                              userNags: widget.userNags,
+                              onSetUserQualityNag: widget.onSetUserQualityNag,
+                              onToggleUserNag: widget.onToggleUserNag,
+                              onToggleMoveNag: widget.onToggleMoveNag,
+                              onClearUserNags: widget.onClearUserNags,
+                              onClearMoveNags: widget.onClearMoveNags,
+                              onSetMoveComment: widget.onSetMoveComment,
+                              onPromoteVariation: widget.onPromoteVariation,
+                              onDeleteVariation: widget.onDeleteVariation,
+                              onTrimContinuation: widget.onTrimContinuation,
+                              forcedOpenIds: forcedOpenIds,
+                              collapsedIds: _collapsed,
+                              expandedIds: _expanded,
+                              onToggleCollapsed: _toggleCollapsed,
+                              autoCollapseDepth: autoCollapseDepth,
+                              autoCollapseMoveThreshold:
+                                  widget.autoCollapseMoveThreshold,
+                              useFigurine: widget.useFigurine,
+                              pieceAssets: widget.pieceAssets,
+                              gameResult: gameResult,
+                            ),
                           ),
                         ),
               ),
@@ -2274,10 +2279,12 @@ class _InlineNotationBlock extends StatelessWidget {
         // A real TextSpan wraps fully and keeps the closing bracket after it.
         // It precedes this move's sub-variations so it never reads as part
         // of their block.
-        spans.add(TextSpan(
-          text: '${sourceCreditText(sourceLabel)} ',
-          style: commentStyle,
-        ));
+        spans.add(
+          TextSpan(
+            text: '${sourceCreditText(sourceLabel)} ',
+            style: commentStyle,
+          ),
+        );
       }
 
       final vars = move.variations;
@@ -2827,89 +2834,84 @@ class _InlineMove extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-        if (prefix.isNotEmpty) ...[
-          Text(
-            prefix,
-            style: TextStyle(
-              color: prefixColor,
-              fontSize: depth == 0 ? 12 : 11,
-              fontWeight: FontWeight.w600,
-              fontFeatures: const [FontFeature.tabularFigures()],
+          if (prefix.isNotEmpty) ...[
+            Text(
+              prefix,
+              style: TextStyle(
+                color: prefixColor,
+                fontSize: depth == 0 ? 12 : 11,
+                fontWeight: FontWeight.w600,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
+            const SizedBox(width: 2),
+          ],
+          _LadderChip(
+            pointer: pointer,
+            san: move.san,
+            fen: move.fen,
+            uci: move.uci,
+            selected: selected,
+            depth: depth,
+            onTap: () => onJump(pointer),
+            nags: nags,
+            annotation: annotation,
+            annotationComment: annotation?.comment,
+            commentText: _firstPgnComment(move.comments),
+            userHasQualityNag: userHasQualityNag,
+            hasStoredQualityNag: (move.nags ?? const <int>[]).any(
+              _isMoveQualityNag,
+            ),
+            clockText: _formatClockChip(move.clockTime),
+            clockSeconds: _clockSeconds(move.clockTime),
+            onSetUserQualityNag:
+                onSetUserQualityNag == null
+                    ? null
+                    : (nag) => onSetUserQualityNag!(pointer.last, nag),
+            onToggleUserNag:
+                onToggleUserNag != null
+                    ? (nag) => onToggleUserNag!(pointer.last, nag)
+                    : depth > 0 && onToggleMoveNag != null
+                    ? (nag) => onToggleMoveNag!(pointer, nag)
+                    : null,
+            onClearNags:
+                depth == 0 &&
+                        (onClearUserNags != null || onClearMoveNags != null)
+                    ? () {
+                      onClearUserNags?.call(pointer.last);
+                      onClearMoveNags?.call(pointer);
+                    }
+                    : onClearMoveNags != null
+                    ? () => onClearMoveNags!(pointer)
+                    : null,
+            onSetComment: onSetComment,
+            onPromoteVariation:
+                onPromoteVariation == null || variationHeadPointer == null
+                    ? null
+                    : () => onPromoteVariation!(variationHeadPointer!),
+            onDeleteVariation:
+                onDeleteVariation == null || variationHeadPointer == null
+                    ? null
+                    : () => onDeleteVariation!(variationHeadPointer!),
+            onTrimFromHere:
+                onTrimContinuation == null
+                    ? null
+                    : () => onTrimContinuation!(pointer),
+            useFigurine: useFigurine,
+            pieceAssets: pieceAssets,
+            compact: true,
+            variationHead: isVariationHead,
+            mainlineDominant: depth == 0,
           ),
-          const SizedBox(width: 2),
-        ],
-        _LadderChip(
-          pointer: pointer,
-          san: move.san,
-          fen: move.fen,
-          uci: move.uci,
-          selected: selected,
-          depth: depth,
-          onTap: () => onJump(pointer),
-          nags: nags,
-          annotation: annotation,
-          annotationComment: annotation?.comment,
-          commentText: _firstPgnComment(move.comments),
-          userHasQualityNag: userHasQualityNag,
-          hasStoredQualityNag: (move.nags ?? const <int>[]).any(
-            _isMoveQualityNag,
-          ),
-          clockText: _formatClockChip(move.clockTime),
-          clockSeconds: _clockSeconds(move.clockTime),
-          onSetUserQualityNag:
-              onSetUserQualityNag == null
-                  ? null
-                  : (nag) => onSetUserQualityNag!(pointer.last, nag),
-          onToggleUserNag:
-              onToggleUserNag != null
-                  ? (nag) => onToggleUserNag!(pointer.last, nag)
-                  : depth > 0 && onToggleMoveNag != null
-                  ? (nag) => onToggleMoveNag!(pointer, nag)
-                  : null,
-          onClearNags:
-              depth == 0 && (onClearUserNags != null || onClearMoveNags != null)
-                  ? () {
-                    onClearUserNags?.call(pointer.last);
-                    onClearMoveNags?.call(pointer);
-                  }
-                  : onClearMoveNags != null
-                  ? () => onClearMoveNags!(pointer)
-                  : null,
-          onSetComment: onSetComment,
-          onPromoteVariation:
-              onPromoteVariation == null || variationHeadPointer == null
-                  ? null
-                  : () => onPromoteVariation!(variationHeadPointer!),
-          onDeleteVariation:
-              onDeleteVariation == null || variationHeadPointer == null
-                  ? null
-                  : () => onDeleteVariation!(variationHeadPointer!),
-          onTrimFromHere:
-              onTrimContinuation == null
-                  ? null
-                  : () => onTrimContinuation!(pointer),
-          useFigurine: useFigurine,
-          pieceAssets: pieceAssets,
-          compact: true,
-          variationHead: isVariationHead,
-          mainlineDominant: depth == 0,
-        ),
         ],
       ),
     );
   }
 }
 
-
-
-
 /// Result badge inside a ladder source card; inline credits use plain text.
 class _ResultBadge extends StatelessWidget {
-  const _ResultBadge({
-    required this.label,
-    required this.tint,
-  });
+  const _ResultBadge({required this.label, required this.tint});
 
   final String label;
   final Color tint;
@@ -2917,10 +2919,7 @@ class _ResultBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: 10,
-        vertical: 4,
-      ),
+      padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: tint.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(5),
@@ -2942,10 +2941,7 @@ class _ResultBadge extends StatelessWidget {
 }
 
 class _SourceMetadataPill extends StatelessWidget {
-  const _SourceMetadataPill({
-    required this.sourceLabel,
-    required this.depth,
-  });
+  const _SourceMetadataPill({required this.sourceLabel, required this.depth});
 
   final String sourceLabel;
   final int depth;
@@ -2960,10 +2956,7 @@ class _SourceMetadataPill extends StatelessWidget {
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: 460),
       child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: 8,
-          vertical: 4,
-        ),
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
           color: accent.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(5),
@@ -3687,7 +3680,9 @@ class _LadderChipState extends State<_LadderChip>
   @override
   Widget build(BuildContext context) {
     final isVariation = widget.depth > 0;
-    final timing = _NotationPositionMarkers.maybeOf(context)?.timings.at(widget.pointer);
+    final timing = _NotationPositionMarkers.maybeOf(
+      context,
+    )?.timings.at(widget.pointer);
     final elapsedLabel = timing?.label;
     final fg =
         widget.selected
@@ -3703,10 +3698,11 @@ class _LadderChipState extends State<_LadderChip>
             ?._annotationsHidden ??
         false;
     final nags = annotationsHidden ? const <NagDisplay>[] : _resolvedNags();
-    final classificationType = annotationsHidden
-        ? null
-        : annotationTypeFromClassificationNags(widget.nags) ??
-              annotationTypeFromQualityNags(widget.nags);
+    final classificationType =
+        annotationsHidden
+            ? null
+            : annotationTypeFromClassificationNags(widget.nags) ??
+                annotationTypeFromQualityNags(widget.nags);
     final firstQualityNag = nags.cast<NagDisplay?>().firstWhere(
       (d) => d?.isQuality == true,
       orElse: () => null,
@@ -3717,11 +3713,11 @@ class _LadderChipState extends State<_LadderChip>
         widget.annotation?.useClassificationIcon == true;
     final manualQualityBadge =
         classificationType == null &&
-            !reportBadgeVisible &&
-            firstQualityNag != null &&
-            manualQualityIconAsset(firstQualityNag.symbol) != null
-        ? firstQualityNag
-        : null;
+                !reportBadgeVisible &&
+                firstQualityNag != null &&
+                manualQualityIconAsset(firstQualityNag.symbol) != null
+            ? firstQualityNag
+            : null;
     final hasClassificationBadge =
         classificationType != null ||
         reportBadgeVisible ||
@@ -3919,9 +3915,10 @@ class _NotationClassificationIcon extends StatelessWidget {
     final type = annotation?.type;
     // Badge SVG already carries its own coloured disc — render bare, no circle.
     return DesktopTooltip(
-      message: type == null
-          ? manualQualityIconLabel(manual!.symbol)
-          : _annotationLabel(type),
+      message:
+          type == null
+              ? manualQualityIconLabel(manual!.symbol)
+              : _annotationLabel(type),
       child: SizedBox(
         width: 17,
         height: 17,
@@ -4246,7 +4243,11 @@ class _ClockBadge extends StatelessWidget {
 
 /// Neutral elapsed label: a quick move must never look like a low clock.
 class _ElapsedTimeBadge extends StatelessWidget {
-  const _ElapsedTimeBadge({required this.text, required this.selected, required this.tooltip});
+  const _ElapsedTimeBadge({
+    required this.text,
+    required this.selected,
+    required this.tooltip,
+  });
 
   final String text;
   final bool selected;
@@ -4259,7 +4260,10 @@ class _ElapsedTimeBadge extends StatelessWidget {
       child: Text(
         text,
         style: TextStyle(
-          color: selected ? kBackgroundColor.withValues(alpha: 0.85) : const Color(0xFF8E8E93),
+          color:
+              selected
+                  ? kBackgroundColor.withValues(alpha: 0.85)
+                  : const Color(0xFF8E8E93),
           fontSize: 10,
           fontWeight: FontWeight.w500,
           height: 1.0,

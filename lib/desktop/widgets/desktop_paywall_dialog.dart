@@ -15,6 +15,7 @@ import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/auth/desktop_paywall_copy.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/web_premium_navigation.dart';
+import 'package:chessever/desktop/services/billing/web_intro_offer.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
 import 'package:chessever/desktop/services/billing/desktop_trial_eligibility_provider.dart';
@@ -97,14 +98,18 @@ Future<bool> showDesktopPremiumPaywall(
   String surface = 'legacy_premium_guard',
 }) {
   final container = ProviderScope.containerOf(context, listen: false);
-  final live = readDesktopAccess(container.read, accessContext ?? _premiumProbe);
+  final live = readDesktopAccess(
+    container.read,
+    accessContext ?? _premiumProbe,
+  );
   if (live.isAllowed) return Future<bool>.value(true);
-  final shown = decision ??
+  final shown =
+      decision ??
       (live.outcome == DesktopAccess.premiumRequired && accessContext == null
           ? const DesktopAccessDecision(
-              DesktopAccess.premiumRequired,
-              DesktopAccessReason.premiumPaidSource,
-            )
+            DesktopAccess.premiumRequired,
+            DesktopAccessReason.premiumPaidSource,
+          )
           : live);
   return showDesktopPaywall(
     context,
@@ -200,12 +205,12 @@ bool desktopPaywallVerified(
   if (entitlement.accountId != account) return false;
   final probe =
       accessContext == null ||
-          accessContext.feature == DesktopFeature.purchase ||
-          accessContext.effectiveQuota != DesktopQuota.none
-      ? _premiumProbe
-      : accessContext.copyWith(
-          entitlementGeneration: desktopUnassertedGeneration,
-        );
+              accessContext.feature == DesktopFeature.purchase ||
+              accessContext.effectiveQuota != DesktopQuota.none
+          ? _premiumProbe
+          : accessContext.copyWith(
+            entitlementGeneration: desktopUnassertedGeneration,
+          );
   return readDesktopAccess(read, probe).isAllowed;
 }
 
@@ -232,7 +237,7 @@ class DesktopPaywallView extends ConsumerStatefulWidget {
 }
 
 class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
-  String _interval = 'year';
+  String _interval = kIsWeb ? 'month' : 'year';
   _PaywallPhase _phase = _PaywallPhase.idle;
   bool _needsSignIn = false;
   bool _closing = false;
@@ -297,11 +302,11 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
         initial.outcome == DesktopAccess.temporarilyUnavailable) {
       return premium.outcome == DesktopAccess.premiumRequired
           ? DesktopAccessDecision(
-              DesktopAccess.premiumRequired,
-              context == null
-                  ? DesktopAccessReason.premiumPaidSource
-                  : initial.reason,
-            )
+            DesktopAccess.premiumRequired,
+            context == null
+                ? DesktopAccessReason.premiumPaidSource
+                : initial.reason,
+          )
           : premium;
     }
     return initial;
@@ -511,12 +516,13 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
     final showSignIn =
         !live.isAllowed &&
         (_needsSignIn || live.outcome == DesktopAccess.accountRequired);
-    final shown = showSignIn
-        ? const DesktopAccessDecision(
-            DesktopAccess.accountRequired,
-            DesktopAccessReason.accountRequiredForPurchase,
-          )
-        : live;
+    final shown =
+        showSignIn
+            ? const DesktopAccessDecision(
+              DesktopAccess.accountRequired,
+              DesktopAccessReason.accountRequiredForPurchase,
+            )
+            : live;
     final copy = desktopPaywallCopyFor(
       widget.decision.outcome == DesktopAccess.accountRequired && showSignIn
           ? widget.decision
@@ -610,9 +616,7 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
           Align(
             alignment: Alignment.centerLeft,
             child: DesktopDialogButton(
-              label: _phase == _PaywallPhase.refreshing
-                  ? 'Retrying'
-                  : 'Retry',
+              label: _phase == _PaywallPhase.refreshing ? 'Retrying' : 'Retry',
               tone: DesktopDialogButtonTone.primary,
               icon: Icons.refresh_rounded,
               onPress: _phase == _PaywallPhase.refreshing ? null : _refresh,
@@ -665,9 +669,23 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
     }
     final pendingTrial = _pendingTrialCheckout;
     if (kIsWeb) {
+      final intro =
+          pricing == null
+              ? null
+              : ref
+                  .watch(webIntroOfferProvider(pricing.pricing.tier))
+                  .valueOrNull;
+      final showsIntro =
+          pricing != null &&
+          intro?.matches(
+                currency: pricing.currencyCode,
+                monthlyAmount: pricing.pricing.monthlyAmount,
+              ) ==
+              true;
       return [
         WebPremiumPlans(
           pricing: pricing,
+          introOffer: intro,
           interval: _interval,
           showsTrial: showsTrial,
           onChanged:
@@ -691,6 +709,8 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
           label:
               _phase == _PaywallPhase.openingCheckout
                   ? 'Opening checkout'
+                  : showsIntro && _interval == 'month'
+                  ? r'Continue with $0.99 first month'
                   : 'Continue to checkout',
           onPress:
               _phase == _PaywallPhase.idle && pendingTrial == null
@@ -758,13 +778,13 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
         runSpacing: 8,
         children: [
           DesktopDialogButton(
-            label: _phase == _PaywallPhase.openingCheckout
-                ? 'Opening checkout'
-                : 'Continue to checkout',
+            label:
+                _phase == _PaywallPhase.openingCheckout
+                    ? 'Opening checkout'
+                    : 'Continue to checkout',
             tone: DesktopDialogButtonTone.primary,
-            onPress: _phase == _PaywallPhase.idle
-                ? () => _purchase(pricing)
-                : null,
+            onPress:
+                _phase == _PaywallPhase.idle ? () => _purchase(pricing) : null,
           ),
           DesktopDialogButton(
             label: 'Already Premium? Refresh',
@@ -1032,11 +1052,12 @@ class _PlanColumnState extends State<_PlanColumn> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    final fill = selected
-        ? kPrimaryColor.withValues(alpha: _hover ? 0.16 : 0.10)
-        : _hover
-        ? kBlack3Color
-        : Colors.transparent;
+    final fill =
+        selected
+            ? kPrimaryColor.withValues(alpha: _hover ? 0.16 : 0.10)
+            : _hover
+            ? kBlack3Color
+            : Colors.transparent;
     // Inner radius + track padding == track radius, so the corners nest.
     const innerRadius =
         _PlanSelector._trackRadius - _PlanSelector._trackPadding;
@@ -1059,9 +1080,10 @@ class _PlanColumnState extends State<_PlanColumn> {
                 color: fill,
                 borderRadius: BorderRadius.circular(innerRadius),
                 border: Border.all(
-                  color: selected
-                      ? kPrimaryColor.withValues(alpha: 0.35)
-                      : Colors.transparent,
+                  color:
+                      selected
+                          ? kPrimaryColor.withValues(alpha: 0.35)
+                          : Colors.transparent,
                 ),
               ),
               child: Column(
@@ -1133,26 +1155,29 @@ class DesktopAccessLockedSurface extends ConsumerWidget {
         label: 'Retry',
         tone: DesktopDialogButtonTone.primary,
         icon: Icons.refresh_rounded,
-        onPress: () => unawaited(
-          DesktopSubscriptionNotifier.current?.refreshFromBackend(
-            forceSessionRefresh: true,
-          ),
-        ),
+        onPress:
+            () => unawaited(
+              DesktopSubscriptionNotifier.current?.refreshFromBackend(
+                forceSessionRefresh: true,
+              ),
+            ),
       ),
       _ => DesktopDialogButton(
-        label: decision.outcome == DesktopAccess.accountRequired
-            ? 'Sign in'
-            : 'See Premium',
+        label:
+            decision.outcome == DesktopAccess.accountRequired
+                ? 'Sign in'
+                : 'See Premium',
         tone: DesktopDialogButtonTone.primary,
-        onPress: () => unawaited(
-          showDesktopPaywall(
-            context,
-            decision,
-            accessContext: accessContext,
-            resume: resume,
-            surface: surface,
-          ),
-        ),
+        onPress:
+            () => unawaited(
+              showDesktopPaywall(
+                context,
+                decision,
+                accessContext: accessContext,
+                resume: resume,
+                surface: surface,
+              ),
+            ),
       ),
     };
     return Center(

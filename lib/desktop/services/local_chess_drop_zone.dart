@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -62,18 +63,22 @@ class _LocalChessDropZoneState extends State<LocalChessDropZone> {
       onDragDone: (details) async {
         if (_dropInFlight) return;
         setState(() => _hovering = false);
-        final List<String> paths;
-        if (kIsWeb) {
-          paths = await copyDroppedChessFilesIntoAppStorage(details.files);
-        } else {
-          await MacSandboxFilePicker.retain(
-            details.files.map((file) => file.path),
-          );
-          paths = await localChessDropPaths(details.files.map((x) => x.path));
-        }
-        if (paths.isEmpty) return;
         _dropInFlight = true;
         try {
+          final List<String> paths;
+          if (kIsWeb) {
+            if (!await ensureWebPgnAccess(context, importing: true) ||
+                !mounted) {
+              return;
+            }
+            paths = await copyDroppedChessFilesIntoAppStorage(details.files);
+          } else {
+            await MacSandboxFilePicker.retain(
+              details.files.map((file) => file.path),
+            );
+            paths = await localChessDropPaths(details.files.map((x) => x.path));
+          }
+          if (paths.isEmpty) return;
           await Future<void>.sync(() => widget.onChessPathsDropped(paths));
         } finally {
           _dropInFlight = false;

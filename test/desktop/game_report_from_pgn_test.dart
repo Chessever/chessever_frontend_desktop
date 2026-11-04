@@ -294,6 +294,7 @@ void main() {
       required bool premium,
       required ChessGame game,
       GameReportAllowanceStore? allowance,
+      bool premiumRequired = false,
     }) async {
       var runs = 0;
       final controller = GameAnalysisReportController(
@@ -314,6 +315,7 @@ void main() {
         isPremium: () => premium,
         store: GameAnalysisReportStore.memory(),
         allowanceStore: allowance ?? GameReportAllowanceStore.memory(),
+        premiumRequired: premiumRequired,
       ).request(
         controller: controller,
         game: game,
@@ -346,6 +348,24 @@ void main() {
       expect(out.runs, 0);
       expect(await allowance.hasLifetimeSuccess('account-1'), isTrue);
     });
+
+    test(
+      'a browser PGN report requires Premium even on its first open',
+      () async {
+        final allowance = GameReportAllowanceStore.memory();
+        final out = await request(
+          premium: false,
+          premiumRequired: true,
+          game: _writtenByOurReport(),
+          allowance: allowance,
+        );
+
+        expect(out.result.outcome, GameReportRequestOutcome.premiumRequired);
+        expect(out.runs, 0);
+        expect(out.controller.state.status, isNot(GameReportStatus.completed));
+        expect(await allowance.hasLifetimeSuccess('account-1'), isFalse);
+      },
+    );
 
     test('reading a PGN report never bypasses a spent allowance', () async {
       final allowance = GameReportAllowanceStore.memory();

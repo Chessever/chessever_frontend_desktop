@@ -8,6 +8,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/auth/web_prep_access.dart';
+import 'package:chessever/desktop/auth/web_prep_source_access.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
@@ -269,6 +271,10 @@ class BoardTabGameArgs {
     final origin = librarySaveOrigin;
     if (origin == null) return base;
     if (origin.kind == BoardTabLibrarySaveOriginKind.localPgnFile) {
+      // A free Prep download is not a personal import. Carry that source
+      // through the board and its next-game rail instead of laundering it
+      // into ordinary owned-file access.
+      if (base.feature == DesktopFeature.prepare) return base;
       return base.copyWith(
         feature: DesktopFeature.localFiles,
         ownedDocument: true,
@@ -433,7 +439,8 @@ class BoardTabGameArgs {
       initialFen: initialFen ?? this.initialFen,
       sourceGame: sourceGame ?? this.sourceGame,
       // A same-tab replacement must never inherit the previous game's control.
-      timeControlText: timeControlText ??
+      timeControlText:
+          timeControlText ??
           (gameId == null || gameId == this.gameId ? _timeControlText : null),
       viewSource: viewSource ?? this.viewSource,
       eventBroadcastId: eventBroadcastId ?? this.eventBroadcastId,
@@ -900,12 +907,45 @@ bool admitBoardGameOpen(
   BoardTabGameArgs args, {
   bool interactive = true,
   String surface = 'board_open',
-}) => admitDesktopAction(
-  container,
-  args.admissionContext,
-  surface: surface,
-  interactive: interactive,
-);
+}) {
+  args = _withWebPrepSourceContext(container, args);
+  final path = args.librarySaveOrigin?.sourcePath;
+  final sourceDecision =
+      path == null
+          ? null
+          : container.read(webPrepSourceAccessDecisionProvider(path));
+  if (sourceDecision != null && !sourceDecision.isAllowed) {
+    if (interactive) {
+      unawaited(
+        presentDesktopAccessDecision(
+          container,
+          sourceDecision,
+          context: webPrepContentAccess,
+          surface: surface,
+        ),
+      );
+    }
+    return false;
+  }
+  return admitDesktopAction(
+    container,
+    args.admissionContext,
+    surface: surface,
+    interactive: interactive,
+  );
+}
+
+BoardTabGameArgs _withWebPrepSourceContext(
+  ProviderContainer container,
+  BoardTabGameArgs args,
+) {
+  final path = args.librarySaveOrigin?.sourcePath;
+  if (path == null ||
+      container.read(webPrepSourceIdentityProvider(path)).valueOrNull != true) {
+    return args;
+  }
+  return args.copyWith(accessContext: webPrepContentAccess);
+}
 
 /// [admitBoardGameOpen] for a context that has not been folded into args yet
 /// (a fetch that will BUILD the args). Unknown entitlement admits nothing.
@@ -934,7 +974,15 @@ String openBoardGameTabFromContainer(
   bool replaceActive = false,
   DesktopBoardAdmission admission = DesktopBoardAdmission.interactive,
 }) {
-  final decision = readDesktopAccess(container.read, args.admissionContext);
+  args = _withWebPrepSourceContext(container, args);
+  final path = args.librarySaveOrigin?.sourcePath;
+  final sourceDecision =
+      path == null
+          ? null
+          : container.read(webPrepSourceAccessDecisionProvider(path));
+  final decision =
+      sourceDecision ??
+      readDesktopAccess(container.read, args.admissionContext);
   if (admission == DesktopBoardAdmission.interactive &&
       (decision.mayOfferPurchase ||
           decision.outcome == DesktopAccess.accountRequired)) {
@@ -944,7 +992,10 @@ String openBoardGameTabFromContainer(
       presentDesktopAccessDecision(
         container,
         decision,
-        context: args.admissionContext,
+        context:
+            sourceDecision == null
+                ? args.admissionContext
+                : webPrepContentAccess,
         surface: 'board_open',
       ),
     );

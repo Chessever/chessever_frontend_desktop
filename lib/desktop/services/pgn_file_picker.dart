@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
+import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 
 /// Open the OS file dialog for picking a `.pgn`, read it from disk, and
@@ -18,7 +20,25 @@ class PgnFilePicker {
   final void Function(String message)? onError;
 
   Future<bool> pickAndLoad() async {
+    if (!await ensureWebPgnAccess(ref.context, importing: true)) return false;
     try {
+      if (kIsWeb) {
+        final paths = await pickWebChessFilesIntoAppStorage(
+          dialogTitle: 'Open PGN',
+        );
+        if (paths == null || paths.isEmpty || !ref.context.mounted) {
+          return false;
+        }
+        final path = paths.first;
+        final pgn = await loadPgnTextForBoard(path, onError: onError);
+        if (pgn == null || !ref.context.mounted) return false;
+        openDetachedPgnTab(
+          ref,
+          label: localChessFileNameFromPath(path),
+          pgn: pgn,
+        );
+        return true;
+      }
       final result = await FilePicker.platform.pickFiles(
         dialogTitle: 'Open PGN',
         type: FileType.custom,

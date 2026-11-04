@@ -66,7 +66,6 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
   Timer? _miniatureSearchDebounce;
   String _query = '';
   bool _didSyncInitialMiniatureSearch = false;
-  _MiniaturesSection _miniaturesSection = _MiniaturesSection.games;
 
   @override
   void initState() {
@@ -132,6 +131,9 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
 
   @override
   Widget build(BuildContext context) {
+    final miniaturesSection = ref.watch(
+      desktopMiniaturesSectionByTabIdProvider(widget.tabId),
+    );
     ref.listen<MiniatureGamesFilter>(miniatureGamesFilterProvider, (
       previous,
       next,
@@ -162,7 +164,7 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
     final copy = _copyForType(type);
     final showGamesList =
         type != PremiumGamesType.miniatures ||
-        _miniaturesSection == _MiniaturesSection.games;
+        miniaturesSection == DesktopMiniaturesSection.games;
 
     return Container(
       color: kBackgroundColor,
@@ -199,7 +201,7 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                 // Header controls act on what is on screen: the games list on
                 // Games, the leaderboard on Players, nothing on About.
                 if (showGamesList ||
-                    _miniaturesSection == _MiniaturesSection.players)
+                    miniaturesSection == DesktopMiniaturesSection.players)
                   DesktopTooltip(
                     message: showGamesList ? 'Refresh' : 'Refresh players',
                     child: FButton.icon(
@@ -234,174 +236,184 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
               padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
               child: Row(
                 children: [
-                  for (final section in _MiniaturesSection.values) ...[
-                    if (section != _MiniaturesSection.values.first)
+                  for (final section in DesktopMiniaturesSection.values) ...[
+                    if (section != DesktopMiniaturesSection.values.first)
                       const SizedBox(width: 6),
                     _MiniaturesSectionTab(
                       label: section.label,
-                      selected: _miniaturesSection == section,
+                      selected: miniaturesSection == section,
                       onPressed:
-                          () => setState(() => _miniaturesSection = section),
+                          () =>
+                              ref
+                                  .read(
+                                    desktopMiniaturesSectionByTabIdProvider(
+                                      widget.tabId,
+                                    ).notifier,
+                                  )
+                                  .state = section,
                     ),
                   ],
                 ],
               ),
             ),
           if (showGamesList) ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
-            child:
-                type == PremiumGamesType.miniatures
-                    ? Row(
-                      children: [
-                        Expanded(
-                          child: DesktopSearchField(
-                            controller: _searchController,
-                            hintText:
-                                'Search miniatures: player, event, opening or ECO',
-                            onChanged: (value) => _onSearchChanged(type, value),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
+              child:
+                  type == PremiumGamesType.miniatures
+                      ? Row(
+                        children: [
+                          Expanded(
+                            child: DesktopSearchField(
+                              controller: _searchController,
+                              hintText:
+                                  'Search miniatures: player, event, opening or ECO',
+                              onChanged:
+                                  (value) => _onSearchChanged(type, value),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        const DesktopMiniaturesFilterButton(),
-                      ],
-                    )
-                    : Row(
-                      children: [
-                        Expanded(
-                          child: DesktopSearchField(
-                            controller: _searchController,
-                            hintText:
-                                'Search games — player, event, opening, ECO…',
-                            onChanged: (value) => _onSearchChanged(type, value),
-                            onClear: () {
-                              _searchController.clear();
-                              _onSearchChanged(type, '');
-                            },
+                          const SizedBox(width: 12),
+                          const DesktopMiniaturesFilterButton(),
+                        ],
+                      )
+                      : Row(
+                        children: [
+                          Expanded(
+                            child: DesktopSearchField(
+                              controller: _searchController,
+                              hintText:
+                                  'Search games — player, event, opening, ECO…',
+                              onChanged:
+                                  (value) => _onSearchChanged(type, value),
+                              onClear: () {
+                                _searchController.clear();
+                                _onSearchChanged(type, '');
+                              },
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        DesktopPremiumGamesFilterButton(type: type),
-                      ],
-                    ),
-          ),
-          Expanded(
-            child: gamesAsync.when(
-              loading: () => const _SmartGamesLoadingSkeleton(),
-              error:
-                  (error, stack) => _PaneMessage(
-                    icon: Icons.error_outline_rounded,
-                    title: 'Could not load games',
-                    message: '$error',
-                    error: true,
-                  ),
-              data: (state) {
-                final visibleGames = visibleDesktopSmartGames(
-                  type: type,
-                  games: state.games,
-                  query: _query,
-                );
-                if (state.games.isEmpty) {
-                  final hasMiniatureSearch =
-                      type == PremiumGamesType.miniatures &&
-                      _query.trim().isNotEmpty;
-                  final activeMiniatureFilter =
-                      type == PremiumGamesType.miniatures
-                          ? miniatureFilter
-                          : MiniatureGamesFilter.defaultFilter;
-                  final premiumFilter =
-                      type == PremiumGamesType.miniatures
-                          ? PremiumGamesFilter.defaultFilter
-                          : ref.watch(premiumGamesFilterProvider(type));
-                  final hasPremiumFilter =
-                      type != PremiumGamesType.miniatures &&
-                      premiumFilter.hasActiveFilters;
-                  return _PaneMessage(
-                    icon: Icons.grid_off_rounded,
-                    title:
-                        hasMiniatureSearch
-                            ? 'No matching miniatures'
-                            : activeMiniatureFilter.hasActiveFilters
-                            ? 'No matching miniatures'
-                            : hasPremiumFilter
-                            ? 'No matching games'
-                            : 'No games found',
-                    message:
-                        hasMiniatureSearch
-                            ? 'No miniatures match "${_query.trim()}".'
-                            : activeMiniatureFilter.hasActiveFilters
-                            ? 'No miniatures match your filters.'
-                            : hasPremiumFilter
-                            ? 'No games match your filters.'
-                            : copy.emptyMessage,
-                    actionLabel:
-                        hasMiniatureSearch
-                            ? 'Clear search'
-                            : activeMiniatureFilter.hasActiveFilters ||
-                                hasPremiumFilter
-                            ? 'Reset filters'
-                            : null,
-                    onAction:
-                        hasMiniatureSearch
-                            ? _clearMiniatureSearch
-                            : activeMiniatureFilter.hasActiveFilters
-                            ? () {
-                              unawaited(
-                                ref
-                                    .read(
-                                      premiumGamesProvider(
-                                        PremiumGamesType.miniatures,
-                                      ).notifier,
-                                    )
-                                    .applyMiniatureFilter(
-                                      MiniatureGamesFilter.defaultFilter
-                                          .copyWith(
-                                            sort: activeMiniatureFilter.sort,
-                                            order: activeMiniatureFilter.order,
-                                          ),
-                                    ),
-                              );
-                            }
-                            : hasPremiumFilter
-                            ? () {
-                              ref
-                                  .read(premiumGamesProvider(type).notifier)
-                                  .resetFilter();
-                            }
-                            : null,
-                  );
-                }
-                if (visibleGames.isEmpty) {
-                  return _PaneMessage(
-                    icon: Icons.search_off_rounded,
-                    title: 'No matching games',
-                    message: 'No games match "${_query.trim()}".',
-                  );
-                }
-                return _SmartGamesList(
-                  tabId: widget.tabId,
-                  type: type,
-                  games: visibleGames,
-                  routeTitle: copy.title,
-                  hasMore: state.hasMore,
-                  isLoading: state.isLoadingMore,
-                  // A day-paginated collection only ever holds whole days, so
-                  // its counts are final the moment a day lands.
-                  showCounts:
-                      type == PremiumGamesType.miniatures ||
-                      isDayPaginatedSmartGamesType(type) ||
-                      !state.hasMore,
-                  onLoadMore: () {
-                    ref.read(premiumGamesProvider(type).notifier).loadMore();
-                  },
-                );
-              },
+                          const SizedBox(width: 12),
+                          DesktopPremiumGamesFilterButton(type: type),
+                        ],
+                      ),
             ),
-          ),
+            Expanded(
+              child: gamesAsync.when(
+                loading: () => const _SmartGamesLoadingSkeleton(),
+                error:
+                    (error, stack) => _PaneMessage(
+                      icon: Icons.error_outline_rounded,
+                      title: 'Could not load games',
+                      message: '$error',
+                      error: true,
+                    ),
+                data: (state) {
+                  final visibleGames = visibleDesktopSmartGames(
+                    type: type,
+                    games: state.games,
+                    query: _query,
+                  );
+                  if (state.games.isEmpty) {
+                    final hasMiniatureSearch =
+                        type == PremiumGamesType.miniatures &&
+                        _query.trim().isNotEmpty;
+                    final activeMiniatureFilter =
+                        type == PremiumGamesType.miniatures
+                            ? miniatureFilter
+                            : MiniatureGamesFilter.defaultFilter;
+                    final premiumFilter =
+                        type == PremiumGamesType.miniatures
+                            ? PremiumGamesFilter.defaultFilter
+                            : ref.watch(premiumGamesFilterProvider(type));
+                    final hasPremiumFilter =
+                        type != PremiumGamesType.miniatures &&
+                        premiumFilter.hasActiveFilters;
+                    return _PaneMessage(
+                      icon: Icons.grid_off_rounded,
+                      title:
+                          hasMiniatureSearch
+                              ? 'No matching miniatures'
+                              : activeMiniatureFilter.hasActiveFilters
+                              ? 'No matching miniatures'
+                              : hasPremiumFilter
+                              ? 'No matching games'
+                              : 'No games found',
+                      message:
+                          hasMiniatureSearch
+                              ? 'No miniatures match "${_query.trim()}".'
+                              : activeMiniatureFilter.hasActiveFilters
+                              ? 'No miniatures match your filters.'
+                              : hasPremiumFilter
+                              ? 'No games match your filters.'
+                              : copy.emptyMessage,
+                      actionLabel:
+                          hasMiniatureSearch
+                              ? 'Clear search'
+                              : activeMiniatureFilter.hasActiveFilters ||
+                                  hasPremiumFilter
+                              ? 'Reset filters'
+                              : null,
+                      onAction:
+                          hasMiniatureSearch
+                              ? _clearMiniatureSearch
+                              : activeMiniatureFilter.hasActiveFilters
+                              ? () {
+                                unawaited(
+                                  ref
+                                      .read(
+                                        premiumGamesProvider(
+                                          PremiumGamesType.miniatures,
+                                        ).notifier,
+                                      )
+                                      .applyMiniatureFilter(
+                                        MiniatureGamesFilter.defaultFilter
+                                            .copyWith(
+                                              sort: activeMiniatureFilter.sort,
+                                              order:
+                                                  activeMiniatureFilter.order,
+                                            ),
+                                      ),
+                                );
+                              }
+                              : hasPremiumFilter
+                              ? () {
+                                ref
+                                    .read(premiumGamesProvider(type).notifier)
+                                    .resetFilter();
+                              }
+                              : null,
+                    );
+                  }
+                  if (visibleGames.isEmpty) {
+                    return _PaneMessage(
+                      icon: Icons.search_off_rounded,
+                      title: 'No matching games',
+                      message: 'No games match "${_query.trim()}".',
+                    );
+                  }
+                  return _SmartGamesList(
+                    tabId: widget.tabId,
+                    type: type,
+                    games: visibleGames,
+                    routeTitle: copy.title,
+                    hasMore: state.hasMore,
+                    isLoading: state.isLoadingMore,
+                    // A day-paginated collection only ever holds whole days, so
+                    // its counts are final the moment a day lands.
+                    showCounts:
+                        type == PremiumGamesType.miniatures ||
+                        isDayPaginatedSmartGamesType(type) ||
+                        !state.hasMore,
+                    onLoadMore: () {
+                      ref.read(premiumGamesProvider(type).notifier).loadMore();
+                    },
+                  );
+                },
+              ),
+            ),
           ] else
             Expanded(
               child:
-                  _miniaturesSection == _MiniaturesSection.players
+                  miniaturesSection == DesktopMiniaturesSection.players
                       ? const DesktopMiniaturePlayersView()
                       : const DesktopMiniaturesAboutView(),
             ),
@@ -973,20 +985,20 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                               widget.type,
                               game,
                             ),
-                                onTap:
-                                    isMiniatures
-                                        ? () => _openSmartGame(
-                                          context,
-                                          ref,
-                                          game,
-                                          widget.type,
-                                          widget.routeTitle,
-                                          groupedGames,
-                                        )
-                                        : null,
-                                // Its Open entries would bypass the
-                                // Miniatures gate.
-                                enableContextMenu: !isMiniatures,
+                            onTap:
+                                isMiniatures
+                                    ? () => _openSmartGame(
+                                      context,
+                                      ref,
+                                      game,
+                                      widget.type,
+                                      widget.routeTitle,
+                                      groupedGames,
+                                    )
+                                    : null,
+                            // Its Open entries would bypass the
+                            // Miniatures gate.
+                            enableContextMenu: !isMiniatures,
                             tournamentTitle: _smartGameTournamentTitle(
                               game,
                               widget.routeTitle,
@@ -1296,11 +1308,8 @@ DesktopAccessContext smartGamesAccessContextFor(
     game,
     DesktopAction.openContent,
   ),
-  PremiumGamesType.live ||
-  PremiumGamesType.gm ||
-  PremiumGamesType.classical => smartCollectionAccessContext(
-    SmartCollectionContentAction.openGame,
-  ),
+  PremiumGamesType.live || PremiumGamesType.gm || PremiumGamesType.classical =>
+    smartCollectionAccessContext(SmartCollectionContentAction.openGame),
   PremiumGamesType.favorites => desktopFavoritesFeedAccessContext,
   PremiumGamesType.countrymen => const DesktopAccessContext(
     feature: DesktopFeature.countrymen,
@@ -1634,26 +1643,26 @@ class _SmartGamesTableRowState extends State<_SmartGamesTableRow> {
                           ),
                         )
                         : Row(
-                  children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: statusColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      statusText,
-                      style: TextStyle(
-                        color: statusColor,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
+                          children: [
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: statusColor,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              statusText,
+                              style: TextStyle(
+                                color: statusColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
               ),
               Expanded(
                 child: DesktopDesaturated(
@@ -2099,16 +2108,6 @@ class _InlineLoader extends StatelessWidget {
       emptyMessage: 'No countrymen games were found.',
     ),
   };
-}
-
-enum _MiniaturesSection {
-  games('Games'),
-  players('Players'),
-  about('About');
-
-  const _MiniaturesSection(this.label);
-
-  final String label;
 }
 
 class _MiniaturesSectionTab extends StatelessWidget {

@@ -185,10 +185,11 @@ class TournamentsPane extends HookConsumerWidget {
     Future<void> openTournament(GroupEventCardModel tournament) async {
       // Plain click navigates the current Tournaments tab into the event's
       // game-list scene. Cmd/Ctrl-click takes the browser-style new-tab path.
-      setActiveTournament(
+      await setActiveTournament(
         ref,
         tournament,
         openInNewTab: isNewTabModifierPressed(),
+        fromPastList: selectedCategory == ge.GroupEventCategory.past,
       );
     }
 

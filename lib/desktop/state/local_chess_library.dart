@@ -5,6 +5,7 @@ import 'package:chessever/desktop/services/cbh_conversion_origin.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/services/cbh_conversion_service.dart';
@@ -196,11 +197,13 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     LocalChessPathsScanner? scanPathsWithProgress,
     LocalChessFileNodeScanner? scanFileNodeWithProgress,
     LocalChessPgnCatalogScanner? scanPgnCatalog,
+    Future<bool> Function()? requestImportAccess,
   }) : _scanPathsWithProgress =
            scanPathsWithProgress ?? scanLocalChessPathsWithProgress,
        _scanFileNodeWithProgress =
            scanFileNodeWithProgress ?? scanLocalChessFileNodeWithProgress,
        _scanPgnCatalog = scanPgnCatalog ?? scanLocalChessPgnCatalog,
+       _requestImportAccess = requestImportAccess,
        super(const LocalChessLibraryState());
 
   /// Optional registry that records picked/opened local PGNs as persistent
@@ -211,6 +214,26 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   final LocalChessPathsScanner _scanPathsWithProgress;
   final LocalChessFileNodeScanner _scanFileNodeWithProgress;
   final LocalChessPgnCatalogScanner _scanPgnCatalog;
+  final Future<bool> Function()? _requestImportAccess;
+
+  Future<bool> _canImport() async => await _requestImportAccess?.call() ?? true;
+
+  Future<bool> _canOpenPaths(List<String> paths) async {
+    if (_requestImportAccess == null) return true;
+    await registry?.hydrated;
+    if (!mounted) return false;
+    final retained = <String>[
+      ...?registry?.state.entries.map((entry) => entry.path),
+      for (final source in state.sessionSources.values) ...source.paths,
+      ...?state.source?.paths,
+    ];
+    if (paths.every(
+      (path) => retained.any((root) => _pathContains(root, path)),
+    )) {
+      return true;
+    }
+    return _canImport();
+  }
 
   Object? _scanToken;
   final Map<String, Object> _backgroundImportTokens = <String, Object>{};
@@ -223,6 +246,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   int _treeBuildGeneration = 0;
 
   Future<bool> pickFolder() async {
+    if (!await _canImport() || !mounted) return false;
     if (kIsWeb) {
       final directory = await pickWebChessFolderIntoAppStorage();
       return directory != null && await openPaths(<String>[directory]);
@@ -236,6 +260,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   }
 
   Future<bool> pickFiles() async {
+    if (!await _canImport() || !mounted) return false;
     if (kIsWeb) {
       final paths = await pickWebChessFilesIntoAppStorage(
         allowedExtensions: localChessPickerExtensions,
@@ -271,6 +296,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     LocalLibraryEntryMetadata? registryMetadata,
     bool forceRefresh = false,
   }) async {
+    if (paths.isEmpty || !await _canOpenPaths(paths) || !mounted) return false;
     final openClock = Stopwatch()..start();
     LocalPgnPerformanceLog.event(
       'open_start',
@@ -281,17 +307,25 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     final token = Object();
     _scanToken = token;
     _invalidateTreeBuilds();
-    if (paths.any((path) => const {'.cbh', '.cbv'}.contains(p.extension(path).toLowerCase()))) {
+    if (paths.any(
+      (path) =>
+          const {'.cbh', '.cbv'}.contains(p.extension(path).toLowerCase()),
+    )) {
       // This request supersedes any older scan, including its progress UI.
-      state = state.copyWith(isScanning: false, scanProgress: null, error: null);
+      state = state.copyWith(
+        isScanning: false,
+        scanProgress: null,
+        error: null,
+      );
       try {
         // A binary database is never passed to the PGN scanner or registry.
         // Conversion is explicit, and an edited converted copy is never replaced.
         final resolved = <String>[];
         for (final path in paths) {
-          final converted = const {'.cbh', '.cbv'}.contains(p.extension(path).toLowerCase())
-              ? await CbhConversionGateway.convert(path)
-              : path;
+          final converted =
+              const {'.cbh', '.cbv'}.contains(p.extension(path).toLowerCase())
+                  ? await CbhConversionGateway.convert(path)
+                  : path;
           if (_scanToken != token || converted == null) return false;
           resolved.add(converted);
         }
@@ -647,13 +681,17 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
 
   /// Rename only a closed PGN. Active editor ownership is checked by the
   /// shell before and after every await leading up to the filesystem commit.
-  Future<String> renameRegisteredPgn(String path, String name, {
+  Future<String> renameRegisteredPgn(
+    String path,
+    String name, {
     required void Function() ensureUnused,
   }) async {
     final target = localPgnRenameDestination(path, name);
     if (p.normalize(target) == p.normalize(path)) return path;
     if (localChessInputPathKey(target) == localChessInputPathKey(path)) {
-      throw const FormatException('Choose a name that differs by more than letter case.');
+      throw const FormatException(
+        'Choose a name that differs by more than letter case.',
+      );
     }
     final registry = this.registry;
     final repository = localDatabaseRepository;
@@ -662,9 +700,16 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     }
     return repository.runLocalPgnWriteQueued(() async {
       ensureUnused();
-      if (FileSystemEntity.typeSync(target, followLinks: false) != FileSystemEntityType.notFound ||
-          registry.state.entries.any((entry) => localChessInputPathKey(entry.path) == localChessInputPathKey(target))) {
-        throw const FormatException('A database with this filename already exists.');
+      if (FileSystemEntity.typeSync(target, followLinks: false) !=
+              FileSystemEntityType.notFound ||
+          registry.state.entries.any(
+            (entry) =>
+                localChessInputPathKey(entry.path) ==
+                localChessInputPathKey(target),
+          )) {
+        throw const FormatException(
+          'A database with this filename already exists.',
+        );
       }
       // A stale cache keyed by the unused target name is safe to drop first.
       // The original's cache and opening tree are dropped only once the
@@ -673,7 +718,11 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       await repository.deleteCachedSource(target);
       await prepareCbhCopyRename(path, target);
       ensureUnused();
-      final result = await registry.renamePgn(path, name, ensureUnused: ensureUnused);
+      final result = await registry.renamePgn(
+        path,
+        name,
+        ensureUnused: ensureUnused,
+      );
       try {
         await repository.deleteCachedSource(path);
       } catch (error, stackTrace) {
@@ -1446,6 +1495,10 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
 final localChessLibraryProvider =
     StateNotifierProvider<LocalChessLibraryNotifier, LocalChessLibraryState>(
       (ref) => LocalChessLibraryNotifier(
+        requestImportAccess:
+            ref.read(webPgnPaywallEnabledProvider)
+                ? () => requireWebPgnImport(ref.container)
+                : null,
         registry: ref.read(localLibraryRegistryProvider.notifier),
         localDatabaseRepository: ref.read(localChessDatabaseRepositoryProvider),
       ),

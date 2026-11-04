@@ -1,6 +1,8 @@
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'package:chessever/desktop/services/local_pgn_source_recovery.dart';
 import 'dart:async';
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
+import 'package:chessever/desktop/widgets/web_prep_source_access_gate.dart';
 import '../../services/local_chess_pgn_fingerprint.dart';
 import '../../state/local_board_games.dart';
 import 'package:chessever/desktop/state/local_game_grid_layout.dart';
@@ -63,7 +65,7 @@ class LocalChessFilesViewController extends ValueNotifier<int> {
   void saveVisibleGamesToCloud() => value += 1;
 }
 
-class LocalChessFilesView extends HookConsumerWidget {
+class LocalChessFilesView extends ConsumerWidget {
   const LocalChessFilesView({
     super.key,
     required this.selectedPath,
@@ -134,7 +136,14 @@ class LocalChessFilesView extends HookConsumerWidget {
   final String? databaseWorkspaceTabId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context, WidgetRef ref) => WebPrepSourceAccessGate(
+    path: selectedPath,
+    child: HookConsumer(
+      builder: (context, ref, _) => _buildContents(context, ref),
+    ),
+  );
+
+  Widget _buildContents(BuildContext context, WidgetRef ref) {
     final watchedState = ref.watch(localChessLibraryProvider);
     final state = stateOverride ?? watchedState;
     final source = state.source;
@@ -645,6 +654,11 @@ class LocalChessFilesView extends HookConsumerWidget {
         );
         return;
       }
+      if (!await ensureWebPgnAccess(context, importing: true) ||
+          !context.mounted) {
+        return;
+      }
+      if (effectiveOwnership?.isCurrent == false) return;
       final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
       if (effectiveOwnership?.isCurrent == false) return;
       final text = clipboard?.text?.trim();
@@ -1859,6 +1873,8 @@ class _LocalGamesTable extends HookConsumerWidget {
     }
 
     Future<void> copySelectedGames({List<LocalChessGame>? scope}) async {
+      if (!await ensureWebPgnAccess(context, importing: false)) return;
+      if (!context.mounted) return;
       final gamesToCopy = scope ?? currentSelectedGames();
       final parts = gamesToCopy
           .map((game) => game.rawPgn.trim())

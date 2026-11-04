@@ -27,7 +27,7 @@ still need a manual pass.
 | Live events, games, players, calendar, rankings | Same | Shared code; images from hosts without CORS go through the `/_img` relay (`web_worker/index.js`, `web/index.html`) |
 | Event card artwork | Same | `event_artwork_provider.dart` batches artwork-only tour queries, retains successful covers for 10 minutes across scrolling and tab switches, and retries a failed lookup once. Player metadata no longer delays cover requests; raw tour IDs still resolve sibling artwork |
 | Likes (community ranking from the phone's Discovery) | Same | Library > My Likes > Most liked (free) and the Events > For You shelf open `TabKind.likes` (`desktop_likes_pane.dart`); the `most_liked_ranking_page` RPC plus Gamebase lookups, no platform code. Shared `/app/likes/<period>` links route through `DesktopDeepLinkRouter` in both builds |
-| Like a game from the board | Same | Heart button first in the board's action row (`board_like_button.dart`): writes the same Liked Games row as the phone, shows the `game_like_count` RPC count, and asks a guest to sign in (`showDesktopAccountSignIn`) before liking |
+| Like a game from the board | Phone guest policy | Heart button first in the board's action row (`board_like_button.dart`): writes the same Liked Games row as the phone and shows the `game_like_count` RPC count. Anonymous web accounts can like without a sign-up popup; native desktop keeps its existing account gate |
 | Board, notation, explorer, keyboard shortcuts | Same | Browser-reserved chords (Cmd/Ctrl+W, T, Tab) also answer to Alt (`browser_safe_shortcuts.dart`) |
 | Stockfish analysis and Play | Same | Stockfish 19 lite single-threaded Wasm in a Web Worker (`web/stockfish/`) |
 | Maia bot | Same | onnxruntime-web through `lib/web/onnx_runtime_web.dart` |
@@ -46,8 +46,10 @@ still need a manual pass.
 | Google and Apple sign-in | Same tab | Supabase-hosted OAuth redirecting back to the page (PKCE) instead of the loopback server; a pending guest merge waits in IndexedDB (`AppDatabaseGuestMergePendingStore`). The origin must be on the Supabase Auth redirect list |
 | Addresses and history | chessever.com paths | `lib/web/web_url_sync.dart` owns the address bar and Back/Forward; Flutter's URL strategy is off |
 | Startup page and How to use | Events at the bare domain; direct links keep their destination | Automatic How to use opens in a background tab on the web; native desktop onboarding keeps its existing focus behavior |
-| Events membership | For You, Current and Calendar stay free; Past requires Premium | For You uses current broadcasts. Shared admission gate keeps Past unmounted until membership is verified; lookup failures offer Retry |
+| Events membership | Event browsing stays free; archived event/game opens require Premium | Each opening resolves canonical Past membership and broadcast dates. Current events remain free unless another protected source applies; restored boards recheck access |
 | Guest sign-up | First browser visit offers sign-in or Not now | The persisted guest clock survives reloads; reminders start at day 7, repeat weekly, and require sign-in at day 28. Signing in clears guest stamps |
+| Phone rewarded features | Upgrade-only web paywall | My Likes/community games, PGN import/copy, every Game Report, Prep content, historical events and the other phone-gated surfaces require verified membership. The complete source audit and exceptions are in [Phone and web monetization parity](web_mobile_monetization_parity.md) |
+| First monthly subscription | $0.99 first month for eligible new subscribers, then the existing monthly price | Checkout verifies purchase history, active USD price and one-time discount server-side. App pricing shows the offer only after a matching server quote. Annual/native pricing is unchanged; the billing service must be deployed before either web frontend |
 | Sidebar number shortcuts | Same as desktop | Cmd/Ctrl+1 through 9, then 0 follow the primary sidebar routes from Events to Play; labels and bindings share `desktop_main_routes.dart` |
 
 ## Packages weighed (pub.dev, 2026-10-28)

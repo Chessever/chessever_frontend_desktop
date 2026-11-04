@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
+import 'package:chessever/desktop/services/billing/web_intro_offer.dart';
 import 'package:flutter/foundation.dart' show debugPrint, immutable, kDebugMode;
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -162,6 +163,32 @@ class DesktopBillingService {
       return eligible is bool ? eligible : null;
     } on Object {
       // Display concern only — leave the optimistic copy in place.
+      return null;
+    }
+  }
+
+  /// Read-only quote; checkout on chessever.com enforces the same eligibility
+  /// again. A missing/older backend cannot accidentally advertise $0.99.
+  Future<WebIntroOffer?> fetchWebIntroOffer(int tier) async {
+    if (tier < 1 || tier > 3) return null;
+    try {
+      final session = await _activeSession(forceRefresh: false);
+      if (session == null || session.user.isAnonymous) return null;
+      final response = await http
+          .get(
+            Uri.parse(
+              '$_baseUrl/stripe-checkout',
+            ).replace(queryParameters: {'tier': '$tier'}),
+            headers: {
+              'authorization': 'Bearer ${session.accessToken}',
+              'accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return null;
+      final body = jsonDecode(response.body);
+      return body is Map ? WebIntroOffer.fromJson(body['intro_offer']) : null;
+    } on Object {
       return null;
     }
   }

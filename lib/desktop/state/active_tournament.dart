@@ -1,5 +1,6 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
@@ -201,11 +202,22 @@ final tournamentDetailSegmentByTabIdProvider =
 /// that board tab intentionally keeps stale tournament metadata keyed by the
 /// same id. Event-card clicks must still land on the event game-list route, not
 /// focus an already-open in-game board tab.
-void setActiveTournament(
+Future<void> setActiveTournament(
   WidgetRef ref,
   GroupEventCardModel tournament, {
   bool openInNewTab = false,
-}) {
+  bool fromPastList = false,
+}) async {
+  final container = ProviderScope.containerOf(ref.context, listen: false);
+  if (container.read(desktopPastEventAccessEnabledProvider)) {
+    final allowed = await requireDesktopPastEventAccess(container, (
+      id: tournament.id,
+      start: tournament.startDate,
+      end: tournament.endDate,
+      fromPastList: fromPastList,
+    ));
+    if (!allowed || !ref.context.mounted) return;
+  }
   final tabsNotifier = ref.read(desktopTabsProvider.notifier);
 
   final String tabId;

@@ -1,4 +1,5 @@
 import 'package:chessground/chessground.dart';
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:dartchess/dartchess.dart' hide Board;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -431,6 +432,7 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
   }
 
   Future<void> _pastePgn() async {
+    if (!await ensureWebPgnAccess(context, importing: true) || !mounted) return;
     final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
     final pgn = clipboard?.text?.trim();
     if (pgn == null || pgn.isEmpty) {
@@ -445,6 +447,7 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
   }
 
   Future<void> _openLocalFiles() async {
+    if (!await ensureWebPgnAccess(context, importing: true) || !mounted) return;
     if (kIsWeb) {
       final paths = await pickWebChessFilesIntoAppStorage(
         dialogTitle: 'Open chess files in Board Editor',
@@ -479,6 +482,7 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
   }
 
   Future<void> _openLocalFolder() async {
+    if (!await ensureWebPgnAccess(context, importing: true) || !mounted) return;
     if (kIsWeb) {
       final directory = await pickWebChessFolderIntoAppStorage();
       if (directory != null) await _openLocalChessPaths(<String>[directory]);
@@ -496,6 +500,7 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
     List<String> paths, {
     String? sourceLabel,
   }) async {
+    if (!await ensureWebPgnAccess(context, importing: true) || !mounted) return;
     try {
       final result = await scanBoardEditorLocalChessPaths(
         paths,

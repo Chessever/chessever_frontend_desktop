@@ -3,6 +3,7 @@ import '../state/event_player_board_games.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -2166,7 +2167,7 @@ Future<void> openTournamentGameTab(
   // unmounted — which used to swallow the click silently. The container
   // is held by the surrounding ProviderScope and survives card disposal.
   final container = ProviderScope.containerOf(ref.context, listen: false);
-  final admission = tournamentGameAccessContext(
+  var admission = tournamentGameAccessContext(
     game,
     tournamentTitle,
     accessContext: accessContext,
@@ -2175,6 +2176,20 @@ Future<void> openTournamentGameTab(
     viewSource: viewSource,
     eventBroadcastId: eventBroadcastId,
   );
+  admission = await resolveDesktopGameEventAccess(
+    container,
+    game: game,
+    access: admission,
+    eventBroadcastId: eventBroadcastId,
+  );
+  if (container.read(desktopPastEventAccessEnabledProvider) &&
+      !await requireDesktopAction(
+        container,
+        admission,
+        surface: 'tournament_game_open',
+      )) {
+    return;
+  }
   // Denied => the PGN hydrate below never starts. The click's window shows
   // the decision; the source list keeps its selection.
   if (!admitBoardSourceOpen(
@@ -2252,7 +2267,7 @@ Future<void> openTournamentGameWindow({
   String? eventBroadcastId,
   DesktopAccessContext? accessContext,
 }) async {
-  final admission = tournamentGameAccessContext(
+  var admission = tournamentGameAccessContext(
     game,
     tournamentTitle,
     accessContext: accessContext,
@@ -2261,6 +2276,20 @@ Future<void> openTournamentGameWindow({
     viewSource: viewSource,
     eventBroadcastId: eventBroadcastId,
   );
+  admission = await resolveDesktopGameEventAccess(
+    container,
+    game: game,
+    access: admission,
+    eventBroadcastId: eventBroadcastId,
+  );
+  if (container.read(desktopPastEventAccessEnabledProvider) &&
+      !await requireDesktopAction(
+        container,
+        admission,
+        surface: 'tournament_game_window_open',
+      )) {
+    return;
+  }
   if (!admitBoardSourceOpen(
     container,
     admission,
@@ -2461,9 +2490,10 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
     );
     final latestGame = retainMissingGameTimeControl(
       selected: positionWinner,
-      alternate: identical(positionWinner, fetched)
-          ? (currentBase ?? openedGame)
-          : fetched,
+      alternate:
+          identical(positionWinner, fetched)
+              ? (currentBase ?? openedGame)
+              : fetched,
     );
 
     if (currentBase != latestGame) {
@@ -3113,7 +3143,7 @@ Future<void> _showLiveGameContextMenu({
     _ => null,
   };
   if (contentAction != null) {
-    final provenance = tournamentGameAccessContext(
+    var provenance = tournamentGameAccessContext(
       game,
       tournamentTitle,
       accessContext: accessContext,
@@ -3122,8 +3152,16 @@ Future<void> _showLiveGameContextMenu({
       viewSource: viewSource,
       eventBroadcastId: eventBroadcastId,
     ).copyWith(action: contentAction, quota: DesktopQuota.none, additions: 0);
+    final container = ProviderScope.containerOf(context, listen: false);
+    provenance = await resolveDesktopGameEventAccess(
+      container,
+      game: game,
+      access: provenance,
+      eventBroadcastId: eventBroadcastId,
+    );
+    if (!context.mounted) return;
     if (!admitDesktopAction(
-      ProviderScope.containerOf(context, listen: false),
+      container,
       provenance,
       surface: 'tournament_game_context_menu',
     )) {

@@ -1,4 +1,5 @@
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
+import 'package:chessever/desktop/services/engine/game_report_request_coordinator.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
@@ -13,6 +14,40 @@ void main() {
     'widget-report',
     '[White "Ada"]\n[Black "Grace"]\n[ECO "C20"]\n\n1. e4 e5 *',
   );
+
+  testWidgets('browser report denial offers an actionable Premium prompt', (
+    tester,
+  ) async {
+    var requests = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 520,
+          height: 360,
+          child: GameReportView(
+            state: const GameReportState(),
+            game: game,
+            headers: const {},
+            activePly: 0,
+            requestNotice: const GameReportRequestResult(
+              GameReportRequestOutcome.premiumRequired,
+              reason: 'premium_game_report',
+            ),
+            onAnalyze: () async => requests++,
+            onCancel: () async {},
+            onJumpToPly: null,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Game reports are Premium'), findsOneWidget);
+    expect(find.text('Your free report is used'), findsNothing);
+    await tester.tap(find.text('See Premium'));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(requests, 1);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('EnginePanel switches to the externally selected Report view', (
     tester,

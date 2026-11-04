@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
@@ -538,6 +539,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   }
 
   Future<void> _copyPgn() async {
+    if (!await ensureWebPgnAccess(context, importing: false)) return;
     try {
       // The clipboard leaves the app; the GIF job above keeps the native
       // `$240`–`$247` block it renders badges from.

@@ -1,249 +1,168 @@
 import 'dart:async';
 import 'dart:js_interop';
 
-import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:web/web.dart' as web;
 
-import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
-import 'package:chessever/desktop/services/desktop_share_actions.dart';
-import 'package:chessever/desktop/state/active_board_game.dart';
-import 'package:chessever/desktop/state/active_player.dart';
-import 'package:chessever/desktop/state/active_tournament.dart';
+import 'package:chessever/desktop/services/desktop_web_location.dart';
+import 'package:chessever/desktop/services/desktop_web_navigation.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 
-/// Keeps app.chessever.com addresses interchangeable with chessever.com ones.
-///
-/// On load, the path is opened the way chessever.com would show it: detail
-/// pages (games, broadcasts, players, collections, books) through the
-/// desktop deep-link router, list pages as their tabs. Afterwards the address
-/// bar follows the active tab, so dropping or adding `app.` keeps the visitor
-/// on the same page. Each new page is a browser history entry carrying its
-/// tab, so Back and Forward move between pages instead of leaving the app.
+class _HistoryPage {
+  const _HistoryPage(this.tabId, this.path, this.restore);
+  final String? tabId;
+  final String path;
+  final void Function() restore;
+}
+
+/// Owns browser navigation for the shared desktop shell. Flutter's Navigator
+/// URL reporting stays disabled, so it cannot overwrite these addresses.
 class WebUrlSync {
   WebUrlSync._();
 
-  static ProviderSubscription<DesktopTabsState>? _tabs;
-  static ProviderSubscription<Map<String, BoardTabGameArgs>>? _boards;
-  static ProviderSubscription<Object?>? _events;
-  static ProviderSubscription<Object?>? _players;
+  static ProviderSubscription<String>? _location;
   static JSFunction? _onPopState;
-
-  /// The tab the arrival address opened, that address, and the address the
-  /// tab itself produced then. While the tab still shows that page the
-  /// visitor's own URL stays in the bar, rather than one rebuilt from the
-  /// tab (an event's canonical slug can differ from the tour slug the
-  /// visitor used); once it shows another page the bar follows it.
-  static String? _arrivalTabId;
-  static String? _arrivalPath;
-  static String? _arrivalTabPath;
-
-  /// Set while a Back or Forward is being applied (until the frame it
-  /// causes has settled), so the tab change it causes rewrites the current
-  /// entry instead of pushing a new one.
+  static final Map<int, _HistoryPage> _pages = {};
   static bool _restoring = false;
-
-  /// Position of the current history entry, stamped on each one, so a
-  /// popstate can tell Back from Forward.
+  static bool _scheduled = false;
   static int _index = 0;
+  static int _generation = 0;
+  static String? _pinnedTab;
+  static String? _pinnedPath;
+  static String? _pinnedGeneratedPath;
 
-  static Future<void> start(ProviderContainer container) async {
-    await _openInitialPath(Uri.base, container);
-    final arrival = Uri.base;
-    if (arrival.pathSegments.any((s) => s.isNotEmpty)) {
-      _arrivalTabId = container.read(desktopTabsProvider).activeId;
-      _arrivalPath =
-          arrival.hasQuery ? '${arrival.path}?${arrival.query}' : arrival.path;
-      _arrivalTabPath = _pathForActiveTab(container);
-    }
+  static String _browserPath() =>
+      '${web.window.location.pathname}${web.window.location.search}';
 
-    String target() {
-      final activeId = container.read(desktopTabsProvider).activeId;
-      final tabPath = _pathForActiveTab(container);
-      if (_arrivalTabId != null &&
-          activeId == _arrivalTabId &&
-          tabPath == _arrivalTabPath) {
-        return _arrivalPath!;
-      }
-      _arrivalTabId = null;
-      return tabPath;
-    }
-
-    void sync({bool replace = false}) {
-      final path = target();
-      final location = web.window.location;
-      if ('${location.pathname}${location.search}' == path) return;
-      final activeId = container.read(desktopTabsProvider).activeId;
-      if (replace || _restoring) {
-        final state = {'tab': activeId, 'index': _index}.jsify();
-        web.window.history.replaceState(state, '', path);
-      } else {
-        _index++;
-        final state = {'tab': activeId, 'index': _index}.jsify();
-        web.window.history.pushState(state, '', path);
-      }
-    }
-
-    _tabs = container.listen(desktopTabsProvider, (_, _) => sync());
-    _boards = container.listen(
-      boardTabGameArgsByTabIdProvider,
-      (_, _) => sync(),
-    );
-    _events = container.listen(tournamentByTabIdProvider, (_, _) => sync());
-    _players = container.listen(playerProfileByTabIdProvider, (_, _) => sync());
-
-    _onPopState =
-        ((web.PopStateEvent event) {
-          unawaited(_restore(container, event.state, sync));
-        }).toJS;
-    web.window.addEventListener('popstate', _onPopState);
-
-    sync(replace: true);
+  static void _pin(ProviderContainer container, String path) {
+    _pinnedTab = container.read(desktopTabsProvider).activeId;
+    _pinnedPath = path;
+    _pinnedGeneratedPath = container.read(desktopWebLocationProvider);
   }
 
-  /// Shows the page a Back or Forward landed on. Another tab's entry
-  /// re-activates that tab; an entry of the tab already in front steps that
-  /// tab's own history (pane switches navigate inside one tab); an entry
-  /// whose tab was closed opens its address afresh.
+  static String _target(ProviderContainer container) {
+    final generated = container.read(desktopWebLocationProvider);
+    if (_pinnedTab == container.read(desktopTabsProvider).activeId &&
+        generated == _pinnedGeneratedPath &&
+        _pinnedPath != null) {
+      return _pinnedPath!;
+    }
+    _pinnedTab = _pinnedPath = _pinnedGeneratedPath = null;
+    return generated;
+  }
+
+  static _HistoryPage _capture(ProviderContainer container, String path) =>
+      _HistoryPage(
+        container.read(desktopTabsProvider).activeId,
+        path,
+        captureDesktopWebPage(container),
+      );
+
+  static void _stamp(String path, {required bool replace}) {
+    final state = {'chessever': true, 'index': _index}.jsify();
+    if (replace) {
+      web.window.history.replaceState(state, '', path);
+    } else {
+      web.window.history.pushState(state, '', path);
+    }
+  }
+
+  static Future<void> start(ProviderContainer container) async {
+    stop();
+    final generation = _generation;
+    _index = 0;
+    _pages.clear();
+    _restoring = true;
+    final arrival = Uri.parse(web.window.location.href);
+    try {
+      if (await openDesktopWebLocation(arrival, container) &&
+          arrival.path != '/') {
+        _pin(
+          container,
+          arrival.hasQuery ? '${arrival.path}?${arrival.query}' : arrival.path,
+        );
+      }
+    } finally {
+      _restoring = false;
+    }
+    if (generation != _generation) return;
+    final path = _target(container);
+    _pages[0] = _capture(container, path);
+    // Stamp even when the path already matches. Otherwise the first Back has
+    // no state and is mistaken for a closed tab or a navigation out of the app.
+    _stamp(path, replace: true);
+
+    void sync() {
+      if (_restoring || _scheduled) return;
+      _scheduled = true;
+      // Opening a tab and installing its arguments is one navigation, not an
+      // intermediate /analysis followed by a second /games entry.
+      scheduleMicrotask(() {
+        _scheduled = false;
+        if (generation != _generation || _restoring) return;
+        final path = _target(container);
+        if (_browserPath() == path) return;
+        _pages.removeWhere((index, _) => index > _index);
+        _index++;
+        _pages[_index] = _capture(container, path);
+        // Browser history remains usable after eviction: reopen its URL.
+        _pages.removeWhere((index, _) => index < _index - 100);
+        _stamp(path, replace: false);
+      });
+    }
+
+    _location = container.listen(desktopWebLocationProvider, (_, _) => sync());
+    _onPopState =
+        ((web.PopStateEvent event) {
+          unawaited(_restore(container, event.state));
+        }).toJS;
+    web.window.addEventListener('popstate', _onPopState);
+  }
+
   static Future<void> _restore(
     ProviderContainer container,
     JSAny? state,
-    void Function({bool replace}) sync,
   ) async {
-    final entry = state?.dartify();
-    final tabId = entry is Map ? entry['tab'] : null;
-    final index = entry is Map ? entry['index'] : null;
-    final back = index is num ? index < _index : true;
-    if (index is num) _index = index.toInt();
+    final decoded = state?.dartify();
+    final index =
+        decoded is Map && decoded['chessever'] == true
+            ? decoded['index']
+            : null;
+    final path = _browserPath();
+    final page = index is num ? _pages[index.toInt()] : null;
     _restoring = true;
     try {
-      final tabs = container.read(desktopTabsProvider);
-      final notifier = container.read(desktopTabsProvider.notifier);
-      if (tabId is String &&
-          tabId != tabs.activeId &&
-          tabs.tabs.any((tab) => tab.id == tabId)) {
-        notifier.activate(tabId);
-      } else if (tabId is String && tabId == tabs.activeId) {
-        if (back && tabs.canGoBack) {
-          notifier.goBack();
-        } else if (!back && tabs.canGoForward) {
-          notifier.goForward();
-        }
+      if (index is num) _index = index.toInt();
+      final exists =
+          page != null &&
+          container
+              .read(desktopTabsProvider)
+              .tabs
+              .any((tab) => tab.id == page.tabId);
+      if (exists) {
+        page.restore();
       } else {
-        await _openInitialPath(Uri.parse(web.window.location.href), container);
+        await openDesktopWebLocation(
+          Uri.parse(web.window.location.href),
+          container,
+        );
       }
-      // Tab changes land over the next frame; keep rewriting until then.
-      await WidgetsBinding.instance.endOfFrame;
-      sync(replace: true);
+      _pin(container, path);
+      _pages[_index] = _capture(container, path);
+      _stamp(path, replace: true);
     } finally {
       _restoring = false;
     }
   }
 
   static void stop() {
-    _tabs?.close();
-    _boards?.close();
-    _events?.close();
-    _players?.close();
-    final onPopState = _onPopState;
-    if (onPopState != null) {
-      web.window.removeEventListener('popstate', onPopState);
-    }
-  }
-
-  /// List pages on chessever.com and the tab that shows the same content.
-  static const Map<String, TabKind> _listPages = {
-    'broadcast': TabKind.tournaments,
-    'broadcasts': TabKind.tournaments,
-    'calendar': TabKind.calendar,
-    'rankings': TabKind.rankings,
-    'chess-players': TabKind.rankings,
-    'analysis': TabKind.board,
-    'play': TabKind.play,
-  };
-
-  static Future<void> _openInitialPath(
-    Uri current,
-    ProviderContainer container,
-  ) async {
-    final segments = current.pathSegments.where((s) => s.isNotEmpty).toList();
-    if (segments.isEmpty) return;
-
-    final website = Uri(
-      scheme: 'https',
-      host: 'chessever.com',
-      pathSegments: segments,
-      queryParameters:
-          current.queryParameters.isEmpty ? null : current.queryParameters,
-    );
-    if (isDesktopRoutableWebDeepLink(website)) {
-      await DesktopDeepLinkRouter.instance.handle(website, container);
-      return;
-    }
-    final listTab = segments.length == 1 ? _listPages[segments.first] : null;
-    if (listTab != null) {
-      container.read(desktopTabsProvider.notifier).open(listTab);
-    }
-  }
-
-  static String _pathForActiveTab(ProviderContainer container) {
-    final tab = container.read(desktopTabsProvider).active;
-    if (tab == null) return '/';
-    switch (tab.kind) {
-      case TabKind.board:
-        final args = container.read(boardTabGameArgsByTabIdProvider)[tab.id];
-        if (args == null) return '/analysis';
-        final url =
-            args.sourceGame != null
-                ? buildDesktopGameShareUrl(game: args.sourceGame)
-                : buildDesktopGameShareUrl(gameId: args.gameId);
-        return url == null ? '/analysis' : _pathOf(url);
-      case TabKind.tournamentDetail:
-        final event = container.read(tournamentForTabProvider(tab.id));
-        if (event == null) return '/broadcast';
-        return _pathOf(
-          buildDesktopEventShareUrl(id: event.id, title: event.title),
-        );
-      case TabKind.playerProfile:
-        final player = container.read(playerProfileByTabIdProvider)[tab.id];
-        final fideId = player?.fideId;
-        if (player == null || fideId == null || fideId <= 0) return '/';
-        return _playerPath(player.playerName, fideId);
-      case TabKind.tournaments:
-        return '/broadcast';
-      case TabKind.calendar:
-        return '/calendar';
-      case TabKind.rankings:
-        return '/rankings';
-      case TabKind.play:
-        return '/play';
-      default:
-        return '/';
-    }
-  }
-
-  /// chessever.com's player address: `/player/<first-last-slug>/<fideId>`
-  /// (src/lib/player-profile-path.ts). The site resolves the FIDE id, so an
-  /// accent dropped from the slug still lands on the same profile.
-  static String _playerPath(String name, int fideId) {
-    var display = name.trim();
-    if (display.contains(',')) {
-      final parts = display.split(',');
-      final first = parts.sublist(1).join(',').trim();
-      final last = parts.first.trim();
-      display = first.isEmpty ? last : '$first $last';
-    }
-    var slug = display
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-        .replaceAll(RegExp(r'^-+|-+$'), '');
-    if (slug.length > 120) slug = slug.substring(0, 120);
-    if (slug.isEmpty) slug = 'player';
-    return '/player/$slug/$fideId';
-  }
-
-  static String _pathOf(String url) {
-    final uri = Uri.parse(url);
-    return uri.hasQuery ? '${uri.path}?${uri.query}' : uri.path;
+    _generation++;
+    _location?.close();
+    _location = null;
+    final listener = _onPopState;
+    if (listener != null) web.window.removeEventListener('popstate', listener);
+    _onPopState = null;
+    _scheduled = false;
+    _pinnedTab = _pinnedPath = _pinnedGeneratedPath = null;
   }
 }

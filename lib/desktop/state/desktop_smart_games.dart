@@ -10,6 +10,20 @@ import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 final desktopSmartGamesTypeByTabIdProvider =
     StateProvider<Map<String, PremiumGamesType>>((ref) => const {});
 
+enum DesktopMiniaturesSection {
+  games('Games'),
+  players('Players'),
+  about('About');
+
+  const DesktopMiniaturesSection(this.label);
+  final String label;
+}
+
+final desktopMiniaturesSectionByTabIdProvider =
+    StateProvider.family<DesktopMiniaturesSection, String>(
+      (_, _) => DesktopMiniaturesSection.games,
+    );
+
 /// What a criteria-driven smart-event tab is showing.
 ///
 /// [request] is the live criteria the tab queries with; editing criteria

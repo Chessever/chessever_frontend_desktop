@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_guest_upgrade_dialog.dart';
@@ -20,11 +21,10 @@ Future<bool?> toggleDesktopGameLike({
   required WidgetRef ref,
   required GamesTourModel game,
 }) async {
-  // Likes live on the account (My Likes on every device, and the community
-  // ranking), so a guest or signed-out window signs in first, then the like
-  // goes through in the same click.
+  // Phone guests can like games using their anonymous account. Mirror that
+  // in the browser; preserve the native desktop sign-in flow.
   final user = ref.read(currentUserProvider);
-  if (user == null || user.isAnonymous) {
+  if (user == null || (!kIsWeb && user.isAnonymous)) {
     final signedIn = await showDesktopAccountSignIn(
       context,
       surface: 'like_game',

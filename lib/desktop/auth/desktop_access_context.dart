@@ -44,6 +44,11 @@ enum DesktopFeature {
   /// year). Browsing every ranking is free; opening a game is free only from
   /// today's ranking. Not the user's own Likes collection ([likes]).
   communityLikes,
+
+  /// Phone-equivalent browser gates for importing and copying PGN. FEN and
+  /// exporting retained files are separate operations.
+  pgnImport,
+  pgnCopy,
 }
 
 /// Where the user discovered the content a request acts on.
@@ -309,9 +314,8 @@ class DesktopAccessContext {
       action: action ?? this.action,
       origin: origin ?? this.origin,
       ownedDocument: ownedDocument ?? this.ownedDocument,
-      retainedSaveId: clearRetainedSaveId
-          ? null
-          : retainedSaveId ?? this.retainedSaveId,
+      retainedSaveId:
+          clearRetainedSaveId ? null : retainedSaveId ?? this.retainedSaveId,
       contentDate: contentDate ?? this.contentDate,
       playedPlies: playedPlies ?? this.playedPlies,
       filterCriteriaCount: filterCriteriaCount ?? this.filterCriteriaCount,

@@ -1,9 +1,11 @@
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'dart:async';
 import '../state/local_board_games.dart';
 import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
 import '../state/event_player_board_games.dart';
 import 'dart:math' as math;
 
@@ -2906,6 +2908,8 @@ Future<int> _copyEventGameSummariesAsPgn({
     showDesktopToast(context, "Games in a collection can't be copied.");
     return 0;
   }
+  if (!await ensureWebPgnAccess(context, importing: false)) return 0;
+  if (!context.mounted) return 0;
   // Denied => no PGN is resolved or fetched for any of the games.
   if (!admitEventRailContentAction(
     ProviderScope.containerOf(context, listen: false),
@@ -3891,12 +3895,13 @@ TournamentGameSummary _mergeFreshEventGameSummary(
     hasPgn: fresh.hasPgn || current.hasPgn,
     tourId: fresh.tourId.isNotEmpty ? fresh.tourId : current.tourId,
     tourSlug: fresh.tourSlug.isNotEmpty ? fresh.tourSlug : current.tourSlug,
-    timeControlText: (fresh.timeControlText?.trim().isNotEmpty ?? false)
-        ? fresh.timeControlText
-        : fresh.id == current.id &&
-              (fresh.tourId.isEmpty || fresh.tourId == current.tourId)
-        ? current.timeControlText
-        : null,
+    timeControlText:
+        (fresh.timeControlText?.trim().isNotEmpty ?? false)
+            ? fresh.timeControlText
+            : fresh.id == current.id &&
+                (fresh.tourId.isEmpty || fresh.tourId == current.tourId)
+            ? current.timeControlText
+            : null,
     whiteFederation:
         fresh.whiteFederation.isNotEmpty
             ? fresh.whiteFederation
@@ -5287,8 +5292,32 @@ Future<void> _insertEventGame({
   required String tournamentTitle,
   required BoardTabGameArgs? activeArgs,
 }) async {
+  final container = ProviderScope.containerOf(ref.context, listen: false);
+  final sourceAccess = activeArgs?.sourceAccessContext;
+  if (sourceAccess != null &&
+      game.localPgnSource == null &&
+      container.read(desktopPastEventAccessEnabledProvider)) {
+    final source = switch (sourceAccess.feature) {
+      DesktopFeature.gamebase => GameSource.gamebase,
+      DesktopFeature.twic => GameSource.twic,
+      _ => activeArgs?.sourceGame?.source ?? GameSource.supabase,
+    };
+    final access = await resolveDesktopGameEventAccess(
+      container,
+      game: gamesTourModelFromTournamentSummary(game, source: source),
+      access: sourceAccess.copyWith(action: DesktopAction.insertMove),
+    );
+    if (!await requireDesktopAction(
+          container,
+          access,
+          surface: 'board_rail_insert',
+        ) ||
+        !ref.context.mounted) {
+      return;
+    }
+  }
   if (!admitEventRailContentAction(
-    ProviderScope.containerOf(ref.context, listen: false),
+    container,
     activeArgs: activeArgs,
     games: <TournamentGameSummary>[game],
     action: DesktopAction.insertMove,
@@ -5629,13 +5658,36 @@ Future<void> _openEventGame({
   // current document never carries to it, and a Miniatures rail judges the
   // next game by its own date. Denied => no replace prompt, no local hydrate,
   // no open-seed fetch, and the active board is untouched.
-  final DesktopAccessContext? railAccess =
+  DesktopAccessContext? railAccess =
       activeArgs == null
           ? null
           : retargetMiniatureAccessContext(
             activeArgs.sourceAccessContext,
             game.lastMoveTime,
           );
+  if (railAccess != null &&
+      game.localPgnSource == null &&
+      ownerContainer.read(desktopPastEventAccessEnabledProvider)) {
+    final source = switch (railAccess.feature) {
+      DesktopFeature.gamebase => GameSource.gamebase,
+      DesktopFeature.twic => GameSource.twic,
+      _ => activeArgs?.sourceGame?.source ?? GameSource.supabase,
+    };
+    railAccess = await resolveDesktopGameEventAccess(
+      ownerContainer,
+      game: gamesTourModelFromTournamentSummary(game, source: source),
+      access: railAccess,
+    );
+    if (!stillOwnsOpen() ||
+        !await requireDesktopAction(
+          ownerContainer,
+          railAccess,
+          surface: 'board_rail_open',
+        ) ||
+        !stillOwnsOpen()) {
+      return;
+    }
+  }
   if (railAccess != null &&
       !(kind == _GameListKind.database && game.localPgnSource != null) &&
       !admitBoardSourceOpen(
@@ -5645,6 +5697,7 @@ Future<void> _openEventGame({
       )) {
     return;
   }
+  if (context != null && !context.mounted) return;
   if (!await _confirmReplaceActiveBoardGameIfNeeded(
     ref: ref,
     context: context,

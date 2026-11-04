@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
+import 'package:chessever/desktop/services/billing/web_intro_offer.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/png_asset.dart';
@@ -206,17 +207,26 @@ class WebPremiumPlans extends StatelessWidget {
     required this.interval,
     required this.showsTrial,
     required this.onChanged,
+    this.introOffer,
   });
 
   final DesktopResolvedPricing? pricing;
   final String interval;
   final bool showsTrial;
   final ValueChanged<String>? onChanged;
+  final WebIntroOffer? introOffer;
 
   @override
   Widget build(BuildContext context) {
     final resolved = pricing;
     final tier = resolved?.pricing;
+    final showsIntro =
+        resolved != null &&
+        introOffer?.matches(
+              currency: resolved.currencyCode,
+              monthlyAmount: resolved.pricing.monthlyAmount,
+            ) ==
+            true;
     String amount(double value) =>
         DesktopPricing.formatAmount(value, resolved!.currencyCode);
     final trialPrefix =
@@ -230,8 +240,16 @@ class WebPremiumPlans extends StatelessWidget {
         _WebPlanRow(
           name: 'Monthly',
           selected: interval == 'month',
-          price: tier == null ? '—' : amount(tier.monthlyAmount),
-          detail: DesktopPricing.monthlyPlanDetail(showsTrial: showsTrial),
+          price:
+              showsIntro
+                  ? r'$0.99'
+                  : tier == null
+                  ? '—'
+                  : amount(tier.monthlyAmount),
+          detail:
+              showsIntro
+                  ? 'First month, then ${amount(tier!.monthlyAmount)} per month'
+                  : DesktopPricing.monthlyPlanDetail(showsTrial: showsTrial),
           onPress: onChanged == null ? null : () => onChanged!('month'),
         ),
         const SizedBox(height: 12),

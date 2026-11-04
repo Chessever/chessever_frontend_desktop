@@ -1,5 +1,6 @@
 import 'package:chessever/desktop/panes/inbox_pane.dart';
 import 'dart:async';
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
@@ -463,6 +464,10 @@ class DesktopShell extends HookConsumerWidget {
               foregroundBoardShortcutDispatcher?.invoke(
                 BoardActionKey.pastePgn,
               );
+              return;
+            }
+            if (!await ensureWebPgnAccess(context, importing: true) ||
+                !context.mounted) {
               return;
             }
             final data = await Clipboard.getData(Clipboard.kTextPlain);

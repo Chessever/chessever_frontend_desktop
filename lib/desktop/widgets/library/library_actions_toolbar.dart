@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
@@ -87,6 +88,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     Future<void> handlePasteClipboard() async {
+      if (!await ensureWebPgnAccess(context, importing: true)) return;
       final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
       final text = clipboard?.text?.trim();
       if (text == null || text.isEmpty) {
@@ -99,6 +101,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
         return;
       }
       final parsed = await parsePgnsToChessGamesAsync(text);
+      if (!context.mounted) return;
       if (parsed.isEmpty) {
         if (!context.mounted) return;
         showDesktopToast(
