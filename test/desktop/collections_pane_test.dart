@@ -1425,6 +1425,60 @@ void main() {
       expect(edges(), unsorted);
     });
 
+    // The pane's share of a 1440 window beside the expanded sidebar.
+    const laptop = Size(1200, 800);
+
+    testWidgets('both dates show in a 1440 window with the sidebar open', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        const CollectionsPane(),
+        reader: FakeCollectionsReader(),
+        window: laptop,
+      );
+      final row = _row('My 60 Memorable Games');
+      for (final key in [
+        'collection-published-my-60-memorable-games',
+        'collection-last-game-my-60-memorable-games',
+      ]) {
+        expect(_in(row, find.byKey(ValueKey(key))), findsOneWidget);
+      }
+      expect(find.text('PUBLISHED'), findsOneWidget);
+      expect(find.text('LAST GAME ADDED'), findsOneWidget);
+    });
+
+    testWidgets(
+      'the date headers fit whole in the system font, sorted or not',
+      (tester) async {
+        await tester.runAsync(_loadFixtureFonts);
+        await _pump(
+          tester,
+          const CollectionsPane(),
+          reader: FakeCollectionsReader(),
+          window: laptop,
+          theme: _macTheme,
+        );
+        // Unsorted, then sorted: the direction mark takes room from the label.
+        for (final label in ['PUBLISHED', 'LAST GAME ADDED']) {
+          for (var press = 0; press < 2; press++) {
+            final paragraph = tester.renderObject<RenderParagraph>(
+              find.text(label),
+            );
+            expect(
+              paragraph.didExceedMaxLines,
+              isFalse,
+              reason: '$label, press $press',
+            );
+            await tester.tap(find.text(label));
+            await _settle(tester);
+          }
+        }
+      },
+      // The fixture font is the Mac system font.
+      skip: !Platform.isMacOS,
+    );
+
     testWidgets('one gutter separates every column', (tester) async {
       await _pump(
         tester,

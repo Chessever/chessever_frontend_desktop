@@ -457,7 +457,9 @@ class CollectionCatalogColumns {
       CollectionCatalogColumns._(
         showAuthor: width >= 600,
         showViews: width >= 700,
-        showDates: width >= 1080,
+        // Room for both dates and still ~170 for the title, so they show in
+        // a 1440 window with the sidebar and rail open.
+        showDates: width >= 900,
       );
 
   final bool showAuthor;
@@ -469,8 +471,12 @@ class CollectionCatalogColumns {
   static const double authorWidth = 160;
   static const double gamesWidth = 72;
   static const double viewsWidth = 60;
-  static const double dateWidth = 112;
-  static const double lastGameAddedWidth = 140;
+
+  /// "PUBLISHED" and its sort mark (80), and "May 30, 2026" (78).
+  static const double dateWidth = 88;
+
+  /// "LAST GAME ADDED" and its sort mark (123).
+  static const double lastGameAddedWidth = 128;
 
   /// The star count's own slot: every count ends on its right edge, and a
   /// row without stars leaves it empty instead of closing it.
