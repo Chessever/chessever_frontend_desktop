@@ -14,6 +14,7 @@ import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/auth/desktop_paywall_copy.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
+import 'package:chessever/desktop/services/billing/web_premium_navigation.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
 import 'package:chessever/desktop/services/billing/desktop_trial_eligibility_provider.dart';
@@ -350,6 +351,32 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
     }
   }
 
+  Future<void> _openWebPremiumPage() async {
+    setState(() {
+      _phase = _PaywallPhase.openingCheckout;
+      _error = null;
+    });
+    try {
+      // Navigate before any auth/network round trip. The Premium website owns
+      // sign-in and payment; this action only opens the selected plan page.
+      await openWebPremiumPage(interval: _interval);
+    } catch (_) {
+      DesktopAccessAnalytics.operationalError(
+        widget.decision,
+        context: widget.accessContext,
+        surface: widget.surface,
+        stage: 'premium_page_open',
+      );
+      if (mounted) {
+        setState(
+          () => _error = 'The Premium page could not be opened. Try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _phase = _PaywallPhase.idle);
+    }
+  }
+
   Future<void> _purchase(DesktopResolvedPricing? pricing) async {
     // Purchasing is itself a request: it needs a permanent account.
     final purchase = readDesktopAccess(
@@ -666,10 +693,8 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
                   ? 'Opening checkout'
                   : 'Continue to checkout',
           onPress:
-              _phase == _PaywallPhase.idle &&
-                      pricing != null &&
-                      pendingTrial == null
-                  ? () => _purchase(pricing)
+              _phase == _PaywallPhase.idle && pendingTrial == null
+                  ? _openWebPremiumPage
                   : null,
         ),
         const SizedBox(height: 12),
