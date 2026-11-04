@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/widgets/paywall/web_premium_paywall.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
@@ -138,13 +140,25 @@ Future<bool> _presentPaywall(
   );
   await showDesktopModal<void>(
     context,
-    maxWidth: 480,
-    builder: (_) => DesktopPaywallView(
-      decision: decision,
-      accessContext: accessContext,
-      surface: surface,
-      onAccountBound: (account) => session.account = account,
-    ),
+    maxWidth: kIsWeb ? 520 : 480,
+    maxHeight:
+        kIsWeb
+            ? (MediaQuery.sizeOf(context).height * 0.9).clamp(0.0, 704.0)
+            : null,
+    shape:
+        kIsWeb
+            ? RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: const BorderSide(color: kDividerColor),
+            )
+            : null,
+    builder:
+        (_) => DesktopPaywallView(
+          decision: decision,
+          accessContext: accessContext,
+          surface: surface,
+          onAccountBound: (account) => session.account = account,
+        ),
   );
   final verified = desktopPaywallVerified(
     container.read,
@@ -483,6 +497,30 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
       context: widget.accessContext,
     );
 
+    if (kIsWeb &&
+        (shown.outcome == DesktopAccess.premiumRequired ||
+            shown.outcome == DesktopAccess.quotaExceeded)) {
+      final countrymen =
+          shown.reason == DesktopAccessReason.premiumPaidSource &&
+          (widget.accessContext?.origin == DesktopDiscoveryOrigin.countrymen ||
+              widget.accessContext?.feature == DesktopFeature.countrymen);
+      return WebPremiumPaywall(
+        subtitle:
+            countrymen ? 'Full Countrymen games, with Premium.' : copy.title,
+        contextDetail: countrymen ? null : copy.body,
+        capacityLine: copy.capacityLine,
+        children: [
+          ..._pricingBody(),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              style: const TextStyle(color: kRedColor, fontSize: 12),
+            ),
+          ],
+        ],
+      );
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 20, 16, 24),
       child: Padding(
@@ -573,7 +611,7 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
   }
 
   List<Widget> _pricingBody() {
-    if (isMacAppStore) {
+    if (!kIsWeb && isMacAppStore) {
       return [MacAppStorePlans(onAccountBound: widget.onAccountBound)];
     }
     final pricingState = ref.watch(desktopPricingProvider);
@@ -599,6 +637,75 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
       ];
     }
     final pendingTrial = _pendingTrialCheckout;
+    if (kIsWeb) {
+      return [
+        WebPremiumPlans(
+          pricing: pricing,
+          interval: _interval,
+          showsTrial: showsTrial,
+          onChanged:
+              _phase == _PaywallPhase.idle && pendingTrial == null
+                  ? (interval) => setState(() => _interval = interval)
+                  : null,
+        ),
+        const SizedBox(height: 20),
+        if (pricing == null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child:
+                pricingState.hasError
+                    ? DesktopDialogButton(
+                      label: 'Could not load prices. Retry',
+                      onPress: () => ref.invalidate(desktopPricingProvider),
+                    )
+                    : const _Progress(label: 'Loading prices'),
+          ),
+        WebPremiumCheckoutButton(
+          label:
+              _phase == _PaywallPhase.openingCheckout
+                  ? 'Opening checkout'
+                  : 'Continue to checkout',
+          onPress:
+              _phase == _PaywallPhase.idle &&
+                      pricing != null &&
+                      pendingTrial == null
+                  ? () => _purchase(pricing)
+                  : null,
+        ),
+        const SizedBox(height: 12),
+        if (widget.decision.reason == DesktopAccessReason.premiumPaidSource &&
+            widget.accessContext != null)
+          const Text(
+            'Browsing and your saved games stay free.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: kWhiteColor70, fontSize: 13),
+          ),
+        // Preserve trial/billing assurance without enlarging the CTA row.
+        if (showsTrial)
+          Text(
+            DesktopPricing.premiumAssuranceLabel(showsTrial: showsTrial),
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+          ),
+        const SizedBox(height: 8),
+        DesktopDialogButton(
+          label:
+              _phase == _PaywallPhase.refreshing
+                  ? 'Refreshing'
+                  : 'Already Premium? Refresh',
+          tone: DesktopDialogButtonTone.ghost,
+          onPress: _phase == _PaywallPhase.idle ? _refresh : null,
+        ),
+        if (pendingTrial != null) ...[
+          const SizedBox(height: 16),
+          _PendingTrialConfirm(
+            busy: _phase != _PaywallPhase.idle,
+            onConfirm: _confirmPendingTrialCheckout,
+            onDismiss: () => setState(() => _pendingTrialCheckout = null),
+          ),
+        ],
+      ];
+    }
     return [
       _PlanSelector(
         pricing: pricing,

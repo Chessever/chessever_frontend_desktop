@@ -1,4 +1,3 @@
-
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -29,6 +28,7 @@ Future<T?> showDesktopModal<T>(
   double? maxHeight,
   bool barrierDismissible = true,
   String? title,
+  ShapeBorder? shape,
 }) {
   return showGeneralDialog<T>(
     context: context,
@@ -44,6 +44,7 @@ Future<T?> showDesktopModal<T>(
         title: title,
         maxWidth: maxWidth,
         maxHeight: effectiveMaxHeight,
+        shape: shape,
         child: Builder(builder: builder),
       );
     },
@@ -134,12 +135,14 @@ class _DesktopModalShell extends StatelessWidget {
     required this.maxWidth,
     required this.maxHeight,
     this.title,
+    this.shape,
   });
 
   final Widget child;
   final double maxWidth;
   final double maxHeight;
   final String? title;
+  final ShapeBorder? shape;
 
   /// Keeps a modal off the window edges when its max size is larger than a
   /// short laptop window; on bigger windows the modal is smaller anyway.
@@ -159,7 +162,8 @@ class _DesktopModalShell extends StatelessWidget {
             color: kBlack2Color,
             elevation: 12,
             shadowColor: Colors.black.withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(12),
+            shape: shape,
+            borderRadius: shape == null ? BorderRadius.circular(12) : null,
             clipBehavior: Clip.antiAlias,
             child: _EscDismissable(
               child: Column(
