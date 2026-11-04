@@ -15,6 +15,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_lock_reasons.dart';
+import 'package:chessever/desktop/widgets/desktop_keyboard_action.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -153,7 +154,7 @@ class _DesktopLikesPaneState extends ConsumerState<DesktopLikesPane> {
                 for (final section in _LikesSection.values)
                   Semantics(
                     selected: current == section,
-                    child: DesktopToolbarPillButton(
+                    child: _LikesActionButton(
                       label: section.label,
                       icon: section.icon,
                       tone:
@@ -343,7 +344,7 @@ _Ranking _watchRanking(
               title: emptyTitle,
               body:
                   'A game enters the ranking once two people like it. '
-                  'Right-click any game and choose Like game to add yours.',
+                  'Open a game and press its heart to add yours.',
             );
           } else {
             entries = all;
@@ -654,7 +655,7 @@ class _PlayerFilterBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          DesktopToolbarPillButton(
+          _LikesActionButton(
             label: 'All games',
             icon: Icons.close_rounded,
             height: 30,
@@ -679,7 +680,7 @@ class _LoadMore extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
       child: Center(
-        child: DesktopToolbarPillButton(
+        child: _LikesActionButton(
           label: paging.failed ? 'Retry' : 'Show more',
           icon:
               paging.failed ? Icons.refresh_rounded : Icons.expand_more_rounded,
@@ -838,9 +839,9 @@ class _PlayerRowState extends ConsumerState<_PlayerRow> {
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onPick,
+        child: DesktopKeyboardAction(
+          excludeChildFocus: false,
+          onPress: widget.onPick,
           child: Container(
             constraints: const BoxConstraints(minHeight: 40),
             decoration: librarySelectedRowDecoration(
@@ -958,8 +959,8 @@ class _LikesAboutView extends ConsumerWidget {
     ),
     (
       'Liking',
-      'Right-click any game and choose Like game. Choose Remove from My '
-          'Likes to take it back.',
+      'Open a game and press its heart to like it. Sign in to keep your '
+          'likes across devices. Press again to remove a like.',
     ),
     (
       'Free',
@@ -1053,7 +1054,7 @@ class _LikesAboutView extends ConsumerWidget {
               const SizedBox(height: 12),
               Align(
                 alignment: Alignment.centerLeft,
-                child: DesktopToolbarPillButton(
+                child: _LikesActionButton(
                   label: 'Open Library',
                   icon: Icons.collections_bookmark_outlined,
                   onPress:
@@ -1131,7 +1132,7 @@ class _Message extends StatelessWidget {
             ),
             if (actionLabel != null && onAction != null) ...[
               const SizedBox(height: 12),
-              DesktopToolbarPillButton(
+              _LikesActionButton(
                 label: actionLabel!,
                 icon: Icons.refresh_rounded,
                 onPress: onAction,
@@ -1142,4 +1143,35 @@ class _Message extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Preserve the shell's toolbar appearance while making every ranking action
+/// reachable with one Tab stop, Enter and Space.
+class _LikesActionButton extends StatelessWidget {
+  const _LikesActionButton({
+    required this.label,
+    required this.icon,
+    required this.onPress,
+    this.tone = DesktopToolbarPillTone.neutral,
+    this.height = 34,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback? onPress;
+  final DesktopToolbarPillTone tone;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) => DesktopKeyboardAction(
+    label: label,
+    onPress: onPress,
+    child: DesktopToolbarPillButton(
+      label: label,
+      icon: icon,
+      tone: tone,
+      height: height,
+      onPress: onPress,
+    ),
+  );
 }

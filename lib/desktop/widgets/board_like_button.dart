@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
@@ -7,6 +9,7 @@ import 'package:chessever/desktop/services/likes/community_likes_models.dart'
     show compactLikeCount;
 import 'package:chessever/desktop/state/game_like_count.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/repository/liked_games/liked_games_provider.dart';
@@ -31,8 +34,8 @@ class DesktopBoardLikeButton extends ConsumerStatefulWidget {
       _DesktopBoardLikeButtonState();
 }
 
-class _DesktopBoardLikeButtonState
-    extends ConsumerState<DesktopBoardLikeButton> {
+class _DesktopBoardLikeButtonState extends ConsumerState<DesktopBoardLikeButton>
+    with DeferredPointerStateMixin<DesktopBoardLikeButton> {
   bool _hovered = false;
   bool _busy = false;
 
@@ -90,69 +93,76 @@ class _DesktopBoardLikeButtonState
       if (showCount) likes == 1 ? '1 like' : '$likes likes',
     ].join('  •  ');
 
-    return DesktopTooltip(
-      message: tooltip,
+    return FTheme(
+      data: FThemes.zinc.dark,
       child: Semantics(
-        button: true,
         toggled: liked,
-        label: liked ? 'Liked' : 'Like',
         value: showCount ? (likes == 1 ? '1 like' : '$likes likes') : null,
-        excludeSemantics: true,
         child: ClickCursor(
-          child: MouseRegion(
-            onEnter: (_) => setState(() => _hovered = true),
-            onExit: (_) => setState(() => _hovered = false),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _busy ? null : _toggle,
-              child: AnimatedContainer(
-                key: const ValueKey('board-like-button'),
-                duration: const Duration(milliseconds: 140),
-                curve: Curves.easeOut,
-                height: 36,
-                constraints: const BoxConstraints(minWidth: 36),
-                padding: EdgeInsets.symmetric(
-                  horizontal: countLabel == null ? 0 : 10,
-                ),
-                decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: border),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SingleMotionBuilder(
-                      key: ValueKey(_pops),
-                      motion: DesktopMotion.select,
-                      from: _pops == 0 ? 1 : _popFrom,
-                      value: 1,
-                      builder:
-                          (context, scale, child) =>
-                              Transform.scale(scale: scale, child: child),
-                      child: Icon(
-                        liked
-                            ? Icons.favorite_rounded
-                            : Icons.favorite_border_rounded,
-                        size: 19,
-                        color: kRedColor,
-                      ),
-                    ),
-                    if (countLabel != null) ...[
-                      const SizedBox(width: 6),
-                      Text(
-                        countLabel,
-                        style: TextStyle(
-                          color:
-                              liked || _hovered ? kWhiteColor : kWhiteColor70,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          fontFeatures: const [FontFeature.tabularFigures()],
+          child: FTappable.static(
+            semanticsLabel: liked ? 'Liked' : 'Like',
+            excludeSemantics: true,
+            behavior: HitTestBehavior.opaque,
+            onHoverChange:
+                (hovered) =>
+                    setStateAfterPointerEvent(() => _hovered = hovered),
+            onPress: _busy ? null : _toggle,
+            shortcuts: const {
+              SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+              SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+            },
+            child: ExcludeFocus(
+              child: DesktopTooltip(
+                message: tooltip,
+                child: AnimatedContainer(
+                  key: const ValueKey('board-like-button'),
+                  duration: const Duration(milliseconds: 140),
+                  curve: Curves.easeOut,
+                  height: 36,
+                  constraints: const BoxConstraints(minWidth: 36),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: countLabel == null ? 0 : 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: bg,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: border),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SingleMotionBuilder(
+                        key: ValueKey(_pops),
+                        motion: DesktopMotion.select,
+                        from: _pops == 0 ? 1 : _popFrom,
+                        value: 1,
+                        builder:
+                            (context, scale, child) =>
+                                Transform.scale(scale: scale, child: child),
+                        child: Icon(
+                          liked
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          size: 19,
+                          color: kRedColor,
                         ),
                       ),
+                      if (countLabel != null) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          countLabel,
+                          style: TextStyle(
+                            color:
+                                liked || _hovered ? kWhiteColor : kWhiteColor70,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),

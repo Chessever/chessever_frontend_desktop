@@ -202,10 +202,10 @@ DesktopPaywallCopy _premiumCopy(
   switch (reason) {
     case DesktopAccessReason.premiumEventDiscovery:
       return const DesktopPaywallCopy(
-        title: 'For You and Past events are Premium',
+        title: 'Past events are Premium',
         body:
-            'Get Premium for personalized recommendations and past events. '
-            'Current events and Calendar stay free.',
+            'Get Premium to explore past events. '
+            'For You, Current events and Calendar stay free.',
       );
     case DesktopAccessReason.premiumPaidSource when context == null:
       // Legacy shared guards that do not pass a request yet.

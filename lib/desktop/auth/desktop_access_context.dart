@@ -37,7 +37,7 @@ enum DesktopFeature {
   /// tab's game came from, which is what keeps it from being exported.
   collection,
 
-  /// Premium Events discovery tabs. Current events and Calendar stay free.
+  /// Past Events discovery. For You, Current events and Calendar stay free.
   eventDiscovery,
 
   /// The community Likes ranking (most liked games of a day, week, month or

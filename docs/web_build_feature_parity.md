@@ -45,7 +45,7 @@ still need a manual pass.
 | Google and Apple sign-in | Same tab | Supabase-hosted OAuth redirecting back to the page (PKCE) instead of the loopback server; a pending guest merge waits in IndexedDB (`AppDatabaseGuestMergePendingStore`). The origin must be on the Supabase Auth redirect list |
 | Addresses and history | chessever.com paths | `lib/web/web_url_sync.dart` owns the address bar and Back/Forward; Flutter's URL strategy is off |
 | Startup page and How to use | Events at the bare domain; direct links keep their destination | Automatic How to use opens in a background tab on the web; native desktop onboarding keeps its existing focus behavior |
-| Events membership | Current and Calendar stay free; For You and Past require Premium | Shared admission gate keeps paid feeds unmounted until membership is verified; lookup failures offer Retry |
+| Events membership | For You, Current and Calendar stay free; Past requires Premium | For You uses current broadcasts. Shared admission gate keeps Past unmounted until membership is verified; lookup failures offer Retry |
 | Guest sign-up | First browser visit offers sign-in or Not now | The persisted guest clock survives reloads; reminders start at day 7, repeat weekly, and require sign-in at day 28. Signing in clears guest stamps |
 | Sidebar number shortcuts | Same as desktop | Cmd/Ctrl+1 through 9, then 0 follow the primary sidebar routes from Events to Play; labels and bindings share `desktop_main_routes.dart` |
 

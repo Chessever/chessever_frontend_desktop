@@ -10,18 +10,19 @@ DesktopAccessContext desktopEventDiscoveryContext(
   GroupEventCategory category,
 ) => DesktopAccessContext(
   feature:
-      category == GroupEventCategory.current
-          ? DesktopFeature.broadcast
-          : DesktopFeature.eventDiscovery,
+      category == GroupEventCategory.past
+          ? DesktopFeature.eventDiscovery
+          : DesktopFeature.broadcast,
   action: DesktopAction.view,
   origin: DesktopDiscoveryOrigin.broadcast,
 );
 
-/// Current never waits for membership. Paid discovery uses the same verified
-/// entitlement and offline grace as the rest of the desktop/browser shell.
+/// For You and Current both show current broadcasts and never wait for
+/// membership. Past uses the same verified entitlement and offline grace as
+/// the rest of the desktop/browser shell.
 final desktopEventDiscoveryAccessProvider = Provider.autoDispose
     .family<DesktopAccessDecision, GroupEventCategory>((ref, category) {
-      if (category == GroupEventCategory.current) {
+      if (category != GroupEventCategory.past) {
         return const DesktopAccessDecision(
           DesktopAccess.allowed,
           DesktopAccessReason.allowedFree,

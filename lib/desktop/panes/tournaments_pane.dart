@@ -2544,9 +2544,17 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
 
   @override
   void dispose() {
-    _persistNavigationBookmark();
+    // Category switches unmount this feed during tree finalization. Publish
+    // its saved position and resume live cards after that widget lifecycle.
+    scheduleMicrotask(() {
+      if (_navigationBookmarkController.mounted) {
+        _persistNavigationBookmark();
+      }
+      if (_liveCardsPauseReasonsController.mounted) {
+        _setLiveCardsPausedForScroll(false);
+      }
+    });
     _scrollIdleTimer?.cancel();
-    _setLiveCardsPausedForScroll(false);
     _scroll.removeListener(_onScroll);
     HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboardScroll);
     _focusNode.dispose();

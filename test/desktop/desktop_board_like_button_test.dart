@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -119,6 +120,26 @@ Future<_FakeLikes> _pump(
 final _member = AppUser(id: 'user-1', createdAt: DateTime(2026));
 
 void main() {
+  testWidgets('Tab, Enter and Space can operate the board like', (
+    tester,
+  ) async {
+    final likes = await _pump(tester, user: _member);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(likes.toggles, 1);
+    expect(find.byIcon(Icons.favorite_rounded), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(likes.toggles, 2);
+    expect(find.byIcon(Icons.favorite_border_rounded), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+  });
+
   testWidgets('a signed-in member likes and unlikes from the board', (
     tester,
   ) async {

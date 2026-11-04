@@ -239,7 +239,7 @@ class MyLikesView extends HookConsumerWidget {
                   const SizedBox(width: 8),
                   // The community ranking of everyone's likes. Free to
                   // browse, so it is reachable here and not only from the
-                  // Premium For You shelf.
+                  // For You shelf.
                   DesktopToolbarPillButton(
                     label: 'Most liked',
                     icon: Icons.leaderboard_outlined,

@@ -5,8 +5,8 @@ import 'package:chessever/desktop/auth/desktop_event_discovery_access.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/providers/group_event_category.dart';
 
-/// Keeps paid feeds unmounted until admission; the Events tab strip remains
-/// available so a guest can always switch back to Current.
+/// Keeps Past unmounted until admission; the Events tab strip remains
+/// available so a guest can always switch back to For You or Current.
 class DesktopEventDiscoveryGate extends ConsumerWidget {
   const DesktopEventDiscoveryGate({
     super.key,

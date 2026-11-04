@@ -34,6 +34,27 @@ class _BotvinnikOff extends BotvinnikEnabledNotifier {
   Future<bool> build() async => false;
 }
 
+class _LoadingForYou extends StateNotifier<ForYouState>
+    implements ForYouNotifier {
+  _LoadingForYou() : super(const ForYouState(isLoading: true));
+
+  @override
+  Future<void> refreshIfStale({
+    Duration maxAge = const Duration(minutes: 5),
+  }) async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _LiveFirstStore implements TournamentLiveFirstStore {
+  @override
+  Future<bool?> read() async => false;
+
+  @override
+  Future<void> write(bool value) async {}
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
@@ -58,7 +79,7 @@ void main() {
     expirationDate: DateTime(2099),
   );
 
-  test('only Current is free; other Events categories require Premium', () {
+  test('For You and Current are free; only Past requires Premium', () {
     for (final category in GroupEventCategory.values) {
       final decision = evaluateDesktopAccess(
         context: desktopEventDiscoveryContext(category),
@@ -68,11 +89,11 @@ void main() {
       );
       expect(
         decision.outcome,
-        category == GroupEventCategory.current
-            ? DesktopAccess.allowed
-            : DesktopAccess.premiumRequired,
+        category == GroupEventCategory.past
+            ? DesktopAccess.premiumRequired
+            : DesktopAccess.allowed,
       );
-      if (category != GroupEventCategory.current) {
+      if (category == GroupEventCategory.past) {
         expect(decision.reason, DesktopAccessReason.premiumEventDiscovery);
       }
       expect(
@@ -88,7 +109,7 @@ void main() {
   });
 
   test(
-    'Current never reads membership, even when the lookup is unavailable',
+    'For You and Current never read membership, even when it is unavailable',
     () {
       final container = ProviderContainer(
         overrides: [
@@ -101,14 +122,18 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
-      expect(
-        container
-            .read(
-              desktopEventDiscoveryAccessProvider(GroupEventCategory.current),
-            )
-            .isAllowed,
-        isTrue,
-      );
+      for (final category in [
+        GroupEventCategory.forYou,
+        GroupEventCategory.current,
+      ]) {
+        expect(
+          container
+              .read(desktopEventDiscoveryAccessProvider(category))
+              .isAllowed,
+          isTrue,
+          reason: category.name,
+        );
+      }
     },
   );
 
@@ -124,50 +149,93 @@ void main() {
         ),
       );
 
-  for (final category in [GroupEventCategory.forYou, GroupEventCategory.past]) {
+  for (final category in [
+    GroupEventCategory.forYou,
+    GroupEventCategory.current,
+  ]) {
     testWidgets(
-      '${category.name} stays unmounted until verified Premium and relocks on expiry',
+      '${category.name} stays available without Premium and during membership failures',
       (tester) async {
         final subscription = _Subscription(SubscriptionState());
         final container = ProviderContainer(
           overrides: [
             subscriptionProvider.overrideWith((_) => subscription),
             desktopEntitlementProvider.overrideWithValue(
-              const DesktopEntitlementSnapshot(accountId: 'member'),
+              DesktopEntitlementSnapshot.guest,
             ),
           ],
         );
         addTearDown(container.dispose);
-        var builds = 0;
         await tester.pumpWidget(
           host(
             container,
             DesktopEventDiscoveryGate(
               category: category,
-              builder: (_) {
-                builds++;
-                return const Text('EVENT FEED');
-              },
+              builder: (_) => const Text('EVENT FEED'),
             ),
           ),
         );
-        expect(builds, 0);
-        expect(find.byType(DesktopAccessLockedSurface), findsOneWidget);
-        expect(
-          find.textContaining('Current events and Calendar stay free.'),
-          findsOneWidget,
-        );
-        expect(find.text('See Premium'), findsOneWidget);
-        subscription.update(premium);
-        await tester.pump();
-        expect(find.text('EVENT FEED'), findsOneWidget);
-        subscription.update(SubscriptionState());
-        await tester.pump();
-        expect(find.text('EVENT FEED'), findsNothing);
-        expect(find.byType(DesktopAccessLockedSurface), findsOneWidget);
+        for (final state in [
+          SubscriptionState(),
+          SubscriptionState(isLoading: true),
+          SubscriptionState(error: 'offline'),
+          premium,
+          SubscriptionState(isSubscribed: true, expirationDate: now),
+        ]) {
+          subscription.update(state);
+          await tester.pump();
+          expect(find.text('EVENT FEED'), findsOneWidget);
+          expect(find.byType(DesktopAccessLockedSurface), findsNothing);
+          expect(find.text('See Premium'), findsNothing);
+          expect(tester.takeException(), isNull);
+        }
       },
     );
   }
+
+  testWidgets(
+    'Past stays unmounted until verified Premium and relocks on expiry',
+    (tester) async {
+      final subscription = _Subscription(SubscriptionState());
+      final container = ProviderContainer(
+        overrides: [
+          subscriptionProvider.overrideWith((_) => subscription),
+          desktopEntitlementProvider.overrideWithValue(
+            const DesktopEntitlementSnapshot(accountId: 'member'),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      var builds = 0;
+      await tester.pumpWidget(
+        host(
+          container,
+          DesktopEventDiscoveryGate(
+            category: GroupEventCategory.past,
+            builder: (_) {
+              builds++;
+              return const Text('EVENT FEED');
+            },
+          ),
+        ),
+      );
+      expect(builds, 0);
+      expect(find.byType(DesktopAccessLockedSurface), findsOneWidget);
+      expect(
+        find.textContaining('For You, Current events and Calendar stay free.'),
+        findsOneWidget,
+      );
+      expect(find.text('Past events are Premium'), findsOneWidget);
+      expect(find.text('See Premium'), findsOneWidget);
+      subscription.update(premium);
+      await tester.pump();
+      expect(find.text('EVENT FEED'), findsOneWidget);
+      subscription.update(SubscriptionState());
+      await tester.pump();
+      expect(find.text('EVENT FEED'), findsNothing);
+      expect(find.byType(DesktopAccessLockedSurface), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'unknown membership offers checking or Retry rather than an upsell',
@@ -202,7 +270,7 @@ void main() {
   );
 
   testWidgets(
-    'real Events pane switches locked tabs without querying their feeds',
+    'real Events pane opens For You for free and keeps Past unqueried',
     (tester) async {
       tester.view.physicalSize = const Size(1100, 760);
       tester.view.devicePixelRatio = 1;
@@ -216,15 +284,12 @@ void main() {
             DesktopEntitlementSnapshot.guest,
           ),
           botvinnikEnabledProvider.overrideWith(_BotvinnikOff.new),
-          forYouEventsProvider.overrideWith(
-            (_) => throw StateError('must not fetch For You'),
-          ),
+          forYouEventsProvider.overrideWith((_) => _LoadingForYou()),
           groupEventScreenProvider.overrideWith(
             (_) => throw StateError('must not fetch Past'),
           ),
-          tournamentLiveEventPrefetchProvider.overrideWith(
-            (_) => throw StateError('must not prefetch'),
-          ),
+          tournamentLiveEventPrefetchProvider.overrideWith((_) async {}),
+          tournamentLiveFirstStoreProvider.overrideWithValue(_LiveFirstStore()),
         ],
       );
       addTearDown(container.dispose);
@@ -238,8 +303,17 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
-      expect(find.byType(DesktopAccessLockedSurface), findsOneWidget);
+      await tester.pump();
+      expect(
+        container.read(selectedGroupCategoryProvider),
+        GroupEventCategory.forYou,
+      );
+      expect(find.byType(DesktopAccessLockedSurface), findsNothing);
+      expect(find.text('See Premium'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('tournament-live-first-chrome')),
+        findsOneWidget,
+      );
       expect(find.text('Current'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('Past'));
@@ -251,18 +325,32 @@ void main() {
       expect(find.byType(DesktopAccessLockedSurface), findsOneWidget);
       expect(tester.takeException(), isNull);
       final qaDirectory = Platform.environment['CHESSEVER_TICKET_QA_DIR'];
-      if (qaDirectory == null) return;
-      await tester.runAsync(() async {
-        final boundary =
-            key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-        final image = await boundary.toImage();
-        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-        await Directory(qaDirectory).create(recursive: true);
-        await File(
-          '$qaDirectory/events-paywall.png',
-        ).writeAsBytes(bytes!.buffer.asUint8List());
-        image.dispose();
-      });
+      if (qaDirectory != null) {
+        await tester.runAsync(() async {
+          final boundary =
+              key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+          final image = await boundary.toImage();
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          await Directory(qaDirectory).create(recursive: true);
+          await File(
+            '$qaDirectory/events-paywall.png',
+          ).writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+      }
+      await tester.tap(find.text('For You'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(
+        container.read(selectedGroupCategoryProvider),
+        GroupEventCategory.forYou,
+      );
+      expect(find.byType(DesktopAccessLockedSurface), findsNothing);
+      expect(find.text('See Premium'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
     },
   );
 }
