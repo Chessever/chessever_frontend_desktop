@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
 import 'package:chessever/desktop/services/billing/web_intro_offer.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/png_asset.dart';
 
-/// Browser-only presentation. Membership, pricing and checkout stay owned by
-/// DesktopPaywallView; this widget never creates or launches a purchase.
+/// Shared presentation for browser and direct-download desktop subscriptions.
+/// Membership, prices and checkout remain owned by DesktopPaywallView.
+/// The Mac App Store edition uses its own store-supplied plans.
 class WebPremiumPaywall extends StatelessWidget {
   const WebPremiumPaywall({
     super.key,
@@ -29,45 +31,27 @@ class WebPremiumPaywall extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(26, 26, 18, 0),
+        padding: const EdgeInsets.fromLTRB(22, 18, 14, 0),
         child: Row(
           children: [
-            Container(
-              width: 38,
-              height: 38,
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                color: kPrimaryColor.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Image.asset(
-                PngAsset.newAppLogo,
-                excludeFromSemantics: true,
-              ),
+            Image.asset(
+              PngAsset.newAppLogo,
+              width: 28,
+              height: 28,
+              // The shipped icon has a black canvas; blend it into the dialog.
+              color: kBlack2Color,
+              colorBlendMode: BlendMode.lighten,
+              excludeFromSemantics: true,
             ),
-            const SizedBox(width: 13),
+            const SizedBox(width: 10),
             const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'ChessEver',
-                    style: TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  Text(
-                    'PREMIUM',
-                    style: TextStyle(
-                      color: kPrimaryColor,
-                      fontSize: 10,
-                      letterSpacing: 1.2,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
+              child: Text(
+                'ChessEver Premium',
+                style: TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             DesktopDialogIconButton(
@@ -79,72 +63,66 @@ class WebPremiumPaywall extends StatelessWidget {
         ),
       ),
       Flexible(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(26, 26, 26, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Open the game. Go deeper.',
-                style: TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 28,
-                  height: 1.15,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                subtitle,
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 16,
-                  height: 1.4,
-                ),
-              ),
-              if (contextDetail != null) ...[
-                const SizedBox(height: 6),
+        child: DesktopScrollHost(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(22, 20, 22, 22),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
                 Text(
-                  contextDetail!,
+                  subtitle,
                   style: const TextStyle(
-                    color: kWhiteColor70,
-                    fontSize: 12,
-                    height: 1.4,
+                    color: kWhiteColor,
+                    fontSize: 21,
+                    height: 1.25,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-              ],
-              if (capacityLine != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  capacityLine!,
-                  style: const TextStyle(
+                if (contextDetail != null) ...[
+                  const SizedBox(height: 7),
+                  Text(
+                    contextDetail!,
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+                if (capacityLine != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    capacityLine!,
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 22),
+                ...children,
+                const SizedBox(height: 24),
+                const Text(
+                  'Every plan includes',
+                  style: TextStyle(
                     color: kWhiteColor,
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                const SizedBox(height: 12),
+                const _Benefit('Full games, databases and player profiles'),
+                const _Benefit('Unlimited game reports, saves and favorites'),
+                const _Benefit(
+                  'Advanced Explorer, opening trees and preparation',
+                ),
+                const _Benefit(
+                  'Play, engine tournaments and more Botvinnik access',
+                ),
               ],
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 22),
-                child: Divider(height: 1, color: kDividerColor),
-              ),
-              const _Benefit(
-                'Full games & databases',
-                detail: 'Countrymen, player profiles, TWIC and more',
-              ),
-              const _Benefit(
-                'Unlimited game reports & saves',
-                detail: 'Unlimited databases and favorite players',
-              ),
-              const _Benefit(
-                'Advanced Explorer & preparation',
-                detail: 'Opening trees, Play and engine tournaments',
-              ),
-              const _Benefit('More daily Botvinnik access'),
-              const SizedBox(height: 10),
-              ...children,
-            ],
+            ),
           ),
         ),
       ),
@@ -153,46 +131,25 @@ class WebPremiumPaywall extends StatelessWidget {
 }
 
 class _Benefit extends StatelessWidget {
-  const _Benefit(this.title, {this.detail});
+  const _Benefit(this.title);
   final String title;
-  final String? detail;
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 14),
+    padding: const EdgeInsets.only(bottom: 9),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.only(top: 2),
-          child: Icon(Icons.check_rounded, size: 18, color: kPrimaryColor),
-        ),
-        const SizedBox(width: 12),
+        const Icon(Icons.check_rounded, size: 16, color: kWhiteColor70),
+        const SizedBox(width: 9),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 16,
-                  height: 1.3,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (detail != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  detail!,
-                  style: const TextStyle(
-                    color: kWhiteColor70,
-                    fontSize: 12,
-                    height: 1.35,
-                  ),
-                ),
-              ],
-            ],
+          child: Text(
+            title,
+            style: const TextStyle(
+              color: kWhiteColor70,
+              fontSize: 12,
+              height: 1.4,
+            ),
           ),
         ),
       ],
@@ -200,6 +157,8 @@ class _Benefit extends StatelessWidget {
   );
 }
 
+/// One plan choice and one complete price statement. An introductory amount
+/// never wears a recurring '/month' suffix, and annual shows the actual charge.
 class WebPremiumPlans extends StatelessWidget {
   const WebPremiumPlans({
     super.key,
@@ -220,7 +179,9 @@ class WebPremiumPlans extends StatelessWidget {
   Widget build(BuildContext context) {
     final resolved = pricing;
     final tier = resolved?.pricing;
+    final monthly = interval == 'month';
     final showsIntro =
+        monthly &&
         resolved != null &&
         introOffer?.matches(
               currency: resolved.currencyCode,
@@ -229,57 +190,155 @@ class WebPremiumPlans extends StatelessWidget {
             true;
     String amount(double value) =>
         DesktopPricing.formatAmount(value, resolved!.currencyCode);
-    final trialPrefix =
-        showsTrial && DesktopPricing.trialDays > 0
-            ? '${DesktopPricing.trialDays} days free, then '
-            : '';
+    final price =
+        tier == null
+            ? '—'
+            : showsIntro
+            ? r'$0.99'
+            : amount(monthly ? tier.monthlyAmount : tier.annualAmount);
+    final unit = monthly ? 'per month' : 'per year';
+    final detail =
+        tier == null
+            ? 'Loading current prices'
+            : showsIntro
+            ? 'From month 2: ${amount(tier.monthlyAmount)}/month.'
+            : !monthly
+            ? '${amount(tier.annualMonthlyEquivalent)} per month, billed yearly.'
+            : DesktopPricing.monthlyPlanDetail(showsTrial: showsTrial);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _WebPlanRow(
-          name: 'Monthly',
-          selected: interval == 'month',
-          price:
-              showsIntro
-                  ? r'$0.99'
-                  : tier == null
-                  ? '—'
-                  : amount(tier.monthlyAmount),
-          detail:
-              showsIntro
-                  ? 'First month, then ${amount(tier!.monthlyAmount)} per month'
-                  : DesktopPricing.monthlyPlanDetail(showsTrial: showsTrial),
-          onPress: onChanged == null ? null : () => onChanged!('month'),
+        Row(
+          children: [
+            Expanded(
+              child: _PlanChoice(
+                label: 'Monthly',
+                selected: monthly,
+                onPress: onChanged == null ? null : () => onChanged!('month'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _PlanChoice(
+                label: 'Annual',
+                selected: !monthly,
+                onPress: onChanged == null ? null : () => onChanged!('year'),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 12),
-        _WebPlanRow(
-          name: 'Annual',
-          selected: interval == 'year',
-          price: tier == null ? '—' : amount(tier.annualMonthlyEquivalent),
-          detail:
-              tier == null
-                  ? 'Billed yearly'
-                  : '$trialPrefix${amount(tier.annualAmount)} billed yearly',
-          onPress: onChanged == null ? null : () => onChanged!('year'),
+        const SizedBox(height: 22),
+        Semantics(
+          liveRegion: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (showsIntro) ...[
+                const Text(
+                  'First month only',
+                  style: TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 20,
+                    height: 1.3,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 2,
+                children: [
+                  if (showsIntro)
+                    Semantics(
+                      label:
+                          'Regular monthly price ${amount(tier!.monthlyAmount)}',
+                      excludeSemantics: true,
+                      child: Text(
+                        amount(tier.monthlyAmount),
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 24,
+                          height: 1.3,
+                          decoration: TextDecoration.lineThrough,
+                          decorationColor: kWhiteColor70,
+                          decorationThickness: 1.5,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                  Text(
+                    price,
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 46,
+                      height: 1.1,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  if (!showsIntro)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 5),
+                      child: Text(
+                        unit,
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 14,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                detail,
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  height: 1.4,
+                ),
+              ),
+              if (showsIntro && introOffer!.requiresSignIn) ...[
+                const SizedBox(height: 6),
+                const Text(
+                  'For first-time subscribers. Sign in to check eligibility.',
+                  style: TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: 12,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+              if (showsTrial &&
+                  DesktopPricing.trialDays > 0 &&
+                  !showsIntro) ...[
+                const SizedBox(height: 6),
+                Text(
+                  '${DesktopPricing.trialDays} days free before your first payment.',
+                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
         ),
       ],
     );
   }
 }
 
-class _WebPlanRow extends StatelessWidget {
-  const _WebPlanRow({
-    required this.name,
+class _PlanChoice extends StatelessWidget {
+  const _PlanChoice({
+    required this.label,
     required this.selected,
-    required this.price,
-    required this.detail,
     required this.onPress,
   });
-  final String name;
+  final String label;
   final bool selected;
-  final String price;
-  final String detail;
   final VoidCallback? onPress;
 
   @override
@@ -294,88 +353,40 @@ class _WebPlanRow extends StatelessWidget {
           (style) => style.copyWith(
             decoration: FWidgetStateMap({
               WidgetState.hovered | WidgetState.focused: BoxDecoration(
-                color: kPrimaryColor.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: kPrimaryColor, width: 2),
+                color: kBlack3Color,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: kPrimaryColor.withValues(alpha: 0.7)),
               ),
               WidgetState.any: BoxDecoration(
                 color:
                     selected
                         ? kPrimaryColor.withValues(alpha: 0.10)
-                        : kBlack2Color,
-                borderRadius: BorderRadius.circular(10),
+                        : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: selected ? kPrimaryColor : kDividerColor,
-                  width: selected ? 2 : 1,
+                  color:
+                      selected
+                          ? kPrimaryColor.withValues(alpha: 0.35)
+                          : kDividerColor,
                 ),
               ),
             }),
             contentStyle:
-                (content) =>
-                    content.copyWith(padding: const EdgeInsets.all(14)),
+                (content) => content.copyWith(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
+                ),
           ),
         ),
         child: Flexible(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 42),
-            child: Row(
-              children: [
-                Icon(
-                  selected
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                  size: 20,
-                  color: selected ? kPrimaryColor : kWhiteColor70,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name,
-                        style: const TextStyle(
-                          color: kWhiteColor,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        detail,
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 12,
-                          height: 1.3,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: price,
-                          style: const TextStyle(
-                            color: kWhiteColor,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const TextSpan(
-                          text: ' /mo',
-                          style: TextStyle(color: kWhiteColor70, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                    textAlign: TextAlign.right,
-                  ),
-                ),
-              ],
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? kPrimaryColor : kWhiteColor70,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ),
@@ -403,18 +414,22 @@ class WebPremiumCheckoutButton extends StatelessWidget {
           decoration: FWidgetStateMap({
             WidgetState.disabled: BoxDecoration(
               color: kBlack3Color,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            WidgetState.hovered | WidgetState.focused: BoxDecoration(
+              color: kWhiteColor.withValues(alpha: 0.9),
+              borderRadius: BorderRadius.circular(8),
             ),
             WidgetState.any: BoxDecoration(
-              color: kPrimaryColor,
-              borderRadius: BorderRadius.circular(10),
+              color: kWhiteColor,
+              borderRadius: BorderRadius.circular(8),
             ),
           }),
           contentStyle:
               (content) => content.copyWith(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 16,
+                  horizontal: 14,
+                  vertical: 15,
                 ),
               ),
         ),
@@ -423,10 +438,10 @@ class WebPremiumCheckoutButton extends StatelessWidget {
         child: Text(
           label,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: kBackgroundColor,
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
+          style: TextStyle(
+            color: onPress == null ? kWhiteColor70 : kBackgroundColor,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),

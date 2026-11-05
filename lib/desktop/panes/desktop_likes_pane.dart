@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/services/desktop_local_day_clock.dart';
 import 'package:chessever/desktop/services/likes/community_likes_access.dart';
@@ -373,7 +374,7 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
   /// The compact scorecard's likes line, and the gap under it.
   static const double _metaHeight = 22;
 
-  final ScrollController _scroll = ScrollController();
+  final ScrollController _scroll = DesktopScrollController();
   int _columns = 1;
 
   @override
@@ -697,28 +698,30 @@ class _RankedPlayersView extends ConsumerWidget {
     if (placeholder != null) return placeholder;
     final players = aggregateCommunityLikesPlayers(ranking.entries!);
 
-    return ListView(
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(17, 0, 20, 24),
-      children: [
-        const _PlayerColumnsHeader(),
-        const SizedBox(height: 6),
-        for (final row in players)
-          _PlayerRow(
-            key: ValueKey('community_likes_player_${row.key}'),
-            row: row,
-            selected: selected?.key == row.key,
-            onPick: () => onPick(row),
+    return DesktopScrollHost(
+      child: ListView(
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(17, 0, 20, 24),
+        children: [
+          const _PlayerColumnsHeader(),
+          const SizedBox(height: 6),
+          for (final row in players)
+            _PlayerRow(
+              key: ValueKey('community_likes_player_${row.key}'),
+              row: row,
+              selected: selected?.key == row.key,
+              onPick: () => onPick(row),
+            ),
+          _LoadMore(
+            paging: ranking.paging,
+            onLoad:
+                () =>
+                    ref
+                        .read(communityLikesPagesProvider(query).notifier)
+                        .loadMore(),
           ),
-        _LoadMore(
-          paging: ranking.paging,
-          onLoad:
-              () =>
-                  ref
-                      .read(communityLikesPagesProvider(query).notifier)
-                      .loadMore(),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -952,99 +955,101 @@ class _LikesAboutView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 640),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Games the community loves.',
-                style: TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w600,
-                  height: 1.3,
+    return DesktopScrollHost(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Games the community loves.',
+                  style: TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Every like on ChessEver, on desktop, web and phone, counts '
-                'toward one shared ranking.',
-                style: TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 13.5,
-                  height: 1.5,
+                const SizedBox(height: 10),
+                const Text(
+                  'Every like on ChessEver, on desktop, web and phone, counts '
+                  'toward one shared ranking.',
+                  style: TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: 13.5,
+                    height: 1.5,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 28),
-              Table(
-                columnWidths: const {
-                  0: IntrinsicColumnWidth(),
-                  1: FlexColumnWidth(),
-                },
-                children: [
-                  for (var i = 0; i < _rules.length; i++)
-                    TableRow(
-                      children: [
-                        Padding(
-                          padding: EdgeInsets.only(
-                            right: 20,
-                            bottom: i == _rules.length - 1 ? 0 : 14,
-                          ),
-                          child: Text(
-                            _rules[i].$1,
-                            style: const TextStyle(
-                              color: kWhiteColor70,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              height: 1.5,
+                const SizedBox(height: 28),
+                Table(
+                  columnWidths: const {
+                    0: IntrinsicColumnWidth(),
+                    1: FlexColumnWidth(),
+                  },
+                  children: [
+                    for (var i = 0; i < _rules.length; i++)
+                      TableRow(
+                        children: [
+                          Padding(
+                            padding: EdgeInsets.only(
+                              right: 20,
+                              bottom: i == _rules.length - 1 ? 0 : 14,
+                            ),
+                            child: Text(
+                              _rules[i].$1,
+                              style: const TextStyle(
+                                color: kWhiteColor70,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                height: 1.5,
+                              ),
                             ),
                           ),
-                        ),
-                        Padding(
-                          padding: EdgeInsets.only(
-                            bottom: i == _rules.length - 1 ? 0 : 14,
-                          ),
-                          child: Text(
-                            _rules[i].$2,
-                            style: const TextStyle(
-                              color: kWhiteColor,
-                              fontSize: 13,
-                              height: 1.5,
+                          Padding(
+                            padding: EdgeInsets.only(
+                              bottom: i == _rules.length - 1 ? 0 : 14,
+                            ),
+                            child: Text(
+                              _rules[i].$2,
+                              style: const TextStyle(
+                                color: kWhiteColor,
+                                fontSize: 13,
+                                height: 1.5,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-              const SizedBox(height: 30),
-              const Text(
-                'The games you liked are saved in Library, under My Likes. '
-                'Most liked there brings you back here.',
-                style: TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 13,
-                  height: 1.5,
+                        ],
+                      ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: _LikesActionButton(
-                  label: 'Open Library',
-                  icon: Icons.collections_bookmark_outlined,
-                  onPress:
-                      () => ref
-                          .read(desktopTabsProvider.notifier)
-                          .open(TabKind.library),
+                const SizedBox(height: 30),
+                const Text(
+                  'The games you liked are saved in Library, under My Likes. '
+                  'Most liked there brings you back here.',
+                  style: TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: 13,
+                    height: 1.5,
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: _LikesActionButton(
+                    label: 'Open Library',
+                    icon: Icons.collections_bookmark_outlined,
+                    onPress:
+                        () => ref
+                            .read(desktopTabsProvider.notifier)
+                            .open(TabKind.library),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

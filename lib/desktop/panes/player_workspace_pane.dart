@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
@@ -855,20 +856,22 @@ class _PlayerLibraryList extends StatelessWidget {
           const _PlayerLibraryHeaderRow(),
           const Divider(height: 1, color: kDividerColor),
           Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              itemCount: players.length,
-              separatorBuilder:
-                  (_, __) => const Divider(height: 1, color: kDividerColor),
-              itemBuilder: (context, index) {
-                final player = players[index];
-                return _PlayerLibraryRow(
-                  player: player,
-                  onOpen: () => onOpenPlayer(player.id),
-                  onRename: () => onRenamePlayer(player),
-                  onRemove: () => onRemovePlayer(player),
-                );
-              },
+            child: DesktopScrollHost(
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                itemCount: players.length,
+                separatorBuilder:
+                    (_, __) => const Divider(height: 1, color: kDividerColor),
+                itemBuilder: (context, index) {
+                  final player = players[index];
+                  return _PlayerLibraryRow(
+                    player: player,
+                    onOpen: () => onOpenPlayer(player.id),
+                    onRename: () => onRenamePlayer(player),
+                    onRemove: () => onRemovePlayer(player),
+                  );
+                },
+              ),
             ),
           ),
         ],
@@ -1504,50 +1507,52 @@ class _PlayerSourceRail extends ConsumerWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: kDividerColor),
       ),
-      child: ListView(
-        padding: const EdgeInsets.all(14),
-        children: [
-          _PlayerIdentityCard(player: player),
-          const SizedBox(height: 14),
-          const _RailSectionLabel('Sources'),
-          const SizedBox(height: 8),
-          for (final source in playerWorkspaceSourceRailOrder) ...[
-            if (source != PlayerWorkspaceSource.combined) ...[
-              for (final account in player.accountsFor(source))
-                _SourceCard(
-                  source: source,
-                  account: account,
-                  operation: _operationForAccount(operations, account),
-                  onAddAccount: () => onAddAccount(source),
-                  onEditAccount: () => onEditAccount(account),
-                  onRefreshAccount: () => onRefreshAccount(account),
-                  onRemoveAccount: () => onRemoveAccount(account),
-                  onSync: () => onSync(account),
-                  onReinstall: () => onReinstall(account),
-                  onCancelOperation: () => onCancelOperation(account),
-                ),
-              if (player.accountsFor(source).isEmpty)
-                _SourceCard(
-                  source: source,
-                  account: null,
-                  operation: _operationForSource(operations, source),
-                  onAddAccount: () => onAddAccount(source),
-                  onEditAccount: null,
-                  onRefreshAccount: null,
-                  onRemoveAccount: null,
-                  onSync: null,
-                  onReinstall: null,
-                  onCancelOperation: null,
-                )
-              else if (source.allowsMultipleAccounts)
-                _AddSourceAccountButton(
-                  source: source,
-                  onPress: () => onAddAccount(source),
-                ),
-            ],
+      child: DesktopScrollHost(
+        child: ListView(
+          padding: const EdgeInsets.all(14),
+          children: [
+            _PlayerIdentityCard(player: player),
+            const SizedBox(height: 14),
+            const _RailSectionLabel('Sources'),
             const SizedBox(height: 8),
+            for (final source in playerWorkspaceSourceRailOrder) ...[
+              if (source != PlayerWorkspaceSource.combined) ...[
+                for (final account in player.accountsFor(source))
+                  _SourceCard(
+                    source: source,
+                    account: account,
+                    operation: _operationForAccount(operations, account),
+                    onAddAccount: () => onAddAccount(source),
+                    onEditAccount: () => onEditAccount(account),
+                    onRefreshAccount: () => onRefreshAccount(account),
+                    onRemoveAccount: () => onRemoveAccount(account),
+                    onSync: () => onSync(account),
+                    onReinstall: () => onReinstall(account),
+                    onCancelOperation: () => onCancelOperation(account),
+                  ),
+                if (player.accountsFor(source).isEmpty)
+                  _SourceCard(
+                    source: source,
+                    account: null,
+                    operation: _operationForSource(operations, source),
+                    onAddAccount: () => onAddAccount(source),
+                    onEditAccount: null,
+                    onRefreshAccount: null,
+                    onRemoveAccount: null,
+                    onSync: null,
+                    onReinstall: null,
+                    onCancelOperation: null,
+                  )
+                else if (source.allowsMultipleAccounts)
+                  _AddSourceAccountButton(
+                    source: source,
+                    onPress: () => onAddAccount(source),
+                  ),
+              ],
+              const SizedBox(height: 8),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -2523,94 +2528,100 @@ class _AccountsTab extends ConsumerWidget {
     final operations = ref.watch(
       playerWorkspaceProvider.select((state) => state.operations),
     );
-    return ListView(
-      padding: const EdgeInsets.all(18),
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Expanded(
-              child: _SectionTitle(
-                icon: Icons.link_outlined,
-                title: 'Connected accounts',
-                subtitle:
-                    'Fetch profile and stats first, then download games explicitly.',
+    return DesktopScrollHost(
+      child: ListView(
+        padding: const EdgeInsets.all(18),
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(
+                child: _SectionTitle(
+                  icon: Icons.link_outlined,
+                  title: 'Connected accounts',
+                  subtitle:
+                      'Fetch profile and stats first, then download games explicitly.',
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            DesktopDialogButton(
-              label: 'Add account',
-              icon: Icons.add_link_outlined,
-              tone: DesktopDialogButtonTone.primary,
-              onPress:
-                  () => unawaited(_showAddAccountChoiceDialog(context, ref)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        for (final source in const [
-          PlayerWorkspaceSource.chessever,
-          PlayerWorkspaceSource.lichess,
-          PlayerWorkspaceSource.chesscom,
-          PlayerWorkspaceSource.manual,
-        ]) ...[
-          for (final account in player.accountsFor(source))
-            _AccountDetailCard(
-              source: source,
-              account: account,
-              operation: _operationForAccount(operations, account),
-              onAddAccount:
-                  () =>
-                      unawaited(_showAccountConnectFlow(context, ref, source)),
-              onEditAccount:
-                  () =>
-                      unawaited(_showEditAccountDialog(context, ref, account)),
-              onRefreshAccount:
-                  () =>
-                      unawaited(_runRefreshAccountEntry(context, ref, account)),
-              onRemoveAccount:
-                  () => unawaited(
-                    _confirmRemoveAccountEntry(context, ref, account),
-                  ),
-              onSyncAccount:
-                  () => unawaited(_runAccountSync(context, ref, account)),
-              onReinstallAccount:
-                  () => unawaited(
-                    _confirmReinstallAccount(context, ref, account),
-                  ),
-              onCancelOperation:
-                  () => unawaited(
-                    _runCancelAccountOperation(context, ref, account),
-                  ),
-            ),
-          if (player.accountsFor(source).isEmpty)
-            _AccountDetailCard(
-              source: source,
-              account: null,
-              operation: _operationForSource(operations, source),
-              onAddAccount:
-                  () =>
-                      unawaited(_showAccountConnectFlow(context, ref, source)),
-              onEditAccount: null,
-              onRefreshAccount: null,
-              onRemoveAccount: null,
-              onSyncAccount: null,
-              onReinstallAccount: null,
-              onCancelOperation: null,
-            )
-          else if (source.allowsMultipleAccounts)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _AddSourceAccountButton(
-                source: source,
+              const SizedBox(width: 12),
+              DesktopDialogButton(
+                label: 'Add account',
+                icon: Icons.add_link_outlined,
+                tone: DesktopDialogButtonTone.primary,
                 onPress:
+                    () => unawaited(_showAddAccountChoiceDialog(context, ref)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          for (final source in const [
+            PlayerWorkspaceSource.chessever,
+            PlayerWorkspaceSource.lichess,
+            PlayerWorkspaceSource.chesscom,
+            PlayerWorkspaceSource.manual,
+          ]) ...[
+            for (final account in player.accountsFor(source))
+              _AccountDetailCard(
+                source: source,
+                account: account,
+                operation: _operationForAccount(operations, account),
+                onAddAccount:
                     () => unawaited(
                       _showAccountConnectFlow(context, ref, source),
                     ),
+                onEditAccount:
+                    () => unawaited(
+                      _showEditAccountDialog(context, ref, account),
+                    ),
+                onRefreshAccount:
+                    () => unawaited(
+                      _runRefreshAccountEntry(context, ref, account),
+                    ),
+                onRemoveAccount:
+                    () => unawaited(
+                      _confirmRemoveAccountEntry(context, ref, account),
+                    ),
+                onSyncAccount:
+                    () => unawaited(_runAccountSync(context, ref, account)),
+                onReinstallAccount:
+                    () => unawaited(
+                      _confirmReinstallAccount(context, ref, account),
+                    ),
+                onCancelOperation:
+                    () => unawaited(
+                      _runCancelAccountOperation(context, ref, account),
+                    ),
               ),
-            ),
+            if (player.accountsFor(source).isEmpty)
+              _AccountDetailCard(
+                source: source,
+                account: null,
+                operation: _operationForSource(operations, source),
+                onAddAccount:
+                    () => unawaited(
+                      _showAccountConnectFlow(context, ref, source),
+                    ),
+                onEditAccount: null,
+                onRefreshAccount: null,
+                onRemoveAccount: null,
+                onSyncAccount: null,
+                onReinstallAccount: null,
+                onCancelOperation: null,
+              )
+            else if (source.allowsMultipleAccounts)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _AddSourceAccountButton(
+                  source: source,
+                  onPress:
+                      () => unawaited(
+                        _showAccountConnectFlow(context, ref, source),
+                      ),
+                ),
+              ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -2882,61 +2893,63 @@ class _BuildTreeTab extends HookConsumerWidget {
           .cancelCombinedDatabasePreparation(player.id);
     }
 
-    return ListView(
-      padding: const EdgeInsets.all(18),
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Expanded(
-              child: _SectionTitle(
-                icon: Icons.account_tree_outlined,
-                title: 'Opening trees',
-                subtitle:
-                    'Build per-source trees or the combined opponent tree. Set '
-                    'which colour to prep against — it applies as you open a tree.',
+    return DesktopScrollHost(
+      child: ListView(
+        padding: const EdgeInsets.all(18),
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(
+                child: _SectionTitle(
+                  icon: Icons.account_tree_outlined,
+                  title: 'Opening trees',
+                  subtitle:
+                      'Build per-source trees or the combined opponent tree. Set '
+                      'which colour to prep against — it applies as you open a tree.',
+                ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        _PrepSideControl(
-          side: side.value,
-          onChanged: (value) => side.value = value,
-        ),
-        const SizedBox(height: 12),
-        if (!hasAnyGames) ...[
-          _InlineEmpty(
-            icon: Icons.account_tree_outlined,
-            title: 'No games available for tree yet',
-            subtitle: 'Connect an account and download games first.',
-            actionLabel: 'Go to Accounts',
-            onAction: onGoToAccounts,
+            ],
           ),
           const SizedBox(height: 12),
+          _PrepSideControl(
+            side: side.value,
+            onChanged: (value) => side.value = value,
+          ),
+          const SizedBox(height: 12),
+          if (!hasAnyGames) ...[
+            _InlineEmpty(
+              icon: Icons.account_tree_outlined,
+              title: 'No games available for tree yet',
+              subtitle: 'Connect an account and download games first.',
+              actionLabel: 'Go to Accounts',
+              onAction: onGoToAccounts,
+            ),
+            const SizedBox(height: 12),
+          ],
+          for (final choice in choices) ...[
+            if (choice.source == PlayerWorkspaceSource.combined &&
+                (combinedBuildQueued.value ||
+                    (choice.target == null && canPrepareCombined)))
+              _PreparingCombinedTreeTargetCard(
+                choice: choice,
+                operation: preparationOperation,
+                queued: combinedBuildQueued.value,
+                onBuild: queueCombinedTreeBuild,
+                onStop: stopCombinedTreeBuild,
+              )
+            else if (choice.target case final target?)
+              _TreeTargetCard(
+                target: target,
+                preparationSide: side.value,
+                player: player,
+              )
+            else
+              _DisabledTreeTargetCard(choice: choice),
+            const SizedBox(height: 10),
+          ],
         ],
-        for (final choice in choices) ...[
-          if (choice.source == PlayerWorkspaceSource.combined &&
-              (combinedBuildQueued.value ||
-                  (choice.target == null && canPrepareCombined)))
-            _PreparingCombinedTreeTargetCard(
-              choice: choice,
-              operation: preparationOperation,
-              queued: combinedBuildQueued.value,
-              onBuild: queueCombinedTreeBuild,
-              onStop: stopCombinedTreeBuild,
-            )
-          else if (choice.target case final target?)
-            _TreeTargetCard(
-              target: target,
-              preparationSide: side.value,
-              player: player,
-            )
-          else
-            _DisabledTreeTargetCard(choice: choice),
-          const SizedBox(height: 10),
-        ],
-      ],
+      ),
     );
   }
 }
@@ -5877,20 +5890,22 @@ class _ConnectAccountsDialogState extends State<_ConnectAccountsDialog> {
     }
     return ConstrainedBox(
       constraints: const BoxConstraints(maxHeight: 264),
-      child: ListView.separated(
-        shrinkWrap: true,
-        padding: EdgeInsets.zero,
-        itemCount: _staged.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 8),
-        itemBuilder: (context, index) {
-          final staged = _staged[index];
-          return _StagedUsernameRow(
-            key: ValueKey(staged.key),
-            staged: staged,
-            onRemove: () => _remove(staged),
-            onRetry: () => _retry(staged),
-          );
-        },
+      child: DesktopScrollHost(
+        child: ListView.separated(
+          shrinkWrap: true,
+          padding: EdgeInsets.zero,
+          itemCount: _staged.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 8),
+          itemBuilder: (context, index) {
+            final staged = _staged[index];
+            return _StagedUsernameRow(
+              key: ValueKey(staged.key),
+              staged: staged,
+              onRemove: () => _remove(staged),
+              onRetry: () => _retry(staged),
+            );
+          },
+        ),
       ),
     );
   }
@@ -6635,17 +6650,20 @@ class _AddPlayerDialogState extends ConsumerState<_AddPlayerDialog> {
                                         : 'No result matched the locked FIDE $lockedFideId.',
                               );
                             }
-                            return ListView.separated(
-                              itemCount: players.length,
-                              separatorBuilder:
-                                  (_, __) => const SizedBox(height: 8),
-                              itemBuilder: (context, index) {
-                                final player = players[index];
-                                return _ChessEverPlayerResult(
-                                  player: player,
-                                  onTap: () => unawaited(_addChessEver(player)),
-                                );
-                              },
+                            return DesktopScrollHost(
+                              child: ListView.separated(
+                                itemCount: players.length,
+                                separatorBuilder:
+                                    (_, __) => const SizedBox(height: 8),
+                                itemBuilder: (context, index) {
+                                  final player = players[index];
+                                  return _ChessEverPlayerResult(
+                                    player: player,
+                                    onTap:
+                                        () => unawaited(_addChessEver(player)),
+                                  );
+                                },
+                              ),
                             );
                           },
                         ),

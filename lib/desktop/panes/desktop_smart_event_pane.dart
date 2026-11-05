@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
@@ -75,9 +76,9 @@ class _DesktopSmartEventPaneState extends ConsumerState<DesktopSmartEventPane> {
   static const Duration _searchDebounceDuration = Duration(milliseconds: 350);
 
   final TextEditingController _searchController = TextEditingController();
-  final ScrollController _gamesScroll = ScrollController();
-  final ScrollController _eventsScroll = ScrollController();
-  final ScrollController _aboutScroll = ScrollController();
+  final ScrollController _gamesScroll = DesktopScrollController();
+  final ScrollController _eventsScroll = DesktopScrollController();
+  final ScrollController _aboutScroll = DesktopScrollController();
   final Set<String> _collapsedDays = <String>{};
 
   Timer? _searchDebounce;

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/models/player_stats.dart';
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
@@ -246,13 +247,15 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
 /// Toolbar + short body (loading / error / empty) in one scroll view so the
 /// filter strip is not pinned above the viewport.
 Widget _scrollableWithToolbar({required Widget toolbar, required Widget body}) {
-  return CustomScrollView(
-    slivers: [
-      SliverToBoxAdapter(child: toolbar),
-      // Fills leftover height when content is short; still scrolls away with
-      // the toolbar when the viewport is tight.
-      SliverFillRemaining(hasScrollBody: false, child: body),
-    ],
+  return DesktopScrollHost(
+    child: CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(child: toolbar),
+        // Fills leftover height when content is short; still scrolls away with
+        // the toolbar when the viewport is tight.
+        SliverFillRemaining(hasScrollBody: false, child: body),
+      ],
+    ),
   );
 }
 
@@ -596,83 +599,88 @@ class _StatsBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      // Toolbar carries its own outer padding; metrics keep the previous
-      // 18px inset so layout under the strip matches the old fixed header.
-      padding: EdgeInsets.zero,
-      children: [
-        toolbar,
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _HeroStripe(snapshot: snapshot, sourceGameCount: sourceGameCount),
-              const SizedBox(height: 14),
-              _ScorePanel(
-                snapshot: snapshot,
-                outcome: outcome,
-                onWins: () => _toggleOutcome(PlayerStatsOutcomeFilter.win),
-                onDraws: () => _toggleOutcome(PlayerStatsOutcomeFilter.draw),
-                onLosses: () => _toggleOutcome(PlayerStatsOutcomeFilter.loss),
-              ),
-              if (snapshot.ratingSeries.length >= 2) ...[
-                const SizedBox(height: 14),
-                _RatingSection(
-                  spots: snapshot.ratingSeries,
-                  timeControlCategory: snapshot.ratingTimeControlCategory,
+    return DesktopScrollHost(
+      child: ListView(
+        // Toolbar carries its own outer padding; metrics keep the previous
+        // 18px inset so layout under the strip matches the old fixed header.
+        padding: EdgeInsets.zero,
+        children: [
+          toolbar,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _HeroStripe(
+                  snapshot: snapshot,
+                  sourceGameCount: sourceGameCount,
                 ),
-              ],
-              const SizedBox(height: 14),
-              _ColorSplitRow(
-                snapshot: snapshot,
-                selectedColor: playerColor,
-                onAsWhite: () => _toggleColor('w'),
-                onAsBlack: () => _toggleColor('b'),
-              ),
-              if (snapshot.openings.isNotEmpty) ...[
                 const SizedBox(height: 14),
-                _OpeningsPanel(
-                  openings: snapshot.openings,
-                  onOpening:
-                      (eco) =>
-                          _emitGames(PlayerOverviewFilterFacet.eco, eco: eco),
+                _ScorePanel(
+                  snapshot: snapshot,
+                  outcome: outcome,
+                  onWins: () => _toggleOutcome(PlayerStatsOutcomeFilter.win),
+                  onDraws: () => _toggleOutcome(PlayerStatsOutcomeFilter.draw),
+                  onLosses: () => _toggleOutcome(PlayerStatsOutcomeFilter.loss),
                 ),
-              ],
-              if (snapshot.opponents.isNotEmpty) ...[
+                if (snapshot.ratingSeries.length >= 2) ...[
+                  const SizedBox(height: 14),
+                  _RatingSection(
+                    spots: snapshot.ratingSeries,
+                    timeControlCategory: snapshot.ratingTimeControlCategory,
+                  ),
+                ],
                 const SizedBox(height: 14),
-                _OpponentsPanel(
-                  opponents: snapshot.opponents,
-                  onOpponent:
-                      (name) => _emitGames(
-                        PlayerOverviewFilterFacet.opponent,
-                        opponent: name,
-                      ),
+                _ColorSplitRow(
+                  snapshot: snapshot,
+                  selectedColor: playerColor,
+                  onAsWhite: () => _toggleColor('w'),
+                  onAsBlack: () => _toggleColor('b'),
                 ),
+                if (snapshot.openings.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  _OpeningsPanel(
+                    openings: snapshot.openings,
+                    onOpening:
+                        (eco) =>
+                            _emitGames(PlayerOverviewFilterFacet.eco, eco: eco),
+                  ),
+                ],
+                if (snapshot.opponents.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  _OpponentsPanel(
+                    opponents: snapshot.opponents,
+                    onOpponent:
+                        (name) => _emitGames(
+                          PlayerOverviewFilterFacet.opponent,
+                          opponent: name,
+                        ),
+                  ),
+                ],
+                if (snapshot.years.length >= 2) ...[
+                  const SizedBox(height: 14),
+                  _YearsPanel(
+                    years: snapshot.years,
+                    timeControls: snapshot.timeControls,
+                    onYear:
+                        (y) =>
+                            _emitGames(PlayerOverviewFilterFacet.year, year: y),
+                    onTimeControl:
+                        (cat) => _emitGames(
+                          PlayerOverviewFilterFacet.timeControl,
+                          tc: cat,
+                        ),
+                  ),
+                ],
+                if (_hasLengths(snapshot.lengthBuckets)) ...[
+                  const SizedBox(height: 14),
+                  _LengthPanel(buckets: snapshot.lengthBuckets),
+                ],
               ],
-              if (snapshot.years.length >= 2) ...[
-                const SizedBox(height: 14),
-                _YearsPanel(
-                  years: snapshot.years,
-                  timeControls: snapshot.timeControls,
-                  onYear:
-                      (y) =>
-                          _emitGames(PlayerOverviewFilterFacet.year, year: y),
-                  onTimeControl:
-                      (cat) => _emitGames(
-                        PlayerOverviewFilterFacet.timeControl,
-                        tc: cat,
-                      ),
-                ),
-              ],
-              if (_hasLengths(snapshot.lengthBuckets)) ...[
-                const SizedBox(height: 14),
-                _LengthPanel(buckets: snapshot.lengthBuckets),
-              ],
-            ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1616,7 +1624,7 @@ class _YearsPanelState extends State<_YearsPanel> {
   static const double _kLabelBand = 22;
   static const double _kMinSlot = 36;
 
-  final ScrollController _chartScrollController = ScrollController();
+  final ScrollController _chartScrollController = DesktopScrollController();
   int? _hoveredYear;
   double? _hoverViewportX;
 

@@ -234,6 +234,7 @@ class _BoardState extends State<Chessboard> with TickerProviderStateMixin {
 
     final translatingPiecesPainter = TranslatingPiecesPainter(
       translatingPiecesNotifier: _controller.translatingPiecesNotifier,
+      translationOrigins: _controller.translationOriginsNotifier,
       squareSize: widget.squareSize,
       orientation: widget.orientation,
       pieceAssets: settings.pieceAssets,
@@ -452,7 +453,11 @@ class _BoardState extends State<Chessboard> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    _controller.attachTo(this, widget.settings.animationDuration);
+    _controller.attachTo(
+      this,
+      widget.settings.animationDuration,
+      onCancelPieceGesture: _cancelGesture,
+    );
     _controller.addListener(_onControllerChange);
     _lastSideToMove = _controller.game.sideToMove;
     _controller.drawnShapesNotifier.addListener(_onDrawnShapesChange);
@@ -522,7 +527,11 @@ class _BoardState extends State<Chessboard> with TickerProviderStateMixin {
   @override
   void activate() {
     super.activate();
-    _controller.attachTo(this, widget.settings.animationDuration);
+    _controller.attachTo(
+      this,
+      widget.settings.animationDuration,
+      onCancelPieceGesture: _cancelGesture,
+    );
     _controllerDetached = false;
   }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/models/player_download_preferences.dart';
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
@@ -182,171 +183,177 @@ class _PlayerDownloadOptionsDialogState
           child: Material(
             color: kBlack2Color,
             borderRadius: BorderRadius.circular(10),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Download games',
-                            style: TextStyle(
-                              color: kWhiteColor,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        DesktopDialogIconButton(
-                          icon: Icons.close_rounded,
-                          tooltip: 'Close download options',
-                          onPress: () => Navigator.of(context).pop(),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '${widget.account.source.label} · ${widget.account.username}',
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 22),
-                    const Text(
-                      'Time controls',
-                      style: TextStyle(
-                        color: kWhiteColor,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    FCheckbox(
-                      label: const Text('All time controls'),
-                      value: _allControls,
-                      onChange:
-                          (value) => setState(() {
-                            _allControls = value;
-                          }),
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 20,
-                      runSpacing: 14,
-                      children: [
-                        for (final control in _controls)
-                          SizedBox(
-                            width: 190,
-                            child: FCheckbox(
-                              label: Text(
-                                control ==
-                                            PlayerDownloadTimeControl
-                                                .correspondence &&
-                                        widget.account.source ==
-                                            PlayerWorkspaceSource.chesscom
-                                    ? 'Daily'
-                                    : control.label,
+            child: DesktopScrollHost(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Download games',
+                              style: TextStyle(
+                                color: kWhiteColor,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
                               ),
-                              value:
-                                  !_allControls && _selected.contains(control),
-                              onChange:
-                                  (value) => setState(() {
-                                    _allControls = false;
-                                    value
-                                        ? _selected.add(control)
-                                        : _selected.remove(control);
-                                  }),
                             ),
                           ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final fields = [
-                          _dateField(
-                            controller: _from,
-                            label: 'Starting date (optional)',
+                          DesktopDialogIconButton(
+                            icon: Icons.close_rounded,
+                            tooltip: 'Close download options',
+                            onPress: () => Navigator.of(context).pop(),
                           ),
-                          _dateField(controller: _to, label: 'End date'),
-                        ];
-                        return constraints.maxWidth < 400
-                            ? Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                fields[0],
-                                const SizedBox(height: 14),
-                                fields[1],
-                              ],
-                            )
-                            : Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(child: fields[0]),
-                                const SizedBox(width: 16),
-                                Expanded(child: fields[1]),
-                              ],
-                            );
-                      },
-                    ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Leave the starting date blank for all history. An end date of today keeps future syncs open. Dates include the whole selected day (UTC).',
-                      style: TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 12,
-                        height: 1.4,
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 18),
-                    Text(
-                      replacesGames
-                          ? 'Applying new options replaces this profile’s local games and updates Combined. Only matching games will remain.'
-                          : 'These options are saved for this profile and used for future syncs.',
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 12,
-                        height: 1.5,
-                      ),
-                    ),
-                    if (error != null) ...[
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 6),
                       Text(
-                        error,
-                        style: const TextStyle(color: kRedColor, fontSize: 12),
+                        '${widget.account.source.label} · ${widget.account.username}',
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      const Text(
+                        'Time controls',
+                        style: TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      FCheckbox(
+                        label: const Text('All time controls'),
+                        value: _allControls,
+                        onChange:
+                            (value) => setState(() {
+                              _allControls = value;
+                            }),
+                      ),
+                      const SizedBox(height: 14),
+                      Wrap(
+                        spacing: 20,
+                        runSpacing: 14,
+                        children: [
+                          for (final control in _controls)
+                            SizedBox(
+                              width: 190,
+                              child: FCheckbox(
+                                label: Text(
+                                  control ==
+                                              PlayerDownloadTimeControl
+                                                  .correspondence &&
+                                          widget.account.source ==
+                                              PlayerWorkspaceSource.chesscom
+                                      ? 'Daily'
+                                      : control.label,
+                                ),
+                                value:
+                                    !_allControls &&
+                                    _selected.contains(control),
+                                onChange:
+                                    (value) => setState(() {
+                                      _allControls = false;
+                                      value
+                                          ? _selected.add(control)
+                                          : _selected.remove(control);
+                                    }),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final fields = [
+                            _dateField(
+                              controller: _from,
+                              label: 'Starting date (optional)',
+                            ),
+                            _dateField(controller: _to, label: 'End date'),
+                          ];
+                          return constraints.maxWidth < 400
+                              ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  fields[0],
+                                  const SizedBox(height: 14),
+                                  fields[1],
+                                ],
+                              )
+                              : Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(child: fields[0]),
+                                  const SizedBox(width: 16),
+                                  Expanded(child: fields[1]),
+                                ],
+                              );
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Leave the starting date blank for all history. An end date of today keeps future syncs open. Dates include the whole selected day (UTC).',
+                        style: TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        replacesGames
+                            ? 'Applying new options replaces this profile’s local games and updates Combined. Only matching games will remain.'
+                            : 'These options are saved for this profile and used for future syncs.',
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 12,
+                          height: 1.5,
+                        ),
+                      ),
+                      if (error != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          error,
+                          style: const TextStyle(
+                            color: kRedColor,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 22),
+                      Wrap(
+                        alignment: WrapAlignment.spaceBetween,
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          DesktopToolbarPillButton(
+                            label: 'Reset options',
+                            icon: Icons.filter_alt_off_rounded,
+                            onPress: _reset,
+                          ),
+                          DesktopToolbarPillButton(
+                            label:
+                                replacesGames
+                                    ? 'Apply and download'
+                                    : widget.account.pgnPath != null
+                                    ? 'Sync new games'
+                                    : 'Download games',
+                            icon: Icons.download_outlined,
+                            tone: DesktopToolbarPillTone.primary,
+                            onPress: error == null ? _submit : null,
+                          ),
+                        ],
                       ),
                     ],
-                    const SizedBox(height: 22),
-                    Wrap(
-                      alignment: WrapAlignment.spaceBetween,
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        DesktopToolbarPillButton(
-                          label: 'Reset options',
-                          icon: Icons.filter_alt_off_rounded,
-                          onPress: _reset,
-                        ),
-                        DesktopToolbarPillButton(
-                          label:
-                              replacesGames
-                                  ? 'Apply and download'
-                                  : widget.account.pgnPath != null
-                                  ? 'Sync new games'
-                                  : 'Download games',
-                          icon: Icons.download_outlined,
-                          tone: DesktopToolbarPillTone.primary,
-                          onPress: error == null ? _submit : null,
-                        ),
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),

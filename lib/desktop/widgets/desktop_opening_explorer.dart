@@ -10,6 +10,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_filter_adapter.dart';
@@ -389,7 +390,7 @@ class _ExplorerBody extends ConsumerStatefulWidget {
 }
 
 class _ExplorerBodyState extends ConsumerState<_ExplorerBody> {
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = DesktopScrollController();
   final Map<int, GlobalKey> _moveKeys = <int, GlobalKey>{};
   int? _suppressRevealForFocusedMoveIndex;
   String? _lastFenKey;
@@ -1084,9 +1085,10 @@ class _RenderResultBarSlot extends RenderProxyBox {
     if (!free.isFinite) return constraints.constrainWidth(_minWidth);
     // The row's content width less the 4px slack the explorer always kept.
     final contentWidth = math.max(0.0, free + _fixedWidth - 4);
-    final width = (free - _slack)
-        .clamp(_minWidth, math.max(_minWidth, contentWidth * 0.5))
-        .toDouble();
+    final width =
+        (free - _slack)
+            .clamp(_minWidth, math.max(_minWidth, contentWidth * 0.5))
+            .toDouble();
     return constraints.constrainWidth(width);
   }
 

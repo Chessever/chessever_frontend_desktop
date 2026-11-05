@@ -5,6 +5,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/services/desktop_local_day_clock.dart';
@@ -451,7 +452,7 @@ class _SmartGamesList extends ConsumerStatefulWidget {
 class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
   static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
 
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = DesktopScrollController();
   final Set<String> _collapsedGroups = <String>{};
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
@@ -1896,53 +1897,55 @@ class _SmartGamesLoadingSkeleton extends StatelessWidget {
             baseColor: kBlackColor,
             highlightColor: kDarkGreyColor,
           ),
-          child: CustomScrollView(
-            physics: const DesktopScrollPhysics(),
-            slivers: [
-              const SliverPadding(
-                padding: EdgeInsets.fromLTRB(24, 4, 24, 8),
-                sliver: SliverToBoxAdapter(
-                  child: _SmartSkeletonSectionHeader(),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                sliver: SliverGrid(
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: columns,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
-                    childAspectRatio: 0.95,
-                  ),
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) => const _SmartSkeletonGameCard(),
-                    childCount: columns * 2,
+          child: DesktopScrollHost(
+            child: CustomScrollView(
+              physics: const DesktopScrollPhysics(),
+              slivers: [
+                const SliverPadding(
+                  padding: EdgeInsets.fromLTRB(24, 4, 24, 8),
+                  sliver: SliverToBoxAdapter(
+                    child: _SmartSkeletonSectionHeader(),
                   ),
                 ),
-              ),
-              const SliverPadding(
-                padding: EdgeInsets.fromLTRB(24, 16, 24, 8),
-                sliver: SliverToBoxAdapter(
-                  child: _SmartSkeletonSectionHeader(),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                sliver: SliverGrid(
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: columns,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
-                    childAspectRatio: 0.95,
-                  ),
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) => const _SmartSkeletonGameCard(),
-                    childCount: columns,
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  sliver: SliverGrid(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: columns,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 0.95,
+                    ),
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => const _SmartSkeletonGameCard(),
+                      childCount: columns * 2,
+                    ),
                   ),
                 ),
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: 24)),
-            ],
+                const SliverPadding(
+                  padding: EdgeInsets.fromLTRB(24, 16, 24, 8),
+                  sliver: SliverToBoxAdapter(
+                    child: _SmartSkeletonSectionHeader(),
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  sliver: SliverGrid(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: columns,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 0.95,
+                    ),
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => const _SmartSkeletonGameCard(),
+                      childCount: columns,
+                    ),
+                  ),
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: 24)),
+              ],
+            ),
           ),
         );
       },

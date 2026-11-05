@@ -4,7 +4,8 @@ import 'dart:convert';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/services/billing/web_intro_offer.dart';
-import 'package:flutter/foundation.dart' show debugPrint, immutable, kDebugMode;
+import 'package:flutter/foundation.dart'
+    show debugPrint, immutable, kDebugMode, visibleForTesting;
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -32,14 +33,39 @@ import 'package:url_launcher/url_launcher.dart';
 /// `--dart-define=BILLING_API_BASE=https://…/functions/v1` if you ever need
 /// to point at a fork or a local supabase functions serve.
 class DesktopBillingService {
-  DesktopBillingService._();
+  DesktopBillingService._()
+    : _http = http.Client(),
+      _activeSessionOverride = null,
+      _baseUrlOverride = null,
+      _appStoreOverride = null;
+
+  @visibleForTesting
+  DesktopBillingService.forTesting({
+    required http.Client client,
+    required Future<Session?> Function({required bool forceRefresh})
+    activeSession,
+    required String baseUrl,
+    bool appStore = false,
+  }) : _http = client,
+       _activeSessionOverride = activeSession,
+       _baseUrlOverride = baseUrl,
+       _appStoreOverride = appStore;
+
   static final DesktopBillingService instance = DesktopBillingService._();
+  final http.Client _http;
+  final Future<Session?> Function({required bool forceRefresh})?
+  _activeSessionOverride;
+  final String? _baseUrlOverride;
+  final bool? _appStoreOverride;
+
+  bool get _usesAppStore => isMacAppStore || _appStoreOverride == true;
 
   /// Edge Functions base URL, resolved at runtime so no backend project ref
   /// is baked into this (public) client source. Prefers an explicit
   /// `BILLING_API_BASE` override; otherwise derives `<SUPABASE_URL>/functions/v1`
   /// from the same `SUPABASE_URL` the rest of the app already requires.
-  static String get _baseUrl {
+  String get _baseUrl {
+    if (_baseUrlOverride != null) return _baseUrlOverride;
     final override = DesktopEnv.maybeGet('BILLING_API_BASE');
     if (override != null && override.isNotEmpty) {
       return override.replaceFirst(RegExp(r'/+$'), '');
@@ -75,8 +101,13 @@ class DesktopBillingService {
   Stream<EntitlementSnapshot> startCheckout({
     required int tier,
     required String interval, // 'month' | 'year'
+    WebIntroOffer? introOffer,
   }) async* {
-    final authToken = await openCheckout(tier: tier, interval: interval);
+    final authToken = await openCheckout(
+      tier: tier,
+      interval: interval,
+      introOffer: introOffer,
+    );
     yield* _pollEntitlement(authToken: authToken);
   }
 
@@ -90,29 +121,38 @@ class DesktopBillingService {
   Future<String> openCheckout({
     required int tier,
     required String interval,
+    WebIntroOffer? introOffer,
   }) async {
     final checkout = await createCheckoutSession(
       tier: tier,
       interval: interval,
+      introOffer: introOffer,
     );
     await launchCheckoutUrl(checkout.url);
     return checkout.authToken;
   }
 
-  /// Creates a Stripe Checkout Session WITHOUT opening the browser, so the
-  /// caller can compare the granted [DesktopCheckoutSession.trialDays]
-  /// against the trial it advertised and confirm with the user first — the
-  /// same honesty check chessever.com/premium runs before following its
-  /// redirect. Pair with [launchCheckoutUrl] and [pollAfterCheckout].
+  /// Creates checkout without opening the browser. A requested [introOffer]
+  /// must be confirmed in full before a session URL can leave this method.
+  /// Legacy trial callers compare [DesktopCheckoutSession.trialDays] before
+  /// calling [launchCheckoutUrl] and [pollAfterCheckout].
   Future<DesktopCheckoutSession> createCheckoutSession({
     required int tier,
     required String interval,
+    WebIntroOffer? introOffer,
   }) async {
-    if (isMacAppStore) {
+    if (_usesAppStore) {
       throw StateError('Use Apple in-app purchases in this edition.');
     }
+    if (introOffer != null &&
+        (interval != 'month' || introOffer.requiresSignIn)) {
+      throw const DesktopIntroOfferException(
+        'Review the Monthly offer after signing in before continuing.',
+        refreshOffer: true,
+      );
+    }
     final session = await _activeSession(forceRefresh: true);
-    if (session == null) {
+    if (session == null || session.user.isAnonymous) {
       throw StateError('Sign in before purchasing.');
     }
 
@@ -120,6 +160,7 @@ class DesktopBillingService {
       authToken: session.accessToken,
       tier: tier,
       interval: interval,
+      introOffer: introOffer,
     );
     return DesktopCheckoutSession(
       url: created.url,
@@ -150,7 +191,7 @@ class DesktopBillingService {
     final session = await _activeSession(forceRefresh: false);
     if (session == null) return null;
     try {
-      final resp = await http.get(
+      final resp = await _http.get(
         Uri.parse('$_baseUrl/stripe-checkout'),
         headers: <String, String>{
           'authorization': 'Bearer ${session.accessToken}',
@@ -167,14 +208,14 @@ class DesktopBillingService {
     }
   }
 
-  /// Read-only quote; checkout on chessever.com enforces the same eligibility
-  /// again. A missing/older backend cannot accidentally advertise $0.99.
+  /// Read-only quote for the browser and direct-download editions. Checkout
+  /// rechecks eligibility; a missing/older backend cannot advertise $0.99.
   Future<WebIntroOffer?> fetchWebIntroOffer(int tier) async {
-    if (tier < 1 || tier > 3) return null;
+    if (_usesAppStore || tier < 1 || tier > 3) return null;
     try {
       final session = await _activeSession(forceRefresh: false);
-      if (session == null || session.user.isAnonymous) return null;
-      final response = await http
+      if (session == null) return null;
+      final response = await _http
           .get(
             Uri.parse(
               '$_baseUrl/stripe-checkout',
@@ -187,7 +228,12 @@ class DesktopBillingService {
           .timeout(const Duration(seconds: 10));
       if (response.statusCode != 200) return null;
       final body = jsonDecode(response.body);
-      return body is Map ? WebIntroOffer.fromJson(body['intro_offer']) : null;
+      return body is Map
+          ? WebIntroOffer.fromJson(
+            body['intro_offer'],
+            allowSignInOffer: session.user.isAnonymous,
+          )
+          : null;
     } on Object {
       return null;
     }
@@ -229,6 +275,9 @@ class DesktopBillingService {
   }
 
   Future<Session?> _activeSession({required bool forceRefresh}) async {
+    if (_activeSessionOverride != null) {
+      return _activeSessionOverride(forceRefresh: forceRefresh);
+    }
     final auth = Supabase.instance.client.auth;
     var session = auth.currentSession;
     if (session == null) return null;
@@ -245,8 +294,9 @@ class DesktopBillingService {
     required String authToken,
     required int tier,
     required String interval,
+    WebIntroOffer? introOffer,
   }) async {
-    final resp = await http.post(
+    final resp = await _http.post(
       Uri.parse('$_baseUrl/stripe-checkout'),
       headers: <String, String>{
         'authorization': 'Bearer $authToken',
@@ -256,6 +306,10 @@ class DesktopBillingService {
         'tier': tier,
         'interval': interval,
         'return_to': 'desktop',
+        if (introOffer != null) ...{
+          'intro_offer': WebIntroOffer.id,
+          'expected_renewal_amount_cents': introOffer.renewalAmountCents,
+        },
       }),
     );
     if (resp.statusCode != 200) {
@@ -265,6 +319,19 @@ class DesktopBillingService {
       } on FormatException {
         // Gateways can return an HTML error instead of the function's JSON.
       }
+      if (introOffer != null && failure is Map) {
+        final code = failure['error'];
+        if (code == 'intro_offer_unavailable' ||
+            code == 'pricing_changed' ||
+            code == 'invalid_intro_offer') {
+          throw DesktopIntroOfferException(
+            failure['message'] is String
+                ? failure['message'] as String
+                : 'The introductory offer changed. Review the updated price before continuing.',
+            refreshOffer: true,
+          );
+        }
+      }
       if (failure is Map && failure['message'] is String) {
         throw DesktopCheckoutException(failure['message'] as String);
       }
@@ -273,6 +340,16 @@ class DesktopBillingService {
       );
     }
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (introOffer != null) {
+      final granted = WebIntroOffer.fromJson(body['intro_offer']);
+      if (granted == null ||
+          granted.renewalAmountCents != introOffer.renewalAmountCents) {
+        throw const DesktopIntroOfferException(
+          'Checkout could not confirm the \$0.99 first month and renewal price. Review the offer and try again. No payment has been taken.',
+          refreshOffer: true,
+        );
+      }
+    }
     final url = body['url'] as String?;
     if (url == null) throw StateError('checkout response missing a Stripe url');
     // Same guard as the website's checkout proxy: the browser must only
@@ -314,7 +391,7 @@ class DesktopBillingService {
   Future<EntitlementSnapshot?> _fetchEntitlement({
     required String authToken,
   }) async {
-    final resp = await http
+    final resp = await _http
         .get(
           Uri.parse('$_baseUrl/entitlement'),
           headers: <String, String>{'authorization': 'Bearer $authToken'},
@@ -366,6 +443,14 @@ class DesktopCheckoutException implements Exception {
   final String message;
   @override
   String toString() => message;
+}
+
+/// An advertised first-month offer was refused or no longer matches checkout.
+/// The caller must show refreshed terms and wait for another explicit click.
+class DesktopIntroOfferException extends DesktopCheckoutException {
+  const DesktopIntroOfferException(super.message, {required this.refreshOffer});
+
+  final bool refreshOffer;
 }
 
 @immutable

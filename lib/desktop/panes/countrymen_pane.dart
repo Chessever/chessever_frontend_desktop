@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:cue/cue.dart';
@@ -384,7 +385,7 @@ class _CountrymenEventsList extends ConsumerStatefulWidget {
 }
 
 class _CountrymenEventsListState extends ConsumerState<_CountrymenEventsList> {
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = DesktopScrollController();
 
   @override
   void initState() {
@@ -700,7 +701,7 @@ class _CountrymenPlayersList extends ConsumerStatefulWidget {
 
 class _CountrymenPlayersListState
     extends ConsumerState<_CountrymenPlayersList> {
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = DesktopScrollController();
 
   @override
   void initState() {
@@ -1675,7 +1676,7 @@ class _CountrymenGames extends ConsumerStatefulWidget {
 class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
   static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
 
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = DesktopScrollController();
   final Set<String> _collapsedGroups = <String>{};
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;

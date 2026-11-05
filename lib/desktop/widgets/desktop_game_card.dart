@@ -134,6 +134,10 @@ class DesktopGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Retained tabs keep their widget state, but invisible cards must not
+    // submit new local engine requests while the foreground board is in use.
+    final allowStockfishFallback =
+        this.allowStockfishFallback && TickerMode.valuesOf(context).enabled;
     // Scope each watch to the single derived bool the card needs so unrelated
     // settings churn (board colour, piece set, engine depth/time) doesn't
     // rebuild every live card in the grid.

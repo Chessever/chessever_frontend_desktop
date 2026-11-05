@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/panes/play_pane.dart'
     show PlayPaneTab, playPaneTabByTabIdProvider, playPaneTabProvider;
@@ -616,16 +617,18 @@ class _PrepSetup extends ConsumerWidget {
     );
     return LayoutBuilder(
       builder:
-          (context, constraints) => SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(_kGutter, 32, _kGutter, 32),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight: (constraints.maxHeight - 64).clamp(
-                  0,
-                  double.infinity,
+          (context, constraints) => DesktopScrollHost(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(_kGutter, 32, _kGutter, 32),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: (constraints.maxHeight - 64).clamp(
+                    0,
+                    double.infinity,
+                  ),
                 ),
+                child: Center(child: _setupColumn(context, ref, players)),
               ),
-              child: Center(child: _setupColumn(context, ref, players)),
             ),
           ),
     );
@@ -994,41 +997,43 @@ class _PlayOverview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.only(bottom: 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(flex: 3, child: _RecordPanel(profile: profile)),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: _FactsPanel(
-                    profile: profile,
-                    achievements: achievements,
-                    onShowGames: onShowGames,
-                    onShowAchievements: onShowAchievements,
+    return DesktopScrollHost(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.only(bottom: 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(flex: 3, child: _RecordPanel(profile: profile)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: _FactsPanel(
+                      profile: profile,
+                      achievements: achievements,
+                      onShowGames: onShowGames,
+                      onShowAchievements: onShowAchievements,
+                    ),
                   ),
-                ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 28),
+            Row(
+              children: [
+                const Text('Latest games', style: _kHeading),
+                const Spacer(),
+                if (games.isNotEmpty)
+                  _QuietButton(label: 'See all', onTap: onShowGames),
               ],
             ),
-          ),
-          const SizedBox(height: 28),
-          Row(
-            children: [
-              const Text('Latest games', style: _kHeading),
-              const Spacer(),
-              if (games.isNotEmpty)
-                _QuietButton(label: 'See all', onTap: onShowGames),
-            ],
-          ),
-          const SizedBox(height: 8),
-          _GameList(games: games.take(6).toList(growable: false)),
-        ],
+            const SizedBox(height: 8),
+            _GameList(games: games.take(6).toList(growable: false)),
+          ],
+        ),
       ),
     );
   }
@@ -1743,130 +1748,132 @@ class _AchievementsBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // A sliver grid lays out only the cards on screen. The old shrink-wrapped
     // grid inside a scroll view laid out all of them on every width change.
-    return CustomScrollView(
-      slivers: [
-        SliverPadding(
-          padding: const EdgeInsets.only(top: 4),
-          sliver: SliverToBoxAdapter(child: _AchievementHero(state: state)),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 16)),
-        SliverGrid.builder(
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 340,
-            mainAxisExtent: 128,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
+    return DesktopScrollHost(
+      child: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.only(top: 4),
+            sliver: SliverToBoxAdapter(child: _AchievementHero(state: state)),
           ),
-          itemCount: kPlayAchievementDefinitions.length,
-          itemBuilder: (context, index) {
-            final def = kPlayAchievementDefinitions[index];
-            final unlocked = state.unlocked.contains(def.id);
-            final claimable = state.claimable.contains(def.id);
-            final earned = unlocked || claimable;
-            final progress = state.stats.progressFor(def.id);
-            final value = (progress / def.target).clamp(0.0, 1.0);
-            final card = AnimatedContainer(
-              duration: const Duration(milliseconds: 160),
-              decoration: _surface(raised: claimable),
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  PlayAchievementBadgeArt(
-                    definition: def,
-                    unlocked: earned,
-                    size: 64,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                def.title,
+          const SliverToBoxAdapter(child: SizedBox(height: 16)),
+          SliverGrid.builder(
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 340,
+              mainAxisExtent: 128,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+            ),
+            itemCount: kPlayAchievementDefinitions.length,
+            itemBuilder: (context, index) {
+              final def = kPlayAchievementDefinitions[index];
+              final unlocked = state.unlocked.contains(def.id);
+              final claimable = state.claimable.contains(def.id);
+              final earned = unlocked || claimable;
+              final progress = state.stats.progressFor(def.id);
+              final value = (progress / def.target).clamp(0.0, 1.0);
+              final card = AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                decoration: _surface(raised: claimable),
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    PlayAchievementBadgeArt(
+                      definition: def,
+                      unlocked: earned,
+                      size: 64,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  def.title,
+                                  style: TextStyle(
+                                    color: earned ? kWhiteColor : kWhiteColor70,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                unlocked
+                                    ? 'CLAIMED'
+                                    : claimable
+                                    ? 'CLAIM'
+                                    : '${(value * 100).round()}%',
                                 style: TextStyle(
-                                  color: earned ? kWhiteColor : kWhiteColor70,
-                                  fontSize: 13,
+                                  color:
+                                      claimable
+                                          ? kPrimaryColor
+                                          : unlocked
+                                          ? kWhiteColor70
+                                          : kSecondaryTextColor,
+                                  fontSize: 10,
                                   fontWeight: FontWeight.w900,
                                 ),
                               ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            def.description,
+                            style: const TextStyle(
+                              color: kSecondaryTextColor,
+                              fontSize: 11,
+                              height: 1.35,
                             ),
-                            Text(
-                              unlocked
-                                  ? 'CLAIMED'
-                                  : claimable
-                                  ? 'CLAIM'
-                                  : '${(value * 100).round()}%',
-                              style: TextStyle(
-                                color:
-                                    claimable
-                                        ? kPrimaryColor
-                                        : unlocked
-                                        ? kWhiteColor70
-                                        : kSecondaryTextColor,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w900,
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            def.group.label,
+                            style: TextStyle(
+                              color: kSecondaryTextColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: LinearProgressIndicator(
+                              value: value.toDouble(),
+                              minHeight: 5,
+                              color:
+                                  earned
+                                      ? kPrimaryColor
+                                      : kWhiteColor.withValues(alpha: 0.38),
+                              backgroundColor: kBlackColor.withValues(
+                                alpha: 0.45,
                               ),
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          def.description,
-                          style: const TextStyle(
-                            color: kSecondaryTextColor,
-                            fontSize: 11,
-                            height: 1.35,
                           ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          def.group.label,
-                          style: TextStyle(
-                            color: kSecondaryTextColor,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(999),
-                          child: LinearProgressIndicator(
-                            value: value.toDouble(),
-                            minHeight: 5,
-                            color:
-                                earned
-                                    ? kPrimaryColor
-                                    : kWhiteColor.withValues(alpha: 0.38),
-                            backgroundColor: kBlackColor.withValues(
-                              alpha: 0.45,
-                            ),
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            );
-            if (!claimable) return card;
-            return _Hoverable(
-              onTap: () async {
-                await ref
-                    .read(playAchievementsProvider.notifier)
-                    .claimAchievements([def.id]);
-                ref.invalidate(playUserProfileProvider);
-              },
-              builder: (_) => card,
-            );
-          },
-        ),
-        // Lets the last row scroll fully clear of the pane's bottom edge.
-        const SliverToBoxAdapter(child: SizedBox(height: 32)),
-      ],
+                  ],
+                ),
+              );
+              if (!claimable) return card;
+              return _Hoverable(
+                onTap: () async {
+                  await ref
+                      .read(playAchievementsProvider.notifier)
+                      .claimAchievements([def.id]);
+                  ref.invalidate(playUserProfileProvider);
+                },
+                builder: (_) => card,
+              );
+            },
+          ),
+          // Lets the last row scroll fully clear of the pane's bottom edge.
+          const SliverToBoxAdapter(child: SizedBox(height: 32)),
+        ],
+      ),
     );
   }
 }

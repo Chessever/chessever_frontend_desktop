@@ -7,6 +7,32 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 void main() {
+  testWidgets(
+    'finished previews do not start animation tickers on scroll mount',
+    (tester) async {
+      for (final status in [GameStatus.blackWins, GameStatus.draw]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Align(
+              alignment: Alignment.topLeft,
+              child: DesktopEndgameBoard(
+                key: ValueKey(status),
+                size: 208,
+                fen: '4R3/3q2pk/8/6Bp/5P1P/1r2N1K1/8/8 w - - 0 1',
+                orientation: Side.white,
+                status: status,
+                settings: const BoardSettingsNew(),
+              ),
+            ),
+          ),
+        );
+        expect(tester.binding.transientCallbackCount, 0);
+        if (status == GameStatus.draw) {
+          expect(find.text('🕊️'), findsNWidgets(2));
+        }
+      }
+    },
+  );
   testWidgets('fallen king keeps the same square footprint as board pieces', (
     tester,
   ) async {

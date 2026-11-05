@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 import 'dart:math' as math;
 
@@ -14,9 +15,6 @@ import 'package:chessever/desktop/services/player_score_card_board_context.dart'
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
-
-
-
 
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -59,7 +57,6 @@ import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
-
 
 import 'package:chessever/utils/location_service_provider.dart';
 import 'package:chessever/utils/png_asset.dart';
@@ -422,7 +419,7 @@ class PlayerScoreCardView extends ConsumerStatefulWidget {
 
 class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
     with SingleTickerProviderStateMixin {
-  final ScrollController _listController = ScrollController();
+  final ScrollController _listController = DesktopScrollController();
   final FocusNode _listFocus = FocusNode(debugLabel: 'scorecard-games');
   late final FPopoverController _switcherController = FPopoverController(
     vsync: this,
@@ -837,16 +834,29 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
   }
 
   Future<void> _toggleFavorite(PlayerStandingModel player) async {
-    final favorites = ref.read(favoritePlayersProviderNew).valueOrNull ?? const [];
-    final already = favorites.any((favorite) => favoritePlayerMatchesIdentity(favorite,
-      fideId: player.fideId?.toString(), playerName: player.name.trim(),
-      memorialSourceIdentity: player.memorialSourceIdentity));
-    await setDesktopPlayerFavorite(context, ref, favorite: !already,
-      playerName: player.name, fideId: player.fideId?.toString(),
-      countryCode: player.countryCode, rating: player.score, title: player.title,
+    final favorites =
+        ref.read(favoritePlayersProviderNew).valueOrNull ?? const [];
+    final already = favorites.any(
+      (favorite) => favoritePlayerMatchesIdentity(
+        favorite,
+        fideId: player.fideId?.toString(),
+        playerName: player.name.trim(),
+        memorialSourceIdentity: player.memorialSourceIdentity,
+      ),
+    );
+    await setDesktopPlayerFavorite(
+      context,
+      ref,
+      favorite: !already,
+      playerName: player.name,
+      fideId: player.fideId?.toString(),
+      countryCode: player.countryCode,
+      rating: player.score,
+      title: player.title,
       gamebasePlayerId: player.gamebasePlayerId,
       memorialSourceIdentity: player.memorialSourceIdentity,
-      memorialRouteId: player.memorialRouteId);
+      memorialRouteId: player.memorialRouteId,
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -1422,83 +1432,85 @@ class _PlayerSwitcherPopover extends ConsumerWidget {
       child: SizedBox(
         width: 320,
         height: math.min(420.0, players.length * 36.0 + 16),
-        child: ListView.builder(
-          physics: const DesktopScrollPhysics(),
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          itemCount: players.length,
-          itemBuilder: (context, i) {
-            final p = players[i];
-            final active =
-                selected?.name == p.name && selected?.fideId == p.fideId;
-            return ClickCursor(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {
-                  controller.hide();
-                  // Re-open via the tab system so the active score-card tab
-                  // re-points to the new player and per-tab args stay in sync.
-                  openPlayerScoreCard(ref, p);
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  color:
-                      active
-                          ? kPrimaryColor.withValues(alpha: 0.12)
-                          : Colors.transparent,
-                  child: Row(
-                    children: [
-                      if (p.countryCode.trim().isNotEmpty)
-                        FederationFlag(
-                          federation: p.countryCode,
-                          height: 12,
-                          width: 18,
-                          borderRadius: BorderRadius.circular(2),
-                        )
-                      else
-                        const SizedBox(width: 18, height: 12),
-                      const SizedBox(width: 10),
-                      if ((p.title ?? '').isNotEmpty) ...[
+        child: DesktopScrollHost(
+          child: ListView.builder(
+            physics: const DesktopScrollPhysics(),
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            itemCount: players.length,
+            itemBuilder: (context, i) {
+              final p = players[i];
+              final active =
+                  selected?.name == p.name && selected?.fideId == p.fideId;
+              return ClickCursor(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    controller.hide();
+                    // Re-open via the tab system so the active score-card tab
+                    // re-points to the new player and per-tab args stay in sync.
+                    openPlayerScoreCard(ref, p);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    color:
+                        active
+                            ? kPrimaryColor.withValues(alpha: 0.12)
+                            : Colors.transparent,
+                    child: Row(
+                      children: [
+                        if (p.countryCode.trim().isNotEmpty)
+                          FederationFlag(
+                            federation: p.countryCode,
+                            height: 12,
+                            width: 18,
+                            borderRadius: BorderRadius.circular(2),
+                          )
+                        else
+                          const SizedBox(width: 18, height: 12),
+                        const SizedBox(width: 10),
+                        if ((p.title ?? '').isNotEmpty) ...[
+                          Text(
+                            p.title!,
+                            style: const TextStyle(
+                              color: kLightYellowColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+                        Expanded(
+                          child: Text(
+                            p.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: active ? kPrimaryColor : kWhiteColor,
+                              fontSize: 12,
+                              fontWeight:
+                                  active ? FontWeight.w700 : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
                         Text(
-                          p.title!,
+                          '${p.score}',
                           style: const TextStyle(
-                            color: kLightYellowColor,
+                            color: kWhiteColor70,
                             fontSize: 11,
-                            fontWeight: FontWeight.w800,
+                            fontFeatures: [FontFeature.tabularFigures()],
                           ),
                         ),
-                        const SizedBox(width: 6),
                       ],
-                      Expanded(
-                        child: Text(
-                          p.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: active ? kPrimaryColor : kWhiteColor,
-                            fontSize: 12,
-                            fontWeight:
-                                active ? FontWeight.w700 : FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${p.score}',
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 11,
-                          fontFeatures: [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );
@@ -1576,79 +1588,81 @@ class _LeftIdentityColumn extends StatelessWidget {
             : null;
     return SizedBox(
       width: 360,
-      child: SingleChildScrollView(
-        physics: const DesktopScrollPhysics(),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: SizedBox(
-                width: 200,
-                height: 200,
-                child: FutureBuilder<String?>(
-                  future: FidePhotoService.getPhotoUrlOrNull(
-                    player.fideId?.toString(),
+      child: DesktopScrollHost(
+        child: SingleChildScrollView(
+          physics: const DesktopScrollPhysics(),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: SizedBox(
+                  width: 200,
+                  height: 200,
+                  child: FutureBuilder<String?>(
+                    future: FidePhotoService.getPhotoUrlOrNull(
+                      player.fideId?.toString(),
+                    ),
+                    builder: (context, snap) {
+                      return PlayerInitialsAvatar(
+                        photoUrl: snap.data,
+                        initials: initials,
+                        size: 200,
+                        borderRadius: 14,
+                        title: player.title,
+                      );
+                    },
                   ),
-                  builder: (context, snap) {
-                    return PlayerInitialsAvatar(
-                      photoUrl: snap.data,
-                      initials: initials,
-                      size: 200,
-                      borderRadius: 14,
-                      title: player.title,
-                    );
-                  },
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: _RatingTile(
-                    label: 'Classical',
-                    asset: PngAsset.classicalIcon,
-                    value: ratings?.getRating('standard'),
-                    loading: ratingsAsync.isLoading,
-                    onTap: onOpenProfile,
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _RatingTile(
+                      label: 'Classical',
+                      asset: PngAsset.classicalIcon,
+                      value: ratings?.getRating('standard'),
+                      loading: ratingsAsync.isLoading,
+                      onTap: onOpenProfile,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _RatingTile(
-                    label: 'Rapid',
-                    asset: PngAsset.rapidIcon,
-                    value: ratings?.getRating('rapid'),
-                    loading: ratingsAsync.isLoading,
-                    onTap: onOpenProfile,
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _RatingTile(
+                      label: 'Rapid',
+                      asset: PngAsset.rapidIcon,
+                      value: ratings?.getRating('rapid'),
+                      loading: ratingsAsync.isLoading,
+                      onTap: onOpenProfile,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _RatingTile(
-                    label: 'Blitz',
-                    asset: PngAsset.blitzIcon,
-                    value: ratings?.getRating('blitz'),
-                    loading: ratingsAsync.isLoading,
-                    onTap: onOpenProfile,
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _RatingTile(
+                      label: 'Blitz',
+                      asset: PngAsset.blitzIcon,
+                      value: ratings?.getRating('blitz'),
+                      loading: ratingsAsync.isLoading,
+                      onTap: onOpenProfile,
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            _PerformanceCard(perf: perf, hasEventContext: hasEventContext),
-            const SizedBox(height: 14),
-            DesktopHeaderActionButton(
-              label: 'Open player profile',
-              icon: Icons.person_outline_rounded,
-              onPress: onOpenProfile,
-              tooltip: 'Open player profile',
-              fillWidth: true,
-            ),
-            const SizedBox(height: 12),
-            _ContextNote(hasEventContext: hasEventContext),
-          ],
+                ],
+              ),
+              const SizedBox(height: 14),
+              _PerformanceCard(perf: perf, hasEventContext: hasEventContext),
+              const SizedBox(height: 14),
+              DesktopHeaderActionButton(
+                label: 'Open player profile',
+                icon: Icons.person_outline_rounded,
+                onPress: onOpenProfile,
+                tooltip: 'Open player profile',
+                fillWidth: true,
+              ),
+              const SizedBox(height: 12),
+              _ContextNote(hasEventContext: hasEventContext),
+            ],
+          ),
         ),
       ),
     );
@@ -2042,10 +2056,7 @@ class _GamesPanel extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _GamesHeader(
-          gameCount: games.length,
-          isLoading: isLoading,
-        ),
+        _GamesHeader(gameCount: games.length, isLoading: isLoading),
         const Divider(height: 1, thickness: 1, color: kDividerColor),
         Expanded(child: _buildBody(context, ref)),
       ],
@@ -2206,10 +2217,7 @@ class _GamesPanel extends ConsumerWidget {
 }
 
 class _GamesHeader extends StatelessWidget {
-  const _GamesHeader({
-    required this.gameCount,
-    required this.isLoading,
-  });
+  const _GamesHeader({required this.gameCount, required this.isLoading});
 
   final int gameCount;
   final bool isLoading;

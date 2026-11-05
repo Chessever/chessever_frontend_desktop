@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/state/engine_formatted_display.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
@@ -6,8 +7,7 @@ import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 
 import 'package:chessever/desktop/services/engine/pv_san_formatter.dart';
-import 'package:flutter/foundation.dart'
-    show compute, kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -173,7 +173,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     formatSan:
         (input) =>
             widget.pvSanFormatter?.call(input) ??
-            compute(formatEnginePvSanLine, input),
+            formatEnginePvSanForDisplay(input),
   );
   int _targetGeneration = 0;
   bool _lastReportedRunning = false;
@@ -744,21 +744,23 @@ class _EngineLinesSurface extends ConsumerWidget {
         ),
       );
     }
-    return ListView.separated(
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      itemCount: pvs.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 6),
-      itemBuilder:
-          (context, index) => _PvLine(
-            rank: index + 1,
-            pv: pvs[index],
-            fen: fen,
-            onPlayUci: onPlayUci,
-            playOwner: playOwner,
-            interactive: interactive,
-            formattedSan: sanLines[index],
-          ),
+    return DesktopScrollHost(
+      child: ListView.separated(
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        itemCount: pvs.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 6),
+        itemBuilder:
+            (context, index) => _PvLine(
+              rank: index + 1,
+              pv: pvs[index],
+              fen: fen,
+              onPlayUci: onPlayUci,
+              playOwner: playOwner,
+              interactive: interactive,
+              formattedSan: sanLines[index],
+            ),
+      ),
     );
   }
 }
@@ -924,49 +926,51 @@ class _GameReportViewState extends State<GameReportView> {
       _header('Opening', ''),
     ].where((part) => part.isNotEmpty && part != '?').join(' · ');
 
-    return ListView(
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.only(right: 4),
-      children: [
-        Row(
-          children: [
-            const Icon(
-              Icons.analytics_outlined,
-              color: kPrimaryColor,
-              size: 17,
-            ),
-            const SizedBox(width: 7),
-            const Text(
-              'Game report',
-              style: TextStyle(
-                color: kWhiteColor,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+    return DesktopScrollHost(
+      child: ListView(
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.only(right: 4),
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.analytics_outlined,
+                color: kPrimaryColor,
+                size: 17,
               ),
+              const SizedBox(width: 7),
+              const Text(
+                'Game report',
+                style: TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          if (opening.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            Text(
+              opening,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: kWhiteColor70, fontSize: 11),
             ),
           ],
-        ),
-        if (opening.isNotEmpty) ...[
-          const SizedBox(height: 5),
-          Text(
-            opening,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: kWhiteColor70, fontSize: 11),
+          const SizedBox(height: 10),
+          _ReportMetrics(white: white, black: black, report: report),
+          const SizedBox(height: 12),
+          _ReportEvaluationGraph(
+            report: report,
+            activePly: widget.activePly,
+            onJumpToPly: widget.onJumpToPly,
           ),
+          const SizedBox(height: 12),
+          _classificationRecap(report, white, black),
+          const SizedBox(height: 4),
         ],
-        const SizedBox(height: 10),
-        _ReportMetrics(white: white, black: black, report: report),
-        const SizedBox(height: 12),
-        _ReportEvaluationGraph(
-          report: report,
-          activePly: widget.activePly,
-          onJumpToPly: widget.onJumpToPly,
-        ),
-        const SizedBox(height: 12),
-        _classificationRecap(report, white, black),
-        const SizedBox(height: 4),
-      ],
+      ),
     );
   }
 
@@ -1160,40 +1164,42 @@ class _ReportMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: kPrimaryColor, size: 26),
-            const SizedBox(height: 9),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+      child: DesktopScrollHost(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: kPrimaryColor, size: 26),
+              const SizedBox(height: 9),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              body,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 11,
-                height: 1.4,
+              const SizedBox(height: 5),
+              Text(
+                body,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 11,
+                  height: 1.4,
+                ),
               ),
-            ),
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 11),
-              FButton(
-                onPress: onAction,
-                prefix: const Icon(Icons.analytics_outlined, size: 14),
-                child: Text(actionLabel!),
-              ),
+              if (actionLabel != null && onAction != null) ...[
+                const SizedBox(height: 11),
+                FButton(
+                  onPress: onAction,
+                  prefix: const Icon(Icons.analytics_outlined, size: 14),
+                  child: Text(actionLabel!),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -1822,7 +1828,7 @@ class _PvLineState extends State<_PvLine> {
       final input = <String, String>{'fen': fen, 'moves': moves};
       final labels =
           await (widget.formatSan?.call(input) ??
-              compute(formatEnginePvSanLine, input));
+              formatEnginePvSanForDisplay(input));
       if (!mounted || generation != _formatGeneration) return;
       // Invalid input/failed conversion must not expose a raw-coordinate line.
       if (labels.isEmpty ||

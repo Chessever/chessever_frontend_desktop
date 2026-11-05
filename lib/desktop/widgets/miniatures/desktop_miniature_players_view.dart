@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/services/desktop_local_day_clock.dart';
 import 'package:chessever/desktop/services/miniature_game_open.dart';
@@ -52,7 +53,7 @@ class DesktopMiniaturePlayersView extends HookConsumerWidget {
     final selected = useState<ChessPlayer?>(null);
     final searchController = useTextEditingController(text: query.search);
     final debounce = useRef<Timer?>(null);
-    final scrollController = useScrollController();
+    final scrollController = useDesktopScrollController();
     useEffect(() => () => debounce.value?.cancel(), const []);
     useEffect(() {
       void onScroll() {
@@ -462,48 +463,50 @@ class _ScorecardGames extends ConsumerWidget {
           );
         }
         final groups = buildMiniatureDayGroups(games);
-        return CustomScrollView(
-          slivers: [
-            for (var i = 0; i < groups.length; i++) ...[
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(24, i == 0 ? 0 : 14, 24, 6),
-                sliver: SliverToBoxAdapter(
-                  child: DesktopDateGroupCard(
-                    label: groups[i].label,
-                    gameCount: groups[i].games.length,
+        return DesktopScrollHost(
+          child: CustomScrollView(
+            slivers: [
+              for (var i = 0; i < groups.length; i++) ...[
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(24, i == 0 ? 0 : 14, 24, 6),
+                  sliver: SliverToBoxAdapter(
+                    child: DesktopDateGroupCard(
+                      label: groups[i].label,
+                      gameCount: groups[i].games.length,
+                    ),
                   ),
                 ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                sliver: SliverList.builder(
-                  itemCount: groups[i].games.length,
-                  itemBuilder: (context, index) {
-                    final game = groups[i].games[index];
-                    return _ScorecardGameRow(
-                      game: game,
-                      playerId: playerId,
-                      playerName: routeTitle,
-                      locked: miniatureGameIsLockedAtRest(
-                        game,
-                        subscription: subscription,
-                        entitlement: entitlement,
-                      ),
-                      onOpen:
-                          () => openMiniatureGame(
-                            context,
-                            ref,
-                            game,
-                            routeTitle: routeTitle,
-                            routeGames: games,
-                          ),
-                    );
-                  },
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  sliver: SliverList.builder(
+                    itemCount: groups[i].games.length,
+                    itemBuilder: (context, index) {
+                      final game = groups[i].games[index];
+                      return _ScorecardGameRow(
+                        game: game,
+                        playerId: playerId,
+                        playerName: routeTitle,
+                        locked: miniatureGameIsLockedAtRest(
+                          game,
+                          subscription: subscription,
+                          entitlement: entitlement,
+                        ),
+                        onOpen:
+                            () => openMiniatureGame(
+                              context,
+                              ref,
+                              game,
+                              routeTitle: routeTitle,
+                              routeGames: games,
+                            ),
+                      );
+                    },
+                  ),
                 ),
-              ),
+              ],
+              const SliverToBoxAdapter(child: SizedBox(height: 24)),
             ],
-            const SliverToBoxAdapter(child: SizedBox(height: 24)),
-          ],
+          ),
         );
       },
     );
@@ -523,8 +526,7 @@ bool? miniatureScorecardPlayerWon(
   final id = playerId.trim();
   if (id.isNotEmpty && game.whitePlayer.gamebasePlayerId?.trim() == id) {
     isWhite = true;
-  } else if (id.isNotEmpty &&
-      game.blackPlayer.gamebasePlayerId?.trim() == id) {
+  } else if (id.isNotEmpty && game.blackPlayer.gamebasePlayerId?.trim() == id) {
     isWhite = false;
   } else {
     final name = playerName.trim().toLowerCase();

@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/player_standing_section_select.dart';
@@ -128,54 +129,60 @@ class DesktopTeamStandingsTable extends ConsumerWidget {
               constraints.maxWidth,
               720.0 + tiebreaks.length * 80,
             );
-            return SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: width,
-                height: constraints.maxHeight,
-                child: ListView.separated(
-                  physics: const DesktopScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-                  itemCount: teams.length + lead,
-                  separatorBuilder:
-                      (_, index) => Divider(
-                        color:
-                            index < lead ? Colors.transparent : kDividerColor,
-                        height: 1,
-                      ),
-                  itemBuilder: (context, index) {
-                    if (officialRound != null && index == 0) {
-                      return Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-                        child: Text(
-                          'Official standings · after round $officialRound',
-                          key: const Key('team-standings-official-line'),
-                          style: const TextStyle(
-                            color: kWhiteColor70,
-                            fontSize: 12,
+            return DesktopScrollHost(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(
+                  width: width,
+                  height: constraints.maxHeight,
+                  child: DesktopScrollHost(
+                    child: ListView.separated(
+                      physics: const DesktopScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+                      itemCount: teams.length + lead,
+                      separatorBuilder:
+                          (_, index) => Divider(
+                            color:
+                                index < lead
+                                    ? Colors.transparent
+                                    : kDividerColor,
+                            height: 1,
                           ),
-                        ),
-                      );
-                    }
-                    if (index == lead - 1) {
-                      return _TeamHeaderRow(tiebreaks: tiebreaks);
-                    }
-                    final team = teams[index - lead];
-                    return _TeamRow(
-                      team: team,
-                      tiebreaks: tiebreaks,
-                      onOpen:
-                          () => openTeamScoreCard(
-                            ref,
-                            TeamScoreCardTabArgs(
-                              teamName: team.teamName,
-                              selectedBroadcast: ref.read(
-                                selectedBroadcastModelProvider,
+                      itemBuilder: (context, index) {
+                        if (officialRound != null && index == 0) {
+                          return Padding(
+                            padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+                            child: Text(
+                              'Official standings · after round $officialRound',
+                              key: const Key('team-standings-official-line'),
+                              style: const TextStyle(
+                                color: kWhiteColor70,
+                                fontSize: 12,
                               ),
                             ),
-                          ),
-                    );
-                  },
+                          );
+                        }
+                        if (index == lead - 1) {
+                          return _TeamHeaderRow(tiebreaks: tiebreaks);
+                        }
+                        final team = teams[index - lead];
+                        return _TeamRow(
+                          team: team,
+                          tiebreaks: tiebreaks,
+                          onOpen:
+                              () => openTeamScoreCard(
+                                ref,
+                                TeamScoreCardTabArgs(
+                                  teamName: team.teamName,
+                                  selectedBroadcast: ref.read(
+                                    selectedBroadcastModelProvider,
+                                  ),
+                                ),
+                              ),
+                        );
+                      },
+                    ),
+                  ),
                 ),
               ),
             );
@@ -377,20 +384,22 @@ class DesktopCompactTeamStandingsView extends ConsumerWidget {
       skipLoadingOnReload: true,
       data: (teams) {
         if (teams.isEmpty) return const _CompactTeamEmpty();
-        return ListView.separated(
-          key: const PageStorageKey<String>('event-rail-team-standings'),
-          physics: const DesktopScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(8, 2, 8, 10),
-          itemCount: teams.length,
-          separatorBuilder:
-              (_, _) => const Divider(color: kDividerColor, height: 1),
-          itemBuilder: (context, index) {
-            final team = teams[index];
-            return _CompactTeamStandingRow(
-              team: team,
-              onOpen: () => _openTeamCard(ref, team),
-            );
-          },
+        return DesktopScrollHost(
+          child: ListView.separated(
+            key: const PageStorageKey<String>('event-rail-team-standings'),
+            physics: const DesktopScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 10),
+            itemCount: teams.length,
+            separatorBuilder:
+                (_, _) => const Divider(color: kDividerColor, height: 1),
+            itemBuilder: (context, index) {
+              final team = teams[index];
+              return _CompactTeamStandingRow(
+                team: team,
+                onOpen: () => _openTeamCard(ref, team),
+              );
+            },
+          ),
         );
       },
       loading:

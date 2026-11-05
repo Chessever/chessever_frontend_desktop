@@ -41,4 +41,45 @@ void main() {
 
     expect(steps, [1]);
   });
+
+  testWidgets(
+    'trackpad packets are accumulated and navigation bursts bounded',
+    (tester) async {
+      final steps = <int>[];
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: BoardWheelNavigation(
+            onStep: steps.add,
+            child: const SizedBox.expand(),
+          ),
+        ),
+      );
+      Future<void> packet(int ms, double delta) => tester.sendEventToBinding(
+        PointerScrollEvent(
+          timeStamp: Duration(milliseconds: ms),
+          position: const Offset(300, 200),
+          kind: PointerDeviceKind.mouse,
+          scrollDelta: Offset(0, delta),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await packet(i * 8, 3);
+      }
+      expect(steps, isEmpty);
+      await packet(40, 3);
+      expect(steps, [1]);
+      for (var i = 6; i < 15; i++) {
+        await packet(i * 8, 5);
+      }
+      expect(steps, [1]);
+      await packet(120, 5);
+      expect(steps, [1, 1]);
+      // A deliberate reversal is never held behind the forward throttle.
+      await packet(128, -20);
+      expect(steps, [1, 1, -1]);
+      await tester.pump(const Duration(seconds: 1));
+      expect(steps, [1, 1, -1]);
+    },
+  );
 }

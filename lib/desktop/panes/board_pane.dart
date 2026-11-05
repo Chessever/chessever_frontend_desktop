@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
@@ -1032,7 +1033,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         })
       >{},
     );
-    final notationScrollController = useScrollController();
+    final notationScrollController = useDesktopScrollController();
     final visibleNotationMoveOrderController =
         useMemoized<ValueNotifier<List<ChessMovePointer>>>(
           () =>

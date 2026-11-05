@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/utils/eco_input_formatter.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
@@ -179,101 +180,104 @@ class _PremiumGamesFilterDialogState extends State<_PremiumGamesFilterDialog> {
                 ),
                 const FDivider(),
                 Flexible(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _FilterSection(
-                          title: 'Time control',
-                          child: _OptionGrid(
-                            children: [
-                              for (final control
-                                  in GameTimeControlFilter.values)
-                                _FilterChipButton(
-                                  label:
-                                      control == GameTimeControlFilter.all
-                                          ? 'Any'
-                                          : control.displayText,
-                                  icon: _timeControlIcon(control),
-                                  selected: _timeControl == control,
-                                  onPress:
-                                      () => setState(
-                                        () => _timeControl = control,
-                                      ),
-                                ),
-                            ],
+                  child: DesktopScrollHost(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _FilterSection(
+                            title: 'Time control',
+                            child: _OptionGrid(
+                              children: [
+                                for (final control
+                                    in GameTimeControlFilter.values)
+                                  _FilterChipButton(
+                                    label:
+                                        control == GameTimeControlFilter.all
+                                            ? 'Any'
+                                            : control.displayText,
+                                    icon: _timeControlIcon(control),
+                                    selected: _timeControl == control,
+                                    onPress:
+                                        () => setState(
+                                          () => _timeControl = control,
+                                        ),
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        _FilterSection(
-                          title: 'Avg. Rating',
-                          child: _MiniatureRatingPresetGrid(
-                            selectedMinRating: _selectedMinRating,
-                            onChanged:
-                                (value) =>
-                                    setState(() => _selectedMinRating = value),
+                          const SizedBox(height: 16),
+                          _FilterSection(
+                            title: 'Avg. Rating',
+                            child: _MiniatureRatingPresetGrid(
+                              selectedMinRating: _selectedMinRating,
+                              onChanged:
+                                  (value) => setState(
+                                    () => _selectedMinRating = value,
+                                  ),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        _FilterSection(
-                          title: 'ECO / Opening',
-                          child: _premiumEcoEditor(),
-                        ),
-                        const SizedBox(height: 16),
-                        _FilterSection(
-                          title: 'Finish',
-                          child: _OptionGrid(
-                            children: [
-                              for (final finish in GameFinishFilter.values)
-                                _FilterChipButton(
-                                  label:
-                                      finish == GameFinishFilter.all
-                                          ? 'Any'
-                                          : finish.displayText,
-                                  icon: _finishIcon(finish),
-                                  selected: _finish == finish,
-                                  onPress:
-                                      () => setState(() => _finish = finish),
-                                ),
-                            ],
+                          const SizedBox(height: 16),
+                          _FilterSection(
+                            title: 'ECO / Opening',
+                            child: _premiumEcoEditor(),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        _FilterSection(
-                          title: 'Result',
-                          child: _OptionGrid(
-                            children: [
-                              for (final result in PremiumGamesResult.values)
-                                _FilterChipButton(
-                                  label:
-                                      result == PremiumGamesResult.all
-                                          ? 'Any'
-                                          : result.displayText,
-                                  icon: _premiumResultIcon(result),
-                                  selected: _result == result,
-                                  onPress:
-                                      () => setState(() => _result = result),
-                                ),
-                            ],
+                          const SizedBox(height: 16),
+                          _FilterSection(
+                            title: 'Finish',
+                            child: _OptionGrid(
+                              children: [
+                                for (final finish in GameFinishFilter.values)
+                                  _FilterChipButton(
+                                    label:
+                                        finish == GameFinishFilter.all
+                                            ? 'Any'
+                                            : finish.displayText,
+                                    icon: _finishIcon(finish),
+                                    selected: _finish == finish,
+                                    onPress:
+                                        () => setState(() => _finish = finish),
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        _FilterSection(
-                          title: 'Year range',
-                          subtitle: _yearRangeSubtitle(_yearFrom, _yearTo),
-                          child: _YearRange(
-                            yearFrom: _yearFrom,
-                            yearTo: _yearTo,
-                            onChanged:
-                                (from, to) => setState(() {
-                                  _yearFrom = from;
-                                  _yearTo = to;
-                                }),
+                          const SizedBox(height: 16),
+                          _FilterSection(
+                            title: 'Result',
+                            child: _OptionGrid(
+                              children: [
+                                for (final result in PremiumGamesResult.values)
+                                  _FilterChipButton(
+                                    label:
+                                        result == PremiumGamesResult.all
+                                            ? 'Any'
+                                            : result.displayText,
+                                    icon: _premiumResultIcon(result),
+                                    selected: _result == result,
+                                    onPress:
+                                        () => setState(() => _result = result),
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 16),
+                          _FilterSection(
+                            title: 'Year range',
+                            subtitle: _yearRangeSubtitle(_yearFrom, _yearTo),
+                            child: _YearRange(
+                              yearFrom: _yearFrom,
+                              yearTo: _yearTo,
+                              onChanged:
+                                  (from, to) => setState(() {
+                                    _yearFrom = from;
+                                    _yearTo = to;
+                                  }),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -586,231 +590,235 @@ class _MiniaturesFilterBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _FilterSection(
-            title: 'Time control',
-            child: _OptionGrid(
-              children: [
-                _FilterChipButton(
-                  label: 'Any',
-                  icon: Icons.apps_rounded,
-                  selected: draft.timeControls.isEmpty,
-                  onPress:
-                      () => onChanged(
-                        draft.copyWith(
-                          timeControls: const <MiniatureGameTimeControl>{},
-                        ),
-                      ),
-                ),
-                for (final control in MiniatureGameTimeControl.values)
+    return DesktopScrollHost(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _FilterSection(
+              title: 'Time control',
+              child: _OptionGrid(
+                children: [
                   _FilterChipButton(
-                    label: control.label,
-                    icon: _miniatureTimeControlIcon(control),
-                    selected: draft.timeControls.contains(control),
+                    label: 'Any',
+                    icon: Icons.apps_rounded,
+                    selected: draft.timeControls.isEmpty,
                     onPress:
                         () => onChanged(
                           draft.copyWith(
-                            timeControls: <MiniatureGameTimeControl>{control},
+                            timeControls: const <MiniatureGameTimeControl>{},
                           ),
                         ),
                   ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          _FilterSection(
-            title: 'Avg. Rating',
-            child: _MiniatureRatingPresetGrid(
-              selectedMinRating: _normalizeMiniatureRatingPreset(
-                draft.minRating,
-              ),
-              onChanged:
-                  (value) => onChanged(
-                    draft
-                        .copyWith(clearRating: true)
-                        .copyWith(minRating: value, maxRating: null),
-                  ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          _FilterSection(
-            title: 'ECO / Opening',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _OptionGrid(
-                  children: [
+                  for (final control in MiniatureGameTimeControl.values)
                     _FilterChipButton(
-                      label: 'Any',
-                      icon: Icons.apps_rounded,
-                      selected:
-                          draft.ecoCategories.isEmpty &&
-                          ecoController.text.trim().isEmpty &&
-                          openingController.text.trim().isEmpty &&
-                          variationController.text.trim().isEmpty,
-                      onPress: () {
-                        ecoController.clear();
-                        openingController.clear();
-                        variationController.clear();
-                        onChanged(
-                          draft.copyWith(
-                            clearEco: true,
-                            clearOpening: true,
-                            clearVariation: true,
-                            ecoCategories: const <String>{},
+                      label: control.label,
+                      icon: _miniatureTimeControlIcon(control),
+                      selected: draft.timeControls.contains(control),
+                      onPress:
+                          () => onChanged(
+                            draft.copyWith(
+                              timeControls: <MiniatureGameTimeControl>{control},
+                            ),
                           ),
-                        );
-                      },
                     ),
-                    for (final category in const ['A', 'B', 'C', 'D', 'E'])
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _FilterSection(
+              title: 'Avg. Rating',
+              child: _MiniatureRatingPresetGrid(
+                selectedMinRating: _normalizeMiniatureRatingPreset(
+                  draft.minRating,
+                ),
+                onChanged:
+                    (value) => onChanged(
+                      draft
+                          .copyWith(clearRating: true)
+                          .copyWith(minRating: value, maxRating: null),
+                    ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _FilterSection(
+              title: 'ECO / Opening',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _OptionGrid(
+                    children: [
                       _FilterChipButton(
-                        label: category,
-                        icon: Icons.tag_rounded,
-                        selected: draft.ecoCategories.contains(category),
+                        label: 'Any',
+                        icon: Icons.apps_rounded,
+                        selected:
+                            draft.ecoCategories.isEmpty &&
+                            ecoController.text.trim().isEmpty &&
+                            openingController.text.trim().isEmpty &&
+                            variationController.text.trim().isEmpty,
                         onPress: () {
                           ecoController.clear();
+                          openingController.clear();
+                          variationController.clear();
                           onChanged(
                             draft.copyWith(
                               clearEco: true,
-                              ecoCategories: <String>{category},
+                              clearOpening: true,
+                              clearVariation: true,
+                              ecoCategories: const <String>{},
                             ),
                           );
                         },
                       ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                FTextField(
-                  controller: ecoController,
-                  hint: 'ECO code, e.g. B03 or C50',
-                  textCapitalization: TextCapitalization.characters,
-                  inputFormatters: const [EcoCodeInputFormatter()],
-                  onChange: (value) {
-                    final eco = sanitizeEcoCode(value);
-                    onChanged(
-                      draft.copyWith(
-                        eco: eco,
-                        clearEco: eco.isEmpty,
-                        ecoCategories: const <String>{},
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 8),
-                FTextField(
-                  controller: openingController,
-                  hint: 'Opening name, e.g. Sicilian Defense',
-                  onChange: (value) {
-                    final opening = _normalizedText(value);
-                    onChanged(
-                      draft.copyWith(
-                        opening: opening,
-                        clearOpening: opening == null,
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 8),
-                FTextField(
-                  controller: variationController,
-                  hint: 'Variation, e.g. Najdorf',
-                  onChange: (value) {
-                    final variation = _normalizedText(value);
-                    onChanged(
-                      draft.copyWith(
-                        variation: variation,
-                        clearVariation: variation == null,
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          _FilterSection(
-            title: 'Finish',
-            subtitle: _finishSubtitle(draft.maxMoves),
-            child: _OptionGrid(
-              children: [
-                _FilterChipButton(
-                  label: 'By move 25',
-                  icon: Icons.flag_outlined,
-                  selected: draft.maxMoves == null || draft.maxMoves == 25,
-                  onPress: () => onChanged(draft.copyWith(clearMoves: true)),
-                ),
-                for (final move in const [20, 15])
-                  _FilterChipButton(
-                    label: 'By move $move',
-                    icon:
-                        move == 20
-                            ? Icons.sports_score_outlined
-                            : Icons.bolt_rounded,
-                    selected: draft.maxMoves == move,
-                    onPress:
-                        () => onChanged(
-                          draft.copyWith(minMoves: null, maxMoves: move),
+                      for (final category in const ['A', 'B', 'C', 'D', 'E'])
+                        _FilterChipButton(
+                          label: category,
+                          icon: Icons.tag_rounded,
+                          selected: draft.ecoCategories.contains(category),
+                          onPress: () {
+                            ecoController.clear();
+                            onChanged(
+                              draft.copyWith(
+                                clearEco: true,
+                                ecoCategories: <String>{category},
+                              ),
+                            );
+                          },
                         ),
+                    ],
                   ),
-              ],
+                  const SizedBox(height: 10),
+                  FTextField(
+                    controller: ecoController,
+                    hint: 'ECO code, e.g. B03 or C50',
+                    textCapitalization: TextCapitalization.characters,
+                    inputFormatters: const [EcoCodeInputFormatter()],
+                    onChange: (value) {
+                      final eco = sanitizeEcoCode(value);
+                      onChanged(
+                        draft.copyWith(
+                          eco: eco,
+                          clearEco: eco.isEmpty,
+                          ecoCategories: const <String>{},
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  FTextField(
+                    controller: openingController,
+                    hint: 'Opening name, e.g. Sicilian Defense',
+                    onChange: (value) {
+                      final opening = _normalizedText(value);
+                      onChanged(
+                        draft.copyWith(
+                          opening: opening,
+                          clearOpening: opening == null,
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  FTextField(
+                    controller: variationController,
+                    hint: 'Variation, e.g. Najdorf',
+                    onChange: (value) {
+                      final variation = _normalizedText(value);
+                      onChanged(
+                        draft.copyWith(
+                          variation: variation,
+                          clearVariation: variation == null,
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          _FilterSection(
-            title: 'Result',
-            child: _OptionGrid(
-              children: [
-                _FilterChipButton(
-                  label: 'Any',
-                  icon: Icons.apps_rounded,
-                  selected: draft.results.isEmpty,
-                  onPress:
-                      () => onChanged(
-                        draft.copyWith(results: const <MiniatureGameResult>{}),
-                      ),
-                ),
-                for (final result in MiniatureGameResult.values)
+            const SizedBox(height: 16),
+            _FilterSection(
+              title: 'Finish',
+              subtitle: _finishSubtitle(draft.maxMoves),
+              child: _OptionGrid(
+                children: [
                   _FilterChipButton(
-                    label: result.label,
-                    icon: _miniatureResultIcon(result),
-                    selected: draft.results.contains(result),
+                    label: 'By move 25',
+                    icon: Icons.flag_outlined,
+                    selected: draft.maxMoves == null || draft.maxMoves == 25,
+                    onPress: () => onChanged(draft.copyWith(clearMoves: true)),
+                  ),
+                  for (final move in const [20, 15])
+                    _FilterChipButton(
+                      label: 'By move $move',
+                      icon:
+                          move == 20
+                              ? Icons.sports_score_outlined
+                              : Icons.bolt_rounded,
+                      selected: draft.maxMoves == move,
+                      onPress:
+                          () => onChanged(
+                            draft.copyWith(minMoves: null, maxMoves: move),
+                          ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _FilterSection(
+              title: 'Result',
+              child: _OptionGrid(
+                children: [
+                  _FilterChipButton(
+                    label: 'Any',
+                    icon: Icons.apps_rounded,
+                    selected: draft.results.isEmpty,
                     onPress:
                         () => onChanged(
                           draft.copyWith(
-                            results: <MiniatureGameResult>{result},
+                            results: const <MiniatureGameResult>{},
                           ),
                         ),
                   ),
-              ],
+                  for (final result in MiniatureGameResult.values)
+                    _FilterChipButton(
+                      label: result.label,
+                      icon: _miniatureResultIcon(result),
+                      selected: draft.results.contains(result),
+                      onPress:
+                          () => onChanged(
+                            draft.copyWith(
+                              results: <MiniatureGameResult>{result},
+                            ),
+                          ),
+                    ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          _FilterSection(
-            title: 'Year range',
-            subtitle: _yearRangeSubtitle(
-              _yearFromDate(draft.dateFrom),
-              _yearFromDate(draft.dateTo),
+            const SizedBox(height: 16),
+            _FilterSection(
+              title: 'Year range',
+              subtitle: _yearRangeSubtitle(
+                _yearFromDate(draft.dateFrom),
+                _yearFromDate(draft.dateTo),
+              ),
+              child: _YearRange(
+                yearFrom: _yearFromDate(draft.dateFrom),
+                yearTo: _yearFromDate(draft.dateTo),
+                onChanged:
+                    (from, to) => onChanged(
+                      draft
+                          .copyWith(clearDates: true)
+                          .copyWith(
+                            dateFrom: from == null ? null : '$from-01-01',
+                            dateTo: to == null ? null : '$to-12-31',
+                          ),
+                    ),
+              ),
             ),
-            child: _YearRange(
-              yearFrom: _yearFromDate(draft.dateFrom),
-              yearTo: _yearFromDate(draft.dateTo),
-              onChanged:
-                  (from, to) => onChanged(
-                    draft
-                        .copyWith(clearDates: true)
-                        .copyWith(
-                          dateFrom: from == null ? null : '$from-01-01',
-                          dateTo: to == null ? null : '$to-12-31',
-                        ),
-                  ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

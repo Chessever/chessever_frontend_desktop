@@ -10,6 +10,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
@@ -88,7 +89,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
 
   // Scrolls the strip when its tabs need more room than it has: the wheel
   // moves it sideways, and the active tab is kept in view.
-  final ScrollController _tabScroll = ScrollController();
+  final ScrollController _tabScroll = DesktopScrollController();
   String? _revealedActiveId;
 
   @override
@@ -137,12 +138,15 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
     if (delta.dy.abs() <= delta.dx.abs()) return;
     final position = _tabScroll.position;
     if (position.maxScrollExtent <= 0) return;
-    _tabScroll.jumpTo(
-      (position.pixels + delta.dy).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      ),
+    final target = (position.pixels + delta.dy).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
     );
+    if (target == position.pixels) return;
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+      event.respond(allowPlatformDefault: false);
+      position.pointerScroll(delta.dy);
+    });
   }
 
   Future<void> _closeTabWithUnsavedAnalysisGuard(String tabId) async {
@@ -174,11 +178,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
         // Drag-drop intent is "open this game and look at it now" — pass
         // focus: true so the new tab foregrounds itself.
         // Admitted before the spawn: a gated payload opens nothing.
-        details.data.spawnAdmitted(
-          ref,
-          focus: true,
-          surface: 'tab_strip_drop',
-        );
+        details.data.spawnAdmitted(ref, focus: true, surface: 'tab_strip_drop');
       },
       builder: (context, candidate, rejected) {
         final dragging = candidate.isNotEmpty;
@@ -266,7 +266,10 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                                 scrollController: _tabScroll,
                                 scrollDirection: Axis.horizontal,
                                 buildDefaultDragHandles: false,
-                                padding: const EdgeInsets.only(left: 6, right: 6),
+                                padding: const EdgeInsets.only(
+                                  left: 6,
+                                  right: 6,
+                                ),
                                 proxyDecorator: (child, index, animation) {
                                   // While being dragged, the proxy gets a slight scale +
                                   // raised shadow so the user feels the lift.

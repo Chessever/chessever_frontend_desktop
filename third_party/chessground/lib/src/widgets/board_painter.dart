@@ -2,6 +2,7 @@ import 'dart:math' show pi;
 import 'dart:ui' as ui;
 
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/widgets.dart';
 
 import '../board_settings.dart';
@@ -192,10 +193,11 @@ class HighlightsPainter extends CustomPainter {
 
   void _drawDests(Canvas canvas, Iterable<Square> dests, Color color) {
     final fillPaint = Paint()..color = color;
-    final strokePaint = Paint()
-      ..color = color
-      ..strokeWidth = squareSize / 5
-      ..style = PaintingStyle.stroke;
+    final strokePaint =
+        Paint()
+          ..color = color
+          ..strokeWidth = squareSize / 5
+          ..style = PaintingStyle.stroke;
     for (final dest in dests) {
       final rect = _squareRect(dest, squareSize, orientation);
       final center = rect.center;
@@ -212,8 +214,8 @@ class HighlightsPainter extends CustomPainter {
 
   void _drawCheck(Canvas canvas, Square square) {
     final rect = _squareRect(square, squareSize, orientation);
-    final layerPaint = Paint()
-      ..imageFilter = ui.ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0);
+    final layerPaint =
+        Paint()..imageFilter = ui.ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0);
     canvas.saveLayer(rect, layerPaint);
     const gradient = RadialGradient(
       radius: 0.6,
@@ -397,7 +399,7 @@ class FadingPiecesPainter extends CustomPainter {
     required this.gameNotifier,
     required Animation<double> animation,
   }) : _animation = animation,
-       super(repaint: animation);
+       super(repaint: Listenable.merge([animation, fadingPiecesNotifier]));
 
   /// The pieces currently fading out, keyed by square.
   final ValueNotifier<FadingPieces> fadingPiecesNotifier;
@@ -432,9 +434,10 @@ class FadingPiecesPainter extends CustomPainter {
 
     final sideToMove = gameNotifier.value?.sideToMove;
     final alpha = (255 * (1.0 - _animation.value)).round().clamp(0, 255);
-    final paint = Paint()
-      ..filterQuality = FilterQuality.medium
-      ..color = Color.fromARGB(alpha, 255, 255, 255);
+    final paint =
+        Paint()
+          ..filterQuality = FilterQuality.medium
+          ..color = Color.fromARGB(alpha, 255, 255, 255);
 
     for (final entry in fadingPieces.entries) {
       final square = entry.key;
@@ -496,8 +499,19 @@ class TranslatingPiecesPainter extends CustomPainter {
     required this.pieceOrientationBehavior,
     required this.gameNotifier,
     required Animation<double> animation,
+    this.translationOrigins,
   }) : _animation = animation,
-       super(repaint: animation);
+       super(
+         repaint: Listenable.merge([
+           animation,
+           translatingPiecesNotifier,
+           translationOrigins,
+         ]),
+       );
+
+  /// Actual starting positions, in file/rank units, when a move interrupts one
+  /// already in flight. Absent entries start at their origin square as usual.
+  final ValueListenable<Map<Square, Offset>>? translationOrigins;
 
   /// The pieces currently animating, keyed by destination square.
   final ValueNotifier<TranslatingPieces> translatingPiecesNotifier;
@@ -545,10 +559,11 @@ class TranslatingPiecesPainter extends CustomPainter {
       if (image == null) continue;
 
       final orientationFactor = orientation == Side.white ? 1 : -1;
-      final dx =
-          -(toSquare.file - fromSquare.file).toDouble() * orientationFactor;
-      final dy =
-          (toSquare.rank - fromSquare.rank).toDouble() * orientationFactor;
+      final origin =
+          translationOrigins?.value[toSquare] ??
+          Offset(fromSquare.file.toDouble(), fromSquare.rank.toDouble());
+      final dx = (origin.dx - toSquare.file) * orientationFactor;
+      final dy = (toSquare.rank - origin.dy) * orientationFactor;
 
       final toRect = _squareRect(toSquare, squareSize, orientation);
       final dst = Rect.fromLTWH(
@@ -685,9 +700,10 @@ class DragSquareTargetPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final pos = positionNotifier.value;
     if (pos == null || targetKind == DragTargetKind.none) return;
-    final paint = Paint()
-      ..color = const Color(0x33000000)
-      ..style = PaintingStyle.fill;
+    final paint =
+        Paint()
+          ..color = const Color(0x33000000)
+          ..style = PaintingStyle.fill;
     if (targetKind == DragTargetKind.circle) {
       // pos is already offset by -squareSize/2 so the circle is centered on the square
       canvas.drawCircle(

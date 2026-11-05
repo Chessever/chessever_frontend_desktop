@@ -8,6 +8,7 @@ import 'package:forui/forui.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -163,129 +164,132 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'Tell us what happened',
-            style: TextStyle(
-              color: kWhiteColor,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            isMacAppStore
-                ? 'Reports include app version and platform.'
-                : kIsWeb
-                ? 'Reports include app version and browser. Screenshots are '
-                    'optional and capture only the ChessEver page, not your '
-                    'browser or other tabs.'
-                : 'Reports include app version and platform. Screenshots are optional and capture only the ChessEver desktop window content, not your OS toolbar or other apps.',
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 13,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _messageController,
-            autofocus: true,
-            minLines: 5,
-            maxLines: 8,
-            maxLength: 1200,
-            style: const TextStyle(color: kWhiteColor, fontSize: 14),
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              hintText:
-                  'Describe the issue, what you expected, and what you were doing…',
-              hintStyle: const TextStyle(color: kLightGreyColor),
-              filled: true,
-              fillColor: kBlack3Color,
-              counterStyle: const TextStyle(color: kLightGreyColor),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: kDividerColor),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: kDividerColor),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: kPrimaryColor),
+    return DesktopScrollHost(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Tell us what happened',
+              style: TextStyle(
+                color: kWhiteColor,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
               ),
             ),
-          ),
-          if (!isMacAppStore) ...[
-            const SizedBox(height: 10),
-            _ScreenshotOption(
-              selected: _includeScreenshot,
-              hasPreview: _previewBytes != null,
-              onChanged: (value) {
-                setState(() {
-                  _includeScreenshot = value;
-                  if (!value) _previewBytes = null;
-                });
-              },
-              onPreview: _includeScreenshot ? _previewScreenshot : null,
-            ),
-          ],
-          if (_previewBytes != null) ...[
-            const SizedBox(height: 12),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Container(
-                constraints: const BoxConstraints(maxHeight: 220),
-                decoration: BoxDecoration(
-                  border: Border.all(color: kDividerColor),
-                  color: kBlack3Color,
-                ),
-                child: Image.memory(
-                  _previewBytes!,
-                  fit: BoxFit.contain,
-                  width: double.infinity,
-                  cacheWidth:
-                      (MediaQuery.sizeOf(context).width *
-                              MediaQuery.devicePixelRatioOf(context))
-                          .round()
-                          .clamp(240, 1200)
-                          .toInt(),
-                  cacheHeight:
-                      (220 * MediaQuery.devicePixelRatioOf(context)).round(),
-                ),
-              ),
-            ),
-          ],
-          if (_errorMessage != null) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 6),
             Text(
-              _errorMessage!,
-              style: const TextStyle(color: kRedColor, fontSize: 13),
-            ),
-          ],
-          const SizedBox(height: 18),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              DesktopDialogButton(
-                label: 'Cancel',
-                onPress: _submitting ? null : () => Navigator.of(context).pop(),
+              isMacAppStore
+                  ? 'Reports include app version and platform.'
+                  : kIsWeb
+                  ? 'Reports include app version and browser. Screenshots are '
+                      'optional and capture only the ChessEver page, not your '
+                      'browser or other tabs.'
+                  : 'Reports include app version and platform. Screenshots are optional and capture only the ChessEver desktop window content, not your OS toolbar or other apps.',
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 13,
+                height: 1.35,
               ),
-              const SizedBox(width: 10),
-              DesktopDialogButton(
-                label: _submitting ? 'Sending…' : 'Send report',
-                tone: DesktopDialogButtonTone.primary,
-                onPress: _canSubmit && !_submitting ? _submit : null,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _messageController,
+              autofocus: true,
+              minLines: 5,
+              maxLines: 8,
+              maxLength: 1200,
+              style: const TextStyle(color: kWhiteColor, fontSize: 14),
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                hintText:
+                    'Describe the issue, what you expected, and what you were doing…',
+                hintStyle: const TextStyle(color: kLightGreyColor),
+                filled: true,
+                fillColor: kBlack3Color,
+                counterStyle: const TextStyle(color: kLightGreyColor),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: kDividerColor),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: kDividerColor),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: kPrimaryColor),
+                ),
+              ),
+            ),
+            if (!isMacAppStore) ...[
+              const SizedBox(height: 10),
+              _ScreenshotOption(
+                selected: _includeScreenshot,
+                hasPreview: _previewBytes != null,
+                onChanged: (value) {
+                  setState(() {
+                    _includeScreenshot = value;
+                    if (!value) _previewBytes = null;
+                  });
+                },
+                onPreview: _includeScreenshot ? _previewScreenshot : null,
               ),
             ],
-          ),
-        ],
+            if (_previewBytes != null) ...[
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: kDividerColor),
+                    color: kBlack3Color,
+                  ),
+                  child: Image.memory(
+                    _previewBytes!,
+                    fit: BoxFit.contain,
+                    width: double.infinity,
+                    cacheWidth:
+                        (MediaQuery.sizeOf(context).width *
+                                MediaQuery.devicePixelRatioOf(context))
+                            .round()
+                            .clamp(240, 1200)
+                            .toInt(),
+                    cacheHeight:
+                        (220 * MediaQuery.devicePixelRatioOf(context)).round(),
+                  ),
+                ),
+              ),
+            ],
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _errorMessage!,
+                style: const TextStyle(color: kRedColor, fontSize: 13),
+              ),
+            ],
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                DesktopDialogButton(
+                  label: 'Cancel',
+                  onPress:
+                      _submitting ? null : () => Navigator.of(context).pop(),
+                ),
+                const SizedBox(width: 10),
+                DesktopDialogButton(
+                  label: _submitting ? 'Sending…' : 'Send report',
+                  tone: DesktopDialogButtonTone.primary,
+                  onPress: _canSubmit && !_submitting ? _submit : null,
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

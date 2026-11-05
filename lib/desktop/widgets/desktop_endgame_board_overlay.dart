@@ -1,9 +1,7 @@
 import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
-import 'package:motor/motor.dart';
 
-import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
@@ -30,9 +28,9 @@ const double _kFallenKingAngle = -0.785398;
 /// Mechanic (mirrors mobile `chess_board_from_fen_new.dart`): chessground draws
 /// pieces internally with no per-piece rotation hook, so the loser king is
 /// *stripped from the FEN* and re-drawn as a rotated overlay sprite on top.
-/// Motion uses [DesktopMotion.arrival] — the shell's "king tilt" token — rather
-/// than mobile's raw `elasticOut`, keeping the curve consistent with the rest
-/// of the desktop chrome while the angle and colours stay pixel-true to mobile.
+/// Preview endings are visible immediately. Scrolling a finished game into
+/// view must not restart a decorative spring or a delayed badge animation;
+/// interactive boards keep their move and result animations separately.
 class DesktopEndgameBoard extends StatelessWidget {
   const DesktopEndgameBoard({
     super.key,
@@ -175,13 +173,11 @@ class DesktopEndgameBoard extends StatelessWidget {
               square: whiteKingSquare,
               squareSize: squareSize,
               orientation: orientation,
-              delayMs: 0,
             ),
             _PeaceIcon(
               square: blackKingSquare,
               squareSize: squareSize,
               orientation: orientation,
-              delayMs: 100,
             ),
           ],
         ),
@@ -219,7 +215,7 @@ class _CellWash extends StatelessWidget {
 }
 
 /// The loser's king, re-drawn over its (now empty) square and leaned to
-/// [_kFallenKingAngle] with the bouncy [DesktopMotion.arrival] spring on mount.
+/// [_kFallenKingAngle], already settled when the preview enters the viewport.
 class _FallenKing extends StatelessWidget {
   const _FallenKing({
     required this.left,
@@ -242,17 +238,9 @@ class _FallenKing extends StatelessWidget {
       height: squareSize,
       child: IgnorePointer(
         child: RepaintBoundary(
-          child: SingleMotionBuilder(
-            motion: DesktopMotion.arrival,
-            from: 0,
-            value: _kFallenKingAngle,
-            builder: (context, value, child) {
-              return Transform.rotate(
-                angle: value,
-                alignment: Alignment.center,
-                child: child,
-              );
-            },
+          child: Transform.rotate(
+            angle: _kFallenKingAngle,
+            alignment: Alignment.center,
             child: Center(
               child: Image(
                 image: ResizeImage.resizeIfNeeded(
@@ -272,86 +260,49 @@ class _FallenKing extends StatelessWidget {
   }
 }
 
-/// Dove perched on a king's square for draws. Pops in (scale 0→1) on mount,
-/// optionally after [delayMs] so the two doves land in sequence.
-class _PeaceIcon extends StatefulWidget {
+/// A settled result badge, visible from the preview's first frame.
+class _PeaceIcon extends StatelessWidget {
   const _PeaceIcon({
     required this.square,
     required this.squareSize,
     required this.orientation,
-    required this.delayMs,
   });
 
   final Square square;
   final double squareSize;
   final Side orientation;
-  final int delayMs;
-
-  @override
-  State<_PeaceIcon> createState() => _PeaceIconState();
-}
-
-class _PeaceIconState extends State<_PeaceIcon> {
-  double _target = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    Future.delayed(Duration(milliseconds: widget.delayMs), () {
-      if (mounted) setState(() => _target = 1);
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
-    final off = _orientedSquareOffset(
-      widget.square,
-      widget.squareSize,
-      widget.orientation,
-    );
-    final containerSize = widget.squareSize * 0.28;
-
+    final off = _orientedSquareOffset(square, squareSize, orientation);
+    final containerSize = squareSize * 0.28;
     return Positioned(
-      left: off.left + widget.squareSize - containerSize - 1,
+      left: off.left + squareSize - containerSize - 1,
       top: off.top + 1,
       child: IgnorePointer(
-        child: RepaintBoundary(
-          child: SingleMotionBuilder(
-            motion: DesktopMotion.arrival,
-            from: 0,
-            value: _target,
-            builder: (context, value, child) {
-              return Transform.scale(
-                scale: value.clamp(0.0, 1.0),
-                alignment: Alignment.topRight,
-                child: child,
-              );
-            },
-            child: Container(
-              width: containerSize,
-              height: containerSize,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.2),
-                    blurRadius: 2,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
+        child: Container(
+          width: containerSize,
+          height: containerSize,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.2),
+                blurRadius: 2,
+                offset: const Offset(0, 1),
               ),
-              child: Center(
-                child: ColorFiltered(
-                  colorFilter: const ColorFilter.mode(
-                    Colors.black,
-                    BlendMode.srcIn,
-                  ),
-                  child: Text(
-                    '🕊️',
-                    style: TextStyle(fontSize: containerSize * 0.6),
-                  ),
-                ),
+            ],
+          ),
+          child: Center(
+            child: ColorFiltered(
+              colorFilter: const ColorFilter.mode(
+                Colors.black,
+                BlendMode.srcIn,
+              ),
+              child: Text(
+                '🕊️',
+                style: TextStyle(fontSize: containerSize * 0.6),
               ),
             ),
           ),

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -215,83 +216,86 @@ class _BotvinnikReportDialogState extends ConsumerState<BotvinnikReportDialog> {
                 ),
               ),
           builder:
-              (context, _) => SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Semantics(
-                      header: true,
-                      child: const Text(
-                        'Report unsafe answer',
-                        style: TextStyle(
-                          color: kWhiteColor,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
+              (context, _) => DesktopScrollHost(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Semantics(
+                        header: true,
+                        child: const Text(
+                          'Report unsafe answer',
+                          style: TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    Semantics(
-                      liveRegion: true,
-                      child: Text(
-                        accountChanged
-                            ? 'Your account changed. Close this dialog and open the answer again.'
-                            : _sent
-                            ? 'Report sent to ChessEver for safety review.'
-                            : 'Share this answer with ChessEver for safety review',
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          height: 1.5,
-                        ),
-                      ),
-                    ),
-                    if (_error != null && !accountChanged) ...[
                       const SizedBox(height: 12),
                       Semantics(
                         liveRegion: true,
                         child: Text(
-                          _error!,
+                          accountChanged
+                              ? 'Your account changed. Close this dialog and open the answer again.'
+                              : _sent
+                              ? 'Report sent to ChessEver for safety review.'
+                              : 'Share this answer with ChessEver for safety review',
                           style: const TextStyle(
-                            color: kWhiteColor,
+                            color: kWhiteColor70,
                             height: 1.5,
                           ),
                         ),
                       ),
-                    ],
-                    const SizedBox(height: 20),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          DesktopDialogButton(
-                            label: _sent || accountChanged ? 'Close' : 'Cancel',
-                            tone: DesktopDialogButtonTone.ghost,
-                            onPress:
-                                canClose
-                                    ? () => Navigator.of(context).pop(_sent)
-                                    : null,
-                          ),
-                          if (!_sent && !accountChanged)
-                            DesktopDialogButton(
-                              key: const ValueKey('botvinnik-report-confirm'),
-                              label: submitLabel,
-                              fillWidth:
-                                  MediaQuery.textScalerOf(context).scale(13) >
-                                  18,
-                              onPress: _busy || _dailyLimit ? null : _report,
-                              child: Text(
-                                submitLabel,
-                                textAlign: TextAlign.center,
-                              ),
+                      if (_error != null && !accountChanged) ...[
+                        const SizedBox(height: 12),
+                        Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            _error!,
+                            style: const TextStyle(
+                              color: kWhiteColor,
+                              height: 1.5,
                             ),
-                        ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 20),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            DesktopDialogButton(
+                              label:
+                                  _sent || accountChanged ? 'Close' : 'Cancel',
+                              tone: DesktopDialogButtonTone.ghost,
+                              onPress:
+                                  canClose
+                                      ? () => Navigator.of(context).pop(_sent)
+                                      : null,
+                            ),
+                            if (!_sent && !accountChanged)
+                              DesktopDialogButton(
+                                key: const ValueKey('botvinnik-report-confirm'),
+                                label: submitLabel,
+                                fillWidth:
+                                    MediaQuery.textScalerOf(context).scale(13) >
+                                    18,
+                                onPress: _busy || _dailyLimit ? null : _report,
+                                child: Text(
+                                  submitLabel,
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
         ),

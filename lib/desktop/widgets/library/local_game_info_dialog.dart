@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/event_info_popover.dart';
@@ -18,7 +19,9 @@ Future<void> showLocalGameInfoDialog(
   return showDesktopDialog<void>(
     context,
     child: Center(
-      child: SingleChildScrollView(child: EventInfoBody(headers: headers)),
+      child: DesktopScrollHost(
+        child: SingleChildScrollView(child: EventInfoBody(headers: headers)),
+      ),
     ),
   );
 }

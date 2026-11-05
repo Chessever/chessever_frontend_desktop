@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
     show tournamentDetailAboutScrollByTabIdProvider;
 import 'package:chessever/desktop/services/collections_reader.dart';
@@ -259,7 +260,7 @@ class _AboutContentState extends ConsumerState<_AboutContent> {
     final initial = ref.read(
       tournamentDetailAboutScrollByTabIdProvider(widget.tabId),
     );
-    _controller = ScrollController(initialScrollOffset: initial);
+    _controller = DesktopScrollController(initialScrollOffset: initial);
     _controller.addListener(_persistOffset);
   }
 

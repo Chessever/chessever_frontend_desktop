@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/providers/auto_pin_preferences_provider.dart';
@@ -94,36 +95,38 @@ class _SettingsShell extends StatelessWidget {
         ),
         Container(width: 1, color: kDividerColor),
         Expanded(
-          child: SingleChildScrollView(
-            physics: const DesktopScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(28, 24, 32, 32),
-            child: Align(
-              alignment: Alignment.topLeft,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1180),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final twoColumns = constraints.maxWidth >= 980;
-                    if (!twoColumns) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
+          child: DesktopScrollHost(
+            child: SingleChildScrollView(
+              physics: const DesktopScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(28, 24, 32, 32),
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1180),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final twoColumns = constraints.maxWidth >= 980;
+                      if (!twoColumns) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _engineColumn(),
+                            const SizedBox(height: 18),
+                            _appearanceColumn(),
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _engineColumn(),
-                          const SizedBox(height: 18),
-                          _appearanceColumn(),
+                          Expanded(flex: 5, child: _engineColumn()),
+                          const SizedBox(width: 20),
+                          Expanded(flex: 4, child: _appearanceColumn()),
                         ],
                       );
-                    }
-
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(flex: 5, child: _engineColumn()),
-                        const SizedBox(width: 20),
-                        Expanded(flex: 4, child: _appearanceColumn()),
-                      ],
-                    );
-                  },
+                    },
+                  ),
                 ),
               ),
             ),
@@ -216,40 +219,42 @@ class _SettingsSidebar extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: SingleChildScrollView(
-              physics: const DesktopScrollPhysics(),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const _Header(),
-                  const SizedBox(height: 24),
-                  _SidebarItem(
-                    icon: Icons.memory_rounded,
-                    title: 'Engine',
-                    value:
-                        engine.showEngineAnalysis
-                            ? '${engine.principalVariationLabel()} lines · ${engine.maxArrowsLabel()} arrows'
-                            : 'Off',
-                  ),
-                  const SizedBox(height: 8),
-                  _SidebarItem(
-                    icon: Icons.dashboard_customize_outlined,
-                    title: 'Board',
-                    value: theme.name,
-                  ),
-                  const SizedBox(height: 8),
-                  _SidebarItem(
-                    icon: Icons.style_outlined,
-                    title: 'Pieces',
-                    value: pieces.label,
-                  ),
-                  const SizedBox(height: 8),
-                  _SidebarItem(
-                    icon: Icons.push_pin_outlined,
-                    title: 'Auto pin',
-                    value: '$autoPinCount of 2 rules',
-                  ),
-                ],
+            child: DesktopScrollHost(
+              child: SingleChildScrollView(
+                physics: const DesktopScrollPhysics(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _Header(),
+                    const SizedBox(height: 24),
+                    _SidebarItem(
+                      icon: Icons.memory_rounded,
+                      title: 'Engine',
+                      value:
+                          engine.showEngineAnalysis
+                              ? '${engine.principalVariationLabel()} lines · ${engine.maxArrowsLabel()} arrows'
+                              : 'Off',
+                    ),
+                    const SizedBox(height: 8),
+                    _SidebarItem(
+                      icon: Icons.dashboard_customize_outlined,
+                      title: 'Board',
+                      value: theme.name,
+                    ),
+                    const SizedBox(height: 8),
+                    _SidebarItem(
+                      icon: Icons.style_outlined,
+                      title: 'Pieces',
+                      value: pieces.label,
+                    ),
+                    const SizedBox(height: 8),
+                    _SidebarItem(
+                      icon: Icons.push_pin_outlined,
+                      title: 'Auto pin',
+                      value: '$autoPinCount of 2 rules',
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -669,24 +674,26 @@ class _BoardThemeCard extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final cols = _columnsFor(constraints.maxWidth, target: 120);
-          return GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: cols,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 0.95,
+          return DesktopScrollHost(
+            child: GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: cols,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 0.95,
+              ),
+              itemCount: kBoardThemes.length,
+              itemBuilder: (context, index) {
+                final theme = kBoardThemes[index];
+                return _BoardThemeTile(
+                  theme: theme,
+                  isSelected: currentIndex == index,
+                  onTap: () => notifier.setBoardThemeIndex(index),
+                );
+              },
             ),
-            itemCount: kBoardThemes.length,
-            itemBuilder: (context, index) {
-              final theme = kBoardThemes[index];
-              return _BoardThemeTile(
-                theme: theme,
-                isSelected: currentIndex == index,
-                onTap: () => notifier.setBoardThemeIndex(index),
-              );
-            },
           );
         },
       ),
@@ -824,26 +831,28 @@ class _PieceSetCard extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final cols = _columnsFor(constraints.maxWidth, target: 130);
-          return GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: cols,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 0.9,
+          return DesktopScrollHost(
+            child: GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: cols,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 0.9,
+              ),
+              itemCount: kPieceSets.length,
+              itemBuilder: (context, index) {
+                final pieceSet = kPieceSets[index];
+                return _PieceSetTile(
+                  pieceSet: pieceSet,
+                  isSelected: currentIndex == index,
+                  lightSquare: boardScheme.lightSquare,
+                  darkSquare: boardScheme.darkSquare,
+                  onTap: () => notifier.setPieceSetIndex(index),
+                );
+              },
             ),
-            itemCount: kPieceSets.length,
-            itemBuilder: (context, index) {
-              final pieceSet = kPieceSets[index];
-              return _PieceSetTile(
-                pieceSet: pieceSet,
-                isSelected: currentIndex == index,
-                lightSquare: boardScheme.lightSquare,
-                darkSquare: boardScheme.darkSquare,
-                onTap: () => notifier.setPieceSetIndex(index),
-              );
-            },
           );
         },
       ),

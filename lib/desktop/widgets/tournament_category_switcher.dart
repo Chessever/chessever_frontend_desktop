@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
@@ -189,7 +190,7 @@ class _CategoryMenu extends StatefulWidget {
 class _CategoryMenuState extends State<_CategoryMenu> {
   static const double _maxMenuHeight = 560;
 
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = DesktopScrollController();
   GlobalKey _selectedRowKey = GlobalKey();
   String? _revealedSelectedId;
 

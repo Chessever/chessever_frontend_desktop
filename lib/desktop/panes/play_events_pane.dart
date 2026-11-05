@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/play/play_tournament_history_repository.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
@@ -39,11 +40,13 @@ class _EventsBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (events.isEmpty) return const _EmptyEvents();
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(40, 34, 40, 40),
-      itemCount: events.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (context, index) => _EventCard(event: events[index]),
+    return DesktopScrollHost(
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(40, 34, 40, 40),
+        itemCount: events.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) => _EventCard(event: events[index]),
+      ),
     );
   }
 }

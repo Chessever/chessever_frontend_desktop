@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/screens/gamebase/models/gamebase_game.dart'
     show TimeControl;
 import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
@@ -87,82 +88,86 @@ class ExplorerFilterBar extends ConsumerWidget {
         color: kBlack2Color,
         border: Border(top: BorderSide(color: kDividerColor)),
       ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            _GroupLabel(compact ? 'Lv' : 'Level'),
-            for (final title in GamebasePlayerTitle.values) ...[
+      child: DesktopScrollHost(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _GroupLabel(compact ? 'Lv' : 'Level'),
+              for (final title in GamebasePlayerTitle.values) ...[
+                _FilterChip(
+                  label:
+                      compact
+                          ? title.label
+                          : '${title.label} ${title.subtitle}',
+                  active: selectedTitle == title,
+                  onTap: () => notifier.toggleTitle(title),
+                ),
+                const SizedBox(width: 6),
+              ],
+              const _RailDivider(),
+              _GroupLabel(compact ? 'TC' : 'Time'),
+              for (final tc in _timeControls.where(
+                (tc) => notifier.availableTimeControls.contains(tc.value),
+              )) ...[
+                _FilterChip(
+                  icon: tc.icon,
+                  label: compact ? _shortTimeControlLabel(tc.value) : tc.label,
+                  active: scopedFilters.timeControls.contains(tc.value),
+                  onTap: () => notifier.toggleTimeControl(tc.value),
+                ),
+                const SizedBox(width: 6),
+              ],
+              const _RailDivider(),
+              _GroupLabel(compact ? 'Res' : 'Result'),
+              for (final r in GamebaseGameResult.values) ...[
+                _FilterChip(
+                  label: r.displayText,
+                  active: scopedFilters.gameResult == r,
+                  onTap: () => notifier.toggleGameResult(r),
+                ),
+                const SizedBox(width: 6),
+              ],
+              const _RailDivider(),
+              _GroupLabel(compact ? 'Fmt' : 'Format'),
               _FilterChip(
-                label:
-                    compact ? title.label : '${title.label} ${title.subtitle}',
-                active: selectedTitle == title,
-                onTap: () => notifier.toggleTitle(title),
+                icon: Icons.public_off_rounded,
+                label: 'OTB',
+                active: scopedFilters.isOnline == false,
+                onTap: () => notifier.toggleFormat(false),
+              ),
+              const SizedBox(width: 6),
+              _FilterChip(
+                icon: Icons.public_rounded,
+                label: 'Online',
+                active: scopedFilters.isOnline == true,
+                onTap: () => notifier.toggleFormat(true),
+              ),
+              const _RailDivider(),
+              _GroupLabel(compact ? 'Side' : 'Color'),
+              _FilterChip(
+                icon: Icons.circle,
+                label: 'White',
+                active: scopedFilters.playerColor == GamebasePlayerColor.white,
+                onTap:
+                    () => notifier.togglePlayerColor(GamebasePlayerColor.white),
+              ),
+              const SizedBox(width: 6),
+              _FilterChip(
+                icon: Icons.circle_outlined,
+                label: 'Black',
+                active: scopedFilters.playerColor == GamebasePlayerColor.black,
+                onTap:
+                    () => notifier.togglePlayerColor(GamebasePlayerColor.black),
+              ),
+              const _RailDivider(),
+              ExplorerFiltersPopoverButton(
+                compact: true,
+                scopedPlayer: scopedPlayer,
               ),
               const SizedBox(width: 6),
             ],
-            const _RailDivider(),
-            _GroupLabel(compact ? 'TC' : 'Time'),
-            for (final tc in _timeControls.where(
-              (tc) => notifier.availableTimeControls.contains(tc.value),
-            )) ...[
-              _FilterChip(
-                icon: tc.icon,
-                label: compact ? _shortTimeControlLabel(tc.value) : tc.label,
-                active: scopedFilters.timeControls.contains(tc.value),
-                onTap: () => notifier.toggleTimeControl(tc.value),
-              ),
-              const SizedBox(width: 6),
-            ],
-            const _RailDivider(),
-            _GroupLabel(compact ? 'Res' : 'Result'),
-            for (final r in GamebaseGameResult.values) ...[
-              _FilterChip(
-                label: r.displayText,
-                active: scopedFilters.gameResult == r,
-                onTap: () => notifier.toggleGameResult(r),
-              ),
-              const SizedBox(width: 6),
-            ],
-            const _RailDivider(),
-            _GroupLabel(compact ? 'Fmt' : 'Format'),
-            _FilterChip(
-              icon: Icons.public_off_rounded,
-              label: 'OTB',
-              active: scopedFilters.isOnline == false,
-              onTap: () => notifier.toggleFormat(false),
-            ),
-            const SizedBox(width: 6),
-            _FilterChip(
-              icon: Icons.public_rounded,
-              label: 'Online',
-              active: scopedFilters.isOnline == true,
-              onTap: () => notifier.toggleFormat(true),
-            ),
-            const _RailDivider(),
-            _GroupLabel(compact ? 'Side' : 'Color'),
-            _FilterChip(
-              icon: Icons.circle,
-              label: 'White',
-              active: scopedFilters.playerColor == GamebasePlayerColor.white,
-              onTap:
-                  () => notifier.togglePlayerColor(GamebasePlayerColor.white),
-            ),
-            const SizedBox(width: 6),
-            _FilterChip(
-              icon: Icons.circle_outlined,
-              label: 'Black',
-              active: scopedFilters.playerColor == GamebasePlayerColor.black,
-              onTap:
-                  () => notifier.togglePlayerColor(GamebasePlayerColor.black),
-            ),
-            const _RailDivider(),
-            ExplorerFiltersPopoverButton(
-              compact: true,
-              scopedPlayer: scopedPlayer,
-            ),
-            const SizedBox(width: 6),
-          ],
+          ),
         ),
       ),
     );

@@ -1,4 +1,5 @@
 import 'package:chessground/chessground.dart' as cg;
+import 'package:chessground/src/widgets/board_painter.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -47,7 +48,8 @@ void main() {
 
     await drag.moveBy(const Offset(0, -4));
     await tester.pump();
-    expect(find.byKey(const ValueKey('e2-selected')), findsOneWidget);
+    expect(_highlights(tester).interactionNotifier.selected, Square.e2);
+    expect(_dragPainters(tester), hasLength(1));
 
     await drag.updateWithCustomEvent(
       PointerMoveEvent(
@@ -64,10 +66,28 @@ void main() {
     await tester.pump();
 
     expect(moves, isEmpty);
-    expect(find.byKey(const ValueKey('e2-whitepawn')), findsOneWidget);
-    expect(find.byKey(const ValueKey('e2-selected')), findsNothing);
+    final board = tester.widget<cg.Chessboard>(find.byType(cg.Chessboard));
+    expect(
+      board.controller.pieces[Square.e2],
+      const Piece(color: Side.white, role: Role.pawn),
+    );
+    expect(_highlights(tester).interactionNotifier.selected, isNull);
+    expect(_dragPainters(tester), isEmpty);
   });
 }
+
+HighlightsPainter _highlights(WidgetTester tester) =>
+    tester
+        .widgetList<CustomPaint>(find.byType(CustomPaint))
+        .map((widget) => widget.painter)
+        .whereType<HighlightsPainter>()
+        .single;
+
+Iterable<DragPiecePainter> _dragPainters(WidgetTester tester) =>
+    tester
+        .widgetList<CustomPaint>(find.byType(CustomPaint))
+        .map((widget) => widget.painter)
+        .whereType<DragPiecePainter>();
 
 Offset _squareOffset(WidgetTester tester, Square square) {
   final rect = tester.getRect(find.byKey(const ValueKey('board-container')));

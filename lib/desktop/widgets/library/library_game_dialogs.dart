@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/event_info_popover.dart';
@@ -119,7 +120,9 @@ Future<void> showSavedAnalysisGameInfoDialog(
   return showDesktopDialog<void>(
     context,
     child: Center(
-      child: SingleChildScrollView(child: EventInfoBody(headers: headers)),
+      child: DesktopScrollHost(
+        child: SingleChildScrollView(child: EventInfoBody(headers: headers)),
+      ),
     ),
   );
 }

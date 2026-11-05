@@ -2,6 +2,7 @@ import 'package:country_picker/country_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -58,7 +59,7 @@ class _DesktopCountryPickerDialogState
   void initState() {
     super.initState();
     _searchController = TextEditingController();
-    _scrollController = ScrollController();
+    _scrollController = DesktopScrollController();
     _allCountries =
         CountryService().getAll()..sort((a, b) => a.name.compareTo(b.name));
   }

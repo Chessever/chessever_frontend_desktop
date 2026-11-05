@@ -6,6 +6,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/shell/desktop_main_routes.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
@@ -199,7 +200,9 @@ class CommandPalette extends HookConsumerWidget {
         case _RowKind.opening:
           ref
               .read(desktopSmartEventOpenerProvider)
-              .open(SmartEventRequest.forOpeningSelection(row.opening!.selection));
+              .open(
+                SmartEventRequest.forOpeningSelection(row.opening!.selection),
+              );
         case _RowKind.entry:
           final e = row.entry!;
           switch (e.kind) {
@@ -563,7 +566,7 @@ class _PaletteSectionColumnState extends State<_PaletteSectionColumn> {
   @override
   void initState() {
     super.initState();
-    _scrollController = ScrollController();
+    _scrollController = DesktopScrollController();
   }
 
   @override
@@ -1486,7 +1489,8 @@ int? _bestCommandPaletteInitialHighlight(List<_PaletteRowData> rows) {
       _RowKind.player => rows[i].player?.score ?? 0,
       // An exact ECO code or family typed into the palette is the strongest
       // possible match; otherwise remote events and players lead.
-      _RowKind.opening => (rows[i].opening?.score ?? 0) >= 19800 ? 1000000 : -0.5,
+      _RowKind.opening =>
+        (rows[i].opening?.score ?? 0) >= 19800 ? 1000000 : -0.5,
       _RowKind.entry => -1,
     };
     if (score > bestScore) {

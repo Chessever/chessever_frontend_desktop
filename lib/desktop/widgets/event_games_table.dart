@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'dart:async';
 import '../state/local_board_games.dart';
@@ -418,7 +419,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       _continuationInitialContextRadius * 2 + 1;
   static const int _eventRailRenderPageSize = kEventRailGamesPageSize;
 
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = DesktopScrollController();
   final FocusNode _railFocusNode = FocusNode(debugLabel: 'event-games-rail');
   final Map<String, GlobalKey> _rowKeys = <String, GlobalKey>{};
   final Map<String, int> _continuationVisibleLimits = <String, int>{};
@@ -6629,8 +6630,8 @@ class _OwnedScrollControllers extends StatefulWidget {
 }
 
 class _OwnedScrollControllersState extends State<_OwnedScrollControllers> {
-  final ScrollController _verticalController = ScrollController();
-  final ScrollController _horizontalController = ScrollController();
+  final ScrollController _verticalController = DesktopScrollController();
+  final ScrollController _horizontalController = DesktopScrollController();
 
   @override
   void dispose() {

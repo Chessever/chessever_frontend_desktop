@@ -2,6 +2,8 @@
 /// a locked one shows, its players and the events it is bound to.
 library;
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
+
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -165,38 +167,40 @@ class CollectionLockedContents extends ConsumerWidget {
     final names = collection.players;
     final shown = names.take(6).join(' · ');
     final more = names.length - 6;
-    return ListView(
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: CollectionUnlockButton(collection: collection),
-        ),
-        const SizedBox(height: 16),
-        if (rows.isNotEmpty)
-          Container(
-            decoration: BoxDecoration(
-              color: kBlack2Color,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: kDividerColor),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: rows,
-            ),
-          )
-        else if (names.isNotEmpty)
-          Text(
-            more > 0 ? '$shown · $more more' : shown,
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 12.5,
-              height: 1.5,
-            ),
+    return DesktopScrollHost(
+      child: ListView(
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: CollectionUnlockButton(collection: collection),
           ),
-      ],
+          const SizedBox(height: 16),
+          if (rows.isNotEmpty)
+            Container(
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: kDividerColor),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: rows,
+              ),
+            )
+          else if (names.isNotEmpty)
+            Text(
+              more > 0 ? '$shown · $more more' : shown,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 12.5,
+                height: 1.5,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -330,110 +334,115 @@ class CollectionAboutView extends ConsumerWidget {
       CollectionKind.book => null,
     };
 
-    return ListView(
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
-      children: [
-        Align(
-          alignment: Alignment.topLeft,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (collection.coverUrl?.trim().isNotEmpty ?? false) ...[
-                      _AboutCover(
-                        url: collection.coverUrl!.trim(),
-                        portrait: isBook,
-                      ),
-                      const SizedBox(width: 16),
-                    ],
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (collection.subtitle?.trim().isNotEmpty ??
-                              false) ...[
-                            Text(
-                              collection.subtitle!.trim(),
-                              style: const TextStyle(
-                                color: kWhiteColor70,
-                                fontSize: 13,
-                                height: 1.35,
+    return DesktopScrollHost(
+      child: ListView(
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+        children: [
+          Align(
+            alignment: Alignment.topLeft,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (collection.coverUrl?.trim().isNotEmpty ?? false) ...[
+                        _AboutCover(
+                          url: collection.coverUrl!.trim(),
+                          portrait: isBook,
+                        ),
+                        const SizedBox(width: 16),
+                      ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (collection.subtitle?.trim().isNotEmpty ??
+                                false) ...[
+                              Text(
+                                collection.subtitle!.trim(),
+                                style: const TextStyle(
+                                  color: kWhiteColor70,
+                                  fontSize: 13,
+                                  height: 1.35,
+                                ),
                               ),
-                            ),
+                            ],
+                            if (collection.subtitle?.trim().isNotEmpty ?? false)
+                              const SizedBox(height: 6),
+                            if (author.isNotEmpty)
+                              _CreditLink(
+                                label: 'by $author',
+                                tooltip: "Show $author's collections",
+                                onTap: onShowAuthor,
+                              )
+                            else if (annotator.isNotEmpty)
+                              _AboutFact('Annotated by $annotator'),
+                            if (author.isNotEmpty &&
+                                annotator.isNotEmpty &&
+                                annotator != author)
+                              _AboutFact('Annotated by $annotator'),
+                            if (isBook && edition != null) _AboutFact(edition),
+                            if (!isBook && where.isNotEmpty) _AboutFact(where),
+                            if (!locked) _AboutFact(contents),
+                            if (collectionCatalogDate(collection.publishedAt)
+                                case final date?)
+                              _AboutFact('Published $date'),
+                            if (collectionCatalogDate(
+                                  collection.lastGameAddedAt,
+                                )
+                                case final date?)
+                              _AboutFact('Last game added $date'),
                           ],
-                          if (collection.subtitle?.trim().isNotEmpty ?? false)
-                            const SizedBox(height: 6),
-                          if (author.isNotEmpty)
-                            _CreditLink(
-                              label: 'by $author',
-                              tooltip: "Show $author's collections",
-                              onTap: onShowAuthor,
-                            )
-                          else if (annotator.isNotEmpty)
-                            _AboutFact('Annotated by $annotator'),
-                          if (author.isNotEmpty &&
-                              annotator.isNotEmpty &&
-                              annotator != author)
-                            _AboutFact('Annotated by $annotator'),
-                          if (isBook && edition != null) _AboutFact(edition),
-                          if (!isBook && where.isNotEmpty) _AboutFact(where),
-                          if (!locked) _AboutFact(contents),
-                          if (collectionCatalogDate(collection.publishedAt)
-                              case final date?)
-                            _AboutFact('Published $date'),
-                          if (collectionCatalogDate(collection.lastGameAddedAt)
-                              case final date?)
-                            _AboutFact('Last game added $date'),
-                        ],
+                        ),
                       ),
+                    ],
+                  ),
+                  if (locked) ...[
+                    const SizedBox(height: 16),
+                    CollectionUnlockButton(collection: collection),
+                  ],
+                  if (summary != null)
+                    _AboutProse(heading: null, text: summary),
+                  _AboutProse(
+                    heading: isBook ? 'About this collection' : null,
+                    text: collection.about,
+                  ),
+                  _AboutProse(heading: 'Foreword', text: collection.foreword),
+                  _AboutProse(
+                    heading: 'About the author',
+                    text: collection.authorBio,
+                  ),
+                  _AboutProse(
+                    heading: 'About the annotator',
+                    text: collection.annotatorBio,
+                  ),
+                  if (collection.events.isNotEmpty) ...[
+                    const SizedBox(height: 22),
+                    const _AboutHeading('Events'),
+                    const SizedBox(height: 8),
+                    _BoundList(
+                      children: [
+                        for (final event in collection.events)
+                          _BoundEventRow(event: event),
+                      ],
                     ),
                   ],
-                ),
-                if (locked) ...[
-                  const SizedBox(height: 16),
-                  CollectionUnlockButton(collection: collection),
-                ],
-                if (summary != null) _AboutProse(heading: null, text: summary),
-                _AboutProse(
-                  heading: isBook ? 'About this collection' : null,
-                  text: collection.about,
-                ),
-                _AboutProse(heading: 'Foreword', text: collection.foreword),
-                _AboutProse(
-                  heading: 'About the author',
-                  text: collection.authorBio,
-                ),
-                _AboutProse(
-                  heading: 'About the annotator',
-                  text: collection.annotatorBio,
-                ),
-                if (collection.events.isNotEmpty) ...[
-                  const SizedBox(height: 22),
-                  const _AboutHeading('Events'),
-                  const SizedBox(height: 8),
-                  _BoundList(
-                    children: [
-                      for (final event in collection.events)
-                        _BoundEventRow(event: event),
-                    ],
-                  ),
-                ],
-                if (collection.kind == CollectionKind.event)
-                  CollectionsBoundToEvent(
-                    anchors: CollectionEventAnchors(
-                      collections: [collection.id],
+                  if (collection.kind == CollectionKind.event)
+                    CollectionsBoundToEvent(
+                      anchors: CollectionEventAnchors(
+                        collections: [collection.id],
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -786,23 +795,25 @@ class _CollectionPlayersTableState extends State<CollectionPlayersTable> {
               ),
             ),
             Expanded(
-              child: ListView.builder(
-                physics: const DesktopScrollPhysics(),
-                padding: EdgeInsets.zero,
-                itemExtent: 44,
-                itemCount: widget.players.length,
-                itemBuilder: (context, index) {
-                  final player = widget.players[index];
-                  return _PlayerRow(
-                    rank: index + 1,
-                    player: player,
-                    selected: player.key == _selectedKey,
-                    rankWidth: _rank,
-                    numberWidth: _number,
-                    onSelect: () => setState(() => _selectedKey = player.key),
-                    onOpen: () => widget.onShowGames(player),
-                  );
-                },
+              child: DesktopScrollHost(
+                child: ListView.builder(
+                  physics: const DesktopScrollPhysics(),
+                  padding: EdgeInsets.zero,
+                  itemExtent: 44,
+                  itemCount: widget.players.length,
+                  itemBuilder: (context, index) {
+                    final player = widget.players[index];
+                    return _PlayerRow(
+                      rank: index + 1,
+                      player: player,
+                      selected: player.key == _selectedKey,
+                      rankWidth: _rank,
+                      numberWidth: _number,
+                      onSelect: () => setState(() => _selectedKey = player.key),
+                      onOpen: () => widget.onShowGames(player),
+                    );
+                  },
+                ),
               ),
             ),
           ],

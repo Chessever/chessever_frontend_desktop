@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
@@ -558,28 +559,31 @@ class _DesktopBracketMatchInspector extends StatelessWidget {
           header,
           const Divider(height: 1, color: kDividerColor),
           Expanded(
-            child: ListView.builder(
-              scrollDirection: compact ? Axis.horizontal : Axis.vertical,
-              padding: const EdgeInsets.all(8),
-              itemCount: match.games.length,
-              itemBuilder: (context, index) {
-                final game = match.games[index];
-                return SizedBox(
-                  width: compact ? 238 : null,
-                  child: Padding(
-                    padding: EdgeInsets.only(
-                      right: compact && index < match.games.length - 1 ? 8 : 0,
-                      bottom:
-                          !compact && index < match.games.length - 1 ? 6 : 0,
+            child: DesktopScrollHost(
+              child: ListView.builder(
+                scrollDirection: compact ? Axis.horizontal : Axis.vertical,
+                padding: const EdgeInsets.all(8),
+                itemCount: match.games.length,
+                itemBuilder: (context, index) {
+                  final game = match.games[index];
+                  return SizedBox(
+                    width: compact ? 238 : null,
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        right:
+                            compact && index < match.games.length - 1 ? 8 : 0,
+                        bottom:
+                            !compact && index < match.games.length - 1 ? 6 : 0,
+                      ),
+                      child: _DesktopBracketLegRow(
+                        game: game,
+                        index: index,
+                        onActivate: () => onOpenGame(game),
+                      ),
                     ),
-                    child: _DesktopBracketLegRow(
-                      game: game,
-                      index: index,
-                      onActivate: () => onOpenGame(game),
-                    ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
           ),
         ],

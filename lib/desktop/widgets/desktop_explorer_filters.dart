@@ -5,6 +5,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -72,108 +73,113 @@ class DesktopExplorerFilters extends ConsumerWidget {
             ),
             const FDivider(),
             Expanded(
-              child: SingleChildScrollView(
-                physics: const DesktopScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const _SectionLabel('Time control'),
-                    const SizedBox(height: 5),
-                    _TimeControlChips(
-                      available: notifier.availableTimeControls,
-                      selected: filters.timeControls,
-                      onToggle: notifier.toggleTimeControl,
-                    ),
-                    const SizedBox(height: 10),
-                    const _SectionLabel('Level'),
-                    const SizedBox(height: 5),
-                    _TitleChips(
-                      selectedMinRating: filters.minRating,
-                      onToggle: notifier.toggleTitle,
-                    ),
-                    const SizedBox(height: 10),
-                    const _SectionLabel('Result'),
-                    const SizedBox(height: 5),
-                    _ResultChips(
-                      selected: filters.gameResult,
-                      onToggle: notifier.toggleGameResult,
-                    ),
-                    const SizedBox(height: 10),
-                    const _SectionLabel('Format'),
-                    const SizedBox(height: 5),
-                    _FormatChips(
-                      selectedIsOnline: filters.isOnline,
-                      onToggle: notifier.toggleFormat,
-                    ),
-                    if (filters.playerIds.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      const _SectionLabel('Played as'),
+              child: DesktopScrollHost(
+                child: SingleChildScrollView(
+                  physics: const DesktopScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const _SectionLabel('Time control'),
                       const SizedBox(height: 5),
-                      _ColorChips(
-                        selected: filters.playerColor,
-                        onToggle: notifier.togglePlayerColor,
+                      _TimeControlChips(
+                        available: notifier.availableTimeControls,
+                        selected: filters.timeControls,
+                        onToggle: notifier.toggleTimeControl,
                       ),
-                    ],
-                    const SizedBox(height: 10),
-                    const _SectionLabel('Rating range'),
-                    const SizedBox(height: 5),
-                    _RatingRange(
-                      minRating: filters.minRating,
-                      maxRating: filters.maxRating,
-                      onChanged: notifier.setRatingRange,
-                    ),
-                    const SizedBox(height: 10),
-                    const _SectionLabel('Year range'),
-                    const SizedBox(height: 5),
-                    _YearRange(
-                      yearFrom: filters.yearFrom,
-                      yearTo: filters.yearTo,
-                      onChanged: notifier.setYearRange,
-                    ),
-                    const SizedBox(height: 10),
-                    const _SectionLabel('Player'),
-                    const SizedBox(height: 5),
-                    if (scopedPlayer != null)
-                      _SelectedPlayerPill(player: scopedPlayer!, onRemove: null)
-                    else
-                      _PlayerFilterField(
-                        selected:
-                            filters.selectedPlayers.isNotEmpty
-                                ? filters.selectedPlayers.first
-                                : null,
-                        onAdd: notifier.addPlayerFilter,
-                        onRemove: notifier.removePlayerFilter,
-                      ),
-                    if (scopedPlayer != null) ...[
                       const SizedBox(height: 10),
-                      const _SectionLabel('Opponent'),
+                      const _SectionLabel('Level'),
                       const SizedBox(height: 5),
-                      _PlayerFilterField(
-                        selected: opponent,
-                        hintText: 'Search opponents (min 2 chars)',
-                        excludedPlayerIds: <String>{
-                          for (final player in filters.selectedPlayers)
-                            if (player.id != opponent?.id) player.id,
-                        },
-                        onAdd:
-                            (player) => notifier.updateFilters(
-                              setBuildTreeOpponentFilter(
-                                filters,
-                                scopedPlayer!,
-                                player,
-                              ),
-                            ),
-                        onRemove:
-                            (_) => notifier.updateFilters(
-                              clearBuildTreeOpponentFilter(
-                                filters,
-                                scopedPlayer!,
-                              ),
-                            ),
+                      _TitleChips(
+                        selectedMinRating: filters.minRating,
+                        onToggle: notifier.toggleTitle,
                       ),
+                      const SizedBox(height: 10),
+                      const _SectionLabel('Result'),
+                      const SizedBox(height: 5),
+                      _ResultChips(
+                        selected: filters.gameResult,
+                        onToggle: notifier.toggleGameResult,
+                      ),
+                      const SizedBox(height: 10),
+                      const _SectionLabel('Format'),
+                      const SizedBox(height: 5),
+                      _FormatChips(
+                        selectedIsOnline: filters.isOnline,
+                        onToggle: notifier.toggleFormat,
+                      ),
+                      if (filters.playerIds.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        const _SectionLabel('Played as'),
+                        const SizedBox(height: 5),
+                        _ColorChips(
+                          selected: filters.playerColor,
+                          onToggle: notifier.togglePlayerColor,
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      const _SectionLabel('Rating range'),
+                      const SizedBox(height: 5),
+                      _RatingRange(
+                        minRating: filters.minRating,
+                        maxRating: filters.maxRating,
+                        onChanged: notifier.setRatingRange,
+                      ),
+                      const SizedBox(height: 10),
+                      const _SectionLabel('Year range'),
+                      const SizedBox(height: 5),
+                      _YearRange(
+                        yearFrom: filters.yearFrom,
+                        yearTo: filters.yearTo,
+                        onChanged: notifier.setYearRange,
+                      ),
+                      const SizedBox(height: 10),
+                      const _SectionLabel('Player'),
+                      const SizedBox(height: 5),
+                      if (scopedPlayer != null)
+                        _SelectedPlayerPill(
+                          player: scopedPlayer!,
+                          onRemove: null,
+                        )
+                      else
+                        _PlayerFilterField(
+                          selected:
+                              filters.selectedPlayers.isNotEmpty
+                                  ? filters.selectedPlayers.first
+                                  : null,
+                          onAdd: notifier.addPlayerFilter,
+                          onRemove: notifier.removePlayerFilter,
+                        ),
+                      if (scopedPlayer != null) ...[
+                        const SizedBox(height: 10),
+                        const _SectionLabel('Opponent'),
+                        const SizedBox(height: 5),
+                        _PlayerFilterField(
+                          selected: opponent,
+                          hintText: 'Search opponents (min 2 chars)',
+                          excludedPlayerIds: <String>{
+                            for (final player in filters.selectedPlayers)
+                              if (player.id != opponent?.id) player.id,
+                          },
+                          onAdd:
+                              (player) => notifier.updateFilters(
+                                setBuildTreeOpponentFilter(
+                                  filters,
+                                  scopedPlayer!,
+                                  player,
+                                ),
+                              ),
+                          onRemove:
+                              (_) => notifier.updateFilters(
+                                clearBuildTreeOpponentFilter(
+                                  filters,
+                                  scopedPlayer!,
+                                ),
+                              ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -751,30 +757,32 @@ class _PlayerFilterField extends HookConsumerWidget {
                               message: 'No players found',
                             );
                           }
-                          return ListView.separated(
-                            shrinkWrap: true,
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            physics: const DesktopScrollPhysics(),
-                            itemCount: available.length,
-                            separatorBuilder:
-                                (_, __) => const Divider(
-                                  color: kDividerColor,
-                                  height: 1,
-                                ),
-                            itemBuilder: (context, i) {
-                              final p = available[i];
-                              return _PlayerSearchHit(
-                                player: p,
-                                onTap: () {
-                                  debounceTimer.value?.cancel();
-                                  onAdd(p);
-                                  controller.clear();
-                                  query.value = '';
-                                  debounced.value = '';
-                                  focusNode.unfocus();
-                                },
-                              );
-                            },
+                          return DesktopScrollHost(
+                            child: ListView.separated(
+                              shrinkWrap: true,
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              physics: const DesktopScrollPhysics(),
+                              itemCount: available.length,
+                              separatorBuilder:
+                                  (_, __) => const Divider(
+                                    color: kDividerColor,
+                                    height: 1,
+                                  ),
+                              itemBuilder: (context, i) {
+                                final p = available[i];
+                                return _PlayerSearchHit(
+                                  player: p,
+                                  onTap: () {
+                                    debounceTimer.value?.cancel();
+                                    onAdd(p);
+                                    controller.clear();
+                                    query.value = '';
+                                    debounced.value = '';
+                                    focusNode.unfocus();
+                                  },
+                                );
+                              },
+                            ),
                           );
                         },
                         loading:

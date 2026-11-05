@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/repository/supabase/tour/published_tiebreak.dart';
 import 'package:chessever/desktop/widgets/player_standing_section_select.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
@@ -477,7 +478,7 @@ class TournamentStandingsView extends HookConsumerWidget {
       tournamentDetailStandingsSearchByTabIdProvider(tabId),
     );
     final searchController = useTextEditingController(text: query);
-    final horizontalController = useScrollController();
+    final horizontalController = useDesktopScrollController();
     final games = ref.watch(mergedTournamentGamesProvider);
     // If the provider is mutated by another path (e.g. tests, clear-all),
     // reflect it in the controller without clobbering the user's caret on
@@ -607,44 +608,47 @@ class TournamentStandingsView extends HookConsumerWidget {
               );
               // Built once outside the LayoutBuilder: the rows never depend on
               // the width, so a resize frame only re-lays them out.
-              final list = ListView.separated(
-                key: PageStorageKey<String>(
-                  'tournament-detail-standings:$tabId',
-                ),
-                physics: const DesktopScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-                itemCount: filtered.length + 1,
-                separatorBuilder:
-                    (_, i) => Divider(
-                      color: i == 0 ? Colors.transparent : kDividerColor,
-                      height: 1,
-                    ),
-                itemBuilder: (context, i) {
-                  if (i == 0) {
-                    return _StandingsHeaderRow(
-                      columns: roundTable.columns,
+              final list = DesktopScrollHost(
+                child: ListView.separated(
+                  key: PageStorageKey<String>(
+                    'tournament-detail-standings:$tabId',
+                  ),
+                  physics: const DesktopScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                  itemCount: filtered.length + 1,
+                  separatorBuilder:
+                      (_, i) => Divider(
+                        color: i == 0 ? Colors.transparent : kDividerColor,
+                        height: 1,
+                      ),
+                  itemBuilder: (context, i) {
+                    if (i == 0) {
+                      return _StandingsHeaderRow(
+                        columns: roundTable.columns,
+                        tiebreaks: publishedTiebreaks,
+                        identity: identity,
+                      );
+                    }
+
+                    final p = filtered[i - 1];
+                    return _StandingsPlayerRow(
+                      player: p,
+                      rank: p.overallRank ?? players.indexOf(p) + 1,
+                      flagFederation: _flagFederation(ref, p.countryCode),
+                      rounds: roundTable,
                       tiebreaks: publishedTiebreaks,
                       identity: identity,
+                      photoResolver:
+                          photoResolver ??
+                          (fideId) =>
+                              FidePhotoService.getPhotoUrlOrNull(fideId),
+                      onOpenScoreCard: () => _openScoreCard(ref, p),
+                      onOpenGame:
+                          (game) =>
+                              _openGame(ref, game, scopedGames, openGeneration),
                     );
-                  }
-
-                  final p = filtered[i - 1];
-                  return _StandingsPlayerRow(
-                    player: p,
-                    rank: p.overallRank ?? players.indexOf(p) + 1,
-                    flagFederation: _flagFederation(ref, p.countryCode),
-                    rounds: roundTable,
-                    tiebreaks: publishedTiebreaks,
-                    identity: identity,
-                    photoResolver:
-                        photoResolver ??
-                        (fideId) => FidePhotoService.getPhotoUrlOrNull(fideId),
-                    onOpenScoreCard: () => _openScoreCard(ref, p),
-                    onOpenGame:
-                        (game) =>
-                            _openGame(ref, game, scopedGames, openGeneration),
-                  );
-                },
+                  },
+                ),
               );
               return LayoutBuilder(
                 builder: (context, constraints) {
@@ -794,29 +798,31 @@ class _CompactTournamentStandings extends StatelessWidget {
       skipLoadingOnReload: true,
       data: (players) {
         if (players.isEmpty) return const _Empty();
-        return ListView.separated(
-          key: const PageStorageKey<String>('event-rail-standings'),
-          physics: const DesktopScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(8, 2, 8, 10),
-          itemCount: players.length,
-          separatorBuilder:
-              (_, __) => const Divider(color: kDividerColor, height: 1),
-          itemBuilder: (context, index) {
-            final player = players[index];
-            return _CompactStandingRow(
-              // Stable per-player identity, mirroring the web rail's
-              // `key={row.playerId}` (CompactStandingsList.tsx:130), so a
-              // standings refresh reuses each row's element and hover state
-              // instead of rebuilding from the first changed row down.
-              key: ValueKey<String>(
-                'event-standing-${player.fideId ?? player.name}',
-              ),
-              player: player,
-              rank: player.overallRank ?? index + 1,
-              photoResolver: photoResolver,
-              onOpen: () => onOpenScoreCard(player),
-            );
-          },
+        return DesktopScrollHost(
+          child: ListView.separated(
+            key: const PageStorageKey<String>('event-rail-standings'),
+            physics: const DesktopScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 10),
+            itemCount: players.length,
+            separatorBuilder:
+                (_, __) => const Divider(color: kDividerColor, height: 1),
+            itemBuilder: (context, index) {
+              final player = players[index];
+              return _CompactStandingRow(
+                // Stable per-player identity, mirroring the web rail's
+                // `key={row.playerId}` (CompactStandingsList.tsx:130), so a
+                // standings refresh reuses each row's element and hover state
+                // instead of rebuilding from the first changed row down.
+                key: ValueKey<String>(
+                  'event-standing-${player.fideId ?? player.name}',
+                ),
+                player: player,
+                rank: player.overallRank ?? index + 1,
+                photoResolver: photoResolver,
+                onOpen: () => onOpenScoreCard(player),
+              );
+            },
+          ),
         );
       },
       loading:

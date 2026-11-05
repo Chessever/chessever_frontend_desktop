@@ -1,6 +1,7 @@
 import 'dart:async';
 import '../state/event_player_board_games.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
@@ -263,7 +264,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       tournamentDetailGamesSearchByTabIdProvider(widget.tabId),
     );
     _searchController = TextEditingController(text: persisted);
-    _scrollController = ScrollController(
+    _scrollController = DesktopScrollController(
       debugLabel: 'desktop-tournament-games-${widget.tabId}',
     );
     // On re-mount, the games provider may have lost its search query (e.g.

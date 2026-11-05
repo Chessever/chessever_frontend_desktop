@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/screens/group_event/smart_event/smart_aggregate_event_provider.dart';
@@ -372,19 +373,21 @@ class _OpeningMenuState extends State<_OpeningMenu> {
             else
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 320),
-                child: ListView(
-                  shrinkWrap: true,
-                  padding: EdgeInsets.zero,
-                  children: [
-                    for (final suggestion in results)
-                      _Option(
-                        key: ValueKey<String>(suggestion.id),
-                        label: '${suggestion.codeLabel}  ${suggestion.title}',
-                        detail: suggestion.subtitle,
-                        tabularFigures: true,
-                        onTap: () => widget.onPick(suggestion),
-                      ),
-                  ],
+                child: DesktopScrollHost(
+                  child: ListView(
+                    shrinkWrap: true,
+                    padding: EdgeInsets.zero,
+                    children: [
+                      for (final suggestion in results)
+                        _Option(
+                          key: ValueKey<String>(suggestion.id),
+                          label: '${suggestion.codeLabel}  ${suggestion.title}',
+                          detail: suggestion.subtitle,
+                          tabularFigures: true,
+                          onTap: () => widget.onPick(suggestion),
+                        ),
+                    ],
+                  ),
                 ),
               ),
           ],

@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_play_access.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_server.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
@@ -58,16 +59,24 @@ class PlayPane extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final session = ref.watch(playSessionArgsByTabIdProvider.select((m) => m[tabId]));
-    final access = ref.watch(desktopAccessDecisionProvider(desktopPlayAccessContext));
+    final session = ref.watch(
+      playSessionArgsByTabIdProvider.select((m) => m[tabId]),
+    );
+    final access = ref.watch(
+      desktopAccessDecisionProvider(desktopPlayAccessContext),
+    );
     // An admitted live game remains mounted on expiry; never discard its moves.
     // Cold/free setup and restored navigation mount no paid providers.
     final retainedTournament =
-        ref.watch(playPaneTabByTabIdProvider(tabId)) == PlayPaneTab.tournaments &&
+        ref.watch(playPaneTabByTabIdProvider(tabId)) ==
+            PlayPaneTab.tournaments &&
         ref.watch(tournamentServerProvider).snapshot != null;
     if (!access.isAllowed && session == null && !retainedTournament) {
-      return DesktopAccessLockedSurface(decision: access,
-        accessContext: desktopPlayAccessContext, surface: 'play_entry');
+      return DesktopAccessLockedSurface(
+        decision: access,
+        accessContext: desktopPlayAccessContext,
+        surface: 'play_entry',
+      );
     }
     ref.listen<List<PlayAchievementId>>(
       playAchievementsProvider.select((state) => state.lastEarned),
@@ -586,19 +595,21 @@ class _PlaySetupScreen extends ConsumerWidget {
                     Expanded(child: right),
                   ],
                 );
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(40, 36, 40, 40),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1200),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const _SetupHeader(),
-                const SizedBox(height: 28),
-                body,
-                const SizedBox(height: 32),
-                _StartBar(config: config, notifier: notifier, tabId: tabId),
-              ],
+        return DesktopScrollHost(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(40, 36, 40, 40),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1200),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const _SetupHeader(),
+                  const SizedBox(height: 28),
+                  body,
+                  const SizedBox(height: 32),
+                  _StartBar(config: config, notifier: notifier, tabId: tabId),
+                ],
+              ),
             ),
           ),
         );

@@ -10,6 +10,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_event_discovery_access.dart';
 import 'package:chessever/desktop/widgets/desktop_event_discovery_gate.dart';
 import 'package:chessever/desktop/state/botvinnik_dock.dart';
@@ -151,7 +152,7 @@ class TournamentsPane extends HookConsumerWidget {
     // the highlighted row when the user navigates with the arrow keys.
     final tileKeys = useRef(<String, GlobalKey>{});
     final listFocusNode = useFocusNode(debugLabel: 'tournaments-list');
-    final listScrollController = useScrollController();
+    final listScrollController = useDesktopScrollController();
 
     // The "For You" tab is fed by a different provider in the mobile app —
     // forYouEventsProvider holds personalized recommendations rather than
@@ -436,101 +437,107 @@ class _SearchResultsBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final tournaments = result.tournamentResults;
     final players = result.playerResults;
-    return ListView(
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-      children: [
-        _SearchResultsHeader(query: query, onClear: onClearSearch),
-        const SizedBox(height: 12),
-        if (isPending)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+    return DesktopScrollHost(
+      child: ListView(
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+        children: [
+          _SearchResultsHeader(query: query, onClear: onClearSearch),
+          const SizedBox(height: 12),
+          if (isPending)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                    ),
                   ),
-                ),
-                SizedBox(width: 8),
-                Text(
-                  'Refreshing…',
-                  style: TextStyle(color: kLightGreyColor, fontSize: 11),
-                ),
-              ],
+                  SizedBox(width: 8),
+                  Text(
+                    'Refreshing…',
+                    style: TextStyle(color: kLightGreyColor, fontSize: 11),
+                  ),
+                ],
+              ),
             ),
-          ),
-        if (players.isNotEmpty) ...[
-          _SectionHeading(
-            label: 'Players',
-            icon: Icons.person_rounded,
-            count: players.length,
-          ),
-          const SizedBox(height: 8),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final width = constraints.maxWidth;
-              final cols = width >= 1100 ? 4 : (width >= 800 ? 3 : 2);
-              return GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: cols,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: 3.4,
-                ),
-                itemCount: players.length.clamp(0, 12),
-                itemBuilder: (context, i) {
-                  final r = players[i];
-                  final p = r.player;
-                  if (p == null) return const SizedBox.shrink();
-                  return _PlayerSearchCard(
-                    player: p,
-                    onTap: () => onOpenPlayer(p),
-                  );
-                },
-              );
-            },
-          ),
-          const SizedBox(height: 24),
+          if (players.isNotEmpty) ...[
+            _SectionHeading(
+              label: 'Players',
+              icon: Icons.person_rounded,
+              count: players.length,
+            ),
+            const SizedBox(height: 8),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final width = constraints.maxWidth;
+                final cols = width >= 1100 ? 4 : (width >= 800 ? 3 : 2);
+                return DesktopScrollHost(
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: cols,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 3.4,
+                    ),
+                    itemCount: players.length.clamp(0, 12),
+                    itemBuilder: (context, i) {
+                      final r = players[i];
+                      final p = r.player;
+                      if (p == null) return const SizedBox.shrink();
+                      return _PlayerSearchCard(
+                        player: p,
+                        onTap: () => onOpenPlayer(p),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+          ],
+          if (tournaments.isNotEmpty) ...[
+            _SectionHeading(
+              label: 'Events',
+              icon: Icons.emoji_events_rounded,
+              count: tournaments.length,
+            ),
+            const SizedBox(height: 8),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final width = constraints.maxWidth;
+                final cols = width >= 1280 ? 4 : (width >= 960 ? 3 : 2);
+                return DesktopScrollHost(
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: cols,
+                      mainAxisSpacing: 16,
+                      crossAxisSpacing: 16,
+                      childAspectRatio: 1.35,
+                    ),
+                    itemCount: tournaments.length,
+                    itemBuilder: (context, i) {
+                      final r = tournaments[i];
+                      return _TournamentSearchTile(
+                        tournament: r.tournament,
+                        onTap: () => onOpenTournament(r.tournament),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ],
         ],
-        if (tournaments.isNotEmpty) ...[
-          _SectionHeading(
-            label: 'Events',
-            icon: Icons.emoji_events_rounded,
-            count: tournaments.length,
-          ),
-          const SizedBox(height: 8),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final width = constraints.maxWidth;
-              final cols = width >= 1280 ? 4 : (width >= 960 ? 3 : 2);
-              return GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: cols,
-                  mainAxisSpacing: 16,
-                  crossAxisSpacing: 16,
-                  childAspectRatio: 1.35,
-                ),
-                itemCount: tournaments.length,
-                itemBuilder: (context, i) {
-                  final r = tournaments[i];
-                  return _TournamentSearchTile(
-                    tournament: r.tournament,
-                    onTap: () => onOpenTournament(r.tournament),
-                  );
-                },
-              );
-            },
-          ),
-        ],
-      ],
+      ),
     );
   }
 }
@@ -2534,7 +2541,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     _selection = bookmark.selection;
     _lastScrollOffset = bookmark.scrollOffset;
     _restoreSelectionPending = bookmark.selection != null;
-    _scroll = ScrollController(
+    _scroll = DesktopScrollController(
       initialScrollOffset:
           bookmark.scrollOffset.clamp(0.0, double.infinity).toDouble(),
     );

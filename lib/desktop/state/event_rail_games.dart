@@ -577,7 +577,7 @@ class EventRailGamesNotifier
       if (serverCount <= loadedCount) return const <Games>[];
       final offset =
           (loadedCount ~/ kEventRailGamesPageSize) * kEventRailGamesPageSize;
-      return repository.getEventRailGamesByRoundIds(
+      return await repository.getEventRailGamesByRoundIds(
         newest.roundIds,
         limit: kEventRailGamesPageSize,
         offset: offset,

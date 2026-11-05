@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
@@ -1521,9 +1522,11 @@ class _RatingHistoryPanelState extends State<_RatingHistoryPanel> {
                     children: [
                       title,
                       const SizedBox(height: 8),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(children: controls),
+                      DesktopScrollHost(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(children: controls),
+                        ),
                       ),
                     ],
                   );
@@ -2312,22 +2315,24 @@ class _AboutBody extends ConsumerWidget {
       );
     }
 
-    return SingleChildScrollView(
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _RatingOverviewRow(
-            ratings: ratings,
-            history: historyAsync?.valueOrNull,
-            historyLoading: historyAsync?.isLoading ?? false,
-            selected: currentTimeControl,
-            onSelect: onSelectTimeControl,
-          ),
-          const SizedBox(height: 14),
-          details,
-        ],
+    return DesktopScrollHost(
+      child: SingleChildScrollView(
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _RatingOverviewRow(
+              ratings: ratings,
+              history: historyAsync?.valueOrNull,
+              historyLoading: historyAsync?.isLoading ?? false,
+              selected: currentTimeControl,
+              onSelect: onSelectTimeControl,
+            ),
+            const SizedBox(height: 14),
+            details,
+          ],
+        ),
       ),
     );
   }
@@ -3708,7 +3713,7 @@ class _GamesBody extends ConsumerStatefulWidget {
 }
 
 class _GamesBodyState extends ConsumerState<_GamesBody> {
-  final _scrollController = ScrollController();
+  final _scrollController = DesktopScrollController();
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
   Timer? _debounce;
@@ -4649,220 +4654,227 @@ class _PlayerGamesFilterRail extends StatelessWidget {
             ),
             const FDivider(),
             Expanded(
-              child: SingleChildScrollView(
-                physics: const DesktopScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _RailSection(
-                      title: 'Played as',
-                      child: DesktopSegmentedTabs<GameColorFilter>(
-                        wrap: true,
-                        selected: filter.color,
-                        onChanged:
-                            (v) => onFilterChanged(
-                              filter.copyWith(
-                                color: v,
-                                eco:
-                                    v == GameColorFilter.all
-                                        ? null
-                                        : GameEcoFilter.all,
-                              ),
-                            ),
-                        tabs: const [
-                          DesktopSegmentedTab(
-                            value: GameColorFilter.all,
-                            label: 'All',
-                            icon: Icons.all_inclusive_rounded,
-                          ),
-                          DesktopSegmentedTab(
-                            value: GameColorFilter.white,
-                            label: 'White',
-                            icon: Icons.circle,
-                          ),
-                          DesktopSegmentedTab(
-                            value: GameColorFilter.black,
-                            label: 'Black',
-                            icon: Icons.circle_outlined,
-                          ),
-                        ],
-                      ),
-                    ),
-                    _RailSection(
-                      title: 'Time control',
-                      child: DesktopSegmentedTabs<GameTimeControlFilter>(
-                        wrap: true,
-                        selected: filter.timeControl,
-                        onChanged:
-                            (v) => onFilterChanged(
-                              filter.copyWith(timeControl: v),
-                            ),
-                        tabs: const [
-                          DesktopSegmentedTab(
-                            value: GameTimeControlFilter.all,
-                            label: 'All',
-                            icon: Icons.all_inclusive_rounded,
-                          ),
-                          DesktopSegmentedTab(
-                            value: GameTimeControlFilter.classical,
-                            label: 'Classical',
-                            icon: Icons.hourglass_top_rounded,
-                          ),
-                          DesktopSegmentedTab(
-                            value: GameTimeControlFilter.rapid,
-                            label: 'Rapid',
-                            icon: Icons.timer_outlined,
-                          ),
-                          DesktopSegmentedTab(
-                            value: GameTimeControlFilter.blitz,
-                            label: 'Blitz',
-                            icon: Icons.bolt_rounded,
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (showFormatFilter)
+              child: DesktopScrollHost(
+                child: SingleChildScrollView(
+                  physics: const DesktopScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                       _RailSection(
-                        title: 'Format',
-                        child: DesktopSegmentedTabs<GameOnlineFilter>(
+                        title: 'Played as',
+                        child: DesktopSegmentedTabs<GameColorFilter>(
                           wrap: true,
-                          selected: filter.online,
+                          selected: filter.color,
                           onChanged:
-                              (v) =>
-                                  onFilterChanged(filter.copyWith(online: v)),
+                              (v) => onFilterChanged(
+                                filter.copyWith(
+                                  color: v,
+                                  eco:
+                                      v == GameColorFilter.all
+                                          ? null
+                                          : GameEcoFilter.all,
+                                ),
+                              ),
                           tabs: const [
                             DesktopSegmentedTab(
-                              value: GameOnlineFilter.all,
+                              value: GameColorFilter.all,
                               label: 'All',
                               icon: Icons.all_inclusive_rounded,
                             ),
                             DesktopSegmentedTab(
-                              value: GameOnlineFilter.online,
-                              label: 'Online',
-                              icon: Icons.language_rounded,
+                              value: GameColorFilter.white,
+                              label: 'White',
+                              icon: Icons.circle,
                             ),
                             DesktopSegmentedTab(
-                              value: GameOnlineFilter.otb,
-                              label: 'OTB',
-                              icon: Icons.event_seat_outlined,
+                              value: GameColorFilter.black,
+                              label: 'Black',
+                              icon: Icons.circle_outlined,
                             ),
                           ],
                         ),
                       ),
-                    _RailSection(
-                      title: 'Player result',
-                      child: DesktopSegmentedTabs<PlayerResultFilter>(
-                        wrap: true,
-                        selected: state.playerResultFilter,
-                        onChanged: onPlayerResultChanged,
-                        tabs: const [
-                          DesktopSegmentedTab(
-                            value: PlayerResultFilter.all,
-                            label: 'All',
-                            icon: Icons.all_inclusive_rounded,
-                          ),
-                          DesktopSegmentedTab(
-                            value: PlayerResultFilter.win,
-                            label: 'Wins',
-                            icon: Icons.trending_up_rounded,
-                          ),
-                          DesktopSegmentedTab(
-                            value: PlayerResultFilter.draw,
-                            label: 'Draws',
-                            icon: Icons.drag_handle_rounded,
-                          ),
-                          DesktopSegmentedTab(
-                            value: PlayerResultFilter.loss,
-                            label: 'Losses',
-                            icon: Icons.trending_down_rounded,
-                          ),
-                        ],
-                      ),
-                    ),
-                    _RailSection(
-                      title: 'Game result',
-                      child: DesktopSegmentedTabs<GameResultFilter>(
-                        wrap: true,
-                        selected: filter.result,
-                        onChanged:
-                            (v) => onFilterChanged(filter.copyWith(result: v)),
-                        tabs: const [
-                          DesktopSegmentedTab(
-                            value: GameResultFilter.all,
-                            label: 'All',
-                            icon: Icons.all_inclusive_rounded,
-                          ),
-                          DesktopSegmentedTab(
-                            value: GameResultFilter.whiteWins,
-                            label: '1-0',
-                            icon: Icons.flag_outlined,
-                          ),
-                          DesktopSegmentedTab(
-                            value: GameResultFilter.draw,
-                            label: '½',
-                            icon: Icons.handshake_outlined,
-                          ),
-                          DesktopSegmentedTab(
-                            value: GameResultFilter.blackWins,
-                            label: '0-1',
-                            icon: Icons.flag_rounded,
-                          ),
-                        ],
-                      ),
-                    ),
-                    _RailSection(
-                      title: 'Opening',
-                      child: _EcoFilterField(
-                        value: filter.eco,
-                        onChanged:
-                            (eco) => onFilterChanged(filter.copyWith(eco: eco)),
-                      ),
-                    ),
-                    _RailSection(
-                      title: 'Year',
-                      child: _NumberRangeFields(
-                        start: filter.minYear,
-                        end: filter.maxYear,
-                        minValue: GameFilter.absoluteMinYear,
-                        maxValue: DateTime.now().year,
-                        defaultStart: GameFilter.defaultMinYear,
-                        defaultEnd: DateTime.now().year,
-                        startHint: 'From',
-                        endHint: 'To',
-                        onChanged:
-                            (start, end) => onFilterChanged(
-                              filter.copyWith(minYear: start, maxYear: end),
+                      _RailSection(
+                        title: 'Time control',
+                        child: DesktopSegmentedTabs<GameTimeControlFilter>(
+                          wrap: true,
+                          selected: filter.timeControl,
+                          onChanged:
+                              (v) => onFilterChanged(
+                                filter.copyWith(timeControl: v),
+                              ),
+                          tabs: const [
+                            DesktopSegmentedTab(
+                              value: GameTimeControlFilter.all,
+                              label: 'All',
+                              icon: Icons.all_inclusive_rounded,
                             ),
-                      ),
-                    ),
-                    _RailSection(
-                      title: 'Rating',
-                      child: _NumberRangeFields(
-                        start: filter.minRating,
-                        end: filter.maxRating,
-                        minValue: GameFilter.absoluteMinRating,
-                        maxValue: GameFilter.absoluteMaxRating,
-                        defaultStart: GameFilter.defaultMinRating,
-                        defaultEnd: GameFilter.absoluteMaxRating,
-                        startHint: 'Min',
-                        endHint: 'Max',
-                        onChanged:
-                            (start, end) => onFilterChanged(
-                              filter.copyWith(minRating: start, maxRating: end),
+                            DesktopSegmentedTab(
+                              value: GameTimeControlFilter.classical,
+                              label: 'Classical',
+                              icon: Icons.hourglass_top_rounded,
                             ),
+                            DesktopSegmentedTab(
+                              value: GameTimeControlFilter.rapid,
+                              label: 'Rapid',
+                              icon: Icons.timer_outlined,
+                            ),
+                            DesktopSegmentedTab(
+                              value: GameTimeControlFilter.blitz,
+                              label: 'Blitz',
+                              icon: Icons.bolt_rounded,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${formatCompactCount(state.filteredGames.length)} games match current filters',
-                      style: const TextStyle(
-                        color: kLightGreyColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
+                      if (showFormatFilter)
+                        _RailSection(
+                          title: 'Format',
+                          child: DesktopSegmentedTabs<GameOnlineFilter>(
+                            wrap: true,
+                            selected: filter.online,
+                            onChanged:
+                                (v) =>
+                                    onFilterChanged(filter.copyWith(online: v)),
+                            tabs: const [
+                              DesktopSegmentedTab(
+                                value: GameOnlineFilter.all,
+                                label: 'All',
+                                icon: Icons.all_inclusive_rounded,
+                              ),
+                              DesktopSegmentedTab(
+                                value: GameOnlineFilter.online,
+                                label: 'Online',
+                                icon: Icons.language_rounded,
+                              ),
+                              DesktopSegmentedTab(
+                                value: GameOnlineFilter.otb,
+                                label: 'OTB',
+                                icon: Icons.event_seat_outlined,
+                              ),
+                            ],
+                          ),
+                        ),
+                      _RailSection(
+                        title: 'Player result',
+                        child: DesktopSegmentedTabs<PlayerResultFilter>(
+                          wrap: true,
+                          selected: state.playerResultFilter,
+                          onChanged: onPlayerResultChanged,
+                          tabs: const [
+                            DesktopSegmentedTab(
+                              value: PlayerResultFilter.all,
+                              label: 'All',
+                              icon: Icons.all_inclusive_rounded,
+                            ),
+                            DesktopSegmentedTab(
+                              value: PlayerResultFilter.win,
+                              label: 'Wins',
+                              icon: Icons.trending_up_rounded,
+                            ),
+                            DesktopSegmentedTab(
+                              value: PlayerResultFilter.draw,
+                              label: 'Draws',
+                              icon: Icons.drag_handle_rounded,
+                            ),
+                            DesktopSegmentedTab(
+                              value: PlayerResultFilter.loss,
+                              label: 'Losses',
+                              icon: Icons.trending_down_rounded,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                      _RailSection(
+                        title: 'Game result',
+                        child: DesktopSegmentedTabs<GameResultFilter>(
+                          wrap: true,
+                          selected: filter.result,
+                          onChanged:
+                              (v) =>
+                                  onFilterChanged(filter.copyWith(result: v)),
+                          tabs: const [
+                            DesktopSegmentedTab(
+                              value: GameResultFilter.all,
+                              label: 'All',
+                              icon: Icons.all_inclusive_rounded,
+                            ),
+                            DesktopSegmentedTab(
+                              value: GameResultFilter.whiteWins,
+                              label: '1-0',
+                              icon: Icons.flag_outlined,
+                            ),
+                            DesktopSegmentedTab(
+                              value: GameResultFilter.draw,
+                              label: '½',
+                              icon: Icons.handshake_outlined,
+                            ),
+                            DesktopSegmentedTab(
+                              value: GameResultFilter.blackWins,
+                              label: '0-1',
+                              icon: Icons.flag_rounded,
+                            ),
+                          ],
+                        ),
+                      ),
+                      _RailSection(
+                        title: 'Opening',
+                        child: _EcoFilterField(
+                          value: filter.eco,
+                          onChanged:
+                              (eco) =>
+                                  onFilterChanged(filter.copyWith(eco: eco)),
+                        ),
+                      ),
+                      _RailSection(
+                        title: 'Year',
+                        child: _NumberRangeFields(
+                          start: filter.minYear,
+                          end: filter.maxYear,
+                          minValue: GameFilter.absoluteMinYear,
+                          maxValue: DateTime.now().year,
+                          defaultStart: GameFilter.defaultMinYear,
+                          defaultEnd: DateTime.now().year,
+                          startHint: 'From',
+                          endHint: 'To',
+                          onChanged:
+                              (start, end) => onFilterChanged(
+                                filter.copyWith(minYear: start, maxYear: end),
+                              ),
+                        ),
+                      ),
+                      _RailSection(
+                        title: 'Rating',
+                        child: _NumberRangeFields(
+                          start: filter.minRating,
+                          end: filter.maxRating,
+                          minValue: GameFilter.absoluteMinRating,
+                          maxValue: GameFilter.absoluteMaxRating,
+                          defaultStart: GameFilter.defaultMinRating,
+                          defaultEnd: GameFilter.absoluteMaxRating,
+                          startHint: 'Min',
+                          endHint: 'Max',
+                          onChanged:
+                              (start, end) => onFilterChanged(
+                                filter.copyWith(
+                                  minRating: start,
+                                  maxRating: end,
+                                ),
+                              ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${formatCompactCount(state.filteredGames.length)} games match current filters',
+                        style: const TextStyle(
+                          color: kLightGreyColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -6390,7 +6402,7 @@ class _EventsBody extends ConsumerStatefulWidget {
 }
 
 class _EventsBodyState extends ConsumerState<_EventsBody> {
-  final _scrollController = ScrollController();
+  final _scrollController = DesktopScrollController();
 
   @override
   void dispose() {

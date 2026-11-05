@@ -562,11 +562,13 @@ void main() {
     await tester.sendEventToBinding(pointer.hover(tester.getCenter(scroll)));
     await tester.sendEventToBinding(pointer.scroll(const Offset(0, 180)));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
 
     final scrollable = tester.state<ScrollableState>(
       find.descendant(of: scroll, matching: find.byType(Scrollable)),
     );
     expect(scrollable.position.pixels, greaterThan(0));
+    expect(scrollable.position.pixels, lessThan(180));
     await tester.pump(playerHoverGraceDelay + const Duration(milliseconds: 80));
     expect(card, findsOneWidget);
   });

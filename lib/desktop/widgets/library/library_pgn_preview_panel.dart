@@ -3,6 +3,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/library_import_buffer.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
@@ -111,31 +112,36 @@ class LibraryPgnPreviewPanel extends HookConsumerWidget {
               child:
                   filtered.isEmpty
                       ? const _EmptyMatch()
-                      : ListView.builder(
-                        physics: const DesktopScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                        itemCount: filtered.length,
-                        itemBuilder: (context, i) {
-                          final entry = filtered[i];
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: DesktopGameCard(
-                              data: GameCardData.fromChessGame(
-                                entry.game,
-                                subtitle: _subtitleFor(entry.game),
+                      : DesktopScrollHost(
+                        child: ListView.builder(
+                          physics: const DesktopScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                          itemCount: filtered.length,
+                          itemBuilder: (context, i) {
+                            final entry = filtered[i];
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: DesktopGameCard(
+                                data: GameCardData.fromChessGame(
+                                  entry.game,
+                                  subtitle: _subtitleFor(entry.game),
+                                ),
+                                onTap: () => onOpenOnBoard(entry.game),
+                                dragPayload: GameTabDragPayload(
+                                  id: entry.game.gameId,
+                                  label: _titleFor(entry.game),
+                                  spawn:
+                                      (_, {required focus}) async =>
+                                          onOpenOnBoard(
+                                            entry.game,
+                                            focus: focus,
+                                          ),
+                                ),
+                                layout: DesktopCardLayout.list,
                               ),
-                              onTap: () => onOpenOnBoard(entry.game),
-                              dragPayload: GameTabDragPayload(
-                                id: entry.game.gameId,
-                                label: _titleFor(entry.game),
-                                spawn:
-                                    (_, {required focus}) async =>
-                                        onOpenOnBoard(entry.game, focus: focus),
-                              ),
-                              layout: DesktopCardLayout.list,
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
             ),
           ],

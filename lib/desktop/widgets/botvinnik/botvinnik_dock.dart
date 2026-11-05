@@ -7,6 +7,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/chat/botvinnik_provider.dart';
 import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/chat/chat_references.dart';
@@ -597,45 +598,47 @@ class _EmptyConversation extends StatelessWidget {
   Widget build(BuildContext context) {
     final subject = botvinnikContextSubject(screenContext);
     final suggestions = chatSuggestionsForScreen(screenContext?.screen);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            subject == null ? 'Ask about live chess' : 'Ask about $subject',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: kWhiteColor,
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              height: 1.25,
-              letterSpacing: -0.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Events, rounds, games and standings. Ask in any language.',
-            style: TextStyle(color: kWhiteColor70, fontSize: 13, height: 1.4),
-          ),
-          const SizedBox(height: 22),
-          for (final suggestion in suggestions) ...[
-            _SuggestionRow(
-              suggestion: suggestion,
-              onPress:
-                  onSuggestion == null
-                      ? null
-                      : () => onSuggestion!(suggestion.prompt),
+    return DesktopScrollHost(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              subject == null ? 'Ask about live chess' : 'Ask about $subject',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                height: 1.25,
+                letterSpacing: -0.2,
+              ),
             ),
             const SizedBox(height: 8),
+            const Text(
+              'Events, rounds, games and standings. Ask in any language.',
+              style: TextStyle(color: kWhiteColor70, fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 22),
+            for (final suggestion in suggestions) ...[
+              _SuggestionRow(
+                suggestion: suggestion,
+                onPress:
+                    onSuggestion == null
+                        ? null
+                        : () => onSuggestion!(suggestion.prompt),
+              ),
+              const SizedBox(height: 8),
+            ],
+            const SizedBox(height: 14),
+            Text(
+              'Botvinnik can make mistakes. Check important results.',
+              style: TextStyle(color: _captionColor, fontSize: 11),
+            ),
           ],
-          const SizedBox(height: 14),
-          Text(
-            'Botvinnik can make mistakes. Check important results.',
-            style: TextStyle(color: _captionColor, fontSize: 11),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -805,7 +808,7 @@ class _MessageList extends ConsumerStatefulWidget {
 }
 
 class _MessageListState extends ConsumerState<_MessageList> {
-  final ScrollController _scroll = ScrollController();
+  final ScrollController _scroll = DesktopScrollController();
 
   /// True while the reader sits at the bottom. Streaming only follows the
   /// answer in that case; a reader who scrolled up stays where they are.
@@ -1253,21 +1256,23 @@ class _HistoryList extends ConsumerWidget {
     }
     final chat = ref.read(botvinnikChatControllerProvider.notifier);
     final dock = ref.read(botvinnikDockProvider.notifier);
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      itemCount: conversations.length,
-      itemBuilder: (context, index) {
-        final conversation = conversations[index];
-        return _ConversationRow(
-          conversation: conversation,
-          selected: conversation.id == selectedId,
-          onOpen: () {
-            dock.showHistory(false);
-            unawaited(chat.select(conversation));
-          },
-          onDelete: () => unawaited(_confirmAndDelete(context, conversation)),
-        );
-      },
+    return DesktopScrollHost(
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        itemCount: conversations.length,
+        itemBuilder: (context, index) {
+          final conversation = conversations[index];
+          return _ConversationRow(
+            conversation: conversation,
+            selected: conversation.id == selectedId,
+            onOpen: () {
+              dock.showHistory(false);
+              unawaited(chat.select(conversation));
+            },
+            onDelete: () => unawaited(_confirmAndDelete(context, conversation)),
+          );
+        },
+      ),
     );
   }
 

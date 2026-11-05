@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -65,18 +66,20 @@ class DesktopSmartEventShelf extends ConsumerWidget {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 24),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (generated != null) _GeneratedSmartEventCard(data: generated),
-            for (final request in cards.saved) ...[
-              if (generated != null || request != cards.saved.first)
-                const SizedBox(width: 14),
-              _SavedSmartEventCard(request: request),
+      child: DesktopScrollHost(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (generated != null) _GeneratedSmartEventCard(data: generated),
+              for (final request in cards.saved) ...[
+                if (generated != null || request != cards.saved.first)
+                  const SizedBox(width: 14),
+                _SavedSmartEventCard(request: request),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

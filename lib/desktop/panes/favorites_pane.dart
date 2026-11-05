@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:country_flags/country_flags.dart';
@@ -211,16 +212,18 @@ class _FavoritePlayersList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.builder(
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.only(bottom: 24),
-      itemCount: players.length,
-      itemBuilder: (context, i) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: _PlayerTile(player: players[i], isFavorite: true),
-        );
-      },
+    return DesktopScrollHost(
+      child: ListView.builder(
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.only(bottom: 24),
+        itemCount: players.length,
+        itemBuilder: (context, i) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _PlayerTile(player: players[i], isFavorite: true),
+          );
+        },
+      ),
     );
   }
 }
@@ -417,7 +420,7 @@ class _FavoritesGamesList extends ConsumerStatefulWidget {
 class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
   static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
 
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = DesktopScrollController();
   final Set<String> _collapsedGroups = <String>{};
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
@@ -782,30 +785,32 @@ class _FavoritePlayerFilterStrip extends StatelessWidget {
 
     return SizedBox(
       height: 38,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        physics: const DesktopScrollPhysics(),
-        itemCount: filterable.length + (selectedFideIds.isNotEmpty ? 1 : 0),
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          if (index >= filterable.length) {
+      child: DesktopScrollHost(
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          physics: const DesktopScrollPhysics(),
+          itemCount: filterable.length + (selectedFideIds.isNotEmpty ? 1 : 0),
+          separatorBuilder: (_, _) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            if (index >= filterable.length) {
+              return _PlayerFilterChip(
+                label: 'Clear',
+                icon: Icons.close_rounded,
+                selected: false,
+                onTap: onClear,
+              );
+            }
+            final player = filterable[index];
+            final fideId = player.fideId!.toString();
+            final selected = selectedFideIds.contains(fideId);
             return _PlayerFilterChip(
-              label: 'Clear',
-              icon: Icons.close_rounded,
-              selected: false,
-              onTap: onClear,
+              label: _shortName(player.name),
+              federation: player.countryCode,
+              selected: selected,
+              onTap: () => onToggle(fideId),
             );
-          }
-          final player = filterable[index];
-          final fideId = player.fideId!.toString();
-          final selected = selectedFideIds.contains(fideId);
-          return _PlayerFilterChip(
-            label: _shortName(player.name),
-            federation: player.countryCode,
-            selected: selected,
-            onTap: () => onToggle(fideId),
-          );
-        },
+          },
+        ),
       ),
     );
   }
@@ -991,7 +996,7 @@ class _WorldPlayersList extends ConsumerStatefulWidget {
 }
 
 class _WorldPlayersListState extends ConsumerState<_WorldPlayersList> {
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = DesktopScrollController();
 
   @override
   void initState() {

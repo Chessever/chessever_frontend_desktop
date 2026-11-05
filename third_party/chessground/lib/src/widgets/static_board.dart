@@ -88,6 +88,7 @@ class _StaticChessboardState extends State<StaticChessboard>
 
   Pieces get pieces => _piecesNotifier.value;
   TranslatingPieces get translatingPieces => _translatingPiecesNotifier.value;
+  final _translationOrigins = ValueNotifier(<Square, Offset>{});
   FadingPieces get fadingPieces => _fadingPiecesNotifier.value;
 
   late final AnimationController _pieceAnimationController;
@@ -107,7 +108,7 @@ class _StaticChessboardState extends State<StaticChessboard>
       animationBehavior: AnimationBehavior.preserve,
       duration: settings.animationDuration,
       vsync: this,
-    );
+    )..addStatusListener(_commitAnimation);
     _translationAnimation = CurvedAnimation(
       parent: _pieceAnimationController,
       curve: Curves.easeInOutCubic,
@@ -116,16 +117,16 @@ class _StaticChessboardState extends State<StaticChessboard>
       parent: _pieceAnimationController,
       curve: Curves.easeInQuad,
     );
-    _highlightNotifier = BoardHighlightNotifier()
-      ..update(
-        selected: null,
-        moveDests: const {},
-        premoveDests: const {},
-        occupiedSquares: const {},
-        lastMove: settings.showLastMove ? widget.lastMove : null,
-        premove: null,
-        checkSquare: null,
-      );
+    _highlightNotifier =
+        BoardHighlightNotifier()..update(
+          selected: null,
+          moveDests: const {},
+          premoveDests: const {},
+          occupiedSquares: const {},
+          lastMove: settings.showLastMove ? widget.lastMove : null,
+          premove: null,
+          checkSquare: null,
+        );
     _imagesLoaded = ChessgroundImages.instance.isAllLoaded(
       settings.pieceAssets,
     );
@@ -135,11 +136,12 @@ class _StaticChessboardState extends State<StaticChessboard>
   }
 
   Future<void> _loadImages(PieceAssets assets) async {
-    final dpr = WidgetsBinding
-        .instance
-        .platformDispatcher
-        .implicitView
-        ?.devicePixelRatio;
+    final dpr =
+        WidgetsBinding
+            .instance
+            .platformDispatcher
+            .implicitView
+            ?.devicePixelRatio;
     await ChessgroundImages.instance.loadAll(assets, devicePixelRatio: dpr);
     if (mounted) setState(() => _imagesLoaded = true);
   }
@@ -160,11 +162,12 @@ class _StaticChessboardState extends State<StaticChessboard>
   }
 
   Future<void> _loadHighlightImages() async {
-    final dpr = WidgetsBinding
-        .instance
-        .platformDispatcher
-        .implicitView
-        ?.devicePixelRatio;
+    final dpr =
+        WidgetsBinding
+            .instance
+            .platformDispatcher
+            .implicitView
+            ?.devicePixelRatio;
     final images = <AssetImage>[];
     final lastMoveImage = settings.colorScheme.lastMove.image;
     if (lastMoveImage != null) images.add(lastMoveImage);
@@ -185,6 +188,7 @@ class _StaticChessboardState extends State<StaticChessboard>
     _gameNotifier.dispose();
     _piecesNotifier.dispose();
     _translatingPiecesNotifier.dispose();
+    _translationOrigins.dispose();
     _fadingPiecesNotifier.dispose();
     _highlightNotifier.dispose();
     _noPendingPromotionNotifier.dispose();
@@ -192,6 +196,13 @@ class _StaticChessboardState extends State<StaticChessboard>
     _translationAnimation.dispose();
     _pieceAnimationController.dispose();
     super.dispose();
+  }
+
+  void _commitAnimation(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    _translatingPiecesNotifier.value = {};
+    _fadingPiecesNotifier.value = {};
+    _translationOrigins.value = {};
   }
 
   @override
@@ -232,13 +243,24 @@ class _StaticChessboardState extends State<StaticChessboard>
       return;
     }
 
+    final previous = translatingPieces;
+    final previousOrigins = _translationOrigins.value;
+    final progress = _translationAnimation.value;
     _translatingPiecesNotifier.value = {};
     _fadingPiecesNotifier.value = {};
+    _translationOrigins.value = {};
 
     final newPieces = readFen(widget.fen);
 
     if (settings.animationDuration > Duration.zero) {
       final (tp, fp) = preparePieceAnimations(pieces, newPieces);
+      _translationOrigins.value = retargetPieceAnimations(
+        previous: previous,
+        previousOrigins: previousOrigins,
+        progress: progress,
+        next: tp,
+        newPosition: newPieces,
+      );
       _translatingPiecesNotifier.value = tp;
       _fadingPiecesNotifier.value = fp;
     }
@@ -276,11 +298,12 @@ class _StaticChessboardState extends State<StaticChessboard>
     final imagesLoaded = _imagesLoaded && !_deferImagesLoading;
     final hasBorder = settings.border != null;
 
-    final background = !hasBorder && settings.enableCoordinates
-        ? widget.orientation == Side.white
-              ? settings.colorScheme.whiteCoordBackground
-              : settings.colorScheme.blackCoordBackground
-        : settings.colorScheme.background;
+    final background =
+        !hasBorder && settings.enableCoordinates
+            ? widget.orientation == Side.white
+                ? settings.colorScheme.whiteCoordBackground
+                : settings.colorScheme.blackCoordBackground
+            : settings.colorScheme.background;
 
     final piecesPainter = PiecesPainter(
       piecesNotifier: _piecesNotifier,
@@ -309,6 +332,7 @@ class _StaticChessboardState extends State<StaticChessboard>
 
     final translatingPiecesPainter = TranslatingPiecesPainter(
       translatingPiecesNotifier: _translatingPiecesNotifier,
+      translationOrigins: _translationOrigins,
       squareSize: widget.squareSize,
       orientation: widget.orientation,
       pieceAssets: settings.pieceAssets,
@@ -408,6 +432,8 @@ class _StaticChessboardState extends State<StaticChessboard>
       );
     }
 
-    return BrightnessHueFilter(brightness: settings.brightness, child: board);
+    return RepaintBoundary(
+      child: BrightnessHueFilter(brightness: settings.brightness, child: board),
+    );
   }
 }

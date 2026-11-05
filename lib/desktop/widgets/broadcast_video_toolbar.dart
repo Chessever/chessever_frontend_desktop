@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -80,29 +81,31 @@ class BroadcastVideoToolbar extends StatelessWidget {
                         }
                         return grouped.indexOf(a).compareTo(grouped.indexOf(b));
                       });
-                      return SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        clipBehavior: Clip.hardEdge,
-                        padding: const EdgeInsets.only(right: 6),
-                        child: Row(
-                          children: [
-                            for (
-                              var index = 0;
-                              index < groups.length;
-                              index++
-                            ) ...[
-                              if (index > 0) const SizedBox(width: gap),
-                              _LanguageGroupButton(
-                                group: groups[index],
-                                selectedId: selectedId,
-                                pinned: pins.contains(
-                                  groups[index].streams.first.id,
+                      return DesktopScrollHost(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          clipBehavior: Clip.hardEdge,
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Row(
+                            children: [
+                              for (
+                                var index = 0;
+                                index < groups.length;
+                                index++
+                              ) ...[
+                                if (index > 0) const SizedBox(width: gap),
+                                _LanguageGroupButton(
+                                  group: groups[index],
+                                  selectedId: selectedId,
+                                  pinned: pins.contains(
+                                    groups[index].streams.first.id,
+                                  ),
+                                  onSelect: onSelect,
+                                  onPin: onPin,
                                 ),
-                                onSelect: onSelect,
-                                onPin: onPin,
-                              ),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
                       );
                     },
@@ -720,11 +723,13 @@ class _MenuSurface extends StatelessWidget {
           ),
         ],
       ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: children,
+      child: DesktopScrollHost(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: children,
+          ),
         ),
       ),
     );

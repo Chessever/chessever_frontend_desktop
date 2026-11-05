@@ -1,4 +1,5 @@
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/painting.dart' show Offset;
 import '../models.dart';
 
 /// A Map of the pieces that are being translated on the board.
@@ -45,7 +46,9 @@ typedef FadingPieces = Map<Square, Piece>;
     // find the closest square that the piece was on before
     final fromSquare = _closestSquare(
       newPieceSquare,
-      missingOnSquare.where((m) => m.$1 == newPiece).map((e) => e.$2),
+      missingOnSquare
+          .where((m) => m.$1 == newPiece && !animatedOrigins.contains(m.$2))
+          .map((e) => e.$2),
     );
     if (fromSquare != null) {
       translatingPieces[newPieceSquare] = (piece: newPiece, from: fromSquare);
@@ -59,6 +62,43 @@ typedef FadingPieces = Map<Square, Piece>;
   }
 
   return (translatingPieces, fadingPieces);
+}
+
+/// Retargets in-flight pieces from their actual displayed positions, in
+/// file/rank units, rather than snapping to the preceding move's destination.
+/// Also carries unfinished moves that remain on the board into the new tween.
+Map<Square, Offset> retargetPieceAnimations({
+  required TranslatingPieces previous,
+  required Map<Square, Offset> previousOrigins,
+  required double progress,
+  required TranslatingPieces next,
+  required Pieces newPosition,
+  Move? lastDrop,
+}) {
+  if (previous.isEmpty || progress >= 1) return const {};
+  final displayed = <Square, Offset>{};
+  for (final entry in previous.entries) {
+    final from =
+        previousOrigins[entry.key] ??
+        Offset(
+          entry.value.from.file.toDouble(),
+          entry.value.from.rank.toDouble(),
+        );
+    final to = Offset(entry.key.file.toDouble(), entry.key.rank.toDouble());
+    displayed[entry.key] = Offset.lerp(from, to, progress)!;
+    if (newPosition[entry.key] == entry.value.piece &&
+        !next.containsKey(entry.key) &&
+        entry.key != lastDrop?.to) {
+      next[entry.key] = entry.value;
+    }
+  }
+  return {
+    for (final entry in next.entries)
+      if (displayed.containsKey(entry.value.from))
+        entry.key: displayed[entry.value.from]!
+      else if (previous[entry.key] == entry.value)
+        entry.key: displayed[entry.key]!,
+  };
 }
 
 /// Returns the closest square to the target square from a list of squares.

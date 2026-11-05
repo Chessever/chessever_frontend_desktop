@@ -27,6 +27,7 @@ List<String> _referenceSan(String fen, List<String> moves) {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   const blackToMove =
       'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
   const afterBb5 =
@@ -63,5 +64,22 @@ void main() {
     final line = ['f1b5', 'a7a6', 'e2e4'];
     expect(format(blackToMove, line), ['3.Bb5', 'a6']);
     expect(format(blackToMove, line), ['3.Bb5', 'a6']);
+  });
+
+  test('cooperative browser formatting yields without changing SAN', () async {
+    const input = {
+      'fen': kInitialFEN,
+      'moves': 'd2d4 d7d5 c2c4 e7e6 b1c3 g8f6 c1g5 f8e7 e2e3 e8g8',
+    };
+    var otherWorkRan = false;
+    final formatted = formatEnginePvSanCooperatively(
+      input,
+      workBudget: Duration.zero,
+    );
+    final otherWork = Future<void>(() => otherWorkRan = true);
+    final labels = await formatted;
+    expect(otherWorkRan, isTrue);
+    expect(labels, _referenceSan(kInitialFEN, input['moves']!.split(' ')));
+    await otherWork;
   });
 }

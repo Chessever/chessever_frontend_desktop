@@ -68,8 +68,6 @@ class DesktopChessBoard extends ConsumerStatefulWidget {
 }
 
 class _DesktopChessBoardState extends ConsumerState<DesktopChessBoard> {
-  int _gestureResetEpoch = 0;
-
   // chessground 10 drives the interactive board through a controller instead
   // of rebuilding the widget with a new `fen` each frame. We own it: created
   // in initState from the current props, advanced in didUpdateWidget, disposed
@@ -131,6 +129,7 @@ class _DesktopChessBoardState extends ConsumerState<DesktopChessBoard> {
         oldWidget.lastMove != widget.lastMove ||
         oldWidget.playerSide != widget.playerSide ||
         oldWidget.sideToMove != widget.sideToMove ||
+        oldWidget.validMoves != widget.validMoves ||
         oldWidget.isCheck != widget.isCheck) {
       _controller.updatePosition(_gameData());
     }
@@ -157,7 +156,8 @@ class _DesktopChessBoardState extends ConsumerState<DesktopChessBoard> {
   Square? _kingSquareInCheck() {
     if (!widget.isCheck) return null;
     for (final entry in _piecesForFen(widget.fen).entries) {
-      if (entry.value.role == Role.king && entry.value.color == widget.sideToMove) {
+      if (entry.value.role == Role.king &&
+          entry.value.color == widget.sideToMove) {
         return entry.key;
       }
     }
@@ -165,10 +165,7 @@ class _DesktopChessBoardState extends ConsumerState<DesktopChessBoard> {
   }
 
   void _cancelActivePieceGesture() {
-    if (!mounted) return;
-    setState(() {
-      _gestureResetEpoch += 1;
-    });
+    _controller.cancelPieceGesture();
   }
 
   @override
@@ -193,12 +190,14 @@ class _DesktopChessBoardState extends ConsumerState<DesktopChessBoard> {
           fit: StackFit.expand,
           children: [
             Chessboard(
-              key: ValueKey<int>(_gestureResetEpoch),
               size: widget.size,
               controller: _controller,
               settings: ChessboardSettings(
                 enableCoordinates: true,
-                animationDuration: const Duration(milliseconds: 180),
+                animationDuration:
+                    MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 180),
                 dragFeedbackScale: 1.05,
                 dragTargetKind: DragTargetKind.square,
                 // Desktop has both fine pointer (mouse) and clicks; allow both.
@@ -550,10 +549,7 @@ class _SquareHighlightOverlay extends StatelessWidget {
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     color: entry.value.details.solidColor!.withValues(
-                      alpha: math.min(
-                        entry.value.details.solidColor!.a,
-                        0.6,
-                      ),
+                      alpha: math.min(entry.value.details.solidColor!.a, 0.6),
                     ),
                   ),
                 ),

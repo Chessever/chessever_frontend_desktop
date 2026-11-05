@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/auth/desktop_guest_upgrade.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -123,7 +124,8 @@ class _GameVideoSubmissionBodyState
               }
             },
           ),
-          if(_error!=null) Padding(padding:const EdgeInsets.all(12),child:Text(_error!)),
+          if (_error != null)
+            Padding(padding: const EdgeInsets.all(12), child: Text(_error!)),
           DesktopDialogButton(
             label: 'Close',
             onPress: () => Navigator.of(context).pop(),
@@ -135,105 +137,108 @@ class _GameVideoSubmissionBodyState
       constraints: BoxConstraints(
         maxHeight: MediaQuery.sizeOf(context).height * .8,
       ),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Form(
-          key: _form,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Attach an analysis video to this game. It becomes public after a ChessEver superadmin approves it.',
-              ),
-              const SizedBox(height: 20),
-              FTextFormField(
-                controller: _name,
-                enabled: !_busy,
-                label: const Text('Author name'),
-                maxLength: 80,
-                validator:
-                    (value) =>
-                        (value?.trim().length ?? 0) < 2
-                            ? 'Enter your author name.'
-                            : null,
-              ),
-              const SizedBox(height: 16),
-              YoutubeVideoFields(
-                key: ValueKey(_editing),
-                value: _url,
-                enabled: !_busy,
-                onChanged: (value) => _url = value,
-              ),
-              const SizedBox(height: 16),
-              FTextFormField(
-                controller: _language,
-                enabled: !_busy,
-                label: const Text('Spoken language (optional)'),
-                hint: 'e.g. en or tr',
-                validator:
-                    (value) =>
-                        value == null ||
-                                value.trim().isEmpty ||
-                                RegExp(
-                                  r'^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$',
-                                ).hasMatch(value.trim())
-                            ? null
-                            : 'Use a language code such as en or pt-BR.',
-              ),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text(
-                    _error!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 20),
-              FButton(
-                onPress: _busy ? null : _submit,
-                child: Expanded(
-                  child: Text(_busy ? 'Submitting…' : 'Submit for review'),
-                ),
-              ),
-              const SizedBox(height: 12),
-              DesktopDialogButton(
-                label: 'Close',
-                onPress: _busy ? null : () => Navigator.of(context).pop(),
-              ),
-              if (_submissions.isNotEmpty) ...[
-                const SizedBox(height: 28),
+      child: DesktopScrollHost(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Form(
+            key: _form,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
                 const Text(
-                  'Your submissions',
-                  style: TextStyle(fontWeight: FontWeight.w600),
+                  'Attach an analysis video to this game. It becomes public after a ChessEver superadmin approves it.',
                 ),
-                for (final item in _submissions)
+                const SizedBox(height: 20),
+                FTextFormField(
+                  controller: _name,
+                  enabled: !_busy,
+                  label: const Text('Author name'),
+                  maxLength: 80,
+                  validator:
+                      (value) =>
+                          (value?.trim().length ?? 0) < 2
+                              ? 'Enter your author name.'
+                              : null,
+                ),
+                const SizedBox(height: 16),
+                YoutubeVideoFields(
+                  key: ValueKey(_editing),
+                  value: _url,
+                  enabled: !_busy,
+                  onChanged: (value) => _url = value,
+                ),
+                const SizedBox(height: 16),
+                FTextFormField(
+                  controller: _language,
+                  enabled: !_busy,
+                  label: const Text('Spoken language (optional)'),
+                  hint: 'e.g. en or tr',
+                  validator:
+                      (value) =>
+                          value == null ||
+                                  value.trim().isEmpty ||
+                                  RegExp(
+                                    r'^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$',
+                                  ).hasMatch(value.trim())
+                              ? null
+                              : 'Use a language code such as en or pt-BR.',
+                ),
+                if (_error != null)
                   Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text('${item['authorName']} · ${item['status']}'),
-                        if (item['note'] != null) Text(item['note'] as String),
-                        DesktopDialogButton(
-                          label: 'Edit',
-                          onPress:
-                              _busy
-                                  ? null
-                                  : () => setState(() {
-                                    _editing = item['id'] as String;
-                                    _url = item['url'] as String;
-                                    _name.text = item['authorName'] as String;
-                                    _language.text =
-                                        item['language'] as String? ?? '';
-                                  }),
-                        ),
-                      ],
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ),
+                const SizedBox(height: 20),
+                FButton(
+                  onPress: _busy ? null : _submit,
+                  child: Expanded(
+                    child: Text(_busy ? 'Submitting…' : 'Submit for review'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DesktopDialogButton(
+                  label: 'Close',
+                  onPress: _busy ? null : () => Navigator.of(context).pop(),
+                ),
+                if (_submissions.isNotEmpty) ...[
+                  const SizedBox(height: 28),
+                  const Text(
+                    'Your submissions',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  for (final item in _submissions)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text('${item['authorName']} · ${item['status']}'),
+                          if (item['note'] != null)
+                            Text(item['note'] as String),
+                          DesktopDialogButton(
+                            label: 'Edit',
+                            onPress:
+                                _busy
+                                    ? null
+                                    : () => setState(() {
+                                      _editing = item['id'] as String;
+                                      _url = item['url'] as String;
+                                      _name.text = item['authorName'] as String;
+                                      _language.text =
+                                          item['language'] as String? ?? '';
+                                    }),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

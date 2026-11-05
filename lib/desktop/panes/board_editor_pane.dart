@@ -1,4 +1,5 @@
 import 'package:chessground/chessground.dart';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:dartchess/dartchess.dart' hide Board;
 import 'package:file_picker/file_picker.dart';
@@ -1130,107 +1131,109 @@ class _PositionSetupModalInspector extends StatelessWidget {
       color: kBlack2Color,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-        child: SingleChildScrollView(
-          physics: const ClampingScrollPhysics(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _CompactInspectorSection(
-                title: 'Castling',
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        const _SideGlyph(side: Side.white),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: _CastlingSymbolButton(
-                            side: 'White',
-                            label: 'O-O',
-                            value: editorState.whiteKingsideCastle,
-                            onChanged:
-                                (v) => onToggleCastling(whiteKingside: v),
+        child: DesktopScrollHost(
+          child: SingleChildScrollView(
+            physics: const ClampingScrollPhysics(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _CompactInspectorSection(
+                  title: 'Castling',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const _SideGlyph(side: Side.white),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: _CastlingSymbolButton(
+                              side: 'White',
+                              label: 'O-O',
+                              value: editorState.whiteKingsideCastle,
+                              onChanged:
+                                  (v) => onToggleCastling(whiteKingside: v),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: _CastlingSymbolButton(
-                            side: 'White',
-                            label: 'O-O-O',
-                            value: editorState.whiteQueensideCastle,
-                            onChanged:
-                                (v) => onToggleCastling(whiteQueenside: v),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: _CastlingSymbolButton(
+                              side: 'White',
+                              label: 'O-O-O',
+                              value: editorState.whiteQueensideCastle,
+                              onChanged:
+                                  (v) => onToggleCastling(whiteQueenside: v),
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        const _SideGlyph(side: Side.black),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: _CastlingSymbolButton(
-                            side: 'Black',
-                            label: 'O-O',
-                            value: editorState.blackKingsideCastle,
-                            onChanged:
-                                (v) => onToggleCastling(blackKingside: v),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const _SideGlyph(side: Side.black),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: _CastlingSymbolButton(
+                              side: 'Black',
+                              label: 'O-O',
+                              value: editorState.blackKingsideCastle,
+                              onChanged:
+                                  (v) => onToggleCastling(blackKingside: v),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: _CastlingSymbolButton(
-                            side: 'Black',
-                            label: 'O-O-O',
-                            value: editorState.blackQueensideCastle,
-                            onChanged:
-                                (v) => onToggleCastling(blackQueenside: v),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: _CastlingSymbolButton(
+                              side: 'Black',
+                              label: 'O-O-O',
+                              value: editorState.blackQueensideCastle,
+                              onChanged:
+                                  (v) => onToggleCastling(blackQueenside: v),
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              _CompactInspectorSection(
-                title: 'Side to move',
-                child: _SideToMoveToggle(
-                  sideToMove: editorState.sideToMove,
-                  onChanged: onSideToMove,
+                const SizedBox(height: 8),
+                _CompactInspectorSection(
+                  title: 'Side to move',
+                  child: _SideToMoveToggle(
+                    sideToMove: editorState.sideToMove,
+                    onChanged: onSideToMove,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              _CompactInspectorSection(
-                title: 'En passant',
-                child: _PositionMetadataFields(
-                  editorState: editorState,
-                  onLastPawnMove: onLastPawnMove,
-                  onMoveNumber: onMoveNumber,
-                  showMoveNumber: false,
+                const SizedBox(height: 8),
+                _CompactInspectorSection(
+                  title: 'En passant',
+                  child: _PositionMetadataFields(
+                    editorState: editorState,
+                    onLastPawnMove: onLastPawnMove,
+                    onMoveNumber: onMoveNumber,
+                    showMoveNumber: false,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              _CompactInspectorSection(
-                title: 'FEN',
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _FenBlock(fen: editorState.fullFen, onCopyFen: onCopyFen),
-                    const SizedBox(height: 7),
-                    _EditorActionButton(
-                      icon: Icons.content_paste_go_rounded,
-                      label: 'Paste FEN',
-                      tone: _EditorButtonTone.secondary,
-                      fillWidth: true,
-                      onPress: onPasteFen,
-                    ),
-                  ],
+                const SizedBox(height: 8),
+                _CompactInspectorSection(
+                  title: 'FEN',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _FenBlock(fen: editorState.fullFen, onCopyFen: onCopyFen),
+                      const SizedBox(height: 7),
+                      _EditorActionButton(
+                        icon: Icons.content_paste_go_rounded,
+                        label: 'Paste FEN',
+                        tone: _EditorButtonTone.secondary,
+                        fillWidth: true,
+                        onPress: onPasteFen,
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -1436,215 +1439,219 @@ class _EditorInspector extends StatelessWidget {
           ),
           const FDivider(),
           Expanded(
-            child: SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _InspectorSection(
-                    title: 'Position',
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _ToolbarButton(
-                                icon: Icons.refresh_rounded,
-                                label: 'Reset',
-                                onPress: onReset,
+            child: DesktopScrollHost(
+              child: SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _InspectorSection(
+                      title: 'Position',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _ToolbarButton(
+                                  icon: Icons.refresh_rounded,
+                                  label: 'Reset',
+                                  onPress: onReset,
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: _ToolbarButton(
-                                icon: Icons.delete_sweep_outlined,
-                                label: 'Clear',
-                                tone: _EditorButtonTone.danger,
-                                onPress: onClear,
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _ToolbarButton(
+                                  icon: Icons.delete_sweep_outlined,
+                                  label: 'Clear',
+                                  tone: _EditorButtonTone.danger,
+                                  onPress: onClear,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        _SideToMoveToggle(
-                          sideToMove: editorState.sideToMove,
-                          onChanged: onSideToMove,
-                        ),
-                        const SizedBox(height: 12),
-                        _PositionMetadataFields(
-                          editorState: editorState,
-                          onLastPawnMove: onLastPawnMove,
-                          onMoveNumber: onMoveNumber,
-                        ),
-                      ],
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          _SideToMoveToggle(
+                            sideToMove: editorState.sideToMove,
+                            onChanged: onSideToMove,
+                          ),
+                          const SizedBox(height: 12),
+                          _PositionMetadataFields(
+                            editorState: editorState,
+                            onLastPawnMove: onLastPawnMove,
+                            onMoveNumber: onMoveNumber,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const FDivider(),
-                  _InspectorSection(
-                    title: 'Castling',
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _CastlingSwitch(
-                                side: 'White',
-                                flank: 'Kingside',
-                                badge: 'K',
-                                notation: 'O-O',
-                                value: editorState.whiteKingsideCastle,
-                                onChanged:
-                                    (v) => onToggleCastling(whiteKingside: v),
+                    const FDivider(),
+                    _InspectorSection(
+                      title: 'Castling',
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _CastlingSwitch(
+                                  side: 'White',
+                                  flank: 'Kingside',
+                                  badge: 'K',
+                                  notation: 'O-O',
+                                  value: editorState.whiteKingsideCastle,
+                                  onChanged:
+                                      (v) => onToggleCastling(whiteKingside: v),
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: _CastlingSwitch(
-                                side: 'White',
-                                flank: 'Queenside',
-                                badge: 'Q',
-                                notation: 'O-O-O',
-                                value: editorState.whiteQueensideCastle,
-                                onChanged:
-                                    (v) => onToggleCastling(whiteQueenside: v),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _CastlingSwitch(
+                                  side: 'White',
+                                  flank: 'Queenside',
+                                  badge: 'Q',
+                                  notation: 'O-O-O',
+                                  value: editorState.whiteQueensideCastle,
+                                  onChanged:
+                                      (v) =>
+                                          onToggleCastling(whiteQueenside: v),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _CastlingSwitch(
-                                side: 'Black',
-                                flank: 'Kingside',
-                                badge: 'K',
-                                notation: 'O-O',
-                                value: editorState.blackKingsideCastle,
-                                onChanged:
-                                    (v) => onToggleCastling(blackKingside: v),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _CastlingSwitch(
+                                  side: 'Black',
+                                  flank: 'Kingside',
+                                  badge: 'K',
+                                  notation: 'O-O',
+                                  value: editorState.blackKingsideCastle,
+                                  onChanged:
+                                      (v) => onToggleCastling(blackKingside: v),
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: _CastlingSwitch(
-                                side: 'Black',
-                                flank: 'Queenside',
-                                badge: 'Q',
-                                notation: 'O-O-O',
-                                value: editorState.blackQueensideCastle,
-                                onChanged:
-                                    (v) => onToggleCastling(blackQueenside: v),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _CastlingSwitch(
+                                  side: 'Black',
+                                  flank: 'Queenside',
+                                  badge: 'Q',
+                                  notation: 'O-O-O',
+                                  value: editorState.blackQueensideCastle,
+                                  onChanged:
+                                      (v) =>
+                                          onToggleCastling(blackQueenside: v),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const FDivider(),
-                  _InspectorSection(
-                    title: 'Pieces',
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _PieceRow(
-                          color: Side.white,
-                          pieceAssets: boardSettings.pieceAssets,
-                          selectedPiece: editorState.selectedPiece,
-                          isDeleteMode: editorState.isDeleteMode,
-                          onSelectPiece: onSelectPiece,
-                        ),
-                        const SizedBox(height: 8),
-                        _PieceRow(
-                          color: Side.black,
-                          pieceAssets: boardSettings.pieceAssets,
-                          selectedPiece: editorState.selectedPiece,
-                          isDeleteMode: editorState.isDeleteMode,
-                          onSelectPiece: onSelectPiece,
-                        ),
-                        const SizedBox(height: 12),
-                        _EditorActionButton(
-                          icon: Icons.delete_outline_rounded,
-                          label:
-                              editorState.isDeleteMode
-                                  ? 'Done deleting'
-                                  : 'Delete mode',
-                          tone: _EditorButtonTone.danger,
-                          selected: editorState.isDeleteMode,
-                          fillWidth: true,
-                          onPress: onToggleDeleteMode,
-                        ),
-                      ],
+                    const FDivider(),
+                    _InspectorSection(
+                      title: 'Pieces',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _PieceRow(
+                            color: Side.white,
+                            pieceAssets: boardSettings.pieceAssets,
+                            selectedPiece: editorState.selectedPiece,
+                            isDeleteMode: editorState.isDeleteMode,
+                            onSelectPiece: onSelectPiece,
+                          ),
+                          const SizedBox(height: 8),
+                          _PieceRow(
+                            color: Side.black,
+                            pieceAssets: boardSettings.pieceAssets,
+                            selectedPiece: editorState.selectedPiece,
+                            isDeleteMode: editorState.isDeleteMode,
+                            onSelectPiece: onSelectPiece,
+                          ),
+                          const SizedBox(height: 12),
+                          _EditorActionButton(
+                            icon: Icons.delete_outline_rounded,
+                            label:
+                                editorState.isDeleteMode
+                                    ? 'Done deleting'
+                                    : 'Delete mode',
+                            tone: _EditorButtonTone.danger,
+                            selected: editorState.isDeleteMode,
+                            fillWidth: true,
+                            onPress: onToggleDeleteMode,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const FDivider(),
-                  _InspectorSection(
-                    title: 'FEN',
-                    child: _FenBlock(
-                      fen: editorState.fullFen,
-                      onCopyFen: onCopyFen,
+                    const FDivider(),
+                    _InspectorSection(
+                      title: 'FEN',
+                      child: _FenBlock(
+                        fen: editorState.fullFen,
+                        onCopyFen: onCopyFen,
+                      ),
                     ),
-                  ),
-                  const FDivider(),
-                  _InspectorSection(
-                    title: 'Import',
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _EditorActionButton(
-                                icon: Icons.content_paste_go_rounded,
-                                label: 'Paste FEN',
-                                tone: _EditorButtonTone.secondary,
-                                fillWidth: true,
-                                onPress: onPasteFen,
+                    const FDivider(),
+                    _InspectorSection(
+                      title: 'Import',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _EditorActionButton(
+                                  icon: Icons.content_paste_go_rounded,
+                                  label: 'Paste FEN',
+                                  tone: _EditorButtonTone.secondary,
+                                  fillWidth: true,
+                                  onPress: onPasteFen,
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: _EditorActionButton(
-                                icon: Icons.upload_file_rounded,
-                                label: 'Paste PGN',
-                                tone: _EditorButtonTone.secondary,
-                                fillWidth: true,
-                                onPress: onPastePgn,
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _EditorActionButton(
+                                  icon: Icons.upload_file_rounded,
+                                  label: 'Paste PGN',
+                                  tone: _EditorButtonTone.secondary,
+                                  fillWidth: true,
+                                  onPress: onPastePgn,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _EditorActionButton(
-                                icon: Icons.file_open_outlined,
-                                label: 'Open files',
-                                tone: _EditorButtonTone.secondary,
-                                fillWidth: true,
-                                onPress: onOpenLocalFiles,
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _EditorActionButton(
+                                  icon: Icons.file_open_outlined,
+                                  label: 'Open files',
+                                  tone: _EditorButtonTone.secondary,
+                                  fillWidth: true,
+                                  onPress: onOpenLocalFiles,
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: _EditorActionButton(
-                                icon: Icons.folder_open_outlined,
-                                label: 'Open folder',
-                                tone: _EditorButtonTone.secondary,
-                                fillWidth: true,
-                                onPress: onOpenLocalFolder,
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _EditorActionButton(
+                                  icon: Icons.folder_open_outlined,
+                                  label: 'Open folder',
+                                  tone: _EditorButtonTone.secondary,
+                                  fillWidth: true,
+                                  onPress: onOpenLocalFolder,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

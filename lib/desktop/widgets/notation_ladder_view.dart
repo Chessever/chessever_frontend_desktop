@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:flutter/material.dart';
@@ -340,7 +341,7 @@ class NotationLadderView extends StatefulWidget {
 class _NotationLadderViewState extends State<NotationLadderView> {
   ScrollController? _ownedScroll;
   ScrollController get _scroll =>
-      widget.scrollController ?? (_ownedScroll ??= ScrollController());
+      widget.scrollController ?? (_ownedScroll ??= DesktopScrollController());
 
   // Manual collapse/expand state, keyed by NotationPointer.encode of the
   // variation's head pointer (`[…, varIdx, 0]`). We track them as two
@@ -706,15 +707,17 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                     mainline.isEmpty
                         ? widget.game.rootComments.isEmpty
                             ? const _EmptyLadderHint()
-                            : SingleChildScrollView(
-                              child: _MoveComments(
-                                depth: 0,
-                                comments:
-                                    _annotationsHidden
-                                        ? const []
-                                        : _cleanPgnComments(
-                                          widget.game.rootComments,
-                                        ),
+                            : DesktopScrollHost(
+                              child: SingleChildScrollView(
+                                child: _MoveComments(
+                                  depth: 0,
+                                  comments:
+                                      _annotationsHidden
+                                          ? const []
+                                          : _cleanPgnComments(
+                                            widget.game.rootComments,
+                                          ),
+                                ),
                               ),
                             )
                         : _layoutMode == NotationLayoutMode.inline
@@ -957,69 +960,71 @@ class _NotationAnnotationToolbar extends StatelessWidget {
           color: kBlack2Color,
           border: Border(top: BorderSide(color: kDividerColor)),
         ),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: Row(
-            children: [
-              _ToolbarIconButton(
-                icon: Icons.arrow_upward_rounded,
-                tooltip:
-                    canPromoteVariation
-                        ? 'Promote variation'
-                        : 'Select a variation move to promote',
-                active: false,
-                foreground: kGreenColor2,
-                onPress:
-                    canPromoteVariation
-                        ? () => onPromoteVariation!(variationHead)
-                        : null,
-              ),
-              const SizedBox(width: 6),
-              _ToolbarIconButton(
-                icon: Icons.close_rounded,
-                tooltip:
-                    canDeleteVariation
-                        ? 'Delete variation'
-                        : 'Select a variation move to delete',
-                active: false,
-                foreground: kRedColor,
-                onPress:
-                    canDeleteVariation
-                        ? () => onDeleteVariation!(variationHead)
-                        : null,
-              ),
-              const SizedBox(width: 6),
-              _ToolbarGlyphButton(
-                label: ']',
-                tooltip:
-                    _canTrimContinuation
-                        ? 'Trim continuation after this move'
-                        : 'Select a move to trim the continuation',
-                active: false,
-                onPress:
-                    _canTrimContinuation
-                        ? () => onTrimContinuation!(activePointer)
-                        : null,
-              ),
-              const SizedBox(width: 6),
-              _ToolbarIconButton(
-                icon: Icons.add_comment_outlined,
-                tooltip: commentActive ? 'Edit comment' : 'Add comment',
-                active: commentActive,
-                onPress: _canComment ? () => _editComment(context) : null,
-              ),
-
-              if (hasUserNags) ...[
+        child: DesktopScrollHost(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              children: [
+                _ToolbarIconButton(
+                  icon: Icons.arrow_upward_rounded,
+                  tooltip:
+                      canPromoteVariation
+                          ? 'Promote variation'
+                          : 'Select a variation move to promote',
+                  active: false,
+                  foreground: kGreenColor2,
+                  onPress:
+                      canPromoteVariation
+                          ? () => onPromoteVariation!(variationHead)
+                          : null,
+                ),
                 const SizedBox(width: 6),
                 _ToolbarIconButton(
-                  icon: Icons.clear_rounded,
-                  tooltip: 'Clear move annotation',
+                  icon: Icons.close_rounded,
+                  tooltip:
+                      canDeleteVariation
+                          ? 'Delete variation'
+                          : 'Select a variation move to delete',
                   active: false,
-                  onPress: _canClearMoveNags ? _clearNags : null,
+                  foreground: kRedColor,
+                  onPress:
+                      canDeleteVariation
+                          ? () => onDeleteVariation!(variationHead)
+                          : null,
                 ),
+                const SizedBox(width: 6),
+                _ToolbarGlyphButton(
+                  label: ']',
+                  tooltip:
+                      _canTrimContinuation
+                          ? 'Trim continuation after this move'
+                          : 'Select a move to trim the continuation',
+                  active: false,
+                  onPress:
+                      _canTrimContinuation
+                          ? () => onTrimContinuation!(activePointer)
+                          : null,
+                ),
+                const SizedBox(width: 6),
+                _ToolbarIconButton(
+                  icon: Icons.add_comment_outlined,
+                  tooltip: commentActive ? 'Edit comment' : 'Add comment',
+                  active: commentActive,
+                  onPress: _canComment ? () => _editComment(context) : null,
+                ),
+
+                if (hasUserNags) ...[
+                  const SizedBox(width: 6),
+                  _ToolbarIconButton(
+                    icon: Icons.clear_rounded,
+                    tooltip: 'Clear move annotation',
+                    active: false,
+                    onPress: _canClearMoveNags ? _clearNags : null,
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

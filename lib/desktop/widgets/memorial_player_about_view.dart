@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/repository/gamebase/memorial_player_about.dart';
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -88,93 +89,95 @@ class _MemorialAboutContent extends StatelessWidget {
         .where((item) => !_isPeakRatingAchievement(item.label))
         .toList(growable: false);
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 980),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (analytics != null || analyticsLoading) ...[
-                _PerformanceSummary(
-                  analytics: analytics,
-                  loading: analyticsLoading,
-                ),
-                const SizedBox(height: 14),
-              ],
-              Container(
-                padding: const EdgeInsets.fromLTRB(28, 26, 28, 30),
-                decoration: BoxDecoration(
-                  color: kBlack2Color,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Life & career',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.headlineSmall?.copyWith(
-                        color: kWhiteColor,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 22),
-                    Wrap(
-                      spacing: 48,
-                      runSpacing: 18,
-                      children: [
-                        _LifeFact(
-                          label: 'Born',
-                          value: formatMemorialProfileDate(player.birthDate),
-                          detail: about?.birthPlace,
-                        ),
-                        _LifeFact(
-                          label: 'Died',
-                          value: formatMemorialProfileDate(player.deathDate),
-                          detail: about?.deathPlace,
-                        ),
-                        if (player.ratingClassical > 0)
-                          _LifeFact(
-                            label: 'Peak classical',
-                            value: player.ratingClassical.toString(),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 30),
-                    for (var index = 0; index < summary.length; index++) ...[
+    return DesktopScrollHost(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 980),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (analytics != null || analyticsLoading) ...[
+                  _PerformanceSummary(
+                    analytics: analytics,
+                    loading: analyticsLoading,
+                  ),
+                  const SizedBox(height: 14),
+                ],
+                Container(
+                  padding: const EdgeInsets.fromLTRB(28, 26, 28, 30),
+                  decoration: BoxDecoration(
+                    color: kBlack2Color,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        summary[index],
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 15,
-                          height: 1.65,
-                        ),
-                      ),
-                      if (index != summary.length - 1)
-                        const SizedBox(height: 12),
-                    ],
-                    if (highlights.isNotEmpty) ...[
-                      const SizedBox(height: 32),
-                      const Text(
-                        'Career highlights',
-                        style: TextStyle(
+                        'Life & career',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.headlineSmall?.copyWith(
                           color: kWhiteColor,
-                          fontSize: 16,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 15),
-                      for (final highlight in highlights)
-                        _CareerHighlight(highlight: highlight),
+                      const SizedBox(height: 22),
+                      Wrap(
+                        spacing: 48,
+                        runSpacing: 18,
+                        children: [
+                          _LifeFact(
+                            label: 'Born',
+                            value: formatMemorialProfileDate(player.birthDate),
+                            detail: about?.birthPlace,
+                          ),
+                          _LifeFact(
+                            label: 'Died',
+                            value: formatMemorialProfileDate(player.deathDate),
+                            detail: about?.deathPlace,
+                          ),
+                          if (player.ratingClassical > 0)
+                            _LifeFact(
+                              label: 'Peak classical',
+                              value: player.ratingClassical.toString(),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 30),
+                      for (var index = 0; index < summary.length; index++) ...[
+                        Text(
+                          summary[index],
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 15,
+                            height: 1.65,
+                          ),
+                        ),
+                        if (index != summary.length - 1)
+                          const SizedBox(height: 12),
+                      ],
+                      if (highlights.isNotEmpty) ...[
+                        const SizedBox(height: 32),
+                        const Text(
+                          'Career highlights',
+                          style: TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 15),
+                        for (final highlight in highlights)
+                          _CareerHighlight(highlight: highlight),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

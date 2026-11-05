@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
 
@@ -322,8 +323,8 @@ class _DesktopPositionGamesTableState
     extends ConsumerState<DesktopPositionGamesTable> {
   static const double _scrollPrefetchExtent = 360;
 
-  final ScrollController _scroll = ScrollController();
-  final ScrollController _horizontalScroll = ScrollController();
+  final ScrollController _scroll = DesktopScrollController();
+  final ScrollController _horizontalScroll = DesktopScrollController();
   final Map<String, GlobalKey> _rowKeys = <String, GlobalKey>{};
   final List<Map<String, dynamic>> _rows = <Map<String, dynamic>>[];
   final Map<Map<String, dynamic>, PositionGameNotation> _preparedNotations =

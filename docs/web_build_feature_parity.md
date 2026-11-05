@@ -20,6 +20,28 @@ were weighed for the gaps. Checked against pub.dev on 2026-10-28; build
 22.17.15. Verified in headless Chromium and WebKit; Firefox and real Safari
 still need a manual pass.
 
+### Board and scrolling update (22.28.0)
+
+Desktop and browser scroll views share `DesktopScrollController`: discrete
+wheel steps interpolate for 120 ms, while fine pixel deltas, touch/trackpad
+gestures and reduced-motion preferences retain direct input. Nested views keep
+independent controllers and hand wheel input to their parent at the edges.
+Board-wheel navigation coalesces trackpad bursts without queuing later moves.
+Interrupted piece animations continue from the displayed position, and cancelling
+a drag preserves the board/controller instead of remounting them. Finished game
+previews mount in their settled state and static boards isolate repaint work.
+Hidden tabs stop submitting new preview-engine work. Browser PV formatting yields
+between small batches; native formatting keeps its worker isolate.
+
+For an on-device release measurement, enable
+`localStorage.setItem('chessever.frameStats', '1')` and reload. Exercise move
+navigation, dragging and the For You grid in a foreground tab. Console reports
+and `window.chesseverFrameStats` expose build, raster and total-latency percentiles.
+The 120 Hz stage budget is 8.33 ms; build and raster are pipelined, so their sum
+is not a throughput test. These timings alone do not prove 120 displayed frames
+per second: confirm browser/display cadence in a foreground performance trace.
+Remove the storage key and reload to disable sampling.
+
 ## Features
 
 | Desktop feature | In the browser | How |
@@ -49,7 +71,7 @@ still need a manual pass.
 | Events membership | Event browsing stays free; archived event/game opens require Premium | Each opening resolves canonical Past membership and broadcast dates. Current events remain free unless another protected source applies; restored boards recheck access |
 | Guest sign-up | First browser visit offers sign-in or Not now | The persisted guest clock survives reloads; reminders start at day 7, repeat weekly, and require sign-in at day 28. Signing in clears guest stamps |
 | Phone rewarded features | Upgrade-only web paywall | My Likes/community games, PGN import/copy, every Game Report, Prep content, historical events and the other phone-gated surfaces require verified membership. Free browsing and the phone's latest-20 Likes export allowance remain available |
-| First monthly subscription | $0.99 first month for eligible new subscribers, then the existing monthly price | Checkout verifies purchase history, active USD price and one-time discount server-side. App pricing shows the offer only after a matching server quote. Annual/native pricing is unchanged; the billing service must be deployed before either web frontend |
+| First monthly subscription | $0.99 first month for eligible new subscribers, then the existing monthly price | Checkout verifies purchase history, active USD price and one-time discount server-side. App pricing shows the offer only after a matching server quote. Web and direct-download desktop share the offer and plan selector; guests see explicit first-time-subscriber conditions. Annual and Mac App Store pricing are unchanged. The billing service must be deployed before advertising the offer |
 | Sidebar number shortcuts | Same as desktop | Cmd/Ctrl+1 through 9, then 0 follow the primary sidebar routes from Events to Play; labels and bindings share `desktop_main_routes.dart` |
 
 ## Packages weighed (pub.dev, 2026-10-28)

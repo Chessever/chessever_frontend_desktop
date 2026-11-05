@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/editorial/inbox_unread_anchor.dart';
 
 import 'package:flutter/material.dart';
@@ -429,9 +430,11 @@ class _SidebarNavViewportState extends State<_SidebarNavViewport> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: SingleChildScrollView(
-                key: const ValueKey('desktop-sidebar-nav-scroll'),
-                child: widget.child,
+              child: DesktopScrollHost(
+                child: SingleChildScrollView(
+                  key: const ValueKey('desktop-sidebar-nav-scroll'),
+                  child: widget.child,
+                ),
               ),
             ),
             _edgeFade(top: true, visible: _moreAbove),

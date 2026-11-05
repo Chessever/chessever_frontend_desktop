@@ -7,6 +7,7 @@ import '../../state/active_board_game.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/pgn_attribution_editor.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
@@ -148,8 +149,12 @@ BoardTabLibrarySaveOrigin? libraryCloudUpdateTargetForCompletedSave({
   required int selectedCloudFolderCount,
   required int selectedLocalPathCount,
   required BoardTabLibrarySaveOrigin? insertedOrigin,
-}) => gameCount == 1 && selectedCloudFolderCount == 1 &&
-    selectedLocalPathCount == 0 ? insertedOrigin : null;
+}) =>
+    gameCount == 1 &&
+            selectedCloudFolderCount == 1 &&
+            selectedLocalPathCount == 0
+        ? insertedOrigin
+        : null;
 
 /// Ids of the destination databases a failed save must remove again.
 ///
@@ -228,10 +233,8 @@ List<LibraryFolder> librarySaveWritableCloudFolders({
   final candidates =
       foldersOnly
           ? folders
-                .where(
-                  (folder) => !libraryCloudNodeIsDatabase(folder, folders),
-                )
-                .toList(growable: false)
+              .where((folder) => !libraryCloudNodeIsDatabase(folder, folders))
+              .toList(growable: false)
           : folders;
   // The Likes collection is written only by the like toggle. Saving into it
   // here would create a like outside the Likes policy (flag, never name).
@@ -266,10 +269,7 @@ List<LibraryFolder?> libraryNewDatabaseParents({
 }
 
 @visibleForTesting
-LibraryFolder? librarySaveFolderById(
-  List<LibraryFolder> folders,
-  String? id,
-) {
+LibraryFolder? librarySaveFolderById(List<LibraryFolder> folders, String? id) {
   if (id == null) return null;
   for (final folder in folders) {
     if (folder.id == id) return folder;
@@ -756,7 +756,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         rejection != null
             ? freemiumQuotaBlockedMessage(rejection)
             : containerRejection ??
-                  'Failed to create folder. Please try again.',
+                'Failed to create folder. Please try again.',
         error: true,
       );
     }
@@ -821,7 +821,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
 
   /// The destination database this dialog already created for [parentKey] under
   /// [name] and whose attempt has not landed a row, or `null`.
-  _PendingCloudDatabase? _pendingCloudDatabaseFor(String parentKey, String name) {
+  _PendingCloudDatabase? _pendingCloudDatabaseFor(
+    String parentKey,
+    String name,
+  ) {
     for (final pending in _pendingCloudDatabases) {
       if (pending.parentKey == parentKey && pending.name == name) {
         return pending;
@@ -959,7 +962,8 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     void retainCommittedOutcome() {
       if (_savedRows == 0 && _localWritten == 0) return;
       committedOutcome = LibrarySaveOutcome(
-        committedGame: effectiveGames.length == 1 ? effectiveGames.single : null,
+        committedGame:
+            effectiveGames.length == 1 ? effectiveGames.single : null,
         savedRows: _savedRows,
         folderCount: cloudFoldersUsed,
         localFilesWritten: _localWritten,
@@ -1054,10 +1058,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
           );
           if (!mounted) return;
           if (!ownedQuota.isAllowed) {
-            _showToast(
-              freemiumQuotaBlockedMessage(ownedQuota),
-              error: true,
-            );
+            _showToast(freemiumQuotaBlockedMessage(ownedQuota), error: true);
             setState(() => _isSaving = false);
             return;
           }
@@ -1263,8 +1264,8 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
           keptNames.isEmpty
               ? ''
               : ' The empty database '
-                    '${keptNames.map((name) => '"$name"').join(', ')} '
-                    'could not be removed and will be reused by the next save.';
+                  '${keptNames.map((name) => '"$name"').join(', ')} '
+                  'could not be removed and will be reused by the next save.';
       if (committedOutcome != null) {
         // A retry here would duplicate already committed destinations.
         _showToast(
@@ -1358,10 +1359,12 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       destinationMode: widget.destinationMode,
     );
     final cloudByPin = {
-      for (final folder in writable) libraryCloudDatabasePinKey(folder.id): folder,
+      for (final folder in writable)
+        libraryCloudDatabasePinKey(folder.id): folder,
     };
     final localByPin = {
-      for (final entry in localEntries) libraryLocalDatabasePinKey(entry.path): entry,
+      for (final entry in localEntries)
+        libraryLocalDatabasePinKey(entry.path): entry,
     };
     final selectedPinKeys = {
       ...selectedFolders.map((folder) => libraryCloudDatabasePinKey(folder.id)),
@@ -1456,100 +1459,112 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                     : _onAddLocalPgnFile,
                           );
                         }
-                        return SingleChildScrollView(
-                          physics: const DesktopScrollPhysics(),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (_supportsMetadataEdit) ...[
-                                _buildGameDetailsSection(),
-                                const SizedBox(height: 14),
-                              ],
-                              if (updateTarget != null) ...[
-                                _UpdateOriginalTile(
-                                  target: updateTarget,
-                                  busy: _isUpdatingOriginal,
-                                  disabled:
-                                      _isSaving || _isDeletingLocalDestination,
-                                  onTap: _onUpdateOriginal,
-                                ),
-                                const SizedBox(height: 12),
-                              ],
-                              if (_newDatabaseNameCtrl != null) ...[
-                                _buildNewDatabaseSection(
-                                  allFolders: folders,
-                                  selectedFolders: selectedFolders,
-                                ),
-                                const SizedBox(height: 8),
-                              ],
-                              if (pinnedKeys.isNotEmpty) ...[
-                                LibrarySaveSection(
-                                  key: const ValueKey('save-pinned'),
-                                  icon: Icons.push_pin_outlined,
-                                  label: 'PINNED',
-                                  enabled: !busy,
-                                  selectedCount: pinnedKeys
-                                      .where(selectedPinKeys.contains)
-                                      .length,
-                                  children: [
-                                    for (final key in pinnedKeys)
-                                      if (cloudByPin[key] case final folder?)
-                                        _cloudDestinationRow(folder, busy)
-                                      else if (localByPin[key] case final entry?)
+                        return DesktopScrollHost(
+                          child: SingleChildScrollView(
+                            physics: const DesktopScrollPhysics(),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (_supportsMetadataEdit) ...[
+                                  _buildGameDetailsSection(),
+                                  const SizedBox(height: 14),
+                                ],
+                                if (updateTarget != null) ...[
+                                  _UpdateOriginalTile(
+                                    target: updateTarget,
+                                    busy: _isUpdatingOriginal,
+                                    disabled:
+                                        _isSaving ||
+                                        _isDeletingLocalDestination,
+                                    onTap: _onUpdateOriginal,
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+                                if (_newDatabaseNameCtrl != null) ...[
+                                  _buildNewDatabaseSection(
+                                    allFolders: folders,
+                                    selectedFolders: selectedFolders,
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
+                                if (pinnedKeys.isNotEmpty) ...[
+                                  LibrarySaveSection(
+                                    key: const ValueKey('save-pinned'),
+                                    icon: Icons.push_pin_outlined,
+                                    label: 'PINNED',
+                                    enabled: !busy,
+                                    selectedCount:
+                                        pinnedKeys
+                                            .where(selectedPinKeys.contains)
+                                            .length,
+                                    children: [
+                                      for (final key in pinnedKeys)
+                                        if (cloudByPin[key] case final folder?)
+                                          _cloudDestinationRow(folder, busy)
+                                        else if (localByPin[key]
+                                            case final entry?)
+                                          _localDestinationRow(entry, busy),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
+                                if (writable.isNotEmpty) ...[
+                                  LibrarySaveSection(
+                                    key: const ValueKey('save-cloud'),
+                                    icon: Icons.cloud_outlined,
+                                    label:
+                                        widget.newDatabaseName == null
+                                            ? 'CLOUD LIBRARY'
+                                            : 'DESTINATION FOLDER',
+                                    enabled: !busy,
+                                    selectedCount: selectedFolders.length,
+                                    children: [
+                                      for (final folder in ordered)
+                                        _cloudDestinationRow(folder, busy),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
+                                if (librarySaveAllowsLocalDestinations(
+                                  widget.destinationMode,
+                                ))
+                                  LibrarySaveSection(
+                                    key: const ValueKey('save-local'),
+                                    icon:
+                                        hostIsMacOS
+                                            ? Icons.computer_outlined
+                                            : Icons.storage_outlined,
+                                    label:
+                                        hostIsMacOS
+                                            ? 'ON THIS MAC'
+                                            : 'ON THIS PC',
+                                    enabled: !busy,
+                                    selectedCount: selectedLocalPaths.length,
+                                    children: [
+                                      for (final entry in localEntries)
                                         _localDestinationRow(entry, busy),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
+                                      // Browsers cannot hand back a writable
+                                      // path to a file the user picks.
+                                      if (!kIsWeb)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 4,
+                                          ),
+                                          child: _AddLocalFolderTile(
+                                            onTap:
+                                                busy
+                                                    ? null
+                                                    : _onAddLocalPgnFile,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
                               ],
-                              if (writable.isNotEmpty) ...[
-                                LibrarySaveSection(
-                                  key: const ValueKey('save-cloud'),
-                                  icon: Icons.cloud_outlined,
-                                  label:
-                                      widget.newDatabaseName == null
-                                          ? 'CLOUD LIBRARY'
-                                          : 'DESTINATION FOLDER',
-                                  enabled: !busy,
-                                  selectedCount: selectedFolders.length,
-                                  children: [
-                                    for (final folder in ordered)
-                                      _cloudDestinationRow(folder, busy),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                              ],
-                              if (librarySaveAllowsLocalDestinations(
-                                widget.destinationMode,
-                              ))
-                                LibrarySaveSection(
-                                  key: const ValueKey('save-local'),
-                                  icon: hostIsMacOS
-                                      ? Icons.computer_outlined
-                                      : Icons.storage_outlined,
-                                  label:
-                                      hostIsMacOS
-                                          ? 'ON THIS MAC'
-                                          : 'ON THIS PC',
-                                  enabled: !busy,
-                                  selectedCount: selectedLocalPaths.length,
-                                  children: [
-                                    for (final entry in localEntries)
-                                      _localDestinationRow(entry, busy),
-                                    // Browsers cannot hand back a writable
-                                    // path to a file the user picks.
-                                    if (!kIsWeb) Padding(
-                                      padding: const EdgeInsets.only(top: 4),
-                                      child: _AddLocalFolderTile(
-                                        onTap: busy ? null : _onAddLocalPgnFile,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                            ],
+                            ),
                           ),
                         );
                       },
@@ -1717,9 +1732,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     folder: folder,
     selected: _selected.contains(folder.id),
     disabled: busy,
-    onToggle: () => setState(() {
-      if (!_selected.add(folder.id)) _selected.remove(folder.id);
-    }),
+    onToggle:
+        () => setState(() {
+          if (!_selected.add(folder.id)) _selected.remove(folder.id);
+        }),
   );
 
   Widget _localDestinationRow(LocalLibraryEntry entry, bool busy) {
@@ -1728,9 +1744,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       entry: entry,
       selected: _selectedLocalPaths.contains(key),
       disabled: busy,
-      onToggle: () => setState(() {
-        if (!_selectedLocalPaths.add(key)) _selectedLocalPaths.remove(key);
-      }),
+      onToggle:
+          () => setState(() {
+            if (!_selectedLocalPaths.add(key)) _selectedLocalPaths.remove(key);
+          }),
       onForget: busy ? null : () => unawaited(_deleteLocalDestination(entry)),
     );
   }
@@ -2224,8 +2241,6 @@ class _EmptyHint extends StatelessWidget {
   }
 }
 
-
-
 class _AddLocalFolderTile extends StatefulWidget {
   const _AddLocalFolderTile({required this.onTap});
 
@@ -2571,8 +2586,6 @@ class _FieldLabel extends StatelessWidget {
     );
   }
 }
-
-
 
 class _PlayerNameRow extends StatelessWidget {
   const _PlayerNameRow({

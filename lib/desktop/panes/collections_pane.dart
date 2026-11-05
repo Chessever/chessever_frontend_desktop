@@ -8,6 +8,8 @@
 /// surface is a Library widget; nothing here draws its own chrome.
 library;
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
+
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -447,71 +449,76 @@ class _CollectionsRail extends ConsumerWidget {
         children: [
           LibraryRailHeader(title: 'Collections', onCollapse: onCollapse),
           Expanded(
-            child: ListView(
-              physics: const DesktopScrollPhysics(),
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              children: [
-                LibraryRailGroupHeader(label: 'Catalog', count: all.total),
-                LibraryRailRow(
-                  label: 'All collections',
-                  icon: Icons.auto_stories_outlined,
-                  selected: selectedAuthor == null,
-                  onTap: () => onSelectAuthor(null),
-                ),
-                const SizedBox(height: 12),
-                LibraryRailGroupHeader(label: 'Authors', count: authors.total),
-                if (authors.isLoading)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 14),
-                    child: LibraryRailLoading(),
-                  )
-                else if (authors.error != null)
-                  _RailNote(
-                    text: 'Authors could not be loaded.',
-                    action: 'Try again',
-                    onAction:
-                        () =>
-                            ref
-                                .read(collectionAuthorsProvider.notifier)
-                                .refresh(),
-                  )
-                else if (authors.items.isEmpty)
-                  const _RailNote(
-                    text:
-                        'Authors will appear here when their collections '
-                        'are published.',
-                  )
-                else ...[
-                  for (final author in authors.items)
-                    LibraryRailRow(
-                      label: author.name,
-                      icon: Icons.person_outline_rounded,
-                      leading: _AuthorPhoto(url: author.avatarUrl, size: 16),
-                      trailingLabel: '${author.bookCount}',
-                      selected: selectedAuthor?.id == author.id,
-                      onTap: () => onSelectAuthor(author),
-                    ),
-                  if (authors.isLoadingMore)
+            child: DesktopScrollHost(
+              child: ListView(
+                physics: const DesktopScrollPhysics(),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                children: [
+                  LibraryRailGroupHeader(label: 'Catalog', count: all.total),
+                  LibraryRailRow(
+                    label: 'All collections',
+                    icon: Icons.auto_stories_outlined,
+                    selected: selectedAuthor == null,
+                    onTap: () => onSelectAuthor(null),
+                  ),
+                  const SizedBox(height: 12),
+                  LibraryRailGroupHeader(
+                    label: 'Authors',
+                    count: authors.total,
+                  ),
+                  if (authors.isLoading)
                     const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 10),
+                      padding: EdgeInsets.symmetric(vertical: 14),
                       child: LibraryRailLoading(),
                     )
-                  else if (authors.hasMore)
-                    LibraryRailRow(
-                      label:
-                          authors.moreError != null
-                              ? 'Try loading more again'
-                              : 'Show more authors',
-                      icon: Icons.expand_more_rounded,
-                      selected: false,
-                      onTap:
+                  else if (authors.error != null)
+                    _RailNote(
+                      text: 'Authors could not be loaded.',
+                      action: 'Try again',
+                      onAction:
                           () =>
                               ref
                                   .read(collectionAuthorsProvider.notifier)
-                                  .loadMore(),
-                    ),
+                                  .refresh(),
+                    )
+                  else if (authors.items.isEmpty)
+                    const _RailNote(
+                      text:
+                          'Authors will appear here when their collections '
+                          'are published.',
+                    )
+                  else ...[
+                    for (final author in authors.items)
+                      LibraryRailRow(
+                        label: author.name,
+                        icon: Icons.person_outline_rounded,
+                        leading: _AuthorPhoto(url: author.avatarUrl, size: 16),
+                        trailingLabel: '${author.bookCount}',
+                        selected: selectedAuthor?.id == author.id,
+                        onTap: () => onSelectAuthor(author),
+                      ),
+                    if (authors.isLoadingMore)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 10),
+                        child: LibraryRailLoading(),
+                      )
+                    else if (authors.hasMore)
+                      LibraryRailRow(
+                        label:
+                            authors.moreError != null
+                                ? 'Try loading more again'
+                                : 'Show more authors',
+                        icon: Icons.expand_more_rounded,
+                        selected: false,
+                        onTap:
+                            () =>
+                                ref
+                                    .read(collectionAuthorsProvider.notifier)
+                                    .loadMore(),
+                      ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ],
@@ -797,7 +804,9 @@ class _CatalogList extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // No remembered offset: a new order's list starts from its top.
-    final scrollController = useScrollController(keepScrollOffset: false);
+    final scrollController = useDesktopScrollController(
+      keepScrollOffset: false,
+    );
 
     // The next page is asked for as the list nears its end, and also when a
     // short first page does not fill the pane at all.
@@ -1165,78 +1174,80 @@ class _AuthorAbout extends StatelessWidget {
     final paragraphs = collectionParagraphs(author.about);
     final hasPhoto = author.avatarUrl?.trim().isNotEmpty ?? false;
     final count = author.bookCount > 0 ? author.bookCount : listed;
-    return ListView(
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-      children: [
-        Align(
-          alignment: Alignment.topLeft,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    if (hasPhoto) ...[
-                      _AuthorPhoto(url: author.avatarUrl, size: 56),
-                      const SizedBox(width: 14),
+    return DesktopScrollHost(
+      child: ListView(
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+        children: [
+          Align(
+            alignment: Alignment.topLeft,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      if (hasPhoto) ...[
+                        _AuthorPhoto(url: author.avatarUrl, size: 56),
+                        const SizedBox(width: 14),
+                      ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              author.name,
+                              style: const TextStyle(
+                                color: kWhiteColor,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              [
+                                if (count == 1)
+                                  '1 collection'
+                                else if (count > 1)
+                                  '$count collections',
+                                if (author.gameCount > 0)
+                                  collectionGamesLabel(author.gameCount),
+                              ].join(' · '),
+                              style: const TextStyle(
+                                color: kLightGreyColor,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            author.name,
-                            style: const TextStyle(
-                              color: kWhiteColor,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            [
-                              if (count == 1)
-                                '1 collection'
-                              else if (count > 1)
-                                '$count collections',
-                              if (author.gameCount > 0)
-                                collectionGamesLabel(author.gameCount),
-                            ].join(' · '),
-                            style: const TextStyle(
-                              color: kLightGreyColor,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (paragraphs.isEmpty)
+                    const Text(
+                      'No author description available yet.',
+                      style: TextStyle(color: kWhiteColor70, fontSize: 13),
+                    )
+                  else
+                    for (var i = 0; i < paragraphs.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      SelectableText(
+                        paragraphs[i],
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 13,
+                          height: 1.55,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                if (paragraphs.isEmpty)
-                  const Text(
-                    'No author description available yet.',
-                    style: TextStyle(color: kWhiteColor70, fontSize: 13),
-                  )
-                else
-                  for (var i = 0; i < paragraphs.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 10),
-                    SelectableText(
-                      paragraphs[i],
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 13,
-                        height: 1.55,
-                      ),
-                    ),
-                  ],
-              ],
+                    ],
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

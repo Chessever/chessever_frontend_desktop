@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/state/desktop_calendar_directory.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
@@ -270,29 +271,31 @@ class _CompactMonthCalendar extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 5),
-          GridView.builder(
-            shrinkWrap: true,
-            padding: EdgeInsets.zero,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 7,
-              mainAxisExtent: 34,
+          DesktopScrollHost(
+            child: GridView.builder(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 7,
+                mainAxisExtent: 34,
+              ),
+              itemCount: leadingBlanks + daysInMonth,
+              itemBuilder: (context, index) {
+                if (index < leadingBlanks) return const SizedBox.shrink();
+                final day = index - leadingBlanks + 1;
+                return _CompactDayCell(
+                  day: day,
+                  selected: selectedDay == day,
+                  isToday: currentMonth && today.day == day,
+                  hasEvents: (eventCounts[day] ?? 0) > 0,
+                  onTap:
+                      onSelectDay == null
+                          ? null
+                          : () => onSelectDay!(selectedDay == day ? null : day),
+                );
+              },
             ),
-            itemCount: leadingBlanks + daysInMonth,
-            itemBuilder: (context, index) {
-              if (index < leadingBlanks) return const SizedBox.shrink();
-              final day = index - leadingBlanks + 1;
-              return _CompactDayCell(
-                day: day,
-                selected: selectedDay == day,
-                isToday: currentMonth && today.day == day,
-                hasEvents: (eventCounts[day] ?? 0) > 0,
-                onTap:
-                    onSelectDay == null
-                        ? null
-                        : () => onSelectDay!(selectedDay == day ? null : day),
-              );
-            },
           ),
           const Divider(height: 17, color: kDividerColor),
           Align(
@@ -527,10 +530,12 @@ class _AgendaList extends StatelessWidget {
     if (listings.isEmpty) {
       return const _EmptyCalendar(message: 'Nothing scheduled');
     }
-    return ListView(
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 16),
-      children: children,
+    return DesktopScrollHost(
+      child: ListView(
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 16),
+        children: children,
+      ),
     );
   }
 
@@ -639,33 +644,35 @@ class _LiveCalendarList extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: ListView.custom(
-            physics: const DesktopScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(22, 0, 22, 18),
-            childrenDelegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final listing = listings[index];
-                return Padding(
-                  key: ValueKey(listing.id),
-                  padding: EdgeInsets.only(
-                    bottom: index == listings.length - 1 ? 0 : 6,
-                  ),
-                  child: DesktopLiveBroadcastRow(
-                    listing: listing,
-                    selected: selectedEventId == listing.id,
-                    onSelect: () => onSelectEvent(listing),
-                    onOpen: () => onOpenEvent(listing),
-                  ),
-                );
-              },
-              childCount: listings.length,
-              findChildIndexCallback: (key) {
-                if (key is! ValueKey<String>) return null;
-                final index = listings.indexWhere(
-                  (listing) => listing.id == key.value,
-                );
-                return index < 0 ? null : index;
-              },
+          child: DesktopScrollHost(
+            child: ListView.custom(
+              physics: const DesktopScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(22, 0, 22, 18),
+              childrenDelegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final listing = listings[index];
+                  return Padding(
+                    key: ValueKey(listing.id),
+                    padding: EdgeInsets.only(
+                      bottom: index == listings.length - 1 ? 0 : 6,
+                    ),
+                    child: DesktopLiveBroadcastRow(
+                      listing: listing,
+                      selected: selectedEventId == listing.id,
+                      onSelect: () => onSelectEvent(listing),
+                      onOpen: () => onOpenEvent(listing),
+                    ),
+                  );
+                },
+                childCount: listings.length,
+                findChildIndexCallback: (key) {
+                  if (key is! ValueKey<String>) return null;
+                  final index = listings.indexWhere(
+                    (listing) => listing.id == key.value,
+                  );
+                  return index < 0 ? null : index;
+                },
+              ),
             ),
           ),
         ),

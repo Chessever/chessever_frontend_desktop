@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/paywall/web_premium_paywall.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -22,7 +23,6 @@ import 'package:chessever/desktop/services/billing/desktop_trial_eligibility_pro
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/desktop/widgets/paywall/mac_app_store_plans.dart';
-import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
@@ -146,13 +146,13 @@ Future<bool> _presentPaywall(
   );
   await showDesktopModal<void>(
     context,
-    maxWidth: kIsWeb ? 520 : 480,
+    maxWidth: kIsWeb || !isMacAppStore ? 520 : 480,
     maxHeight:
-        kIsWeb
+        (kIsWeb || !isMacAppStore)
             ? (MediaQuery.sizeOf(context).height * 0.9).clamp(0.0, 704.0)
             : null,
     shape:
-        kIsWeb
+        (kIsWeb || !isMacAppStore)
             ? RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
               side: const BorderSide(color: kDividerColor),
@@ -237,7 +237,7 @@ class DesktopPaywallView extends ConsumerStatefulWidget {
 }
 
 class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
-  String _interval = kIsWeb ? 'month' : 'year';
+  String _interval = 'month';
   _PaywallPhase _phase = _PaywallPhase.idle;
   bool _needsSignIn = false;
   bool _closing = false;
@@ -382,7 +382,10 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
     }
   }
 
-  Future<void> _purchase(DesktopResolvedPricing? pricing) async {
+  Future<void> _purchase(
+    DesktopResolvedPricing? pricing, {
+    WebIntroOffer? introOffer,
+  }) async {
     // Purchasing is itself a request: it needs a permanent account.
     final purchase = readDesktopAccess(
       ref.read,
@@ -421,7 +424,20 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
       created = await DesktopBillingService.instance.createCheckoutSession(
         tier: pricing.pricing.tier,
         interval: _interval,
+        introOffer: introOffer,
       );
+    } on DesktopIntroOfferException catch (error) {
+      if (!mounted) return;
+      if (error.refreshOffer) {
+        ref.invalidate(webIntroOfferProvider(pricing.pricing.tier));
+        ref.invalidate(desktopPricingProvider);
+      }
+      setState(() {
+        _phase = _PaywallPhase.idle;
+        _error =
+            'Your offer changed. Review the updated price before continuing.';
+      });
+      return;
     } catch (_) {
       DesktopAccessAnalytics.operationalError(
         widget.decision,
@@ -530,7 +546,7 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
       context: widget.accessContext,
     );
 
-    if (kIsWeb &&
+    if ((kIsWeb || !isMacAppStore) &&
         (shown.outcome == DesktopAccess.premiumRequired ||
             shown.outcome == DesktopAccess.quotaExceeded)) {
       final countrymen =
@@ -554,53 +570,55 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
         ],
       );
     }
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 20, 16, 24),
-      child: Padding(
-        padding: const EdgeInsets.only(right: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _Header(title: copy.title),
-            const SizedBox(height: 8),
-            if (shown.outcome == DesktopAccess.checking)
-              // The progress row carries the body line; the title already
-              // names what is being checked.
-              _Progress(label: copy.body)
-            else
-              Text(
-                copy.body,
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 13,
-                  height: 1.45,
+    return DesktopScrollHost(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 20, 16, 24),
+        child: Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _Header(title: copy.title),
+              const SizedBox(height: 8),
+              if (shown.outcome == DesktopAccess.checking)
+                // The progress row carries the body line; the title already
+                // names what is being checked.
+                _Progress(label: copy.body)
+              else
+                Text(
+                  copy.body,
+                  style: const TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: 13,
+                    height: 1.45,
+                  ),
                 ),
-              ),
-            if (copy.capacityLine != null) ...[
-              const SizedBox(height: 14),
-              Text(
-                copy.capacityLine!,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: [FontFeature.tabularFigures()],
+              if (copy.capacityLine != null) ...[
+                const SizedBox(height: 14),
+                Text(
+                  copy.capacityLine!,
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
                 ),
-              ),
+              ],
+              if (shown.outcome != DesktopAccess.checking) ...[
+                const SizedBox(height: 20),
+                ..._bodyFor(shown),
+              ],
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  style: const TextStyle(color: kRedColor, fontSize: 12),
+                ),
+              ],
             ],
-            if (shown.outcome != DesktopAccess.checking) ...[
-              const SizedBox(height: 20),
-              ..._bodyFor(shown),
-            ],
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _error!,
-                style: const TextStyle(color: kRedColor, fontSize: 12),
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );
@@ -668,135 +686,81 @@ class _DesktopPaywallViewState extends ConsumerState<DesktopPaywallView> {
       ];
     }
     final pendingTrial = _pendingTrialCheckout;
-    if (kIsWeb) {
-      final intro =
-          pricing == null
-              ? null
-              : ref
-                  .watch(webIntroOfferProvider(pricing.pricing.tier))
-                  .valueOrNull;
-      final showsIntro =
-          pricing != null &&
-          intro?.matches(
-                currency: pricing.currencyCode,
-                monthlyAmount: pricing.pricing.monthlyAmount,
-              ) ==
-              true;
-      return [
-        WebPremiumPlans(
-          pricing: pricing,
-          introOffer: intro,
-          interval: _interval,
-          showsTrial: showsTrial,
-          onChanged:
-              _phase == _PaywallPhase.idle && pendingTrial == null
-                  ? (interval) => setState(() => _interval = interval)
-                  : null,
-        ),
-        const SizedBox(height: 20),
-        if (pricing == null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child:
-                pricingState.hasError
-                    ? DesktopDialogButton(
-                      label: 'Could not load prices. Retry',
-                      onPress: () => ref.invalidate(desktopPricingProvider),
-                    )
-                    : const _Progress(label: 'Loading prices'),
-          ),
-        WebPremiumCheckoutButton(
-          label:
-              _phase == _PaywallPhase.openingCheckout
-                  ? 'Opening checkout'
-                  : showsIntro && _interval == 'month'
-                  ? r'Continue with $0.99 first month'
-                  : 'Continue to checkout',
-          onPress:
-              _phase == _PaywallPhase.idle && pendingTrial == null
-                  ? _openWebPremiumPage
-                  : null,
-        ),
-        const SizedBox(height: 12),
-        if (widget.decision.reason == DesktopAccessReason.premiumPaidSource &&
-            widget.accessContext != null)
-          const Text(
-            'Browsing and your saved games stay free.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: kWhiteColor70, fontSize: 13),
-          ),
-        // Preserve trial/billing assurance without enlarging the CTA row.
-        if (showsTrial)
-          Text(
-            DesktopPricing.premiumAssuranceLabel(showsTrial: showsTrial),
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: kWhiteColor70, fontSize: 12),
-          ),
-        const SizedBox(height: 8),
-        DesktopDialogButton(
-          label:
-              _phase == _PaywallPhase.refreshing
-                  ? 'Refreshing'
-                  : 'Already Premium? Refresh',
-          tone: DesktopDialogButtonTone.ghost,
-          onPress: _phase == _PaywallPhase.idle ? _refresh : null,
-        ),
-        if (pendingTrial != null) ...[
-          const SizedBox(height: 16),
-          _PendingTrialConfirm(
-            busy: _phase != _PaywallPhase.idle,
-            onConfirm: _confirmPendingTrialCheckout,
-            onDismiss: () => setState(() => _pendingTrialCheckout = null),
-          ),
-        ],
-      ];
-    }
+    final introState =
+        pricing == null
+            ? null
+            : ref.watch(webIntroOfferProvider(pricing.pricing.tier));
+    final intro = introState?.valueOrNull;
+    final showsIntro =
+        pricing != null &&
+        intro?.matches(
+              currency: pricing.currencyCode,
+              monthlyAmount: pricing.pricing.monthlyAmount,
+            ) ==
+            true;
+    final checkingOffer = introState?.isLoading == true;
+    final canCheckout =
+        _phase == _PaywallPhase.idle &&
+        pendingTrial == null &&
+        pricing != null &&
+        !checkingOffer;
+    final monthlyIntro = showsIntro && _interval == 'month';
     return [
-      _PlanSelector(
+      WebPremiumPlans(
         pricing: pricing,
+        introOffer: intro,
         interval: _interval,
         showsTrial: showsTrial,
-        onChanged: (interval) => setState(() => _interval = interval),
+        onChanged:
+            _phase == _PaywallPhase.idle && pendingTrial == null
+                ? (interval) => setState(() => _interval = interval)
+                : null,
       ),
-      const SizedBox(height: 16),
-      for (final line in desktopPremiumIncludes)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Text(
-            line,
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 12.5,
-              height: 1.35,
-            ),
-          ),
+      const SizedBox(height: 20),
+      if (pricing == null && pricingState.hasError) ...[
+        DesktopDialogButton(
+          label: 'Could not load prices. Retry',
+          onPress: () => ref.invalidate(desktopPricingProvider),
         ),
-      const SizedBox(height: 18),
-      // Wraps instead of overflowing when the dialog is narrow.
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          DesktopDialogButton(
-            label:
-                _phase == _PaywallPhase.openingCheckout
-                    ? 'Opening checkout'
-                    : 'Continue to checkout',
-            tone: DesktopDialogButtonTone.primary,
-            onPress:
-                _phase == _PaywallPhase.idle ? () => _purchase(pricing) : null,
-          ),
-          DesktopDialogButton(
-            label: 'Already Premium? Refresh',
-            tone: DesktopDialogButtonTone.ghost,
-            onPress: _phase == _PaywallPhase.idle ? _refresh : null,
-          ),
-        ],
+        const SizedBox(height: 10),
+      ],
+      WebPremiumCheckoutButton(
+        label:
+            _phase == _PaywallPhase.openingCheckout
+                ? 'Opening checkout'
+                : pricing == null
+                ? 'Loading prices'
+                : checkingOffer
+                ? 'Checking your offer'
+                : monthlyIntro
+                ? intro!.requiresSignIn
+                    ? 'Check my first-month offer'
+                    : r'Start first month for $0.99'
+                : 'Continue to checkout',
+        onPress:
+            !canCheckout
+                ? null
+                : kIsWeb
+                ? _openWebPremiumPage
+                : () =>
+                    _purchase(pricing, introOffer: monthlyIntro ? intro : null),
       ),
-      const SizedBox(height: 12),
+      const SizedBox(height: 10),
       Text(
-        DesktopPricing.premiumAssuranceLabel(showsTrial: showsTrial),
-        style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+        _interval == 'month'
+            ? 'Cancel anytime in your account.'
+            : DesktopPricing.premiumAssuranceLabel(showsTrial: showsTrial),
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
+      ),
+      const SizedBox(height: 4),
+      DesktopDialogButton(
+        label:
+            _phase == _PaywallPhase.refreshing
+                ? 'Refreshing'
+                : 'Already Premium? Refresh',
+        tone: DesktopDialogButtonTone.ghost,
+        onPress: _phase == _PaywallPhase.idle ? _refresh : null,
       ),
       if (pendingTrial != null) ...[
         const SizedBox(height: 16),
@@ -942,191 +906,6 @@ class _Progress extends StatelessWidget {
   }
 }
 
-/// Monthly / annual as ONE composed control: two equal columns inside a
-/// single rounded track, each column carrying the same three rows (plan,
-/// price, detail) so the rows line up regardless of copy length.
-class _PlanSelector extends StatelessWidget {
-  const _PlanSelector({
-    required this.pricing,
-    required this.interval,
-    required this.showsTrial,
-    required this.onChanged,
-  });
-
-  final DesktopResolvedPricing? pricing;
-  final String interval;
-  final bool showsTrial;
-  final ValueChanged<String> onChanged;
-
-  static const double _trackRadius = 10;
-  static const double _trackPadding = 4;
-
-  @override
-  Widget build(BuildContext context) {
-    final resolved = pricing;
-    final tier = resolved?.pricing;
-    final currency = resolved?.currencyCode ?? 'USD';
-    return Container(
-      padding: const EdgeInsets.all(_trackPadding),
-      decoration: BoxDecoration(
-        color: kBackgroundColor,
-        borderRadius: BorderRadius.circular(_trackRadius),
-        border: Border.all(color: kDividerColor),
-      ),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: _PlanColumn(
-                selected: interval == 'month',
-                plan: 'Monthly',
-                price:
-                    tier == null
-                        ? '-'
-                        : DesktopPricing.formatAmount(
-                          tier.monthlyAmount,
-                          currency,
-                        ),
-                detail:
-                    tier == null
-                        ? 'per month'
-                        : DesktopPricing.monthlyPlanDetail(
-                          showsTrial: showsTrial,
-                        ),
-                onTap: () => onChanged('month'),
-              ),
-            ),
-            const SizedBox(width: _trackPadding),
-            Expanded(
-              child: _PlanColumn(
-                selected: interval == 'year',
-                plan: 'Annual',
-                price:
-                    tier == null
-                        ? '-'
-                        : DesktopPricing.formatAmount(
-                          tier.annualAmount,
-                          currency,
-                        ),
-                detail:
-                    tier == null
-                        ? 'per year'
-                        : DesktopPricing.annualPlanDetail(
-                          pricing: tier,
-                          currencyCode: currency,
-                          showsTrial: showsTrial,
-                        ),
-                onTap: () => onChanged('year'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PlanColumn extends StatefulWidget {
-  const _PlanColumn({
-    required this.selected,
-    required this.plan,
-    required this.price,
-    required this.detail,
-    required this.onTap,
-  });
-
-  final bool selected;
-  final String plan;
-  final String price;
-  final String detail;
-  final VoidCallback onTap;
-
-  @override
-  State<_PlanColumn> createState() => _PlanColumnState();
-}
-
-class _PlanColumnState extends State<_PlanColumn> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final selected = widget.selected;
-    final fill =
-        selected
-            ? kPrimaryColor.withValues(alpha: _hover ? 0.16 : 0.10)
-            : _hover
-            ? kBlack3Color
-            : Colors.transparent;
-    // Inner radius + track padding == track radius, so the corners nest.
-    const innerRadius =
-        _PlanSelector._trackRadius - _PlanSelector._trackPadding;
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: '${widget.plan}, ${widget.price}',
-      child: CursorAware(
-        mode: CursorMode.hover,
-        child: MouseRegion(
-          onEnter: (_) => setState(() => _hover = true),
-          onExit: (_) => setState(() => _hover = false),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onTap,
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 40),
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              decoration: BoxDecoration(
-                color: fill,
-                borderRadius: BorderRadius.circular(innerRadius),
-                border: Border.all(
-                  color:
-                      selected
-                          ? kPrimaryColor.withValues(alpha: 0.35)
-                          : Colors.transparent,
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    widget.plan,
-                    style: TextStyle(
-                      color: selected ? kPrimaryColor : kWhiteColor70,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    widget.price,
-                    style: const TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _keepSavingsTogether(widget.detail),
-                    style: const TextStyle(
-                      color: kWhiteColor70,
-                      fontSize: 12,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// A locked placeholder a surface renders INSTEAD of loading gated content.
 ///
 /// Rendering it never opens a paywall and starts no fetch. Its one button is
@@ -1181,51 +960,53 @@ class DesktopAccessLockedSurface extends ConsumerWidget {
       ),
     };
     return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                copy.title,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  height: 1.3,
-                ),
-              ),
-              const SizedBox(height: 8),
-              if (decision.outcome == DesktopAccess.checking)
-                // The progress row carries the body line; the title already
-                // names what is being checked.
-                _Progress(label: copy.body)
-              else
+      child: DesktopScrollHost(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  copy.body,
-                  style: const TextStyle(
-                    color: kWhiteColor70,
-                    fontSize: 13,
-                    height: 1.45,
-                  ),
-                ),
-              if (copy.capacityLine != null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  copy.capacityLine!,
+                  copy.title,
                   style: const TextStyle(
                     color: kWhiteColor,
-                    fontSize: 13,
+                    fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    fontFeatures: [FontFeature.tabularFigures()],
+                    height: 1.3,
                   ),
                 ),
+                const SizedBox(height: 8),
+                if (decision.outcome == DesktopAccess.checking)
+                  // The progress row carries the body line; the title already
+                  // names what is being checked.
+                  _Progress(label: copy.body)
+                else
+                  Text(
+                    copy.body,
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 13,
+                      height: 1.45,
+                    ),
+                  ),
+                if (copy.capacityLine != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    copy.capacityLine!,
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+                if (action != null) ...[const SizedBox(height: 16), action],
               ],
-              if (action != null) ...[const SizedBox(height: 16), action],
-            ],
+            ),
           ),
         ),
       ),
@@ -1289,10 +1070,3 @@ class _DesktopPaywallHostState extends State<DesktopPaywallHost> {
   @override
   Widget build(BuildContext context) => widget.child;
 }
-
-/// "Save $21.89/yr" wraps as one unit: a line break inside it left "yr"
-/// alone on the next line.
-String _keepSavingsTogether(String detail) => detail.replaceAllMapped(
-  RegExp(r'Save (\S+)/yr'),
-  (match) => 'Save\u00A0${match[1]}\u2060/\u2060yr',
-);

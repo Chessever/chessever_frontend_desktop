@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_feedback_dialog.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
@@ -18,41 +19,43 @@ class DesktopWhatsNewHomePane extends StatelessWidget {
     return Container(
       color: kBackgroundColor,
       alignment: Alignment.center,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                kIsWeb
-                    ? 'Welcome to ChessEver on the web'
-                    : isMacAppStore
-                    ? 'Welcome to ChessEver for Mac'
-                    : 'Welcome to ChessEver Desktop Beta',
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 30,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.5,
+      child: DesktopScrollHost(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  kIsWeb
+                      ? 'Welcome to ChessEver on the web'
+                      : isMacAppStore
+                      ? 'Welcome to ChessEver for Mac'
+                      : 'Welcome to ChessEver Desktop Beta',
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              _FeedbackIntro(feedbackScreenshotKey: feedbackScreenshotKey),
-              const SizedBox(height: 28),
-              const Text(
-                'Quick start / power tips',
-                style: TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
+                const SizedBox(height: 12),
+                _FeedbackIntro(feedbackScreenshotKey: feedbackScreenshotKey),
+                const SizedBox(height: 28),
+                const Text(
+                  'Quick start / power tips',
+                  style: TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              const _PowerTipsList(),
-            ],
+                const SizedBox(height: 12),
+                const _PowerTipsList(),
+              ],
+            ),
           ),
         ),
       ),

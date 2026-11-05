@@ -5,6 +5,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/editorial/editorial_links.dart';
 import 'package:chessever/desktop/services/editorial/inbox_message.dart';
 import 'package:chessever/desktop/services/editorial/inbox_provider.dart';
@@ -229,22 +230,24 @@ class _InboxPaneState extends ConsumerState<InboxPane> {
               message:
                   'Updates and chess tips from the ChessEver team arrive here.',
             )
-            : ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: state.messages.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 6),
-              itemBuilder: (context, index) {
-                final message = state.messages[index];
-                return _InboxRow(
-                  message: message,
-                  selected: message.id == selected,
-                  onOpen:
-                      () => setState(() {
-                        _selected = (state.ownerId, message.id);
-                        _rendered = null;
-                      }),
-                );
-              },
+            : DesktopScrollHost(
+              child: ListView.separated(
+                padding: const EdgeInsets.all(12),
+                itemCount: state.messages.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 6),
+                itemBuilder: (context, index) {
+                  final message = state.messages[index];
+                  return _InboxRow(
+                    message: message,
+                    selected: message.id == selected,
+                    onOpen:
+                        () => setState(() {
+                          _selected = (state.ownerId, message.id);
+                          _rendered = null;
+                        }),
+                  );
+                },
+              ),
             ),
   );
 }
@@ -357,36 +360,38 @@ class _InboxEmpty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.inbox_outlined, size: 32, color: kWhiteColor70),
-          const SizedBox(height: 16),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: kWhiteColor,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 300),
-            child: Text(
-              message,
+    child: DesktopScrollHost(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.inbox_outlined, size: 32, color: kWhiteColor70),
+            const SizedBox(height: 16),
+            Text(
+              title,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 13,
-                height: 1.6,
+                color: kWhiteColor,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 300),
+              child: Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 13,
+                  height: 1.6,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   );

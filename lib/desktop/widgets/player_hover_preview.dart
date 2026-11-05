@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/state/player_hover_rounds.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -112,7 +113,7 @@ class _PlayerHoverPreviewState extends State<PlayerHoverPreview>
   final GlobalKey _popoverRegionKey = GlobalKey(
     debugLabel: 'player-hover-popover-region',
   );
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = DesktopScrollController();
   Timer? _openTimer;
   Timer? _dismissTimer;
   bool _hoveringTrigger = false;

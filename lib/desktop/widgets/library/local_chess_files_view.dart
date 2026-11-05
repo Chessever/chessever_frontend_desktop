@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'package:chessever/desktop/services/local_pgn_source_recovery.dart';
 import 'dart:async';
@@ -1311,20 +1312,22 @@ class _LocalChildrenStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       height: 112,
-      child: ListView.separated(
-        physics: const DesktopScrollPhysics(),
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(20, 2, 20, 12),
-        itemCount: folder.children.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, i) {
-          final child = folder.children[i];
-          return _LocalChildCard(
-            node: child,
-            selected: child.path == selectedPath,
-            onTap: () => onSelect(child.path),
-          );
-        },
+      child: DesktopScrollHost(
+        child: ListView.separated(
+          physics: const DesktopScrollPhysics(),
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(20, 2, 20, 12),
+          itemCount: folder.children.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (context, i) {
+            final child = folder.children[i];
+            return _LocalChildCard(
+              node: child,
+              selected: child.path == selectedPath,
+              onTap: () => onSelect(child.path),
+            );
+          },
+        ),
       ),
     );
   }
@@ -1487,11 +1490,11 @@ class _LocalGamesTable extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final controller = useScrollController();
+    final controller = useDesktopScrollController();
     final focusNode = useFocusNode(debugLabel: 'local-pgn-games-table');
     final scheduledPages = useRef<Set<int>>(<int>{});
     final pendingSelectionIndex = useRef<int?>(null);
-    final horizontalController = useScrollController();
+    final horizontalController = useDesktopScrollController();
     final columnsButtonKey = useMemoized(() => GlobalKey());
     final layout = ref.watch(localGameGridLayoutProvider);
     final layoutNotifier = ref.read(localGameGridLayoutProvider.notifier);

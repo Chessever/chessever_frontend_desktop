@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
@@ -454,7 +455,7 @@ class _CollectionShelf extends StatefulWidget {
 }
 
 class _CollectionShelfState extends State<_CollectionShelf> {
-  final ScrollController _controller = ScrollController();
+  final ScrollController _controller = DesktopScrollController();
   bool _moreLeft = false;
   bool _moreRight = false;
 
@@ -499,7 +500,10 @@ class _CollectionShelfState extends State<_CollectionShelf> {
     if (target == position.pixels) return;
     GestureBinding.instance.pointerSignalResolver.register(
       event,
-      (_) => _controller.jumpTo(target),
+      (_) {
+        event.respond(allowPlatformDefault: false);
+        position.pointerScroll(delta.dy);
+      },
     );
   }
 

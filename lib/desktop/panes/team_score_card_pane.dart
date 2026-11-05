@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/board_share_service.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/services/team_share_url.dart';
@@ -482,64 +483,66 @@ class _Roster extends StatelessWidget {
                     text: 'No players are listed for this team yet.',
                     alignment: Alignment.topLeft,
                   )
-                  : ListView.separated(
-                    physics: const DesktopScrollPhysics(),
-                    padding: const EdgeInsets.only(bottom: 24),
-                    itemCount: players.length,
-                    separatorBuilder:
-                        (_, _) =>
-                            const Divider(color: kDividerColor, height: 1),
-                    itemBuilder: (context, index) {
-                      final player = players[index];
-                      return _HoverRow(
-                        onTap: () => onOpenPlayer(player),
-                        child: Row(
-                          children: [
-                            if ((player.title ?? '').isNotEmpty) ...[
-                              Text(
-                                player.title!,
-                                style: const TextStyle(
-                                  color: kPrimaryColor,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
+                  : DesktopScrollHost(
+                    child: ListView.separated(
+                      physics: const DesktopScrollPhysics(),
+                      padding: const EdgeInsets.only(bottom: 24),
+                      itemCount: players.length,
+                      separatorBuilder:
+                          (_, _) =>
+                              const Divider(color: kDividerColor, height: 1),
+                      itemBuilder: (context, index) {
+                        final player = players[index];
+                        return _HoverRow(
+                          onTap: () => onOpenPlayer(player),
+                          child: Row(
+                            children: [
+                              if ((player.title ?? '').isNotEmpty) ...[
+                                Text(
+                                  player.title!,
+                                  style: const TextStyle(
+                                    color: kPrimaryColor,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                              ],
+                              Expanded(
+                                child: Text(
+                                  player.name,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: kWhiteColor,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                 ),
                               ),
-                              const SizedBox(width: 6),
-                            ],
-                            Expanded(
-                              child: Text(
-                                player.name,
-                                overflow: TextOverflow.ellipsis,
+                              const SizedBox(width: 12),
+                              Text(
+                                player.score > 0 ? '${player.score}' : '',
+                                style: const TextStyle(
+                                  color: kWhiteColor70,
+                                  fontSize: 13,
+                                  fontFeatures: _tabular,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Text(
+                                player.matchScore ?? '',
                                 style: const TextStyle(
                                   color: kWhiteColor,
                                   fontSize: 13,
-                                  fontWeight: FontWeight.w500,
+                                  fontWeight: FontWeight.w600,
+                                  fontFeatures: _tabular,
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              player.score > 0 ? '${player.score}' : '',
-                              style: const TextStyle(
-                                color: kWhiteColor70,
-                                fontSize: 13,
-                                fontFeatures: _tabular,
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Text(
-                              player.matchScore ?? '',
-                              style: const TextStyle(
-                                color: kWhiteColor,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                fontFeatures: _tabular,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+                            ],
+                          ),
+                        );
+                      },
+                    ),
                   ),
         ),
       ],
@@ -570,15 +573,17 @@ class _MatchHistory extends StatelessWidget {
                     text: 'No matches have been played yet.',
                     alignment: Alignment.topLeft,
                   )
-                  : ListView.builder(
-                    physics: const DesktopScrollPhysics(),
-                    padding: const EdgeInsets.only(bottom: 24),
-                    itemCount: matches.length,
-                    itemBuilder:
-                        (context, index) => _MatchBlock(
-                          match: matches[index],
-                          onOpenBoard: onOpenBoard,
-                        ),
+                  : DesktopScrollHost(
+                    child: ListView.builder(
+                      physics: const DesktopScrollPhysics(),
+                      padding: const EdgeInsets.only(bottom: 24),
+                      itemCount: matches.length,
+                      itemBuilder:
+                          (context, index) => _MatchBlock(
+                            match: matches[index],
+                            onOpenBoard: onOpenBoard,
+                          ),
+                    ),
                   ),
         ),
       ],

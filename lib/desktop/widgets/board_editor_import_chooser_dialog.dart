@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/board_editor_pgn_import.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -81,14 +82,16 @@ class _BoardEditorImportChooserDialogState
                 child:
                     entries.isEmpty
                         ? const _EmptyResults()
-                        : ListView.separated(
-                          itemCount: entries.length,
-                          separatorBuilder:
-                              (_, __) => const SizedBox(height: 8),
-                          itemBuilder: (context, index) {
-                            final entry = entries[index];
-                            return _ImportEntryButton(entry: entry);
-                          },
+                        : DesktopScrollHost(
+                          child: ListView.separated(
+                            itemCount: entries.length,
+                            separatorBuilder:
+                                (_, __) => const SizedBox(height: 8),
+                            itemBuilder: (context, index) {
+                              final entry = entries[index];
+                              return _ImportEntryButton(entry: entry);
+                            },
+                          ),
                         ),
               ),
               const SizedBox(height: 16),

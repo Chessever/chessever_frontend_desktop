@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
 import 'package:flutter/material.dart';
@@ -24,7 +25,6 @@ import 'package:chessever/screens/players/providers/player_providers.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 
@@ -39,7 +39,7 @@ class RankingsPane extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final searchController = useTextEditingController();
-    final scrollController = useScrollController();
+    final scrollController = useDesktopScrollController();
     final debounceTimer = useRef<Timer?>(null);
     final asyncPlayers = ref.watch(playerPaginationProvider);
     final favorites = ref.watch(favoritePlayersProviderNew);
@@ -695,14 +695,19 @@ Future<void> _toggleFavorite(
   WidgetRef ref,
   Map<String, dynamic> player, {
   required bool isFavorite,
-}) => setDesktopPlayerFavorite(context, ref,
+}) => setDesktopPlayerFavorite(
+  context,
+  ref,
   favorite: !isFavorite,
   playerName: _playerName(player),
   fideId: _playerFideId(player).isEmpty ? null : _playerFideId(player),
-  countryCode: _playerFederation(player), rating: _playerRating(player),
+  countryCode: _playerFederation(player),
+  rating: _playerRating(player),
   title: _playerTitle(player),
   gamebasePlayerId: _stringField(player, const ['gamebasePlayerId']),
-  memorialSourceIdentity: _stringField(player, const ['memorialSourceIdentity']),
+  memorialSourceIdentity: _stringField(player, const [
+    'memorialSourceIdentity',
+  ]),
   memorialRouteId: _stringField(player, const ['memorialRouteId']),
 );
 
@@ -741,13 +746,13 @@ bool _isFavorite(
     'memorialSourceIdentity',
   ]);
   return favoritePlayers.any(
-        (favorite) => favoritePlayerMatchesIdentity(
-          favorite,
-          fideId: fideId,
-          playerName: name,
-          memorialSourceIdentity: memorialIdentity,
-        ),
-      );
+    (favorite) => favoritePlayerMatchesIdentity(
+      favorite,
+      fideId: fideId,
+      playerName: name,
+      memorialSourceIdentity: memorialIdentity,
+    ),
+  );
 }
 
 String _playerKey(Map<String, dynamic> player, int index) {

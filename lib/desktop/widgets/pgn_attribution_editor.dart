@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/library/library_save_section.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -102,47 +103,49 @@ class _PgnAttributionDialogState extends State<_PgnAttributionDialog> {
           decoration: style.decoration.copyWith(color: kBlack2Color),
         ),
     builder:
-        (_, _) => SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'Save PGN to file',
-                  style: TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                PgnAttributionEditor(controller: _controller),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    DesktopDialogButton(
-                      label: 'Cancel',
-                      onPress: () => Navigator.of(context).pop(),
+        (_, _) => DesktopScrollHost(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Save PGN to file',
+                    style: TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                     ),
-                    const SizedBox(width: 8),
-                    DesktopDialogButton(
-                      label: 'Choose file…',
-                      tone: DesktopDialogButtonTone.primary,
-                      onPress:
-                          () => Navigator.of(context).pop(
-                            widget.game.copyWith(
-                              metadata: _controller.applyTo(
-                                widget.game.metadata,
+                  ),
+                  const SizedBox(height: 12),
+                  PgnAttributionEditor(controller: _controller),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      DesktopDialogButton(
+                        label: 'Cancel',
+                        onPress: () => Navigator.of(context).pop(),
+                      ),
+                      const SizedBox(width: 8),
+                      DesktopDialogButton(
+                        label: 'Choose file…',
+                        tone: DesktopDialogButtonTone.primary,
+                        onPress:
+                            () => Navigator.of(context).pop(
+                              widget.game.copyWith(
+                                metadata: _controller.applyTo(
+                                  widget.game.metadata,
+                                ),
                               ),
                             ),
-                          ),
-                    ),
-                  ],
-                ),
-              ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),

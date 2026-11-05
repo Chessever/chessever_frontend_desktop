@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/utils/eco_input_formatter.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -227,139 +228,141 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
                 _titleBar(context),
                 const FDivider(),
                 Flexible(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (_shows(DesktopGameFilterSection.timeControl))
-                          _FilterSection(
-                            title: 'Time control',
-                            child: _OptionGrid<GameTimeControlFilter>(
-                              value: _timeControl,
-                              values: GameTimeControlFilter.values,
-                              label:
-                                  (v) =>
-                                      v == GameTimeControlFilter.all
-                                          ? 'Any'
-                                          : v.displayText,
-                              icon: _timeControlIcon,
-                              onChanged:
-                                  (v) => setState(() => _timeControl = v),
-                            ),
-                          ),
-                        if (_gapBefore(DesktopGameFilterSection.rating))
-                          const SizedBox(height: 16),
-                        if (_shows(DesktopGameFilterSection.rating))
-                          _FilterSection(
-                            title: 'Avg. Rating',
-                            child: _RatingPresetGrid(
-                              selectedMinRating: _selectedMinRating,
-                              onChanged:
-                                  (value) => setState(
-                                    () => _selectedMinRating = value,
-                                  ),
-                            ),
-                          ),
-                        if (_gapBefore(DesktopGameFilterSection.eco))
-                          const SizedBox(height: 16),
-                        if (_shows(DesktopGameFilterSection.eco))
-                          _FilterSection(
-                            title: 'ECO / Opening',
-                            child: _ecoEditor(),
-                          ),
-                        if (_gapBefore(DesktopGameFilterSection.finish))
-                          const SizedBox(height: 16),
-                        if (_shows(DesktopGameFilterSection.finish))
-                          _FilterSection(
-                            title: 'Finish',
-                            child: _OptionGrid<GameFinishFilter>(
-                              value: _finish,
-                              values: GameFinishFilter.values,
-                              label:
-                                  (v) =>
-                                      v == GameFinishFilter.all
-                                          ? 'Any'
-                                          : v.displayText,
-                              icon: _finishIcon,
-                              onChanged: (v) => setState(() => _finish = v),
-                            ),
-                          ),
-                        if (_gapBefore(DesktopGameFilterSection.result))
-                          const SizedBox(height: 16),
-                        if (_shows(DesktopGameFilterSection.result))
-                          _FilterSection(
-                            title: 'Result',
-                            child: _OptionGrid<GameResultFilter>(
-                              value: _result,
-                              values: GameResultFilter.values,
-                              label:
-                                  (v) =>
-                                      v == GameResultFilter.all
-                                          ? 'Any'
-                                          : v.displayText,
-                              icon: _resultIcon,
-                              onChanged: (v) => setState(() => _result = v),
-                            ),
-                          ),
-                        if (_gapBefore(DesktopGameFilterSection.year))
-                          const SizedBox(height: 16),
-                        if (_shows(DesktopGameFilterSection.year))
-                          _FilterSection(
-                            title: 'Year range',
-                            subtitle: _yearRangeSubtitle(_minYear, _maxYear),
-                            child: _YearRange(
-                              yearFrom: _minYear,
-                              yearTo: _maxYear,
-                              onChanged:
-                                  (from, to) => setState(() {
-                                    _minYear = from;
-                                    _maxYear = to;
-                                  }),
-                            ),
-                          ),
-                        if (widget.showFormatFilter) ...[
-                          if (_gapBefore(DesktopGameFilterSection.color))
-                            const SizedBox(height: 16),
-                          if (_shows(DesktopGameFilterSection.color))
+                  child: DesktopScrollHost(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (_shows(DesktopGameFilterSection.timeControl))
                             _FilterSection(
-                              title: 'Color',
-                              child: _OptionGrid<GameColorFilter>(
-                                value: _color,
-                                values: GameColorFilter.values,
+                              title: 'Time control',
+                              child: _OptionGrid<GameTimeControlFilter>(
+                                value: _timeControl,
+                                values: GameTimeControlFilter.values,
                                 label:
                                     (v) =>
-                                        v == GameColorFilter.all
+                                        v == GameTimeControlFilter.all
                                             ? 'Any'
                                             : v.displayText,
-                                icon: _colorIcon,
-                                iconColor:
-                                    (v) =>
-                                        v == GameColorFilter.white
-                                            ? kWhiteColor
-                                            : null,
-                                onChanged: (v) => setState(() => _color = v),
+                                icon: _timeControlIcon,
+                                onChanged:
+                                    (v) => setState(() => _timeControl = v),
                               ),
                             ),
-                          if (_gapBefore(DesktopGameFilterSection.format))
+                          if (_gapBefore(DesktopGameFilterSection.rating))
                             const SizedBox(height: 16),
-                          if (_shows(DesktopGameFilterSection.format))
+                          if (_shows(DesktopGameFilterSection.rating))
                             _FilterSection(
-                              title: 'Format',
-                              child: _OptionGrid<GameOnlineFilter>(
-                                value: _online,
-                                values: GameOnlineFilter.values,
+                              title: 'Avg. Rating',
+                              child: _RatingPresetGrid(
+                                selectedMinRating: _selectedMinRating,
+                                onChanged:
+                                    (value) => setState(
+                                      () => _selectedMinRating = value,
+                                    ),
+                              ),
+                            ),
+                          if (_gapBefore(DesktopGameFilterSection.eco))
+                            const SizedBox(height: 16),
+                          if (_shows(DesktopGameFilterSection.eco))
+                            _FilterSection(
+                              title: 'ECO / Opening',
+                              child: _ecoEditor(),
+                            ),
+                          if (_gapBefore(DesktopGameFilterSection.finish))
+                            const SizedBox(height: 16),
+                          if (_shows(DesktopGameFilterSection.finish))
+                            _FilterSection(
+                              title: 'Finish',
+                              child: _OptionGrid<GameFinishFilter>(
+                                value: _finish,
+                                values: GameFinishFilter.values,
                                 label:
                                     (v) =>
-                                        v == GameOnlineFilter.all
+                                        v == GameFinishFilter.all
                                             ? 'Any'
                                             : v.displayText,
-                                icon: _onlineIcon,
-                                onChanged: (v) => setState(() => _online = v),
+                                icon: _finishIcon,
+                                onChanged: (v) => setState(() => _finish = v),
                               ),
                             ),
+                          if (_gapBefore(DesktopGameFilterSection.result))
+                            const SizedBox(height: 16),
+                          if (_shows(DesktopGameFilterSection.result))
+                            _FilterSection(
+                              title: 'Result',
+                              child: _OptionGrid<GameResultFilter>(
+                                value: _result,
+                                values: GameResultFilter.values,
+                                label:
+                                    (v) =>
+                                        v == GameResultFilter.all
+                                            ? 'Any'
+                                            : v.displayText,
+                                icon: _resultIcon,
+                                onChanged: (v) => setState(() => _result = v),
+                              ),
+                            ),
+                          if (_gapBefore(DesktopGameFilterSection.year))
+                            const SizedBox(height: 16),
+                          if (_shows(DesktopGameFilterSection.year))
+                            _FilterSection(
+                              title: 'Year range',
+                              subtitle: _yearRangeSubtitle(_minYear, _maxYear),
+                              child: _YearRange(
+                                yearFrom: _minYear,
+                                yearTo: _maxYear,
+                                onChanged:
+                                    (from, to) => setState(() {
+                                      _minYear = from;
+                                      _maxYear = to;
+                                    }),
+                              ),
+                            ),
+                          if (widget.showFormatFilter) ...[
+                            if (_gapBefore(DesktopGameFilterSection.color))
+                              const SizedBox(height: 16),
+                            if (_shows(DesktopGameFilterSection.color))
+                              _FilterSection(
+                                title: 'Color',
+                                child: _OptionGrid<GameColorFilter>(
+                                  value: _color,
+                                  values: GameColorFilter.values,
+                                  label:
+                                      (v) =>
+                                          v == GameColorFilter.all
+                                              ? 'Any'
+                                              : v.displayText,
+                                  icon: _colorIcon,
+                                  iconColor:
+                                      (v) =>
+                                          v == GameColorFilter.white
+                                              ? kWhiteColor
+                                              : null,
+                                  onChanged: (v) => setState(() => _color = v),
+                                ),
+                              ),
+                            if (_gapBefore(DesktopGameFilterSection.format))
+                              const SizedBox(height: 16),
+                            if (_shows(DesktopGameFilterSection.format))
+                              _FilterSection(
+                                title: 'Format',
+                                child: _OptionGrid<GameOnlineFilter>(
+                                  value: _online,
+                                  values: GameOnlineFilter.values,
+                                  label:
+                                      (v) =>
+                                          v == GameOnlineFilter.all
+                                              ? 'Any'
+                                              : v.displayText,
+                                  icon: _onlineIcon,
+                                  onChanged: (v) => setState(() => _online = v),
+                                ),
+                              ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),

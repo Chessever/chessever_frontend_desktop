@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/auth/desktop_auth_browser.dart';
 import 'package:chessever/desktop/services/auth/desktop_guest_unsaved_work.dart';
 import 'package:chessever/desktop/services/auth/desktop_guest_upgrade.dart';
@@ -41,8 +42,9 @@ Future<T?> _showGuestAccountDialog<T>(
             maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.85,
           ),
           builder:
-              (bodyContext, _) =>
-                  SingleChildScrollView(child: builder(bodyContext)),
+              (bodyContext, _) => DesktopScrollHost(
+                child: SingleChildScrollView(child: builder(bodyContext)),
+              ),
         ),
   );
 }

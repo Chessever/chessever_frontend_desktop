@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
@@ -363,8 +364,9 @@ class _FallbackScrollControllerState extends State<_FallbackScrollController> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      widget.builder(widget.controller ?? (_owned ??= ScrollController()));
+  Widget build(BuildContext context) => widget.builder(
+    widget.controller ?? (_owned ??= DesktopScrollController()),
+  );
 }
 
 TableColumnWidth _columnWidthFor<T>(AdaptiveColumn<T> column) {
@@ -618,16 +620,17 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
 
   List<TableRow> _buildBodyRows(BuildContext context) {
     // Pre-resolve sublines so we don't ask the builder twice per row.
-    final sublines = _sublinesCache ??= () {
-      final resolved = <int, Widget>{};
-      if (widget.rowSublineBuilder != null) {
-        for (var i = 0; i < widget.rows.length; i++) {
-          final s = widget.rowSublineBuilder!(context, widget.rows[i]);
-          if (s != null) resolved[i] = s;
-        }
-      }
-      return resolved;
-    }();
+    final sublines =
+        _sublinesCache ??= () {
+          final resolved = <int, Widget>{};
+          if (widget.rowSublineBuilder != null) {
+            for (var i = 0; i < widget.rows.length; i++) {
+              final s = widget.rowSublineBuilder!(context, widget.rows[i]);
+              if (s != null) resolved[i] = s;
+            }
+          }
+          return resolved;
+        }();
     return [
       for (var i = 0; i < widget.rows.length; i++) ...[
         _bodyRow(i, hasSubline: sublines.containsKey(i)),
@@ -882,16 +885,17 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
 
     return TableRow(
       decoration: decoration,
-      children: _rowCellsCache[(rowIndex, height)] ??= [
-        for (var colIndex = 0; colIndex < widget.columns.length; colIndex++)
-          _buildInteractiveCell(
-            row: row,
-            rowIndex: rowIndex,
-            col: widget.columns[colIndex],
-            rowKey: colIndex == 0 ? widget.rowKeyBuilder?.call(row) : null,
-            height: height,
-          ),
-      ],
+      children:
+          _rowCellsCache[(rowIndex, height)] ??= [
+            for (var colIndex = 0; colIndex < widget.columns.length; colIndex++)
+              _buildInteractiveCell(
+                row: row,
+                rowIndex: rowIndex,
+                col: widget.columns[colIndex],
+                rowKey: colIndex == 0 ? widget.rowKeyBuilder?.call(row) : null,
+                height: height,
+              ),
+          ],
     );
   }
 

@@ -11,6 +11,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart'
     show chessFileDropHolds;
@@ -3246,7 +3247,7 @@ class _FadingScroll extends StatefulWidget {
 
 class _FadingScrollState extends State<_FadingScroll> {
   static const _fade = 20.0;
-  final _controller = ScrollController();
+  final _controller = DesktopScrollController();
   bool _above = false;
   bool _below = false;
 
@@ -3796,8 +3797,10 @@ class _StageBand extends StatelessWidget {
                             // pushing the form out of the dialog.
                             ConstrainedBox(
                               constraints: const BoxConstraints(maxHeight: 114),
-                              child: SingleChildScrollView(
-                                child: SelectableText(rest, style: body),
+                              child: DesktopScrollHost(
+                                child: SingleChildScrollView(
+                                  child: SelectableText(rest, style: body),
+                                ),
                               ),
                             ),
                           ],

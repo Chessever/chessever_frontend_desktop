@@ -9,6 +9,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -815,50 +816,52 @@ class _MyLikesList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CustomScrollView(
-      slivers: [
-        const SliverPadding(
-          padding: EdgeInsets.fromLTRB(24, 0, 24, 6),
-          sliver: SliverToBoxAdapter(child: _MyLikesColumnsHeader()),
-        ),
-        for (var i = 0; i < data.sections.length; i++) ...[
-          // A sorted list is one ordered result and the Sort button already
-          // names the order, so it gets no header of its own.
-          if (data.sections[i].key != kMyLikesSortedSectionKey)
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(24, i == 0 ? 0 : 12, 24, 0),
-              sliver: SliverToBoxAdapter(
-                child: _MyLikesDayHeader(
-                  label: formatLikedDateHeader(data.sections[i].key),
-                  count: data.sections[i].value.length,
-                  collapsed: collapsed.contains(data.sections[i].key),
-                  onToggle: () => onToggleSection(data.sections[i].key),
+    return DesktopScrollHost(
+      child: CustomScrollView(
+        slivers: [
+          const SliverPadding(
+            padding: EdgeInsets.fromLTRB(24, 0, 24, 6),
+            sliver: SliverToBoxAdapter(child: _MyLikesColumnsHeader()),
+          ),
+          for (var i = 0; i < data.sections.length; i++) ...[
+            // A sorted list is one ordered result and the Sort button already
+            // names the order, so it gets no header of its own.
+            if (data.sections[i].key != kMyLikesSortedSectionKey)
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(24, i == 0 ? 0 : 12, 24, 0),
+                sliver: SliverToBoxAdapter(
+                  child: _MyLikesDayHeader(
+                    label: formatLikedDateHeader(data.sections[i].key),
+                    count: data.sections[i].value.length,
+                    collapsed: collapsed.contains(data.sections[i].key),
+                    onToggle: () => onToggleSection(data.sections[i].key),
+                  ),
                 ),
               ),
-            ),
-          if (!collapsed.contains(data.sections[i].key))
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              sliver: SliverList.builder(
-                itemCount: data.sections[i].value.length,
-                itemBuilder: (context, index) {
-                  final entry = data.sections[i].value[index];
-                  return _MyLikesRow(
-                    entry: entry,
-                    showFullDate:
-                        data.sections[i].key == kMyLikesSortedSectionKey,
-                    selected: entry.analysis.id == selectedId,
-                    onSelect: () => onSelect(entry.analysis),
-                    onOpen: () => onOpen(entry.analysis),
-                    onContextMenu:
-                        (position) => onContextMenu(entry.analysis, position),
-                  );
-                },
+            if (!collapsed.contains(data.sections[i].key))
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                sliver: SliverList.builder(
+                  itemCount: data.sections[i].value.length,
+                  itemBuilder: (context, index) {
+                    final entry = data.sections[i].value[index];
+                    return _MyLikesRow(
+                      entry: entry,
+                      showFullDate:
+                          data.sections[i].key == kMyLikesSortedSectionKey,
+                      selected: entry.analysis.id == selectedId,
+                      onSelect: () => onSelect(entry.analysis),
+                      onOpen: () => onOpen(entry.analysis),
+                      onContextMenu:
+                          (position) => onContextMenu(entry.analysis, position),
+                    );
+                  },
+                ),
               ),
-            ),
+          ],
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
-      ],
+      ),
     );
   }
 }
@@ -1344,15 +1347,17 @@ class _DatabasePickerDialog extends StatelessWidget {
                   ),
                 ),
                 Flexible(
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: [
-                      for (final folder in targets)
-                        _DatabasePickerRow(
-                          folder: folder,
-                          onTap: () => Navigator.of(context).pop(folder),
-                        ),
-                    ],
+                  child: DesktopScrollHost(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final folder in targets)
+                          _DatabasePickerRow(
+                            folder: folder,
+                            onTap: () => Navigator.of(context).pop(folder),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ],

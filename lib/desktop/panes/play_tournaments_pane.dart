@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_play_access.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
@@ -873,19 +874,21 @@ class _LiveGamesRail extends StatelessWidget {
     final rounds = _roundGroupsForLiveRail(snapshot);
     return Container(
       color: kBlack2Color,
-      child: ListView.separated(
-        padding: const EdgeInsets.all(10),
-        itemCount: rounds.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, idx) {
-          final round = rounds[idx];
-          return _LiveRoundCard(
-            snapshot: snapshot,
-            round: round,
-            focusedGameId: focusedGameId,
-            onFocusGame: onFocusGame,
-          );
-        },
+      child: DesktopScrollHost(
+        child: ListView.separated(
+          padding: const EdgeInsets.all(10),
+          itemCount: rounds.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 12),
+          itemBuilder: (context, idx) {
+            final round = rounds[idx];
+            return _LiveRoundCard(
+              snapshot: snapshot,
+              round: round,
+              focusedGameId: focusedGameId,
+              onFocusGame: onFocusGame,
+            );
+          },
+        ),
       ),
     );
   }
@@ -1110,7 +1113,10 @@ class _PairingLine extends StatelessWidget {
           child: Row(
             children: [
               if ((part?.identity.title ?? '').isNotEmpty) ...[
-                DesktopPlayerTitleChip(title: part!.identity.title!, compact: true),
+                DesktopPlayerTitleChip(
+                  title: part!.identity.title!,
+                  compact: true,
+                ),
                 const SizedBox(width: 6),
               ],
               Expanded(
@@ -1801,31 +1807,33 @@ class _StandingsRailState extends State<_StandingsRail> {
           ),
           const Divider(height: 1, color: kDividerColor),
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: SizedBox(
-                height: standings.length * _StandingsRail.rowHeight,
-                child: Stack(
-                  clipBehavior: Clip.hardEdge,
-                  children: <Widget>[
-                    for (int idx = 0; idx < standings.length; idx++)
-                      _AnimatedStandingRow(
-                        key: ValueKey<String>(standings[idx].participantId),
-                        rank: idx + 1,
-                        previousRank:
-                            (_previousRanks[standings[idx].participantId] ??
-                                idx) +
-                            1,
-                        top: idx * _StandingsRail.rowHeight,
-                        standing: standings[idx],
-                        participant: widget.snapshot.participantById(
-                          standings[idx].participantId,
+            child: DesktopScrollHost(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: SizedBox(
+                  height: standings.length * _StandingsRail.rowHeight,
+                  child: Stack(
+                    clipBehavior: Clip.hardEdge,
+                    children: <Widget>[
+                      for (int idx = 0; idx < standings.length; idx++)
+                        _AnimatedStandingRow(
+                          key: ValueKey<String>(standings[idx].participantId),
+                          rank: idx + 1,
+                          previousRank:
+                              (_previousRanks[standings[idx].participantId] ??
+                                  idx) +
+                              1,
+                          top: idx * _StandingsRail.rowHeight,
+                          standing: standings[idx],
+                          participant: widget.snapshot.participantById(
+                            standings[idx].participantId,
+                          ),
+                          onSettled: () {
+                            _previousRanks[standings[idx].participantId] = idx;
+                          },
                         ),
-                        onSettled: () {
-                          _previousRanks[standings[idx].participantId] = idx;
-                        },
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -2046,44 +2054,48 @@ class _BracketBoard extends StatelessWidget {
       byRound.putIfAbsent(game.round, () => <TournamentGame>[]).add(game);
     }
     final rounds = byRound.keys.toList()..sort();
-    return ListView.separated(
-      padding: const EdgeInsets.all(20),
-      scrollDirection: Axis.horizontal,
-      itemCount: rounds.length,
-      separatorBuilder: (_, __) => const SizedBox(width: 14),
-      itemBuilder: (context, index) {
-        final round = rounds[index];
-        final games = byRound[round]!..sort((a, b) => a.id.compareTo(b.id));
-        return SizedBox(
-          width: 280,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Round $round',
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
+    return DesktopScrollHost(
+      child: ListView.separated(
+        padding: const EdgeInsets.all(20),
+        scrollDirection: Axis.horizontal,
+        itemCount: rounds.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 14),
+        itemBuilder: (context, index) {
+          final round = rounds[index];
+          final games = byRound[round]!..sort((a, b) => a.id.compareTo(b.id));
+          return SizedBox(
+            width: 280,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Round $round',
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              Expanded(
-                child: ListView.separated(
-                  itemCount: games.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder:
-                      (context, i) => _LiveGameCard(
-                        snapshot: snapshot,
-                        game: games[i],
-                        onTap: () => onFocusGame(games[i].id),
-                      ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: DesktopScrollHost(
+                    child: ListView.separated(
+                      itemCount: games.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder:
+                          (context, i) => _LiveGameCard(
+                            snapshot: snapshot,
+                            game: games[i],
+                            onTap: () => onFocusGame(games[i].id),
+                          ),
+                    ),
+                  ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -2522,165 +2534,168 @@ class _CreateTournamentDialogState
               const _CreateTournamentHeader(),
               const SizedBox(height: 18),
               Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _DialogSection(
-                        icon: FIcons.trophy,
-                        title: 'Event',
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            FTextField(
-                              controller: _title,
-                              label: const Text('Title'),
-                              hint: 'ChessEver Cup',
-                              clearable: (value) => value.text.isNotEmpty,
-                            ),
-                            const SizedBox(height: 12),
-                            _fieldRow(
-                              _selectField<TournamentFormat>(
-                                label: 'Format',
-                                value: _format,
-                                values: TournamentFormat.values,
-                                format: (value) => value.displayName,
-                                onChanged: (value) => _format = value,
-                              ),
-                              _ParticipantsField(
-                                count: _participantCount,
-                                onChanged:
-                                    (value) => setState(
-                                      () => _participantCount = value,
-                                    ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            _IncludeUserSwitch(
-                              selected: _includeUser,
-                              onChanged:
-                                  (value) =>
-                                      setState(() => _includeUser = value),
-                            ),
-                            const SizedBox(height: 12),
-                            _ScheduleMathPreview(summary: schedule),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      _DialogSection(
-                        icon: FIcons.timer,
-                        title: 'Clock',
-                        child: _TimeControlPicker(
-                          category: _timeCategory,
-                          baseSeconds: _baseSeconds,
-                          incrementSeconds: _incrementSeconds,
-                          onCategoryChanged: (cat) {
-                            setState(() {
-                              _timeCategory = cat;
-                              if (cat != TimeControlCategory.custom) {
-                                final preset = kTimeControlPresets[cat]!.first;
-                                _baseSeconds = preset.baseSeconds;
-                                _incrementSeconds = preset.incrementSeconds;
-                              }
-                            });
-                          },
-                          onPresetSelected: (preset) {
-                            setState(() {
-                              _timeCategory = preset.category;
-                              _baseSeconds = preset.baseSeconds;
-                              _incrementSeconds = preset.incrementSeconds;
-                            });
-                          },
-                          onBaseChanged: (v) {
-                            setState(() {
-                              _baseSeconds = v.clamp(10, 3600 * 4);
-                              _timeCategory = TimeControlCategory.custom;
-                            });
-                          },
-                          onIncrementChanged: (v) {
-                            setState(() {
-                              _incrementSeconds = v.clamp(0, 180);
-                              _timeCategory = TimeControlCategory.custom;
-                            });
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      _DialogSection(
-                        icon: FIcons.target,
-                        title: 'Rating',
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _SliderField(
-                              label: 'Target ELO',
-                              value: _eloCenter,
-                              min: 800,
-                              max: 3200,
-                              onChanged:
-                                  (v) => setState(
-                                    () => _eloCenter = v.clamp(800, 3200),
-                                  ),
-                            ),
-                            const SizedBox(height: 14),
-                            _SliderField(
-                              label: 'ELO spread',
-                              value: _eloJitter,
-                              min: 0,
-                              max: 600,
-                              onChanged:
-                                  (v) => setState(
-                                    () => _eloJitter = v.clamp(0, 600),
-                                  ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      _DialogSection(
-                        icon: FIcons.bot,
-                        title: 'Bots',
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _engineControls(),
-                            const SizedBox(height: 12),
-                            _resourcePreview(resource),
-                          ],
-                        ),
-                      ),
-                      if (_format == TournamentFormat.knockout) ...[
-                        const SizedBox(height: 14),
+                child: DesktopScrollHost(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
                         _DialogSection(
-                          icon: FIcons.brackets,
-                          title: 'Knockout rules',
-                          child: _fieldRow(
-                            _selectField<KnockoutTiebreakMode>(
-                              label: 'Tiebreak',
-                              value: _tiebreakMode,
-                              values: KnockoutTiebreakMode.values,
-                              format: (value) => value.displayName,
-                              onChanged: (value) => _tiebreakMode = value,
-                            ),
-                            _selectField<KnockoutReseeding>(
-                              label: 'Seeding',
-                              value: _reseeding,
-                              values: KnockoutReseeding.values,
-                              format: (value) => value.displayName,
-                              onChanged: (value) => _reseeding = value,
-                            ),
+                          icon: FIcons.trophy,
+                          title: 'Event',
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              FTextField(
+                                controller: _title,
+                                label: const Text('Title'),
+                                hint: 'ChessEver Cup',
+                                clearable: (value) => value.text.isNotEmpty,
+                              ),
+                              const SizedBox(height: 12),
+                              _fieldRow(
+                                _selectField<TournamentFormat>(
+                                  label: 'Format',
+                                  value: _format,
+                                  values: TournamentFormat.values,
+                                  format: (value) => value.displayName,
+                                  onChanged: (value) => _format = value,
+                                ),
+                                _ParticipantsField(
+                                  count: _participantCount,
+                                  onChanged:
+                                      (value) => setState(
+                                        () => _participantCount = value,
+                                      ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              _IncludeUserSwitch(
+                                selected: _includeUser,
+                                onChanged:
+                                    (value) =>
+                                        setState(() => _includeUser = value),
+                              ),
+                              const SizedBox(height: 12),
+                              _ScheduleMathPreview(summary: schedule),
+                            ],
                           ),
                         ),
+                        const SizedBox(height: 14),
+                        _DialogSection(
+                          icon: FIcons.timer,
+                          title: 'Clock',
+                          child: _TimeControlPicker(
+                            category: _timeCategory,
+                            baseSeconds: _baseSeconds,
+                            incrementSeconds: _incrementSeconds,
+                            onCategoryChanged: (cat) {
+                              setState(() {
+                                _timeCategory = cat;
+                                if (cat != TimeControlCategory.custom) {
+                                  final preset =
+                                      kTimeControlPresets[cat]!.first;
+                                  _baseSeconds = preset.baseSeconds;
+                                  _incrementSeconds = preset.incrementSeconds;
+                                }
+                              });
+                            },
+                            onPresetSelected: (preset) {
+                              setState(() {
+                                _timeCategory = preset.category;
+                                _baseSeconds = preset.baseSeconds;
+                                _incrementSeconds = preset.incrementSeconds;
+                              });
+                            },
+                            onBaseChanged: (v) {
+                              setState(() {
+                                _baseSeconds = v.clamp(10, 3600 * 4);
+                                _timeCategory = TimeControlCategory.custom;
+                              });
+                            },
+                            onIncrementChanged: (v) {
+                              setState(() {
+                                _incrementSeconds = v.clamp(0, 180);
+                                _timeCategory = TimeControlCategory.custom;
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        _DialogSection(
+                          icon: FIcons.target,
+                          title: 'Rating',
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _SliderField(
+                                label: 'Target ELO',
+                                value: _eloCenter,
+                                min: 800,
+                                max: 3200,
+                                onChanged:
+                                    (v) => setState(
+                                      () => _eloCenter = v.clamp(800, 3200),
+                                    ),
+                              ),
+                              const SizedBox(height: 14),
+                              _SliderField(
+                                label: 'ELO spread',
+                                value: _eloJitter,
+                                min: 0,
+                                max: 600,
+                                onChanged:
+                                    (v) => setState(
+                                      () => _eloJitter = v.clamp(0, 600),
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        _DialogSection(
+                          icon: FIcons.bot,
+                          title: 'Bots',
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _engineControls(),
+                              const SizedBox(height: 12),
+                              _resourcePreview(resource),
+                            ],
+                          ),
+                        ),
+                        if (_format == TournamentFormat.knockout) ...[
+                          const SizedBox(height: 14),
+                          _DialogSection(
+                            icon: FIcons.brackets,
+                            title: 'Knockout rules',
+                            child: _fieldRow(
+                              _selectField<KnockoutTiebreakMode>(
+                                label: 'Tiebreak',
+                                value: _tiebreakMode,
+                                values: KnockoutTiebreakMode.values,
+                                format: (value) => value.displayName,
+                                onChanged: (value) => _tiebreakMode = value,
+                              ),
+                              _selectField<KnockoutReseeding>(
+                                label: 'Seeding',
+                                value: _reseeding,
+                                values: KnockoutReseeding.values,
+                                format: (value) => value.displayName,
+                                onChanged: (value) => _reseeding = value,
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 14),
+                        _DialogSection(
+                          icon: FIcons.route,
+                          title: 'Openings',
+                          trailing: _CountPill('${_selectedEcos.length}'),
+                          child: _ecoChips(),
+                        ),
                       ],
-                      const SizedBox(height: 14),
-                      _DialogSection(
-                        icon: FIcons.route,
-                        title: 'Openings',
-                        trailing: _CountPill('${_selectedEcos.length}'),
-                        child: _ecoChips(),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),

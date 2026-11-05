@@ -57,6 +57,7 @@ class ChessboardController extends ChangeNotifier {
   late final ValueNotifier<GameData> _gameNotifier;
   late final ValueNotifier<Pieces> _piecesNotifier;
   late final ValueNotifier<TranslatingPieces> _translatingPiecesNotifier;
+  final _translationOriginsNotifier = ValueNotifier(<Square, Offset>{});
   late final ValueNotifier<FadingPieces> _fadingPiecesNotifier;
   late final BoardHighlightNotifier _highlightNotifier;
   late final ValueNotifier<Set<Shape>> _drawnShapesNotifier;
@@ -66,6 +67,7 @@ class ChessboardController extends ChangeNotifier {
   AnimationController? _animationController;
   CurvedAnimation? _translationAnimation;
   CurvedAnimation? _fadeAnimation;
+  VoidCallback? _onCancelPieceGesture;
 
   // --- Public API ---
 
@@ -99,6 +101,11 @@ class ChessboardController extends ChangeNotifier {
   @internal
   ValueNotifier<TranslatingPieces> get translatingPiecesNotifier =>
       _translatingPiecesNotifier;
+
+  /// Fractional starting squares for interrupted piece animations.
+  @internal
+  ValueNotifier<Map<Square, Offset>> get translationOriginsNotifier =>
+      _translationOriginsNotifier;
   @internal
   ValueNotifier<FadingPieces> get fadingPiecesNotifier => _fadingPiecesNotifier;
   @internal
@@ -122,11 +129,16 @@ class ChessboardController extends ChangeNotifier {
   // --- Lifecycle (called by _BoardState) ---
 
   @internal
-  void attachTo(TickerProvider vsync, Duration animationDuration) {
+  void attachTo(
+    TickerProvider vsync,
+    Duration animationDuration, {
+    VoidCallback? onCancelPieceGesture,
+  }) {
     assert(
       _animationController == null,
       'ChessboardController is already attached.',
     );
+    _onCancelPieceGesture = onCancelPieceGesture;
     _animationController = AnimationController(
       animationBehavior: AnimationBehavior.preserve,
       duration: animationDuration,
@@ -168,10 +180,12 @@ class ChessboardController extends ChangeNotifier {
     if (_fadingPiecesNotifier.value.isNotEmpty) {
       _fadingPiecesNotifier.value = {};
     }
+    _translationOriginsNotifier.value = {};
   }
 
   @internal
   void detach() {
+    _onCancelPieceGesture = null;
     _animationController?.removeStatusListener(_onAnimationStatusChanged);
     _fadeAnimation?.dispose();
     _translationAnimation?.dispose();
@@ -198,6 +212,12 @@ class ChessboardController extends ChangeNotifier {
   }
 
   // --- Public mutation API ---
+
+  /// Cancels a selection or drag without submitting a move or remounting the board.
+  ///
+  /// The remaining events from the cancelled pointer are ignored. Position,
+  /// pending premoves and piece animations are preserved.
+  void cancelPieceGesture() => _onCancelPieceGesture?.call();
 
   /// Sets or clears the premove.
   ///
@@ -226,9 +246,10 @@ class ChessboardController extends ChangeNotifier {
   @internal
   void toggleDrawnShape(Shape shape) {
     final current = _drawnShapesNotifier.value;
-    _drawnShapesNotifier.value = current.contains(shape)
-        ? current.difference({shape})
-        : {...current, shape};
+    _drawnShapesNotifier.value =
+        current.contains(shape)
+            ? current.difference({shape})
+            : {...current, shape};
   }
 
   /// Removes all user-drawn shapes from the board.
@@ -282,6 +303,7 @@ class ChessboardController extends ChangeNotifier {
   }) {
     if (!animate) {
       _animationController?.stop();
+      _translationOriginsNotifier.value = {};
       _translatingPiecesNotifier.value = {};
       _fadingPiecesNotifier.value = {};
       _lastDropMove = null;
@@ -296,8 +318,12 @@ class ChessboardController extends ChangeNotifier {
       final lastDrop = _lastDropMove;
       _lastDropMove = null;
       final oldPieces = _piecesNotifier.value;
+      final previous = _translatingPiecesNotifier.value;
+      final previousOrigins = _translationOriginsNotifier.value;
+      final progress = translationAnimation.value;
       _translatingPiecesNotifier.value = {};
       _fadingPiecesNotifier.value = {};
+      _translationOriginsNotifier.value = {};
 
       final newPieces = readFen(game.fen);
 
@@ -305,6 +331,14 @@ class ChessboardController extends ChangeNotifier {
         final (tp, fp) = preparePieceAnimations(
           oldPieces,
           newPieces,
+          lastDrop: lastDrop,
+        );
+        _translationOriginsNotifier.value = retargetPieceAnimations(
+          previous: previous,
+          previousOrigins: previousOrigins,
+          progress: progress,
+          next: tp,
+          newPosition: newPieces,
           lastDrop: lastDrop,
         );
         _translatingPiecesNotifier.value = tp;
@@ -333,6 +367,7 @@ class ChessboardController extends ChangeNotifier {
     _gameNotifier.dispose();
     _piecesNotifier.dispose();
     _translatingPiecesNotifier.dispose();
+    _translationOriginsNotifier.dispose();
     _fadingPiecesNotifier.dispose();
     _highlightNotifier.dispose();
     _drawnShapesNotifier.dispose();

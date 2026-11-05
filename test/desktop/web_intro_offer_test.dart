@@ -30,4 +30,30 @@ void main() {
       expect(WebIntroOffer.fromJson(invalid), isNull, reason: '$invalid');
     }
   });
+
+  test(
+    'a guest can see verified terms only as a conditional sign-in offer',
+    () {
+      final guestQuote = {...quote, 'eligible': false};
+      expect(WebIntroOffer.fromJson(guestQuote), isNull);
+      final offer = WebIntroOffer.fromJson(guestQuote, allowSignInOffer: true)!;
+      expect(offer.requiresSignIn, isTrue);
+      expect(offer.renewalAmountCents, 1099);
+      expect(
+        WebIntroOffer.fromJson(quote, allowSignInOffer: true)!.requiresSignIn,
+        isTrue,
+      );
+      expect(WebIntroOffer.fromJson(quote)!.requiresSignIn, isFalse);
+      for (final invalid in <Object?>[
+        null,
+        {},
+        {...guestQuote, 'eligible': null},
+        {...guestQuote, 'id': 'unrecognized'},
+        {...guestQuote, 'renewal_amount_cents': null},
+        {...guestQuote, 'currency': 'eur'},
+      ]) {
+        expect(WebIntroOffer.fromJson(invalid, allowSignInOffer: true), isNull);
+      }
+    },
+  );
 }
