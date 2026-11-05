@@ -2884,7 +2884,8 @@ class PlayerProfileGamesNotifier
           pageNumber: 0,
           pageSize: _twicPageSize,
         );
-        allGames = page.games;
+        // Empty fallback pages can be const; sort an owned, mutable copy.
+        allGames = List<GamesTourModel>.of(page.games);
         hasMorePages = page.hasMore;
         nextPageNumber = page.nextPageNumber;
         totalCount = page.totalCount;

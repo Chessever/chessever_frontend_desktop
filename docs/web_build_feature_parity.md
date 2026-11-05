@@ -47,6 +47,7 @@ Remove the storage key and reload to disable sampling.
 | Desktop feature | In the browser | How |
 |---|---|---|
 | Live events, games, players, calendar, rankings | Same | Shared code; images from hosts without CORS go through the `/_img` relay (`web_worker/index.js`, `web/index.html`) |
+| Feedback reports and optional screenshots | Same | Shared feedback dialog and screenshot capture; the feedback relay allows the exact app origin and returns CORS headers on success and failure |
 | Event card artwork | Same | `event_artwork_provider.dart` batches artwork-only tour queries, retains successful covers for 10 minutes across scrolling and tab switches, and retries a failed lookup once. Player metadata no longer delays cover requests; raw tour IDs still resolve sibling artwork |
 | Likes (community ranking from the phone's Discovery) | Same | Library > My Likes > Most liked (free) and the Events > For You shelf open `TabKind.likes` (`desktop_likes_pane.dart`); the `most_liked_ranking_page` RPC plus Gamebase lookups, no platform code. Shared `/app/likes/<period>` links route through `DesktopDeepLinkRouter` in both builds |
 | Like a game from the board | Same | Heart button first in the board's action row (`board_like_button.dart`): writes the same Liked Games row as the phone and shows the `game_like_count` RPC count. Guests and anonymous accounts get the sign-in prompt first, in both builds |
@@ -108,9 +109,12 @@ Deploy the matching services before releasing the updated browser client:
   creation time of games currently in the collection, independently of cover,
   metadata or game edits. Apply the additive `collection_game_added_idx`
   migration to keep those reads indexed. Older services reject the new sorts.
-- The feedback relay must accept the exact `https://app.chessever.com` origin,
+- The feedback relay (`apps/feedback` in `chessever_cloudflare`) must be deployed
+  with support for the exact `https://app.chessever.com` origin,
   answer its POST preflight, and include CORS headers on error responses as well
-  as successful deliveries. Native clients continue to omit Origin.
+  as successful deliveries. Native clients continue to omit Origin. Provider
+  calls use `redirect: "manual"` and reject redirect responses; the deployed
+  Workers runtime rejects `redirect: "error"` before sending.
 - Botvinnik's chat service must recognize the browser client's
   `desktop-shell-v1` capability as the app at app.chessever.com, distinct from
   the public website. Its help lookup can select an explicitly requested phone,
