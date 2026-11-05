@@ -6258,9 +6258,13 @@ class PlayerSourceMark extends StatelessWidget {
   final PlayerWorkspaceSource source;
   final double size;
 
+  // Sits on the dark shell, where the stock black Lichess knight vanishes.
   @override
-  Widget build(BuildContext context) =>
-      _SourceBrandMark(source: source, size: size);
+  Widget build(BuildContext context) => _SourceBrandMark(
+    source: source,
+    size: size,
+    color: source == PlayerWorkspaceSource.lichess ? kWhiteColor : null,
+  );
 }
 
 Future<void> _showAddPlayerDialog(
