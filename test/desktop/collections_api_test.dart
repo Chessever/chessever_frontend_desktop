@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:chessever/desktop/services/collections_reader.dart'
+    show CollectionsReader;
 import 'package:chessever/repository/gamebase/collections/collection_search_query.dart';
 import 'package:chessever/repository/gamebase/collections/collections_models.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -245,6 +247,40 @@ void main() {
       'limit': '200',
       'offset': '0',
     });
+  });
+
+  test('a book order never reaches a collection\'s games endpoint', () async {
+    // The games endpoint sorts by default|newest|oldest|name only and
+    // answers anything else with a 400 before it checks Premium: the
+    // 22.20.6 catalog order `lastGameAdded` leaking here made every book
+    // read "Couldn't load the games."
+    for (final sort in ['lastGameAdded', 'publishedAt', 'stars']) {
+      adapter.answer(
+        200,
+        _ok({'items': [], 'total': 0, 'limit': 200, 'offset': 0}),
+      );
+      await CollectionsReader(api).searchGames(
+        'exchange-sacrifice',
+        search: CollectionSearchQuery(text: 'tal', sort: sort, order: 'asc'),
+      );
+      expect(adapter.requests.last.uri.queryParameters, {
+        'q': 'tal',
+        'include': 'pgn',
+        'limit': '200',
+        'offset': '0',
+      }, reason: sort);
+    }
+
+    // The orders the endpoint knows go through as asked.
+    adapter.answer(
+      200,
+      _ok({'items': [], 'total': 0, 'limit': 200, 'offset': 0}),
+    );
+    await CollectionsReader(api).searchGames(
+      'exchange-sacrifice',
+      search: const CollectionSearchQuery(sort: 'newest'),
+    );
+    expect(adapter.requests.last.uri.queryParameters['sort'], 'newest');
   });
 
   test('the Premium gate arrives as a gate, with the server\'s code', () async {
