@@ -2,7 +2,6 @@ import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
-import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
@@ -12,16 +11,6 @@ import 'package:chessever/desktop/auth/web_prep_source_access.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
-
-final _restoredEventAccessProvider = FutureProvider.autoDispose
-    .family<DesktopAccessContext, BoardTabGameArgs>((ref, args) {
-      return resolveDesktopGameEventAccess(
-        ref.container,
-        game: args.sourceGame!,
-        access: args.admissionContext,
-        eventBroadcastId: args.eventBroadcastId,
-      );
-    });
 
 /// Board admission that belongs to a GAME's lifetime, not to an entitlement
 /// poll.
@@ -105,7 +94,11 @@ class _DesktopBoardAccessGateState
         ref.watch(desktopPastEventAccessEnabledProvider) &&
         desktopGameNeedsEventClassification(accessContext, args.sourceGame);
     if (classifyEvent) {
-      final resolved = ref.watch(_restoredEventAccessProvider(args));
+      final resolved = ref.watch(
+        desktopGameIsPastProvider(
+          desktopGameEventKey(args.sourceGame!, accessContext),
+        ),
+      );
       final value = resolved.valueOrNull;
       if (value == null) {
         return DesktopAccessLockedSurface(
@@ -119,7 +112,7 @@ class _DesktopBoardAccessGateState
           surface: 'event_game_access',
         );
       }
-      accessContext = value;
+      accessContext = desktopGameEventAccessContext(accessContext, past: value);
     }
     final freeDecision = desktopAccessWithoutMembership(accessContext);
     final recheckProtectedWeb =

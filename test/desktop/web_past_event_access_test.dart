@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -37,6 +39,8 @@ class _Lookup implements DesktopEventAccessLookup {
   GroupBroadcast? slugEvent;
   String? requestedId;
   int calls = 0;
+  int broadcastCalls = 0;
+  bool failNextBroadcast = false;
   @override
   Future<bool?> isPast(String eventId) async {
     calls++;
@@ -48,6 +52,11 @@ class _Lookup implements DesktopEventAccessLookup {
   @override
   Future<GroupBroadcast?> broadcast(String eventOrTourId) async {
     requestedId = eventOrTourId;
+    broadcastCalls++;
+    if (failNextBroadcast) {
+      failNextBroadcast = false;
+      throw StateError('Event lookup failed');
+    }
     return event;
   }
 
@@ -225,6 +234,189 @@ void main() {
         DesktopEntitlementSnapshot.guest,
       ),
     ],
+  );
+
+  for (final settled in ['premium', 'free', 'error']) {
+    test(
+      'game-link admission waits for $settled membership without a transient dialog',
+      () async {
+        final subscription = _Subscription(SubscriptionState(isLoading: true));
+        final container = containerFor(_Lookup(), subscription: subscription);
+        addTearDown(container.dispose);
+        final presented = <DesktopAccess>[];
+        addTearDown(
+          registerDesktopPaywallPresenter(container, (
+            decision, {
+            context,
+            resume,
+            required surface,
+          }) async {
+            presented.add(decision.outcome);
+            return false;
+          }),
+        );
+        var completed = false;
+        final admitted = requireDesktopAction(
+          container,
+          desktopPastEventOpenContext,
+          surface: 'game_link',
+        ).then((value) {
+          completed = true;
+          return value;
+        });
+        await Future<void>.delayed(Duration.zero);
+        expect(presented, isEmpty);
+        expect(completed, isFalse);
+        subscription.update(
+          SubscriptionState(
+            isSubscribed: settled == 'premium',
+            error: settled == 'error' ? 'Unavailable' : null,
+          ),
+        );
+        expect(await admitted, settled == 'premium');
+        expect(presented, switch (settled) {
+          'premium' => <DesktopAccess>[],
+          'free' => [DesktopAccess.premiumRequired],
+          _ => [DesktopAccess.temporarilyUnavailable],
+        });
+      },
+    );
+  }
+
+  testWidgets('stalled membership reaches the existing checking flow once', (
+    tester,
+  ) async {
+    final subscription = _Subscription(SubscriptionState(isLoading: true));
+    final container = containerFor(_Lookup(), subscription: subscription);
+    addTearDown(container.dispose);
+    final presented = <DesktopAccess>[];
+    addTearDown(
+      registerDesktopPaywallPresenter(container, (
+        decision, {
+        context,
+        resume,
+        required surface,
+      }) async {
+        presented.add(decision.outcome);
+        return false;
+      }),
+    );
+    final admitted = requireDesktopAction(
+      container,
+      desktopPastEventOpenContext,
+      surface: 'game_link',
+    );
+    await tester.pump(const Duration(seconds: 7));
+    expect(presented, isEmpty);
+    await tester.pump(const Duration(seconds: 1));
+    expect(await admitted, isFalse);
+    expect(presented, [DesktopAccess.checking]);
+  });
+
+  testWidgets(
+    'deep-link classification is ready on the first board frame and survives PGN refresh',
+    (tester) async {
+      final lookup =
+          _Lookup()
+            ..past = true
+            ..event = GroupBroadcast(
+              id: 'archive-event',
+              createdAt: now,
+              name: 'Archive',
+              search: [],
+            );
+      final subscription = _Subscription(SubscriptionState(isSubscribed: true));
+      final container = containerFor(lookup, subscription: subscription);
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: SizedBox()),
+        ),
+      );
+      final game = _game();
+      final resolving = resolveDesktopGameEventAccess(
+        container,
+        game: game,
+        access: const DesktopAccessContext(
+          feature: DesktopFeature.broadcast,
+          action: DesktopAction.openContent,
+          origin: DesktopDiscoveryOrigin.deepLink,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      final access = await resolving;
+      expect(access.feature, DesktopFeature.eventDiscovery);
+      final classifiedCalls = lookup.calls;
+      final args = BoardTabGameArgs(
+        gameId: game.gameId,
+        pgn: '1. e4 e5 *',
+        label: 'Shared game',
+        whiteName: 'White',
+        blackName: 'Black',
+        sourceGame: game,
+        accessContext: access,
+      );
+      container.read(boardTabGameArgsByTabIdProvider.notifier).state = {
+        'board': args,
+      };
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: DesktopBoardAccessGate(
+              tabId: 'board',
+              child: Text('Advanced board'),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Advanced board'), findsOneWidget);
+      expect(find.text('Checking your membership'), findsNothing);
+      expect(lookup.calls, classifiedCalls);
+      container.read(boardTabGameArgsByTabIdProvider.notifier).state = {
+        'board': args.copyWith(
+          pgn: '1. e4 e5 2. Nf3 *',
+          sourceGame: game.copyWith(pgn: '1. e4 e5 2. Nf3 *'),
+        ),
+      };
+      await tester.pump();
+      expect(find.text('Advanced board'), findsOneWidget);
+      expect(find.text('Checking your membership'), findsNothing);
+      expect(lookup.calls, classifiedCalls);
+      subscription.update(SubscriptionState());
+      expect(readDesktopAccess(container.read, access).isAllowed, isFalse);
+      await tester.pumpAndSettle();
+      expect(find.text('Advanced board'), findsNothing);
+      expect(lookup.calls, classifiedCalls);
+    },
+  );
+
+  test(
+    'failed event classification is retried and never cached as access',
+    () async {
+      final lookup = _Lookup()..failNextBroadcast = true;
+      final container = containerFor(lookup);
+      addTearDown(container.dispose);
+      const access = DesktopAccessContext(
+        feature: DesktopFeature.broadcast,
+        action: DesktopAction.openContent,
+        origin: DesktopDiscoveryOrigin.deepLink,
+      );
+      await expectLater(
+        resolveDesktopGameEventAccess(container, game: _game(), access: access),
+        throwsStateError,
+      );
+      await container.pump();
+      final resolved = await resolveDesktopGameEventAccess(
+        container,
+        game: _game(),
+        access: access,
+      );
+      expect(resolved.feature, DesktopFeature.broadcast);
+      expect(lookup.broadcastCalls, 2);
+    },
   );
 
   test(

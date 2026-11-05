@@ -14,6 +14,7 @@ import 'package:flutter/widgets.dart' show AppLifecycleState, VoidCallback;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
@@ -171,7 +172,31 @@ Future<bool> requireDesktopAction(
   DesktopAccessContext context, {
   required String surface,
 }) async {
-  final decision = readDesktopAccess(container.read, context);
+  var decision = readDesktopAccess(container.read, context);
+  if (decision.outcome == DesktopAccess.checking) {
+    // Deep links can arrive before the initial membership request completes.
+    // Wait for that request rather than opening a dialog just to dismiss it
+    // immediately. A stalled lookup still reaches the existing Retry UI.
+    final settled = Completer<void>();
+    final subscription = container.listen(
+      desktopAccessDecisionProvider(context),
+      (_, next) {
+        if (next.outcome != DesktopAccess.checking && !settled.isCompleted) {
+          settled.complete();
+        }
+      },
+      fireImmediately: true,
+    );
+    try {
+      await settled.future.timeout(
+        const Duration(seconds: 8),
+        onTimeout: () {},
+      );
+    } finally {
+      subscription.close();
+    }
+    decision = readDesktopAccess(container.read, context);
+  }
   if (decision.isAllowed) return true;
   await presentDesktopAccessDecision(
     container,

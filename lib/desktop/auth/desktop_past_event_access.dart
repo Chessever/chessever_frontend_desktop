@@ -254,7 +254,76 @@ Future<DesktopAccessContext> resolveDesktopGameEventAccess(
       !desktopGameNeedsEventClassification(access, game)) {
     return access;
   }
-  final lookup = container.read(desktopEventAccessLookupProvider);
+  final subscription = container.listen(
+    desktopGameIsPastProvider(desktopGameEventKey(game, access)).future,
+    (_, _) {},
+  );
+  try {
+    return desktopGameEventAccessContext(
+      access,
+      past: await subscription.read(),
+    );
+  } finally {
+    subscription.close();
+  }
+}
+
+/// Classification metadata only: PGN, clocks and board state cannot restart
+/// the same event lookup while the deep link hands the game to its board.
+typedef DesktopGameEventKey =
+    ({
+      String tourId,
+      String? tourSlug,
+      GameSource source,
+      DateTime? day,
+      bool collection,
+    });
+
+DesktopGameEventKey desktopGameEventKey(
+  GamesTourModel game,
+  DesktopAccessContext access,
+) => (
+  tourId: game.tourId,
+  tourSlug: game.tourSlug,
+  source: game.source,
+  day: game.gameDay ?? game.dateStart ?? game.lastMoveTime,
+  collection: access.isCollectionContent,
+);
+
+/// A bounded hand-off cache, not membership state. Expiry is checked on read
+/// so this cache has no background timer and never retains lookup failures.
+final _desktopGameEventCacheProvider = Provider((ref) {
+  ref.watch(desktopEventAccessLookupProvider);
+  return <DesktopGameEventKey, ({DateTime checkedAt, bool past})>{};
+});
+
+/// Shares the completed classification between pre-navigation admission and
+/// the mounted board. A cached result is returned synchronously, avoiding a
+/// second loading frame even if the router's provider was already disposed.
+final desktopGameIsPastProvider = FutureProvider.autoDispose
+    .family<bool, DesktopGameEventKey>((ref, game) {
+      final cache = ref.watch(_desktopGameEventCacheProvider);
+      final now = DateTime.now();
+      cache.removeWhere(
+        (_, result) =>
+            now.difference(result.checkedAt) >= const Duration(minutes: 1),
+      );
+      final cached = cache[game];
+      if (cached != null) return cached.past;
+      return _resolveDesktopGameIsPast(ref, game).then((past) {
+        cache[game] = (checkedAt: DateTime.now(), past: past);
+        while (cache.length > 64) {
+          cache.remove(cache.keys.first);
+        }
+        return past;
+      });
+    });
+
+Future<bool> _resolveDesktopGameIsPast(
+  Ref ref,
+  DesktopGameEventKey game,
+) async {
+  final lookup = ref.watch(desktopEventAccessLookupProvider);
   // A persisted parent selection can belong to a different row of a mixed
   // list. The target game's own tour is the authority for admission.
   var broadcast = await lookup.broadcast(game.tourId);
@@ -269,7 +338,7 @@ Future<DesktopAccessContext> resolveDesktopGameEventAccess(
       if (broadcast != null) break;
     }
   }
-  final day = game.gameDay ?? game.dateStart ?? game.lastMoveTime;
+  final day = game.day;
   if (broadcast != null &&
       resolvedByName &&
       (day == null ||
@@ -281,11 +350,11 @@ Future<DesktopAccessContext> resolveDesktopGameEventAccess(
     broadcast = null;
   }
   var past =
-      access.isCollectionContent
+      game.collection
           ? desktopEventWindowIsPast(end: day, now: DateTime.now())
           : game.source != GameSource.supabase;
   if (broadcast != null) {
-    final subscription = container.listen(
+    final subscription = ref.container.listen(
       desktopEventIsPastProvider((
         id: broadcast.id,
         start: broadcast.dateStart,
@@ -293,10 +362,7 @@ Future<DesktopAccessContext> resolveDesktopGameEventAccess(
         fromPastList:
             broadcast.dateStart == null &&
             broadcast.dateEnd == null &&
-            desktopEventWindowIsPast(
-              end: game.gameDay ?? game.dateStart ?? game.lastMoveTime,
-              now: DateTime.now(),
-            ),
+            desktopEventWindowIsPast(end: game.day, now: DateTime.now()),
       )).future,
       (_, _) {},
     );
@@ -306,6 +372,13 @@ Future<DesktopAccessContext> resolveDesktopGameEventAccess(
       subscription.close();
     }
   }
+  return past;
+}
+
+DesktopAccessContext desktopGameEventAccessContext(
+  DesktopAccessContext access, {
+  required bool past,
+}) {
   return access.copyWith(
     feature:
         past
