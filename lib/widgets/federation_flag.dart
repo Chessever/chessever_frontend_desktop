@@ -1,5 +1,5 @@
 import 'package:chessever/utils/country_utils.dart';
-import 'package:country_flags/country_flags.dart';
+import 'package:chessever/widgets/raster_country_flag.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_country_flags/flutter_country_flags.dart' as fcf;
 
@@ -72,9 +72,10 @@ class FederationFlag extends StatelessWidget {
       return _empty();
     }
 
-    final child = CountryFlag.fromCountryCode(
+    final child = RasterCountryFlag(
       iso2,
-      theme: ImageTheme(width: width, height: height),
+      width: width ?? 60,
+      height: height ?? 40,
     );
 
     final radius = borderRadius ?? BorderRadius.circular(3);

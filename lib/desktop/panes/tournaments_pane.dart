@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:country_flags/country_flags.dart';
+import 'package:chessever/widgets/raster_country_flag.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -1150,13 +1150,13 @@ class _EventFallbackVisual extends StatelessWidget {
       return Stack(
         fit: StackFit.expand,
         children: [
-          FittedBox(
-            fit: BoxFit.cover,
-            child: SizedBox(
-              width: 90,
-              height: 60,
-              child: CountryFlag.fromCountryCode(code),
-            ),
+          LayoutBuilder(
+            builder:
+                (context, constraints) => RasterCountryFlag(
+                  code,
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
+                ),
           ),
           DecoratedBox(
             decoration: BoxDecoration(
