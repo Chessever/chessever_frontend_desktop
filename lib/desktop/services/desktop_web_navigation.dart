@@ -113,7 +113,11 @@ Future<bool> openDesktopWebLocation(
       }
     }
     if (kind == TabKind.tournaments) {
-      final value = current.queryParameters['tab'];
+      // Only the browser root defaults to For You. Explicit broadcast URLs
+      // retain their selected tab and the native startup preference is untouched.
+      final value =
+          current.queryParameters['tab'] ??
+          (current.path == '/' ? 'for-you' : null);
       container
           .read(selectedGroupCategoryProvider.notifier)
           .state = switch (value) {

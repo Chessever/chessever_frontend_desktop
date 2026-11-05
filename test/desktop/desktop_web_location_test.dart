@@ -75,6 +75,42 @@ void main() {
     );
   });
 
+  test(
+    'browser root defaults to For You without changing explicit tabs',
+    () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      for (final entry
+          in {
+            '/': '/broadcast?tab=for-you',
+            '/?utm_source=test': '/broadcast?tab=for-you',
+            '/broadcast?tab=current': '/broadcast?tab=current',
+            '/broadcast?tab=for-you': '/broadcast?tab=for-you',
+            '/broadcast?tab=past': '/broadcast?tab=past',
+            '/broadcast?tab=search': '/broadcast?tab=search',
+            '/broadcast': '/broadcast?tab=current',
+            '/?tab=current': '/broadcast?tab=current',
+          }.entries) {
+        expect(
+          await openDesktopWebLocation(
+            Uri.parse('https://app.chessever.com${entry.key}'),
+            container,
+          ),
+          true,
+        );
+        expect(
+          container.read(desktopTabsProvider).active?.kind,
+          TabKind.tournaments,
+        );
+        expect(
+          container.read(desktopWebLocationProvider),
+          entry.value,
+          reason: entry.key,
+        );
+      }
+    },
+  );
+
   test('direct list URLs select their actual pane', () async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
