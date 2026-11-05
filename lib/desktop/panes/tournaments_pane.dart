@@ -342,6 +342,11 @@ class TournamentsPane extends HookConsumerWidget {
                                 loadingId: loadingId.value,
                                 tileKeys: tileKeys.value,
                                 scrollController: listScrollController,
+                                // Every Past event is finished; a Completed
+                                // chip on each tile is redundant there.
+                                showStatusBadge:
+                                    selectedCategory !=
+                                    ge.GroupEventCategory.past,
                               ),
                             );
                           },
@@ -1666,6 +1671,7 @@ class _TournamentBrowser extends StatelessWidget {
     required this.loadingId,
     required this.tileKeys,
     required this.scrollController,
+    this.showStatusBadge = true,
   });
 
   final List<GroupEventCardModel> tournaments;
@@ -1676,6 +1682,7 @@ class _TournamentBrowser extends StatelessWidget {
   final String? loadingId;
   final Map<String, GlobalKey> tileKeys;
   final ScrollController scrollController;
+  final bool showStatusBadge;
 
   @override
   Widget build(BuildContext context) {
@@ -1697,6 +1704,7 @@ class _TournamentBrowser extends StatelessWidget {
       onActivate: onActivate,
       tileKeys: tileKeys,
       scrollController: scrollController,
+      showStatusBadge: showStatusBadge,
     );
   }
 }
@@ -1937,6 +1945,7 @@ class _TournamentEventGrid extends StatelessWidget {
     required this.onActivate,
     required this.tileKeys,
     required this.scrollController,
+    this.showStatusBadge = true,
   });
 
   final List<GroupEventCardModel> tournaments;
@@ -1947,6 +1956,7 @@ class _TournamentEventGrid extends StatelessWidget {
   final ValueChanged<GroupEventCardModel> onActivate;
   final Map<String, GlobalKey> tileKeys;
   final ScrollController scrollController;
+  final bool showStatusBadge;
 
   @override
   Widget build(BuildContext context) {
@@ -1985,6 +1995,7 @@ class _TournamentEventGrid extends StatelessWidget {
                 tournament: tournament,
                 selected: tournament.id == selectedId,
                 loading: tournament.id == loadingId,
+                showStatusBadge: showStatusBadge,
                 onTap: () {
                   onSelect(tournament.id);
                   onActivate(tournament);
@@ -2004,10 +2015,12 @@ class _TournamentRowTile extends StatefulWidget {
     required this.selected,
     required this.loading,
     required this.onTap,
+    this.showStatusBadge = true,
   });
 
   final GroupEventCardModel tournament;
   final bool selected;
+  final bool showStatusBadge;
   final bool loading;
   final VoidCallback onTap;
 
@@ -2083,9 +2096,10 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                               Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  if (_shouldShowStatusBadge(
-                                    t.tourEventCategory,
-                                  )) ...[
+                                  if (widget.showStatusBadge &&
+                                      _shouldShowStatusBadge(
+                                        t.tourEventCategory,
+                                      )) ...[
                                     _StatusBadge(category: t.tourEventCategory),
                                     const SizedBox(width: 8),
                                   ],

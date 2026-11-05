@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'support/current_broadcast_games.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -18,7 +20,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 
 void main() {
   test('scratch board keeps the local PGN identity after its first save', () {
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: [currentBroadcastGames]);
     addTearDown(container.dispose);
 
     container
@@ -88,6 +90,7 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [currentBroadcastGames],
         child: MaterialApp(
           home: Consumer(
             builder: (context, ref, _) {
@@ -138,6 +141,7 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [currentBroadcastGames],
         child: MaterialApp(
           home: Consumer(
             builder: (context, ref, _) {
@@ -176,6 +180,7 @@ void main() {
 
       await tester.pumpWidget(
         ProviderScope(
+          overrides: [currentBroadcastGames],
           child: MaterialApp(
             home: Consumer(
               builder: (context, ref, _) {
@@ -234,6 +239,7 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [currentBroadcastGames],
         child: MaterialApp(
           home: Consumer(
             builder: (context, ref, _) {
@@ -331,6 +337,7 @@ void main() {
 
       await tester.pumpWidget(
         ProviderScope(
+          overrides: [currentBroadcastGames],
           child: MaterialApp(
             home: Consumer(
               builder: (context, ref, _) {
@@ -388,7 +395,10 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [gameRepositoryProvider.overrideWithValue(repository)],
+        overrides: [
+          currentBroadcastGames,
+          gameRepositoryProvider.overrideWithValue(repository),
+        ],
         child: MaterialApp(
           home: Consumer(
             builder: (context, ref, _) {
@@ -439,6 +449,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(_EmptyGameRepository()),
         ],
         child: MaterialApp(
@@ -497,6 +508,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(_EmptyGameRepository()),
         ],
         child: MaterialApp(

@@ -213,6 +213,7 @@ void main() {
   }) => ProviderContainer(
     overrides: [
       desktopPastEventAccessEnabledProvider.overrideWithValue(enabled),
+      desktopBoardMembershipRecheckEnabledProvider.overrideWithValue(enabled),
       desktopEventAccessLookupProvider.overrideWithValue(lookup),
       gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
       gameUpdatesBatchArrivalStreamProvider.overrideWith(
@@ -560,13 +561,22 @@ void main() {
     expect(current.feature, DesktopFeature.broadcast);
   });
 
-  test('native event access does not query or gate an event open', () async {
+  test('disabling game classification does not query the event', () async {
     final lookup = _Lookup()..past = true;
     final container = containerFor(lookup, enabled: false);
     addTearDown(container.dispose);
+    const access = DesktopAccessContext(
+      feature: DesktopFeature.broadcast,
+      action: DesktopAction.openContent,
+      origin: DesktopDiscoveryOrigin.broadcast,
+    );
     expect(
-      await requireDesktopPastEventAccess(container, event(past: true)),
-      isTrue,
+      await resolveDesktopGameEventAccess(
+        container,
+        game: _game(),
+        access: access,
+      ),
+      access,
     );
     expect(lookup.calls, 0);
   });
@@ -787,14 +797,13 @@ void main() {
   });
 
   testWidgets(
-    'past activation cancels without navigating, then resumes after verified purchase',
+    'past activation opens the event without checking membership or a paywall',
     (tester) async {
       final lookup = _Lookup()..past = true;
       final subscription = _Subscription(SubscriptionState());
       final container = containerFor(lookup, subscription: subscription);
       addTearDown(container.dispose);
       var prompts = 0;
-      var purchase = false;
       addTearDown(
         registerDesktopPaywallPresenter(container, (
           decision, {
@@ -803,11 +812,7 @@ void main() {
           required surface,
         }) async {
           prompts++;
-          expect(decision.outcome, DesktopAccess.premiumRequired);
-          if (purchase) {
-            subscription.update(SubscriptionState(isSubscribed: true));
-          }
-          return purchase;
+          return false;
         }),
       );
       await tester.pumpWidget(
@@ -841,15 +846,8 @@ void main() {
       );
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
-      expect(prompts, 1);
-      expect(
-        container.read(desktopTabsProvider).active?.kind,
-        TabKind.tournaments,
-      );
-      purchase = true;
-      await tester.tap(find.text('Open'));
-      await tester.pumpAndSettle();
-      expect(prompts, 2);
+      expect(prompts, 0);
+      expect(lookup.calls, 0);
       expect(
         container.read(desktopTabsProvider).active?.kind,
         TabKind.tournamentDetail,

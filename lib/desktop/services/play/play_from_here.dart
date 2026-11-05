@@ -13,6 +13,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/state/play_setup.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
 import 'package:chessever/desktop/widgets/play_strength_control.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -72,7 +73,6 @@ Future<void> showPlayFromHereDialog(
   WidgetRef ref, {
   required PlayFromHereSeed seed,
 }) async {
-  if (!admitDesktopPlay(ref)) return;
   final container = ProviderScope.containerOf(context, listen: false);
   final account = container.read(desktopAccountIdentityProvider);
   final owner = container.read(desktopTabsProvider).activeId;
@@ -82,13 +82,15 @@ Future<void> showPlayFromHereDialog(
         (ctx, _, animation) =>
             _PlayFromHereDialog(seed: seed, animation: animation),
   );
-  if (result == null || !context.mounted ||
+  if (result == null ||
+      !context.mounted ||
       container.read(desktopAccountIdentityProvider) != account ||
-      container.read(desktopTabsProvider).activeId != owner ||
-      !admitDesktopPlay(ref)) {
+      container.read(desktopTabsProvider).activeId != owner) {
     return;
   }
 
+  final binaryPath = engineBinaryPathFor(ref, result.engine);
+  if (binaryPath != null && !admitDesktopPlay(ref)) return;
   final tabId = ref
       .read(desktopTabsProvider.notifier)
       .open(TabKind.play, reuseExisting: false);
@@ -115,7 +117,6 @@ Future<void> showPlayFromHereDialog(
     startClockImmediately: true,
   );
 
-  final binaryPath = engineBinaryPathFor(ref, result.engine);
   if (binaryPath != null) {
     final identity = BotIdentityGenerator().next(elo: config.elo);
     ref
@@ -385,7 +386,7 @@ class _PlayFromHereDialogState extends ConsumerState<_PlayFromHereDialog> {
     final install = ref.watch(engineInstallProvider(_engine));
     return FDialog.raw(
       animation: widget.animation,
-      constraints: const BoxConstraints(maxWidth: 520),
+      constraints: const BoxConstraints(maxWidth: 520, maxHeight: 760),
       builder: (context, _) {
         return Padding(
           padding: const EdgeInsets.fromLTRB(22, 20, 22, 20),
@@ -395,46 +396,59 @@ class _PlayFromHereDialogState extends ConsumerState<_PlayFromHereDialog> {
             children: [
               const _DialogHeader(),
               const SizedBox(height: 16),
-              _EngineDropdown(
-                value: _engine,
-                onChanged:
-                    (v) => setState(() {
-                      _engine = v;
-                      _elo = normalizePlayStrength(v, _elo);
-                    }),
-              ),
-              const SizedBox(height: 14),
-              PlayStrengthControl(
-                engine: _engine,
-                value: _elo,
-                onChanged:
-                    (v) => setState(
-                      () => _elo = normalizePlayStrength(_engine, v),
+              Flexible(
+                fit: FlexFit.loose,
+                child: DesktopScrollHost(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _EngineDropdown(
+                          value: _engine,
+                          onChanged:
+                              (v) => setState(() {
+                                _engine = v;
+                                _elo = normalizePlayStrength(v, _elo);
+                              }),
+                        ),
+                        const SizedBox(height: 14),
+                        PlayStrengthControl(
+                          engine: _engine,
+                          value: _elo,
+                          onChanged:
+                              (v) => setState(
+                                () => _elo = normalizePlayStrength(_engine, v),
+                              ),
+                          compact: true,
+                        ),
+                        const SizedBox(height: 14),
+                        _ColorField(
+                          value: _color,
+                          onChanged: (v) => setState(() => _color = v),
+                        ),
+                        const SizedBox(height: 16),
+                        _ClockSection(
+                          whiteBase: _whiteBase,
+                          whiteInc: _whiteInc,
+                          blackBase: _blackBase,
+                          blackInc: _blackInc,
+                          mirror: _mirror,
+                          inherited: _inheritedClockAvailable,
+                          onWhiteBaseChanged: _setWhiteBase,
+                          onWhiteIncChanged: _setWhiteInc,
+                          onBlackBaseChanged: _setBlackBase,
+                          onBlackIncChanged: _setBlackInc,
+                          onMirrorChanged: _toggleMirror,
+                          onPreset: _applyPreset,
+                        ),
+                        const SizedBox(height: 18),
+                        _EngineHint(install: install),
+                      ],
                     ),
-                compact: true,
+                  ),
+                ),
               ),
-              const SizedBox(height: 14),
-              _ColorField(
-                value: _color,
-                onChanged: (v) => setState(() => _color = v),
-              ),
-              const SizedBox(height: 16),
-              _ClockSection(
-                whiteBase: _whiteBase,
-                whiteInc: _whiteInc,
-                blackBase: _blackBase,
-                blackInc: _blackInc,
-                mirror: _mirror,
-                inherited: _inheritedClockAvailable,
-                onWhiteBaseChanged: _setWhiteBase,
-                onWhiteIncChanged: _setWhiteInc,
-                onBlackBaseChanged: _setBlackBase,
-                onBlackIncChanged: _setBlackInc,
-                onMirrorChanged: _toggleMirror,
-                onPreset: _applyPreset,
-              ),
-              const SizedBox(height: 18),
-              _EngineHint(install: install),
               const SizedBox(height: 14),
               Row(
                 children: [
@@ -451,18 +465,22 @@ class _PlayFromHereDialogState extends ConsumerState<_PlayFromHereDialog> {
                     child: FButton(
                       style: playPrimaryActionButtonStyle(),
                       prefix: const Icon(Icons.play_arrow_rounded),
-                      onPress:
-                          () => Navigator.of(context).pop(
-                            _PlayFromHereDecision(
-                              engine: _engine,
-                              elo: _elo,
-                              color: _color,
-                              whiteBaseSeconds: _whiteBase,
-                              whiteIncrementSeconds: _whiteInc,
-                              blackBaseSeconds: _blackBase,
-                              blackIncrementSeconds: _blackInc,
-                            ),
+                      onPress: () {
+                        if (engineReady(install) && !admitDesktopPlay(ref)) {
+                          return;
+                        }
+                        Navigator.of(context).pop(
+                          _PlayFromHereDecision(
+                            engine: _engine,
+                            elo: _elo,
+                            color: _color,
+                            whiteBaseSeconds: _whiteBase,
+                            whiteIncrementSeconds: _whiteInc,
+                            blackBaseSeconds: _blackBase,
+                            blackIncrementSeconds: _blackInc,
                           ),
+                        );
+                      },
                       child: Text(
                         engineReady(install) ? 'Start game' : 'Open setup',
                       ),
@@ -690,31 +708,19 @@ class _MirrorToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () => onChanged(!value),
-      borderRadius: BorderRadius.circular(6),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              value ? Icons.link_rounded : Icons.link_off_rounded,
-              size: 14,
-              color: value ? kPrimaryColor : kSecondaryTextColor,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              value ? 'Mirror sides' : 'Independent',
-              style: TextStyle(
-                color: value ? kPrimaryColor : kSecondaryTextColor,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
+    return FButton(
+      style:
+          value
+              ? playPrimaryActionButtonStyle(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              )
+              : playSecondaryActionButtonStyle(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
               ),
-            ),
-          ],
-        ),
-      ),
+      mainAxisSize: MainAxisSize.min,
+      onPress: () => onChanged(!value),
+      prefix: Icon(value ? Icons.link_rounded : Icons.link_off_rounded),
+      child: Text(value ? 'Mirror sides' : 'Independent'),
     );
   }
 }
@@ -739,26 +745,13 @@ class _ClockPresetsRow extends StatelessWidget {
       runSpacing: 6,
       children: [
         for (final p in _presets)
-          InkWell(
-            onTap: () => onPick(p.$2, p.$3),
-            borderRadius: BorderRadius.circular(6),
-            child: Container(
+          FButton(
+            style: playSecondaryActionButtonStyle(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: kBlack3Color,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: kDividerColor),
-              ),
-              child: Text(
-                p.$1,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
             ),
+            mainAxisSize: MainAxisSize.min,
+            onPress: () => onPick(p.$2, p.$3),
+            child: Text(p.$1),
           ),
       ],
     );
@@ -978,7 +971,7 @@ class _HmsFieldState extends State<_HmsField> {
           ),
         ),
         const SizedBox(height: 4),
-        TextField(
+        FTextField(
           controller: _controller,
           focusNode: _focusNode,
           keyboardType: TextInputType.number,
@@ -987,35 +980,23 @@ class _HmsFieldState extends State<_HmsField> {
             LengthLimitingTextInputFormatter(widget.wide ? 3 : 2),
           ],
           textAlign: TextAlign.center,
-          onSubmitted: (_) => _commit(),
-          onChanged: (_) => _commit(),
-          style: const TextStyle(
-            color: kWhiteColor,
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            fontFeatures: [FontFeature.tabularFigures()],
-          ),
-          decoration: InputDecoration(
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(
-              vertical: 9,
-              horizontal: 6,
-            ),
-            filled: true,
-            fillColor: kBlackColor,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(color: kDividerColor),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(color: kDividerColor),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(color: kPrimaryColor),
-            ),
-          ),
+          onSubmit: (_) => _commit(),
+          onChange: (_) => _commit(),
+          style:
+              (style) => style.copyWith(
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: 9,
+                  horizontal: 6,
+                ),
+                contentTextStyle: FWidgetStateMap.all(
+                  const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
         ),
       ],
     );

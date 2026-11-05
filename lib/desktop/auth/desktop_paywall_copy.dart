@@ -242,10 +242,10 @@ DesktopPaywallCopy _premiumCopy(
       );
     case DesktopAccessReason.premiumEventDiscovery:
       return const DesktopPaywallCopy(
-        title: 'Past events are Premium',
+        title: 'Opening archived games is Premium',
         body:
-            'Get Premium to explore past events. '
-            'For You, Current events and Calendar stay free.',
+            'Get Premium to open games from past events. '
+            'Browsing events, rounds and standings stays free.',
       );
     case DesktopAccessReason.premiumPaidSource when context == null:
       // Legacy shared guards that do not pass a request yet.
@@ -285,7 +285,7 @@ DesktopPaywallCopy _premiumCopy(
       );
     case DesktopAccessReason.premiumPlay:
       return const DesktopPaywallCopy(
-        title: 'Play is Premium',
+        title: 'Starting games is Premium',
         body:
             'Play against engines and enter tournaments with Premium. Your existing games remain yours.',
       );

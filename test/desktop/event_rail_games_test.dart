@@ -1,3 +1,5 @@
+import 'support/current_broadcast_games.dart';
+
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -119,6 +121,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
@@ -213,6 +216,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           // Stepping through a smart collection's games is Premium content.
           ...desktopPremiumTestOverrides,
           gameRepositoryProvider.overrideWithValue(repository),
@@ -317,6 +321,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
@@ -410,6 +415,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
@@ -517,6 +523,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            currentBroadcastGames,
             gameRepositoryProvider.overrideWithValue(repository),
             boardTabGameArgsByTabIdProvider.overrideWith(
               (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
@@ -669,6 +676,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            currentBroadcastGames,
             gameRepositoryProvider.overrideWithValue(repository),
             boardTabGameArgsByTabIdProvider.overrideWith(
               (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
@@ -749,7 +757,10 @@ void main() {
     BuildContext? capturedContext;
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [gameRepositoryProvider.overrideWithValue(repository)],
+        overrides: [
+          currentBroadcastGames,
+          gameRepositoryProvider.overrideWithValue(repository),
+        ],
         child: MaterialApp(
           home: Consumer(
             builder: (context, ref, child) {
@@ -846,6 +857,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
@@ -962,6 +974,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
@@ -1108,6 +1121,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            currentBroadcastGames,
             gameRepositoryProvider.overrideWithValue(repository),
             boardTabGameArgsByTabIdProvider.overrideWith(
               (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
@@ -3153,7 +3167,10 @@ EventRailGamesProviderKey _providerKey(
 
 ProviderContainer _container(_FakeGameRepository repository) {
   return ProviderContainer(
-    overrides: [gameRepositoryProvider.overrideWithValue(repository)],
+    overrides: [
+      currentBroadcastGames,
+      gameRepositoryProvider.overrideWithValue(repository),
+    ],
   );
 }
 

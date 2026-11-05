@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'support/current_broadcast_games.dart';
+
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -85,6 +87,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            currentBroadcastGames,
             gameRepositoryProvider.overrideWithValue(_AwardRepository(rows)),
             boardTabGameArgsByTabIdProvider.overrideWith(
               (ref) => {'tournaments-default': args},

@@ -907,15 +907,6 @@ class DesktopDeepLinkRouter {
         .getGroupBroadcastById(link.id)
         .timeout(const Duration(seconds: 12));
 
-    if (!await requireDesktopPastEventAccess(container, (
-      id: broadcast.id,
-      start: broadcast.dateStart,
-      end: broadcast.dateEnd,
-      fromPastList: false,
-    ))) {
-      return null;
-    }
-
     await _preselectTourIfSharedLinkUsesTourId(
       container,
       linkId: link.id,

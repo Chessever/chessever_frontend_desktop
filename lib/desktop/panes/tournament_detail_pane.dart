@@ -6,11 +6,6 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
-import 'package:chessever/desktop/auth/desktop_access_decision.dart';
-import 'package:chessever/desktop/auth/desktop_access_policy.dart';
-import 'package:chessever/desktop/auth/desktop_access_providers.dart';
-import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
-import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/chat/chat_api.dart';
 import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/widgets/botvinnik/botvinnik_launch_button.dart';
@@ -84,36 +79,6 @@ class TournamentDetailPane extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final tournament = ref.watch(tournamentForTabProvider(tabId));
-    if (tournament != null &&
-        ref.watch(desktopPastEventAccessEnabledProvider)) {
-      final past = ref.watch(
-        desktopEventIsPastProvider((
-          id: tournament.id,
-          start: tournament.startDate,
-          end: tournament.endDate,
-          fromPastList: false,
-        )),
-      );
-      if (past.valueOrNull != false) {
-        final decision =
-            past.valueOrNull == true
-                ? ref.watch(
-                  desktopAccessDecisionProvider(desktopPastEventOpenContext),
-                )
-                : const DesktopAccessDecision(
-                  DesktopAccess.checking,
-                  DesktopAccessReason.entitlementChecking,
-                );
-        if (!decision.isAllowed) {
-          return DesktopAccessLockedSurface(
-            decision: decision,
-            accessContext: desktopPastEventOpenContext,
-            surface: 'past_event_restored',
-          );
-        }
-      }
-    }
     return _TournamentDetailContent(tabId: tabId);
   }
 }

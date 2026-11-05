@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'support/current_broadcast_games.dart';
+
 import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
@@ -110,6 +112,7 @@ void main() {
         ProviderScope(
           observers: <ProviderObserver>[observer],
           overrides: [
+            currentBroadcastGames,
             boardTabGameArgsByTabIdProvider.overrideWith(
               (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
             ),
@@ -526,6 +529,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            currentBroadcastGames,
             boardTabGameArgsByTabIdProvider.overrideWith(
               (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
             ),
@@ -658,6 +662,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            currentBroadcastGames,
             boardTabGameArgsByTabIdProvider.overrideWith(
               (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
             ),
@@ -836,6 +841,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            currentBroadcastGames,
             boardTabGameArgsByTabIdProvider.overrideWith(
               (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
             ),
@@ -930,6 +936,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{tabId: args},
           ),
@@ -1044,6 +1051,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           desktopTabsProvider.overrideWith((ref) => tabs),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
@@ -1118,6 +1126,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          currentBroadcastGames,
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
           ),
@@ -1186,6 +1195,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            currentBroadcastGames,
             boardPictureInPictureModeProvider.overrideWith((ref) => true),
             boardTabGameArgsByTabIdProvider.overrideWith(
               (ref) => <String, BoardTabGameArgs>{'pip': args},
@@ -1279,6 +1289,7 @@ Future<_TickRebuildMetrics> _measureSteadyMetadataTickRebuilds(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        currentBroadcastGames,
         boardTabGameArgsByTabIdProvider.overrideWith(
           (ref) => <String, BoardTabGameArgs>{tabId: args},
         ),
@@ -1548,10 +1559,8 @@ class _TestBoardSettingsNotifier extends BoardSettingsNotifierNew {
 
 class _TestEngineSettingsNotifier extends EngineSettingsNotifierNew {
   @override
-  Future<EngineSettings> build() async => const EngineSettings(
-    showEngineGauge: false,
-    showEngineAnalysis: false,
-  );
+  Future<EngineSettings> build() async =>
+      const EngineSettings(showEngineGauge: false, showEngineAnalysis: false);
 }
 
 class _TestKeyboardShortcutsNotifier extends KeyboardShortcutsNotifier {

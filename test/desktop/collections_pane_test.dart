@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'support/current_broadcast_games.dart';
+
 import 'package:chessever/desktop/panes/collections_pane.dart';
 import 'package:chessever/desktop/panes/library_pane.dart'
     show libraryReadOnlyGamesFit;
@@ -53,6 +55,7 @@ Future<ProviderContainer> _pump(
   addTearDown(tester.view.reset);
   final container = ProviderContainer(
     overrides: [
+      currentBroadcastGames,
       collectionsReaderProvider.overrideWithValue(reader),
       favoriteEventsProvider.overrideWith(() => FakeFavoriteEvents(starred)),
       subscriptionProvider.overrideWith(
@@ -1035,6 +1038,7 @@ void main() {
           const CollectionsPane(),
           reader: reader,
           overrides: [
+            currentBroadcastGames,
             collectionStarAccountProvider.overrideWithValue(() => true),
           ],
         );
@@ -2019,6 +2023,7 @@ void main() {
         window: const Size(1400, 800),
         starred: [starredCollection('my-60-memorable-games')],
         overrides: [
+          currentBroadcastGames,
           collectionWorkspaceArgsByTabIdProvider.overrideWith(
             (ref) => {
               't1': const CollectionWorkspaceArgs(
@@ -2168,6 +2173,7 @@ void main() {
             const Size(1100, 620),
             pane: const CollectionWorkspacePane(tabId: 't1'),
             overrides: [
+              currentBroadcastGames,
               collectionWorkspaceArgsByTabIdProvider.overrideWith(
                 (ref) => {'t1': CollectionWorkspaceArgs(slug: slug, title: '')},
               ),

@@ -1,9 +1,6 @@
 import 'dart:math' as math;
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_play_access.dart';
-import 'package:chessever/desktop/services/tournament_server/tournament_server.dart';
-import 'package:chessever/desktop/auth/desktop_access_providers.dart';
-import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
@@ -59,25 +56,8 @@ class PlayPane extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final session = ref.watch(
-      playSessionArgsByTabIdProvider.select((m) => m[tabId]),
-    );
-    final access = ref.watch(
-      desktopAccessDecisionProvider(desktopPlayAccessContext),
-    );
-    // An admitted live game remains mounted on expiry; never discard its moves.
-    // Cold/free setup and restored navigation mount no paid providers.
-    final retainedTournament =
-        ref.watch(playPaneTabByTabIdProvider(tabId)) ==
-            PlayPaneTab.tournaments &&
-        ref.watch(tournamentServerProvider).snapshot != null;
-    if (!access.isAllowed && session == null && !retainedTournament) {
-      return DesktopAccessLockedSurface(
-        decision: access,
-        accessContext: desktopPlayAccessContext,
-        surface: 'play_entry',
-      );
-    }
+    // Browsing and configuring Play is free. Each start action admits the
+    // session before launching an engine; expiry never unmounts a live game.
     ref.listen<List<PlayAchievementId>>(
       playAchievementsProvider.select((state) => state.lastEarned),
       (previous, next) {

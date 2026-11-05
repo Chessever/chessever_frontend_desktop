@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
@@ -11,6 +12,12 @@ import 'package:chessever/desktop/auth/web_prep_source_access.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
+
+/// Browser clean boards recheck membership; admitted native sessions retain
+/// their lifetime. This is independent of archived-game classification.
+final desktopBoardMembershipRecheckEnabledProvider = Provider<bool>(
+  (_) => kIsWeb,
+);
 
 /// Board admission that belongs to a GAME's lifetime, not to an entitlement
 /// poll.
@@ -116,7 +123,7 @@ class _DesktopBoardAccessGateState
     }
     final freeDecision = desktopAccessWithoutMembership(accessContext);
     final recheckProtectedWeb =
-        ref.watch(desktopPastEventAccessEnabledProvider) &&
+        ref.watch(desktopBoardMembershipRecheckEnabledProvider) &&
         !freeDecision.isAllowed;
     if (!recheckProtectedWeb &&
         (_admittedKey == key || (latched && !classifyEvent))) {

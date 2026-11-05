@@ -5,8 +5,8 @@ import 'package:chessever/desktop/auth/desktop_event_discovery_access.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/providers/group_event_category.dart';
 
-/// Native Past discovery retains its existing admission. In the browser the
-/// list is free, and opening an archived event asks for Premium instead.
+/// Discovery remains visible in every edition. Archived games ask for Premium
+/// when opened, rather than hiding the event catalog behind a page lock.
 class DesktopEventDiscoveryGate extends ConsumerWidget {
   const DesktopEventDiscoveryGate({
     super.key,
