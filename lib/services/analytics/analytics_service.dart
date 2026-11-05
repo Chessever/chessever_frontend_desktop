@@ -40,6 +40,13 @@ class AnalyticsService {
 
   bool get isReady => _isReady;
 
+  /// Updates only the Windows relay's account association. This synchronous
+  /// boundary clears identity before any events following sign-out are queued.
+  /// Other platforms retain their existing Firebase SDK behavior.
+  void setWindowsUserId(String? userId) {
+    _windowsAnalytics?.setUserId(userId);
+  }
+
   Future<void> _initialize() async {
     _baseEventProperties = await _buildBaseEventProperties();
     _firebaseAnalytics = _createFirebaseAnalytics();
@@ -62,6 +69,7 @@ class AnalyticsService {
     await _initFuture;
 
     _userId = user?.id;
+    _windowsAnalytics?.setUserId(user?.isAnonymous == false ? _userId : null);
     if (user == null) {
       _userProperties = {};
       await _firebaseAnalytics?.setUserId(id: null);
@@ -84,6 +92,7 @@ class AnalyticsService {
   Future<void> clearUser() async {
     await _initFuture;
     _userId = null;
+    _windowsAnalytics?.setUserId(null);
     _userProperties = {};
     await _firebaseAnalytics?.setUserId(id: null);
   }

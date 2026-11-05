@@ -62,6 +62,9 @@ class WindowsAnalyticsTransport with WidgetsBindingObserver {
     'is_favorite',
   };
   static final _safeValue = RegExp(r'^[a-zA-Z0-9 _.:+\-]{1,100}$');
+  static final _accountIdPattern = RegExp(
+    r'^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$',
+  );
 
   final bool enabled;
   final http.Client Function() _createClient;
@@ -69,8 +72,9 @@ class WindowsAnalyticsTransport with WidgetsBindingObserver {
   final Future<String?> Function() _readClientId;
   final Future<void> Function(String) _saveClientId;
   final DateTime Function() _now;
-  final List<Map<String, Object>> _pending = [];
+  final List<_WindowsAnalyticsEvent> _pending = [];
   String? _clientId;
+  String? _userId;
   int _sessionId = 0;
   DateTime? _backgroundedAt;
   DateTime? _lastEngagement;
@@ -125,8 +129,15 @@ class WindowsAnalyticsTransport with WidgetsBindingObserver {
     }
   }
 
-  /// The allowlist deliberately excludes user IDs/properties, email, names,
-  /// URLs, file paths, free-text searches and exception details.
+  /// Uses the same opaque account UUID as the native Firebase SDK. Invalid
+  /// identifiers clear the association rather than retaining a previous user.
+  void setUserId(String? id) {
+    _userId = id != null && _accountIdPattern.hasMatch(id) ? id : null;
+  }
+
+  /// Event metadata excludes user IDs/properties, email, names, URLs, file
+  /// paths, free-text searches and exception details. The account UUID travels
+  /// separately as GA's top-level user_id, never as an event parameter.
   void addEvent(String name, Map<String, Object> properties) {
     if (!enabled || _clientId == null || _disposed) return;
     final now = _now();
@@ -150,7 +161,9 @@ class WindowsAnalyticsTransport with WidgetsBindingObserver {
       if (params.length >= 25) break;
     }
     if (_pending.length >= _maxQueueLength) _pending.removeAt(0);
-    _pending.add({'name': name, 'params': params});
+    _pending.add(
+      _WindowsAnalyticsEvent({'name': name, 'params': params}, _userId),
+    );
     if (_pending.length >= 25) unawaited(flush());
   }
 
@@ -189,7 +202,12 @@ class WindowsAnalyticsTransport with WidgetsBindingObserver {
   }
 
   Future<void> _sendBatch() async {
-    final batch = _pending.take(25).toList();
+    // A request has only one top-level user_id. Snapshot identity when an event
+    // is queued and never mix accounts (or signed-out events) in one request,
+    // including when a failed request is retried after an account switch.
+    final userId = _pending.first.userId;
+    final batch =
+        _pending.takeWhile((event) => event.userId == userId).take(25).toList();
     _pending.removeRange(0, batch.length);
     bool retry = false;
     final client = _createClient();
@@ -199,7 +217,11 @@ class WindowsAnalyticsTransport with WidgetsBindingObserver {
           .post(
             endpoint,
             headers: {'content-type': 'application/json'},
-            body: jsonEncode({'client_id': _clientId, 'events': batch}),
+            body: jsonEncode({
+              'client_id': _clientId,
+              if (userId != null) 'user_id': userId,
+              'events': batch.map((entry) => entry.event).toList(),
+            }),
           )
           .timeout(const Duration(seconds: 7));
       retry = response.statusCode == 429 || response.statusCode >= 500;
@@ -241,4 +263,11 @@ class WindowsAnalyticsTransport with WidgetsBindingObserver {
     _pending.clear();
     _activeClient?.close();
   }
+}
+
+class _WindowsAnalyticsEvent {
+  const _WindowsAnalyticsEvent(this.event, this.userId);
+
+  final Map<String, Object> event;
+  final String? userId;
 }

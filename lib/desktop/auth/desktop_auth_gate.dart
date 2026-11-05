@@ -15,6 +15,7 @@ import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/widgets/mandatory_update_gate.dart';
 import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
 import 'package:chessever/repository/authentication/auth_repository.dart';
+import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// What the root of the main desktop window shows.
@@ -76,18 +77,36 @@ class DesktopAuthGate extends HookConsumerWidget {
 
     useEffect(() {
       var disposed = false;
-      final sub = auth.onAuthStateChange.listen((event) {
-        if (!restoring.value && event.event == AuthChangeEvent.signedOut) {
-          signedOutThisRun.value = true;
-        }
-        if (event.session != null &&
-            bootstrap.value == DesktopGuestBootstrap.failed) {
-          // A session supersedes the earlier guest failure, so a later
-          // sign-out does not repeat that message on the welcome screen.
-          bootstrap.value = DesktopGuestBootstrap.idle;
-        }
-        session.value = event.session;
-      });
+      void syncAnalyticsIdentity(Session? current) {
+        final user = current?.user;
+        AnalyticsService.instance.setWindowsUserId(
+          user != null && !user.isAnonymous ? user.id : null,
+        );
+      }
+
+      syncAnalyticsIdentity(auth.currentSession);
+      final sub = auth.onAuthStateChange.listen(
+        (event) {
+          syncAnalyticsIdentity(event.session);
+          if (!restoring.value && event.event == AuthChangeEvent.signedOut) {
+            signedOutThisRun.value = true;
+          }
+          if (event.session != null &&
+              bootstrap.value == DesktopGuestBootstrap.failed) {
+            // A session supersedes the earlier guest failure, so a later
+            // sign-out does not repeat that message on the welcome screen.
+            bootstrap.value = DesktopGuestBootstrap.idle;
+          }
+          session.value = event.session;
+        },
+        onError: (Object error, StackTrace stack) {
+          ErrorReporter.report(
+            error,
+            stackTrace: stack,
+            tag: 'auth.session_listener',
+          );
+        },
+      );
 
       unawaited(
         Future<void>(() async {
