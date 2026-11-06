@@ -691,12 +691,12 @@ void main() {
           File('lib/desktop/shell/desktop_shell.dart').readAsStringSync();
 
       expect(authGate, contains('return const MandatoryUpdateGate('));
+      expect(authGate, contains('child: DesktopGuestGateListener('));
+      expect(authGate, contains('child: DesktopWelcomeScreen('));
       expect(
         authGate,
-        contains('child: DesktopGuestGateListener(child: DesktopShell()),'),
+        contains('onContinueAsGuest: kIsWeb ? null : startGuestSession,'),
       );
-      expect(authGate, contains('child: DesktopWelcomeScreen('));
-      expect(authGate, contains('onContinueAsGuest: startGuestSession,'));
       // Freemium: the entrance never walls on entitlement.
       expect(authGate, isNot(contains('DesktopPremiumRequiredScreen')));
       expect(authGate, isNot(contains('subscriptionProvider')));

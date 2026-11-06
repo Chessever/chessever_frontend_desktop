@@ -50,13 +50,29 @@ void main() {
       );
     });
 
-    test('creates a guest on launch but never a second one', () {
+    test('web launches never create anonymous accounts', () {
+      for (final bootstrap in DesktopGuestBootstrap.values) {
+        expect(
+          shouldBootstrapDesktopGuest(
+            hasSession: false,
+            hasCurrentUser: false,
+            signedOutThisRun: false,
+            bootstrap: bootstrap,
+            isWeb: true,
+          ),
+          isFalse,
+        );
+      }
+    });
+
+    test('creates a guest on native launch but never a second one', () {
       expect(
         shouldBootstrapDesktopGuest(
           hasSession: false,
           hasCurrentUser: false,
           signedOutThisRun: false,
           bootstrap: DesktopGuestBootstrap.idle,
+          isWeb: false,
         ),
         isTrue,
       );

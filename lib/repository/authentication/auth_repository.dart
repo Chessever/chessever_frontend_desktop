@@ -534,6 +534,11 @@ class AuthController extends AutoDisposeAsyncNotifier<AppAuthState> {
   }
 
   Future<AppUser> signInAnonymously() async {
+    // All browser entry points, including deep links, require a real sign-in.
+    if (kIsWeb) {
+      throw UnsupportedError('Please sign in with Google or Apple.');
+    }
+
     state = const AsyncValue.data(AppAuthState.loading());
     unawaited(
       AnalyticsService.instance.trackAuthEvent(

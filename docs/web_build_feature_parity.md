@@ -13,6 +13,15 @@ This Flutter repository owns app.chessever.com (Worker `chessever-app`). The
 sibling `chessever_web_frontend` repository owns the separate Next.js site at
 chessever.com. Both `AGENTS.md` files carry the synchronized-update policy.
 
+## Web sign-in policy (22.28.3)
+
+The browser app requires Google or Apple sign-in for new sessions. Automatic
+guest bootstrap and the guest fallback are disabled, and the shared anonymous
+sign-in method rejects browser calls, including deep-link entry points. Existing
+guest sessions can still restore their data. Native desktop guest access is
+unchanged. This web-specific policy prevents fresh automated visits from
+creating anonymous accounts.
+
 ## Previous verification baseline
 
 What the desktop shell does in a browser, how, and which pub.dev packages

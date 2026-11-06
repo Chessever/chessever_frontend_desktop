@@ -33,10 +33,10 @@ enum DesktopGuestBootstrap { idle, inFlight, failed }
 ///
 /// 1. **Restoring** the persisted session: a short loading frame.
 /// 2. **Any session** (guest or permanent) → [DesktopShell].
-/// 3. **No session on launch** → a guest session is created automatically,
-///    reusing [AuthController.signInAnonymously].
-/// 4. **Explicit sign-out, or guest creation failed** → [DesktopWelcomeScreen],
-///    which offers sign-in and "Continue as guest".
+/// 3. **No session on web** → sign-in through [DesktopWelcomeScreen].
+/// 4. **No session on native launch** → a guest session is created automatically.
+/// 5. **Native sign-out, or guest creation failed** → [DesktopWelcomeScreen],
+///    which also offers "Continue as guest" on native builds.
 class DesktopAuthGate extends HookConsumerWidget {
   const DesktopAuthGate({super.key});
 
@@ -58,6 +58,7 @@ class DesktopAuthGate extends HookConsumerWidget {
     final container = ProviderScope.containerOf(context, listen: false);
 
     Future<void> startGuestSession() async {
+      if (kIsWeb) return;
       if (bootstrap.value == DesktopGuestBootstrap.inFlight) return;
       // Never mint a second guest while any user (anonymous or not) exists.
       if (auth.currentUser != null) return;
@@ -119,6 +120,7 @@ class DesktopAuthGate extends HookConsumerWidget {
             hasCurrentUser: auth.currentUser != null,
             signedOutThisRun: signedOutThisRun.value,
             bootstrap: bootstrap.value,
+            isWeb: kIsWeb,
           )) {
             await startGuestSession();
           }
@@ -141,7 +143,7 @@ class DesktopAuthGate extends HookConsumerWidget {
       case DesktopAuthGateView.welcome:
         return DesktopStandaloneWindowChrome(
           child: DesktopWelcomeScreen(
-            onContinueAsGuest: startGuestSession,
+            onContinueAsGuest: kIsWeb ? null : startGuestSession,
             guestFailed: bootstrap.value == DesktopGuestBootstrap.failed,
           ),
         );
@@ -172,7 +174,8 @@ DesktopAuthGateView resolveDesktopAuthGateView({
   return DesktopAuthGateView.welcome;
 }
 
-/// A guest session is created automatically only on launch with no user at
+/// Web visitors must sign in; anonymous account creation is disabled.
+/// On native builds, a guest is created automatically only on launch with no user at
 /// all. After an explicit sign-out the user chose to leave, so the welcome
 /// screen is shown and a guest is created only if they ask for it.
 @visibleForTesting
@@ -181,7 +184,9 @@ bool shouldBootstrapDesktopGuest({
   required bool hasCurrentUser,
   required bool signedOutThisRun,
   required DesktopGuestBootstrap bootstrap,
+  bool isWeb = kIsWeb,
 }) {
+  if (isWeb) return false;
   if (hasSession || hasCurrentUser) return false;
   if (signedOutThisRun) return false;
   return bootstrap == DesktopGuestBootstrap.idle;
