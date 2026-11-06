@@ -1,6 +1,6 @@
 // app.chessever.com: the desktop shell compiled to the web (lib/web/web_main.dart).
 // Static assets from build/web; the script in web_worker/ runs only for the
-// /_img image relay. Build with scripts/build_web.sh, deploy with
+// /_img image relay and the /_broadcast/ live-stream list relay. Build with scripts/build_web.sh, deploy with
 // scripts/deploy_web.sh.
 {
   "$schema": "https://unpkg.com/wrangler/config-schema.json",
@@ -11,7 +11,7 @@
     "directory": "./build/web",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/_img"]
+    "run_worker_first": ["/_img", "/_broadcast/*"]
   },
   "routes": [{ "pattern": "app.chessever.com", "custom_domain": true }],
   "workers_dev": false,

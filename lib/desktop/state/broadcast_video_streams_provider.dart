@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -14,12 +15,14 @@ const Duration broadcastVideoStreamsRefreshInterval = Duration(seconds: 30);
 
 final broadcastVideoStreamsClientProvider =
     Provider<BroadcastVideoStreamsClient>((ref) {
-      // `BROADCAST_API_BASE` is an optional debug/UAT override; production
-      // carries the public origin as the client default.
+      // `BROADCAST_API_BASE` is an optional debug/UAT override. Production
+      // reads the public API, or the page's own relay in the web build.
       final override = DesktopEnv.maybeGet('BROADCAST_API_BASE');
       final client = BroadcastVideoStreamsClient(
         baseUrl:
-            override == null || override.isEmpty ? null : Uri.parse(override),
+            override == null || override.isEmpty
+                ? broadcastApiDefaultBase(inBrowser: kIsWeb)
+                : Uri.parse(override),
       );
       ref.onDispose(client.dispose);
       return client;

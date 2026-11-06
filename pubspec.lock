@@ -2265,7 +2265,7 @@ packages:
     source: hosted
     version: "1.4.1"
   webview_all_web:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: webview_all_web
       sha256: "767a5bf5b7f7cc51cb905798ada48df0c100559d581e1bd1fc85d34e5bf68a4c"

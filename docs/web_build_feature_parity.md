@@ -62,6 +62,7 @@ Remove the storage key and reload to disable sampling.
 | Copy board image | Clipboard | `ClipboardItem` (image/png) |
 | Share board image | Browser share sheet | `share_plus` with `XFile.fromData` |
 | Open game in new window, move tab to new window | New browser tab | The game's chessever.com address, same origin (`browser_tab.dart`); local-only games open as a tab |
+| Live streams on the board (Twitch, YouTube, Kick, analysis videos) | Same | The panel's player is an `<iframe>` (`webview_all_web`) of chessever.com's `/embed/video` page, allowed autoplay and fullscreen for the nested provider frame (`lib/web/broadcast_video_frame_web.dart`). The stream list is read through the same-origin `/_broadcast/` relay (`web_worker/index.js`) because the broadcast API sends CORS headers only to chessever.com. Local `flutter run -d chrome` has no relay; set `BROADCAST_API_BASE` |
 | Picture-in-picture, tear-off tabs | Not available | Hidden on the web |
 | Edit a PGN file in place | Chrome, Edge, Opera | Import keeps a File System Access handle; saved changes are written back to the user's file (`lib/web/linked_files_web.dart`). Firefox and Safari edit an imported copy; Export saves it |
 | Show in folder, window position | Not applicable | Hidden on the web |
@@ -115,6 +116,10 @@ Deploy the matching services before releasing the updated browser client:
   as successful deliveries. Native clients continue to omit Origin. Provider
   calls use `redirect: "manual"` and reject redirect responses; the deployed
   Workers runtime rejects `redirect: "error"` before sending.
+- chessever.com's `/embed/video` page (`VideoEmbedFrame` in
+  `chessever_web_frontend`) must list `app.chessever.com` as a Twitch
+  `parent`. Twitch refuses to play when any framing ancestor is missing from
+  that list; YouTube and Kick streams play without it.
 - Botvinnik's chat service must recognize the browser client's
   `desktop-shell-v1` capability as the app at app.chessever.com, distinct from
   the public website. Its help lookup can select an explicitly requested phone,

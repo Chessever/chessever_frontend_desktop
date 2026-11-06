@@ -24,6 +24,25 @@ import 'package:http/http.dart' as http;
 /// Public broadcast API host. Same origin the web spectator bridge proxies to.
 const String broadcastApiOrigin = 'https://api.broadcast.chessever.com';
 
+/// Same-origin path on app.chessever.com that relays the read-only
+/// `video-streams` endpoint (web_worker/index.js). The broadcast API only
+/// sends CORS headers to chessever.com, so the web build cannot read it
+/// directly.
+const String broadcastApiWebRelayPath = '/_broadcast';
+
+/// Base URL the stream list is read from. The browser build reads through
+/// its own origin's relay; the native builds call the API directly.
+Uri broadcastApiDefaultBase({required bool inBrowser, Uri? pageUri}) {
+  if (!inBrowser) return Uri.parse(broadcastApiOrigin);
+  final page = pageUri ?? Uri.base;
+  return Uri(
+    scheme: page.scheme,
+    host: page.host,
+    port: page.hasPort ? page.port : null,
+    path: broadcastApiWebRelayPath,
+  );
+}
+
 /// Public site origin: hosts the `/watch` pages the toolbar links to and the
 /// `/embed/video` documents the panel plays through.
 const String broadcastWatchOrigin = 'https://chessever.com';
