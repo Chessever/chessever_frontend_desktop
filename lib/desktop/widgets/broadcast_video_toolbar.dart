@@ -101,6 +101,7 @@ class BroadcastVideoToolbar extends StatelessWidget {
                                     groups[index].streams.first.id,
                                   ),
                                   onSelect: onSelect,
+                                  onToggle: onToggle,
                                   onPin: onPin,
                                 ),
                               ],
@@ -162,6 +163,7 @@ class _LanguageGroupButton extends StatefulWidget {
     required this.selectedId,
     required this.pinned,
     required this.onSelect,
+    required this.onToggle,
     required this.onPin,
   });
 
@@ -169,6 +171,10 @@ class _LanguageGroupButton extends StatefulWidget {
   final String selectedId;
   final bool pinned;
   final ValueChanged<BroadcastVideoStream> onSelect;
+
+  /// Hide/show the player. A tap on the already-selected flag routes here,
+  /// so the highlighted circle closes the video it opened.
+  final VoidCallback onToggle;
   final ValueChanged<String> onPin;
 
   @override
@@ -214,6 +220,9 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
 
   void _closeMenu() {
     _cancelClose();
+    // Single-stream flags render no FPopover, so the controller is never
+    // attached to an overlay and `hide()` would assert.
+    if (!_multiple) return;
     unawaited(_menuController.hide());
   }
 
@@ -232,6 +241,13 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
       return;
     }
     _closeMenu();
+    final selected = widget.group.streams.any(
+      (stream) => stream.id == widget.selectedId,
+    );
+    if (selected) {
+      widget.onToggle();
+      return;
+    }
     widget.onSelect(widget.group.streams.first);
   }
 

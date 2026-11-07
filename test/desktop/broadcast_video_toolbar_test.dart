@@ -20,6 +20,66 @@ BroadcastVideoStream stream({
 }
 
 void main() {
+  testWidgets('tapping the selected flag again toggles the video', (
+    tester,
+  ) async {
+    var toggles = 0;
+    final selections = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 420,
+              child: BroadcastVideoToolbar(
+                streams: <BroadcastVideoStream>[
+                  stream(
+                    id: 'en1',
+                    label: 'Board · English',
+                    countryCode: 'GB',
+                  ),
+                  stream(
+                    id: 'es1',
+                    label: 'Canal · Spanish',
+                    countryCode: 'ES',
+                  ),
+                ],
+                selectedId: 'en1',
+                visible: true,
+                pins: const <String>[],
+                onSelect: (picked) => selections.add(picked.id),
+                onToggle: () => toggles++,
+                onPin: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final flags = find.byWidgetPredicate(
+      (widget) =>
+          widget.key is ValueKey<String> &&
+          (widget.key! as ValueKey<String>).value.startsWith(
+            'desktop-broadcast-video-language-',
+          ),
+    );
+    expect(flags, findsNWidgets(2));
+
+    await tester.tap(flags.at(0));
+    await tester.pump();
+    expect(toggles, 1, reason: 'the highlighted flag closes its video');
+    expect(selections, isEmpty);
+
+    await tester.tap(flags.at(1));
+    await tester.pump();
+    expect(toggles, 1);
+    expect(selections, <String>['es1'], reason: 'other flags still switch');
+    // Let the hover tooltip's delay timer run out before teardown.
+    await tester.pump(const Duration(seconds: 5));
+  });
+
   testWidgets('language marks are circular cover-cropped flags', (
     tester,
   ) async {
