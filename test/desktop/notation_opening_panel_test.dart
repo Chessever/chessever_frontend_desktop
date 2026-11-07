@@ -225,6 +225,8 @@ void main() {
       find.byKey(const ValueKey('opening-explorer-source-button')),
       findsOneWidget,
     );
+    expect(tester.getSize(find.byKey(const ValueKey('opening-explorer-source-button'))).height, 40);
+    expect(tester.getSize(find.byKey(const ValueKey('board-explorer-filters'))).height, 40);
     expect(find.text('Hikaru Chesscom'), findsOneWidget);
     expect(find.text('Both'), findsNothing);
     expect(find.text('W'), findsNothing);
@@ -453,7 +455,7 @@ void main() {
     await _drainStripTestTimers(tester);
   });
 
-  testWidgets('bottom strip reports the width that shows every control', (
+  testWidgets('two-row bottom strip reports only the replay minimum width', (
     tester,
   ) async {
     _ignoreExplorerEmptyStateOverflowForTest();
@@ -479,10 +481,10 @@ void main() {
     await tester.pumpWidget(strip(760));
     await tester.pump();
 
-    // 20 padding + 36 Explorer + 42 report + 8 + 236 navigation + 8 + 156
-    // trailing, rounded up with a pixel spare.
+    // Five 44px replay buttons, four 6px gaps and 20px outer padding.
+    // Utilities adapt below rather than forcing the board rail wider.
     final fullWidth = reported!;
-    expect(fullWidth, 507);
+    expect(fullWidth, 264);
 
     final navigationIcons = [
       Icons.keyboard_double_arrow_left_rounded,
@@ -507,7 +509,7 @@ void main() {
     }
     expect(
       tester.getCenter(find.byIcon(Icons.chevron_left_rounded)).dy,
-      greaterThan(tester.getCenter(find.byIcon(Icons.menu_book_outlined)).dy),
+      lessThan(tester.getCenter(find.byIcon(Icons.menu_book_outlined)).dy),
     );
     // Measured from the fixed-width controls, so it does not follow the pane.
     expect(reported, fullWidth);

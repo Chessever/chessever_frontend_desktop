@@ -3,6 +3,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:chessever/web/web_release_watcher.dart';
 
 void main() {
+  test(
+    'compiledVersion reads the build-time metadata, never a runtime file',
+    () {
+      final name = const String.fromEnvironment('FLUTTER_BUILD_NAME').trim();
+      final build = const String.fromEnvironment('FLUTTER_BUILD_NUMBER').trim();
+      expect(
+        WebReleaseWatcher.compiledVersion(),
+        name.isEmpty
+            ? ''
+            : build.isEmpty
+            ? name
+            : '$name+$build',
+      );
+    },
+  );
   group('parseVersionJson', () {
     test('reads Flutter version.json as version+build', () {
       expect(

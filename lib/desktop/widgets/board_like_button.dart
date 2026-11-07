@@ -19,11 +19,11 @@ import 'package:chessever/theme/app_theme.dart';
 /// Like for the game on the board, the phone's notation Like button on
 /// desktop and the web port.
 ///
-/// Sits first in the board's action row, beside Save: on the phone the like
-/// heart flies into Save, so the two belong together. The heart is red in
+/// Far-left action in the Board's pinned notation footer. The heart is red in
 /// both states, as every like heart in the app is; the fill says whether the
-/// game is liked. The community count rides beside it once the server knows
-/// it. Guests are asked to sign in first on desktop and the web port alike
+/// game is liked. Positive community counts below 100 sit inside the heart;
+/// counts from 100 sit beside it. Unknown and zero counts show only the heart.
+/// Guests are asked to sign in first on desktop and the web port alike
 /// (see [toggleDesktopGameLike]).
 class DesktopBoardLikeButton extends ConsumerStatefulWidget {
   const DesktopBoardLikeButton({super.key, required this.game});
@@ -78,16 +78,8 @@ class _DesktopBoardLikeButtonState extends ConsumerState<DesktopBoardLikeButton>
     final likes = ref.watch(desktopGameLikeCountProvider(likeId)).valueOrNull;
     final showCount = likes != null && likes > 0;
     final countLabel = showCount ? compactLikeCount(likes) : null;
-
-    final Color bg;
-    final Color border;
-    if (liked) {
-      bg = kRedColor.withValues(alpha: _hovered ? 0.16 : 0.10);
-      border = kRedColor.withValues(alpha: 0.40);
-    } else {
-      bg = _hovered ? kBlack3Color : Colors.transparent;
-      border = _hovered ? kWhiteColor.withValues(alpha: 0.10) : kDividerColor;
-    }
+    final countInside = showCount && likes < 100;
+    final countAdjacent = showCount && !countInside;
 
     final tooltip = [
       liked ? 'Liked. Click to remove from My Likes' : 'Like this game',
@@ -119,16 +111,12 @@ class _DesktopBoardLikeButtonState extends ConsumerState<DesktopBoardLikeButton>
                   key: const ValueKey('board-like-button'),
                   duration: const Duration(milliseconds: 140),
                   curve: Curves.easeOut,
-                  height: 36,
-                  constraints: const BoxConstraints(minWidth: 36),
+                  height: 40,
+                  constraints: const BoxConstraints(minWidth: 40),
                   padding: EdgeInsets.symmetric(
-                    horizontal: countLabel == null ? 0 : 10,
+                    horizontal: countAdjacent ? 8 : 0,
                   ),
-                  decoration: BoxDecoration(
-                    color: bg,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: border),
-                  ),
+
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -141,18 +129,47 @@ class _DesktopBoardLikeButtonState extends ConsumerState<DesktopBoardLikeButton>
                         builder:
                             (context, scale, child) =>
                                 Transform.scale(scale: scale, child: child),
-                        child: Icon(
-                          liked
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
-                          size: 19,
-                          color: kRedColor,
+                        child: SizedBox.square(
+                          dimension: 32,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              Icon(
+                                liked
+                                    ? Icons.favorite_rounded
+                                    : Icons.favorite_border_rounded,
+                                size: 32,
+                                color: kRedColor,
+                              ),
+                              if (countInside)
+                                ExcludeSemantics(
+                                  child: Transform.translate(
+                                    offset: const Offset(0, 1),
+                                    child: Text(
+                                      countLabel!,
+                                      style: TextStyle(
+                                        color:
+                                            liked
+                                                ? kBackgroundColor
+                                                : kWhiteColor,
+                                        fontSize: 10,
+                                        height: 1,
+                                        fontWeight: FontWeight.w800,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
                       ),
-                      if (countLabel != null) ...[
-                        const SizedBox(width: 6),
+                      if (countAdjacent) ...[
+                        const SizedBox(width: 4),
                         Text(
-                          countLabel,
+                          countLabel!,
                           style: TextStyle(
                             color:
                                 liked || _hovered ? kWhiteColor : kWhiteColor70,

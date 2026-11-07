@@ -1,9 +1,80 @@
 import 'package:chessever/desktop/widgets/event_info_popover.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'Info is borderless while retaining its full click target and popover',
+    (tester) async {
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: SizedBox.square(
+                  dimension: 40,
+                  child: EventInfoPopover(
+                    headers: {'Event': 'Toolbar verification'},
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final info = find.byType(EventInfoPopover);
+      expect(
+        find.descendant(of: info, matching: find.byType(DecoratedBox)),
+        findsNothing,
+      );
+      final rect = tester.getRect(info);
+      expect(rect.size, const Size(40, 40));
+      await tester.tapAt(rect.topLeft + const Offset(2, 2));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Toolbar verification'), findsOneWidget);
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Toolbar verification'), findsNothing);
+      Focus.of(
+        tester.element(find.byIcon(Icons.info_outline_rounded)),
+      ).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Toolbar verification'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    },
+  );
+
+  testWidgets('empty Info stays borderless and disabled', (tester) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(body: Center(child: EventInfoPopover(headers: {}))),
+        ),
+      ),
+    );
+    final info = find.byType(EventInfoPopover);
+    expect(tester.getSize(info), const Size(40, 40));
+    expect(
+      find.descendant(of: info, matching: find.byType(DecoratedBox)),
+      findsNothing,
+    );
+    await tester.tap(info);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(EventInfoBody), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   group('eventInfoDisplayEvent', () {
     test('returns broadcast name when available', () {
       expect(
