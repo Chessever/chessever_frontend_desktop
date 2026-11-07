@@ -394,7 +394,8 @@ void main() {
         GameReportPosition(
           fen: game.startingFen,
           lines: [
-            _line(cp: 0, moves: ['a2a3']),
+            // Praise requires the played score in this same root snapshot.
+            _line(cp: 150, moves: ['e2e4']),
             _line(cp: -250, moves: ['h2h3']),
           ],
         ),

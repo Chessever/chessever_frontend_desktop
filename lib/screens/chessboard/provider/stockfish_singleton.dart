@@ -110,6 +110,21 @@ Completer<void> guardedStockfishInitializationCompleter() {
   return completer;
 }
 
+/// Production UCI search command. Defaults preserve ordinary board searches;
+/// bounded report jobs add a hard node ceiling alongside time and depth.
+String stockfishReportGoCommand({
+  required int depth,
+  Duration? searchDuration,
+  int? maxDepth,
+  int? maxNodes,
+}) {
+  final base =
+      searchDuration == null
+          ? 'go depth $depth'
+          : 'go movetime ${searchDuration.inMilliseconds}${maxDepth == null ? '' : ' depth $maxDepth'}';
+  return '$base${maxNodes == null ? '' : ' nodes $maxNodes'}';
+}
+
 class StockfishSingleton {
   StockfishSingleton._();
 
@@ -205,6 +220,7 @@ class StockfishSingleton {
     int depth = 15,
     Duration? searchDuration,
     int? maxDepth,
+    int? maxNodes,
     int multiPV = 3,
     Function(int depth, int knodes)? onDepthUpdate,
     Function(List<Pv> pvs, int depth)? onPvUpdate,
@@ -247,7 +263,9 @@ class StockfishSingleton {
             : searchDuration != null
             ? 'time_${searchDuration.inMilliseconds}'
             : 'depth_$depth';
-    final cacheKey = '${fen}_${searchMode}_pv${multiPV}_$sideToMove';
+    final boundsKey =
+        maxNodes == null ? '' : '_nodes${maxNodes}_maxDepth$maxDepth';
+    final cacheKey = '${fen}_${searchMode}_pv${multiPV}_$sideToMove$boundsKey';
 
     // Job key includes ownerId to isolate jobs per provider
     // This prevents different providers from sharing completers (which caused wrong evals)
@@ -398,6 +416,7 @@ class StockfishSingleton {
       completer,
       searchDuration: searchDuration,
       maxDepth: maxDepth,
+      maxNodes: maxNodes,
       multiPV: multiPV,
       onDepthUpdate: onDepthUpdate,
       onPvUpdate: onPvUpdate,
@@ -1039,13 +1058,25 @@ class StockfishSingleton {
             '   → Sending: MultiPV $multiPV, movetime ${moveTimeMs}ms${maxDepth != null ? ", depth $maxDepth" : ""}',
           );
           if (maxDepth != null) {
-            _engine!.stdin = 'go movetime $moveTimeMs depth $maxDepth';
+            _engine!.stdin = stockfishReportGoCommand(
+              depth: depth,
+              searchDuration: searchDuration,
+              maxDepth: maxDepth,
+              maxNodes: job.maxNodes,
+            );
           } else {
-            _engine!.stdin = 'go movetime $moveTimeMs';
+            _engine!.stdin = stockfishReportGoCommand(
+              depth: depth,
+              searchDuration: searchDuration,
+              maxNodes: job.maxNodes,
+            );
           }
         } else {
           debugPrint('   → Sending: MultiPV $multiPV, depth $depth');
-          _engine!.stdin = 'go depth $depth';
+          _engine!.stdin = stockfishReportGoCommand(
+            depth: depth,
+            maxNodes: job.maxNodes,
+          );
         }
       } catch (e) {
         debugPrint('❌ ERROR sending commands to Stockfish: $e');
@@ -1938,6 +1969,7 @@ class _EvalJob {
     this.completer, {
     this.searchDuration,
     this.maxDepth,
+    this.maxNodes,
     this.multiPV = 3,
     this.onDepthUpdate,
     this.onPvUpdate,
@@ -1956,6 +1988,7 @@ class _EvalJob {
   final Completer<EnhancedCloudEval> completer;
   final Duration? searchDuration;
   final int? maxDepth;
+  final int? maxNodes;
   final int multiPV;
   final Function(int depth, int knodes)? onDepthUpdate;
   final Function(List<Pv> pvs, int depth)? onPvUpdate;

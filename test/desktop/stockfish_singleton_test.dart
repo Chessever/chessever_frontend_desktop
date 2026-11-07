@@ -5,6 +5,32 @@ import 'package:chessever/desktop/services/engine/stockfish_facade.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'report go command enforces nodes time depth and leaves board defaults unchanged',
+    () {
+      expect(
+        stockfishReportGoCommand(
+          depth: 18,
+          searchDuration: const Duration(seconds: 12),
+          maxDepth: 18,
+          maxNodes: 6000000,
+        ),
+        'go movetime 12000 depth 18 nodes 6000000',
+      );
+      expect(stockfishReportGoCommand(depth: 14), 'go depth 14');
+      expect(
+        stockfishReportGoCommand(
+          depth: 14,
+          searchDuration: const Duration(milliseconds: 250),
+        ),
+        'go movetime 250',
+      );
+      expect(
+        stockfishReportGoCommand(depth: 18, maxNodes: 12345),
+        'go depth 18 nodes 12345',
+      );
+    },
+  );
   group('StockfishSingleton cache policy', () {
     test('bypasses cached results for current-position searches', () {
       expect(
