@@ -201,6 +201,9 @@ class FakeCollectionsReader implements CollectionsReader {
   final List<CollectionSearchQuery> bookQueries = [];
   final List<String> detailReads = [];
   final List<String> gameReads = [];
+
+  /// The search each games read was asked with.
+  final List<CollectionSearchQuery> gameQueries = [];
   final List<String> playerReads = [];
   final List<String> views = [];
   final List<(String, bool)> stars = [];
@@ -349,8 +352,14 @@ class FakeCollectionsReader implements CollectionsReader {
     String? playerKey,
   }) async {
     gameReads.add(slug);
+    gameQueries.add(search);
     final error = gamesError;
     if (error != null) throw error;
+    // As the server does: the games endpoint knows fewer orders than the
+    // book catalog and refuses the rest before it checks Premium.
+    if (!const {'default', 'newest', 'oldest', 'name'}.contains(search.sort)) {
+      throw unknownOrder;
+    }
     if (lockedSlugs.contains(slug)) {
       throw const CollectionsRequestException(
         'Premium required',

@@ -1,8 +1,4 @@
-import 'dart:io';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
@@ -79,7 +75,7 @@ void main() {
     expirationDate: DateTime(2099),
   );
 
-  test('For You and Current are free; only Past requires Premium', () {
+  test('all event discovery is free before opening a game', () {
     for (final category in GroupEventCategory.values) {
       final decision = evaluateDesktopAccess(
         context: desktopEventDiscoveryContext(category),
@@ -87,15 +83,7 @@ void main() {
         entitlement: DesktopEntitlementSnapshot.guest,
         now: now,
       );
-      expect(
-        decision.outcome,
-        category == GroupEventCategory.past
-            ? DesktopAccess.premiumRequired
-            : DesktopAccess.allowed,
-      );
-      if (category == GroupEventCategory.past) {
-        expect(decision.reason, DesktopAccessReason.premiumEventDiscovery);
-      }
+      expect(decision.outcome, DesktopAccess.allowed);
       expect(
         evaluateDesktopAccess(
           context: desktopEventDiscoveryContext(category),
@@ -109,7 +97,7 @@ void main() {
   });
 
   test(
-    'For You and Current never read membership, even when it is unavailable',
+    'event discovery never reads membership, even when it is unavailable',
     () {
       final container = ProviderContainer(
         overrides: [
@@ -122,10 +110,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
-      for (final category in [
-        GroupEventCategory.forYou,
-        GroupEventCategory.current,
-      ]) {
+      for (final category in GroupEventCategory.values) {
         expect(
           container
               .read(desktopEventDiscoveryAccessProvider(category))
@@ -149,10 +134,7 @@ void main() {
         ),
       );
 
-  for (final category in [
-    GroupEventCategory.forYou,
-    GroupEventCategory.current,
-  ]) {
+  for (final category in GroupEventCategory.values) {
     testWidgets(
       '${category.name} stays available without Premium and during membership failures',
       (tester) async {
@@ -194,82 +176,6 @@ void main() {
   }
 
   testWidgets(
-    'Past stays unmounted until verified Premium and relocks on expiry',
-    (tester) async {
-      final subscription = _Subscription(SubscriptionState());
-      final container = ProviderContainer(
-        overrides: [
-          subscriptionProvider.overrideWith((_) => subscription),
-          desktopEntitlementProvider.overrideWithValue(
-            const DesktopEntitlementSnapshot(accountId: 'member'),
-          ),
-        ],
-      );
-      addTearDown(container.dispose);
-      var builds = 0;
-      await tester.pumpWidget(
-        host(
-          container,
-          DesktopEventDiscoveryGate(
-            category: GroupEventCategory.past,
-            builder: (_) {
-              builds++;
-              return const Text('EVENT FEED');
-            },
-          ),
-        ),
-      );
-      expect(builds, 0);
-      expect(find.byType(DesktopAccessLockedSurface), findsOneWidget);
-      expect(
-        find.textContaining('For You, Current events and Calendar stay free.'),
-        findsOneWidget,
-      );
-      expect(find.text('Past events are Premium'), findsOneWidget);
-      expect(find.text('See Premium'), findsOneWidget);
-      subscription.update(premium);
-      await tester.pump();
-      expect(find.text('EVENT FEED'), findsOneWidget);
-      subscription.update(SubscriptionState());
-      await tester.pump();
-      expect(find.text('EVENT FEED'), findsNothing);
-      expect(find.byType(DesktopAccessLockedSurface), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'unknown membership offers checking or Retry rather than an upsell',
-    (tester) async {
-      final subscription = _Subscription(SubscriptionState(isLoading: true));
-      final container = ProviderContainer(
-        overrides: [
-          subscriptionProvider.overrideWith((_) => subscription),
-          desktopEntitlementProvider.overrideWithValue(
-            DesktopEntitlementSnapshot.guest,
-          ),
-        ],
-      );
-      addTearDown(container.dispose);
-      await tester.pumpWidget(
-        host(
-          container,
-          DesktopEventDiscoveryGate(
-            category: GroupEventCategory.past,
-            builder: (_) => const Text('EVENT FEED'),
-          ),
-        ),
-      );
-      expect(find.text('Checking your membership'), findsOneWidget);
-      expect(find.text('See Premium'), findsNothing);
-      subscription.update(SubscriptionState(error: 'offline'));
-      await tester.pump();
-      expect(find.text('Retry'), findsOneWidget);
-      expect(find.text('See Premium'), findsNothing);
-      expect(find.text('EVENT FEED'), findsNothing);
-    },
-  );
-
-  testWidgets(
     'real Events pane opens For You for free and keeps Past unqueried',
     (tester) async {
       tester.view.physicalSize = const Size(1100, 760);
@@ -293,15 +199,8 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
-      final key = GlobalKey();
       await tester.pumpWidget(
-        host(
-          container,
-          RepaintBoundary(
-            key: key,
-            child: const TournamentsPane(tabId: 'events'),
-          ),
-        ),
+        host(container, const TournamentsPane(tabId: 'events')),
       );
       await tester.pump();
       expect(
@@ -315,38 +214,6 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Current'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await tester.tap(find.text('Past'));
-      await tester.pumpAndSettle();
-      expect(
-        container.read(selectedGroupCategoryProvider),
-        GroupEventCategory.past,
-      );
-      expect(find.byType(DesktopAccessLockedSurface), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      final qaDirectory = Platform.environment['CHESSEVER_TICKET_QA_DIR'];
-      if (qaDirectory != null) {
-        await tester.runAsync(() async {
-          final boundary =
-              key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-          final image = await boundary.toImage();
-          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          await Directory(qaDirectory).create(recursive: true);
-          await File(
-            '$qaDirectory/events-paywall.png',
-          ).writeAsBytes(bytes!.buffer.asUint8List());
-          image.dispose();
-        });
-      }
-      await tester.tap(find.text('For You'));
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
-      expect(
-        container.read(selectedGroupCategoryProvider),
-        GroupEventCategory.forYou,
-      );
-      expect(find.byType(DesktopAccessLockedSurface), findsNothing);
-      expect(find.text('See Premium'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();

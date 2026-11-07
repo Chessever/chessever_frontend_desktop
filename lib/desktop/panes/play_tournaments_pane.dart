@@ -628,19 +628,19 @@ bool _admitTournament(BuildContext context, DesktopAction action) =>
     );
 
 Future<void> _openCreateTournament(BuildContext context, WidgetRef ref) async {
-  // Denied => the tournament server is not even started.
+  final cfg = await showFDialog<TournamentConfig>(
+    context: context,
+    builder:
+        (ctx, _, animation) => _CreateTournamentDialog(animation: animation),
+  );
+  if (cfg == null || !context.mounted) return;
+  // Setup is free; confirm admission before starting any tournament work.
   if (!_admitTournament(context, DesktopAction.create)) return;
   final state = ref.read(tournamentServerProvider);
   if (state.status != TournamentServerStatus.running) {
     final ready = await ref.read(tournamentServerProvider.notifier).start();
     if (!ready || !context.mounted) return;
   }
-  final cfg = await showFDialog<TournamentConfig>(
-    context: context,
-    builder:
-        (ctx, _, animation) => _CreateTournamentDialog(animation: animation),
-  );
-  if (cfg == null) return;
   await ref.read(tournamentServerProvider.notifier).launchTournament(cfg);
   unawaited(
     ref.read(playAchievementsProvider.notifier).recordTournamentCreated(cfg),
@@ -2715,7 +2715,12 @@ class _CreateTournamentDialogState
                     child: FButton(
                       style: playPrimaryActionButtonStyle(),
                       prefix: const Icon(FIcons.play),
-                      onPress: () => Navigator.of(context).pop(_buildConfig()),
+                      onPress: () {
+                        if (!_admitTournament(context, DesktopAction.create)) {
+                          return;
+                        }
+                        Navigator.of(context).pop(_buildConfig());
+                      },
                       child: const Text('Create and start'),
                     ),
                   ),

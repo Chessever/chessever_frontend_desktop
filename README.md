@@ -135,3 +135,29 @@ flutter pub run build_runner build --delete-conflicting-outputs
 ```
 
 This command will generate assets using `build_runner`
+
+## Repository-specific Flutter SDK
+
+Desktop/web development uses Flutter **3.47.9**, pinned in `.flutter-version`.
+It is installed separately at `~/.local/share/flutter-sdks/3.47.9`; the global
+Flutter installation and other repositories keep their existing SDKs.
+
+To install it on another machine:
+
+```sh
+git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$HOME/.local/share/flutter-sdks/3.47.9"
+ln -s "$HOME/.local/share/flutter-sdks/3.47.9" .flutter-sdk
+scripts/with_flutter.sh flutter --version
+```
+
+VS Code uses the ignored `.flutter-sdk` link for this workspace. In terminals,
+use `scripts/with_flutter.sh flutter analyze` or
+`scripts/with_flutter.sh flutter test`. To build the browser release with the
+same SDK:
+
+```sh
+WEB_PUBLIC_CONFIG=.env.web scripts/with_flutter.sh bash scripts/build_web.sh
+```
+
+`CHESSEVER_FLUTTER_SDK` can select another installation path for this pinned
+version. The wrapper only changes the environment of the invoked command.

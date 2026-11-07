@@ -155,13 +155,46 @@ CollectionGame? collectionGameFromCard(CollectionGameCard card, int index) {
   }
 }
 
+/// The orders a collection's games endpoint (`GET /api/collections/:slug/
+/// games`) takes. The book catalog takes more (`lastGameAdded`,
+/// `publishedAt`, the columns), and the games endpoint answers any of those
+/// with a 400 before it checks Premium.
+const Set<String> collectionGamesSorts = {
+  'default',
+  'newest',
+  'oldest',
+  'name',
+};
+
+/// [search] as the games endpoint takes it: its filters unchanged, and an
+/// order the endpoint does not know replaced by the collection's own order.
+/// None of these orders takes a direction, so `order` is dropped.
+CollectionSearchQuery collectionGamesSearch(CollectionSearchQuery search) {
+  final sort =
+      collectionGamesSorts.contains(search.sort) ? search.sort : 'default';
+  if (sort == search.sort && search.order.isEmpty) return search;
+  return CollectionSearchQuery(
+    text: search.text,
+    eco: search.eco,
+    result: search.result,
+    year: search.year,
+    minYear: search.minYear,
+    maxYear: search.maxYear,
+    author: search.author,
+    authorId: search.authorId,
+    annotated: search.annotated,
+    sort: sort,
+  );
+}
+
 /// The day [game] was played: the card's, else the PGN's own `Date` tag
 /// with an unknown month or day read as its first.
 DateTime? _collectionGameDay(CollectionGame game) {
   final known = game.card.playedOn ?? game.card.playedAt?.toUtc();
   if (known != null) return DateTime(known.year, known.month, known.day);
-  final parts =
-      (game.row.chessGame.metadata['Date']?.toString() ?? '').trim().split('.');
+  final parts = (game.row.chessGame.metadata['Date']?.toString() ?? '')
+      .trim()
+      .split('.');
   final year = int.tryParse(parts.first);
   if (year == null) return null;
   int part(int index) =>
@@ -297,12 +330,13 @@ class CollectionsReader {
     String? playerKey,
   }) async {
     final fresh = isFreshAccess(slug);
+    final asked = collectionGamesSearch(search);
     final cards = await _allPages<CollectionGameCard>(
       pageSize: gamesPageSize,
       fetch: (offset) async {
         final page = await _api.getCollectionGames(
           slug,
-          search: search,
+          search: asked,
           playerKey: playerKey,
           includePgn: true,
           limit: gamesPageSize,

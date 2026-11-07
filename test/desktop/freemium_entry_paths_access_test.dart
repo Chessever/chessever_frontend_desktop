@@ -1,3 +1,5 @@
+import 'support/current_broadcast_games.dart';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -201,6 +203,7 @@ void _useDesktopSurface(WidgetTester tester) {
 }
 
 List<Override> _freeOverrides(_CountingGameRepository repository) => [
+  currentBroadcastGames,
   subscriptionProvider.overrideWith(
     (ref) => SubscriptionNotifier.stub(SubscriptionState()),
   ),
@@ -208,9 +211,7 @@ List<Override> _freeOverrides(_CountingGameRepository repository) => [
     const DesktopEntitlementSnapshot(accountId: 'free-user', generation: 1),
   ),
   gameRepositoryProvider.overrideWith((ref) => repository),
-  gameStreamRepositoryProvider.overrideWithValue(
-    _SilentGameStreamRepository(),
-  ),
+  gameStreamRepositoryProvider.overrideWithValue(_SilentGameStreamRepository()),
   boardSettingsProviderNew.overrideWith(_QuietBoardSettings.new),
   engineSettingsProviderNew.overrideWith(_QuietEngineSettings.new),
   gameCardEvalCacheOnlyProvider.overrideWith((ref, fen) async => _cloudEval()),
@@ -438,7 +439,10 @@ void main() {
       expect(presented, isEmpty);
       expect(_tabCount(container), tabsBefore + 1);
       final opened = container.read(boardTabGameArgsByTabIdProvider).values;
-      expect(opened.single.accessContext?.origin, DesktopDiscoveryOrigin.miniatures);
+      expect(
+        opened.single.accessContext?.origin,
+        DesktopDiscoveryOrigin.miniatures,
+      );
     });
   });
 
@@ -591,33 +595,44 @@ void main() {
         origin: DesktopDiscoveryOrigin.countrymen,
       );
       expect(
-        identical(retargetMiniatureAccessContext(countrymen, _lockedDay), countrymen),
+        identical(
+          retargetMiniatureAccessContext(countrymen, _lockedDay),
+          countrymen,
+        ),
         isTrue,
       );
     });
 
-    test('drag payloads expose the gated provenance; broadcasts carry none', () {
-      final locked = _miniature(_lockedMiniatureId, _lockedDay);
-      final payload = tournamentGameDragPayload(
-        locked,
-        'Miniatures',
-        accessContext: smartGamesAccessContextFor(
-          PremiumGamesType.miniatures,
+    test(
+      'drag payloads expose the gated provenance; broadcasts carry none',
+      () {
+        final locked = _miniature(_lockedMiniatureId, _lockedDay);
+        final payload = tournamentGameDragPayload(
           locked,
-        ),
-      );
-      expect(payload.accessContext?.origin, DesktopDiscoveryOrigin.miniatures);
-      expect(_decideFree(payload.accessContext!).isAllowed, isFalse);
-      expect(
-        tournamentGameDragPayload(_broadcastGame(), 'Event').accessContext,
-        isNull,
-      );
-      expect(
-        smartGamesAccessContextFor(PremiumGamesType.live, _broadcastGame())
-            .origin,
-        DesktopDiscoveryOrigin.smartCollection,
-      );
-    });
+          'Miniatures',
+          accessContext: smartGamesAccessContextFor(
+            PremiumGamesType.miniatures,
+            locked,
+          ),
+        );
+        expect(
+          payload.accessContext?.origin,
+          DesktopDiscoveryOrigin.miniatures,
+        );
+        expect(_decideFree(payload.accessContext!).isAllowed, isFalse);
+        expect(
+          tournamentGameDragPayload(_broadcastGame(), 'Event').accessContext,
+          isNull,
+        );
+        expect(
+          smartGamesAccessContextFor(
+            PremiumGamesType.live,
+            _broadcastGame(),
+          ).origin,
+          DesktopDiscoveryOrigin.smartCollection,
+        );
+      },
+    );
 
     test('a detached or restored Miniatures board keeps its date rule', () {
       final locked = _miniature(_lockedMiniatureId, _lockedDay);

@@ -649,6 +649,35 @@ void main() {
   });
 
   group('BroadcastVideoStreamsClient', () {
+    test('the web build reads the stream list through its own origin', () {
+      // api.broadcast.chessever.com only answers chessever.com with CORS
+      // headers; app.chessever.com relays it (web_worker/index.js).
+      final base = broadcastApiDefaultBase(
+        inBrowser: true,
+        pageUri: Uri.parse('https://app.chessever.com/board/abc?x=1#frag'),
+      );
+      expect(base.toString(), 'https://app.chessever.com/_broadcast');
+      expect(
+        BroadcastVideoStreamsClient(
+          baseUrl: base,
+        ).endpointFor(const BroadcastVideoScope(tourId: 't1', roundId: 'r1')),
+        Uri.parse(
+          'https://app.chessever.com/_broadcast/api/broadcast/round/r1/video-streams',
+        ),
+      );
+      expect(
+        broadcastApiDefaultBase(
+          inBrowser: true,
+          pageUri: Uri.parse('http://localhost:8080/'),
+        ).toString(),
+        'http://localhost:8080/_broadcast',
+      );
+      expect(
+        broadcastApiDefaultBase(inBrowser: false).toString(),
+        broadcastApiOrigin,
+      );
+    });
+
     test('asks the resolved round scope, then parses the payload', () async {
       late Uri requested;
       final client = BroadcastVideoStreamsClient(

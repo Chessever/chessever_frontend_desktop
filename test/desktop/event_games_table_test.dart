@@ -1,3 +1,5 @@
+import 'support/current_broadcast_games.dart';
+
 import 'package:flutter/material.dart';
 import 'package:chessever/desktop/services/retained_local_pgn.dart';
 import 'package:flutter/services.dart';
@@ -85,6 +87,7 @@ void main() {
               gameListSelectedId: rows.first.id,
             ),
             overrides: [
+              currentBroadcastGames,
               retainedLocalPgnHydratorProvider.overrideWithValue(
                 (row) async => row.copyWith(
                   pgn:
@@ -126,6 +129,7 @@ void main() {
             '1. e4 {My note} e5 2. Nf3 (2. Bc4) Nc6 *';
         final container = ProviderContainer(
           overrides: [
+            currentBroadcastGames,
             retainedLocalPgnHydratorProvider.overrideWithValue((row) async {
               expect(identical(row, localRow), isTrue);
               return row.copyWith(pgn: fullPgn);
@@ -144,6 +148,7 @@ void main() {
         final row = localRow.copyWith(pgn: '1. e4 {old note} e5 *');
         final container = ProviderContainer(
           overrides: [
+            currentBroadcastGames,
             retainedLocalPgnHydratorProvider.overrideWithValue(
               (row) async => row.copyWith(pgn: '1. e4 {current note} e5 *'),
             ),
@@ -164,6 +169,7 @@ void main() {
         final failure = StateError('Source is unavailable');
         final container = ProviderContainer(
           overrides: [
+            currentBroadcastGames,
             retainedLocalPgnHydratorProvider.overrideWithValue(
               (_) async => throw failure,
             ),
@@ -2199,6 +2205,7 @@ void main() {
           gameListSelectedId: rows.first.id,
         ),
         overrides: [
+          currentBroadcastGames,
           retainedLocalPgnHydratorProvider.overrideWithValue(
             (row) async => row,
           ),
@@ -2437,6 +2444,7 @@ void main() {
           ),
         ),
         overrides: [
+          currentBroadcastGames,
           // This test isolates the opening payload contract; physical read
           // refresh is covered by retained_local_pgn_test.dart.
           retainedLocalPgnHydratorProvider.overrideWithValue(
@@ -2510,7 +2518,10 @@ void main() {
           ),
           gameListSelectedId: 'seed-0',
         ),
-        overrides: [gamebaseRepositoryProvider.overrideWithValue(repository)],
+        overrides: [
+          currentBroadcastGames,
+          gamebaseRepositoryProvider.overrideWithValue(repository),
+        ],
       ),
     );
     await tester.pump();
@@ -2600,7 +2611,10 @@ void main() {
           ),
           gameListSelectedId: 'saved-0',
         ),
-        overrides: [gamebaseRepositoryProvider.overrideWithValue(repository)],
+        overrides: [
+          currentBroadcastGames,
+          gamebaseRepositoryProvider.overrideWithValue(repository),
+        ],
       ),
     );
     await tester.pump();
@@ -3628,6 +3642,7 @@ Widget _wrap(
 }) {
   return ProviderScope(
     overrides: [
+      currentBroadcastGames,
       ...overrides,
       boardTabGameArgsByTabIdProvider.overrideWith(
         (ref) => {'tournaments-default': args},

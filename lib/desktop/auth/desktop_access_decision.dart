@@ -358,11 +358,12 @@ _Requirement _requirementFor(
     case DesktopFeature.pgnCopy:
       throw StateError('PGN access is resolved before feature dispatch.');
     case DesktopFeature.eventDiscovery:
-      if (isWebApp && context.action == DesktopAction.view) return _free;
+      if (context.action == DesktopAction.view) return _free;
       return const _Requirement.premium(
         DesktopAccessReason.premiumEventDiscovery,
       );
     case DesktopFeature.play:
+      if (context.action == DesktopAction.view) return _free;
       return const _Requirement.premium(DesktopAccessReason.premiumPlay);
     case DesktopFeature.prepare:
       if (isWebApp) {

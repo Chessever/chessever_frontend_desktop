@@ -13,7 +13,7 @@ This Flutter repository owns app.chessever.com (Worker `chessever-app`). The
 sibling `chessever_web_frontend` repository owns the separate Next.js site at
 chessever.com. Both `AGENTS.md` files carry the synchronized-update policy.
 
-## Web sign-in policy (22.28.3)
+## Web sign-in policy (22.30.1)
 
 The browser app requires Google or Apple sign-in for new sessions. Automatic
 guest bootstrap and the guest fallback are disabled, and the shared anonymous
@@ -56,11 +56,12 @@ Remove the storage key and reload to disable sampling.
 | Desktop feature | In the browser | How |
 |---|---|---|
 | Live events, games, players, calendar, rankings | Same | Shared code; images from hosts without CORS go through the `/_img` relay (`web_worker/index.js`, `web/index.html`) |
+| Feedback reports and optional screenshots | Same | Shared feedback dialog and screenshot capture; the feedback relay allows the exact app origin and returns CORS headers on success and failure |
 | Event card artwork | Same | `event_artwork_provider.dart` batches artwork-only tour queries, retains successful covers for 10 minutes across scrolling and tab switches, and retries a failed lookup once. Player metadata no longer delays cover requests; raw tour IDs still resolve sibling artwork |
 | Likes (community ranking from the phone's Discovery) | Same | Library > My Likes > Most liked (free) and the Events > For You shelf open `TabKind.likes` (`desktop_likes_pane.dart`); the `most_liked_ranking_page` RPC plus Gamebase lookups, no platform code. Shared `/app/likes/<period>` links route through `DesktopDeepLinkRouter` in both builds |
-| Like a game from the board | Phone guest policy | Heart button first in the board's action row (`board_like_button.dart`): writes the same Liked Games row as the phone and shows the `game_like_count` RPC count. Anonymous web accounts can like without a sign-up popup; native desktop keeps its existing account gate |
+| Like a game from the board | Same | Heart button first in the board's action row (`board_like_button.dart`): writes the same Liked Games row as the phone and shows the `game_like_count` RPC count. Guests and anonymous accounts get the sign-in prompt first, in both builds |
 | Board, notation, explorer, keyboard shortcuts | Same | Browser-reserved chords (Cmd/Ctrl+W, T, Tab) also answer to Alt (`browser_safe_shortcuts.dart`) |
-| Stockfish analysis and Play | Same | Stockfish 19 lite single-threaded Wasm in a Web Worker (`web/stockfish/`) |
+| Stockfish analysis and Play | Same | Stockfish 19 lite single-threaded Wasm in a Web Worker (`web/stockfish/`). Play pages and setup dialogs are free to browse and configure; Premium admission happens at game/tournament start |
 | Maia bot | Same | onnxruntime-web through `lib/web/onnx_runtime_web.dart` |
 | Leela (lc0) bot | Not available | No browser build of lc0; marked Unavailable and left out of tournament setup |
 | Engine tournaments | Same | Conductor runs in the page; no loopback server |
@@ -70,6 +71,7 @@ Remove the storage key and reload to disable sampling.
 | Copy board image | Clipboard | `ClipboardItem` (image/png) |
 | Share board image | Browser share sheet | `share_plus` with `XFile.fromData` |
 | Open game in new window, move tab to new window | New browser tab | The game's chessever.com address, same origin (`browser_tab.dart`); local-only games open as a tab |
+| Live streams on the board (Twitch, YouTube, Kick, analysis videos) | Same | The panel's player is an `<iframe>` (`webview_all_web`) of chessever.com's `/embed/video` page, allowed autoplay and fullscreen for the nested provider frame (`lib/web/broadcast_video_frame_web.dart`). The stream list is read through the same-origin `/_broadcast/` relay (`web_worker/index.js`) because the broadcast API sends CORS headers only to chessever.com. Local `flutter run -d chrome` has no relay; set `BROADCAST_API_BASE` |
 | Picture-in-picture, tear-off tabs | Not available | Hidden on the web |
 | Edit a PGN file in place | Chrome, Edge, Opera | Import keeps a File System Access handle; saved changes are written back to the user's file (`lib/web/linked_files_web.dart`). Firefox and Safari edit an imported copy; Export saves it |
 | Show in folder, window position | Not applicable | Hidden on the web |
@@ -78,7 +80,7 @@ Remove the storage key and reload to disable sampling.
 | Addresses and history | Shared paths and exact page state | Every shell surface has an explicit address; games, player sections, event rounds/scorecards, collections, calendar details, Likes and Miniatures mirror public paths. `WebUrlSync` owns Back/Forward, including same-tab game changes and board cursor/orientation. Flutter URL reporting stays off. See the Browser URL contract below |
 | Windows analytics account attribution | Windows relay carries signed-in account UUIDs | Guest events use only the installation ID. macOS Firebase SDK and the browser analytics bootstrap keep their existing behavior |
 | Startup page and How to use | Events at the bare domain; direct links keep their destination | Automatic How to use opens in a background tab on the web; native desktop onboarding keeps its existing focus behavior |
-| Events membership | Event browsing stays free; archived event/game opens require Premium | Each opening resolves canonical Past membership and broadcast dates. Current events remain free unless another protected source applies; restored boards recheck access |
+| Events membership | Event lists, rounds and standings stay free; opening archived games requires Premium in every edition | Each opening resolves canonical Past membership and broadcast dates. Current events remain free unless another protected source applies; restored boards recheck access |
 | Guest sign-up | First browser visit offers sign-in or Not now | The persisted guest clock survives reloads; reminders start at day 7, repeat weekly, and require sign-in at day 28. Signing in clears guest stamps |
 | Phone rewarded features | Upgrade-only web paywall | My Likes/community games, PGN import/copy, every Game Report, Prep content, historical events and the other phone-gated surfaces require verified membership. Free browsing and the phone's latest-20 Likes export allowance remain available |
 | First monthly subscription | $0.99 first month for eligible new subscribers, then the existing monthly price | Checkout verifies purchase history, active USD price and one-time discount server-side. App pricing shows the offer only after a matching server quote. Web and direct-download desktop share the offer and plan selector; guests see explicit first-time-subscriber conditions. Annual and Mac App Store pricing are unchanged. The billing service must be deployed before advertising the offer |
@@ -117,9 +119,16 @@ Deploy the matching services before releasing the updated browser client:
   creation time of games currently in the collection, independently of cover,
   metadata or game edits. Apply the additive `collection_game_added_idx`
   migration to keep those reads indexed. Older services reject the new sorts.
-- The feedback relay must accept the exact `https://app.chessever.com` origin,
+- The feedback relay (`apps/feedback` in `chessever_cloudflare`) must be deployed
+  with support for the exact `https://app.chessever.com` origin,
   answer its POST preflight, and include CORS headers on error responses as well
-  as successful deliveries. Native clients continue to omit Origin.
+  as successful deliveries. Native clients continue to omit Origin. Provider
+  calls use `redirect: "manual"` and reject redirect responses; the deployed
+  Workers runtime rejects `redirect: "error"` before sending.
+- chessever.com's `/embed/video` page (`VideoEmbedFrame` in
+  `chessever_web_frontend`) must list `app.chessever.com` as a Twitch
+  `parent`. Twitch refuses to play when any framing ancestor is missing from
+  that list; YouTube and Kick streams play without it.
 - Botvinnik's chat service must recognize the browser client's
   `desktop-shell-v1` capability as the app at app.chessever.com, distinct from
   the public website. Its help lookup can select an explicitly requested phone,

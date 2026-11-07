@@ -1,3 +1,5 @@
+import 'support/current_broadcast_games.dart';
+
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -126,6 +128,7 @@ void main() {
     (tester) async {
       final container = ProviderContainer(
         overrides: [
+          currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(_Games()),
           eventPlayerGamesProvider.overrideWith(_History.new),
         ],
@@ -196,6 +199,7 @@ void main() {
         );
         final container = ProviderContainer(
           overrides: [
+            currentBroadcastGames,
             tourRepositoryProvider.overrideWithValue(_Tours()),
             gameRepositoryProvider.overrideWithValue(_Games()),
           ],
@@ -247,26 +251,39 @@ void main() {
         expect((args.eventPlayerScope!).tourIds, ['event-a', 'event-a-page-2']);
         // Activate the actual compact name from the production Board header.
         final pointer = TestPointer(1, PointerDeviceKind.mouse);
-        await tester.sendEventToBinding(pointer.hover(tester.getCenter(
-          find.byKey(const ValueKey('player-hover-preview-trigger')),
-        )));
+        await tester.sendEventToBinding(
+          pointer.hover(
+            tester.getCenter(
+              find.byKey(const ValueKey('player-hover-preview-trigger')),
+            ),
+          ),
+        );
         await tester.pump(playerHoverIntentDelay);
         await tester.pump(const Duration(milliseconds: 120));
         expect(find.text('Open event games'), findsNothing);
         await tester.tap(find.text('Games'));
         await tester.pump();
         expect(container.read(desktopTabsProvider).activeId, first);
-        await tester.tap(find.byKey(const ValueKey('player-hover-header-name')));
+        await tester.tap(
+          find.byKey(const ValueKey('player-hover-header-name')),
+        );
         await tester.pumpAndSettle();
         final second = container.read(desktopTabsProvider).activeId!;
         expect(second, isNot(first));
         expect(container.read(boardTabGameArgsByTabIdProvider)[second], isNull);
         expect(container.read(playerProfileByTabIdProvider)[second], isNull);
-        expect(container.read(playerScoreCardByTabIdProvider)[second]!.name, 'Player');
-        final report = container.read(playerScoreCardContextByTabIdProvider)[second]!;
+        expect(
+          container.read(playerScoreCardByTabIdProvider)[second]!.name,
+          'Player',
+        );
+        final report =
+            container.read(playerScoreCardContextByTabIdProvider)[second]!;
         expect(report.hasEventContext, isTrue);
         expect(report.gamesContext, hasLength(7));
-        expect(report.gamesContext!.every((g) => g.tourId == 'event-a'), isTrue);
+        expect(
+          report.gamesContext!.every((g) => g.tourId == 'event-a'),
+          isTrue,
+        );
         expect(
           container.read(boardTabGameArgsByTabIdProvider)[originalId],
           same(original),
@@ -348,7 +365,7 @@ void main() {
   });
 
   test('different players and ordinary event tabs do not reuse each other', () {
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: [currentBroadcastGames]);
     addTearDown(container.dispose);
     final original = buildTournamentBoardTabArgs(model(7), 'Event A');
     final eventTab = openBoardGameTabFromContainer(

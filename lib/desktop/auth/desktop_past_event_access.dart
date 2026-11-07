@@ -1,8 +1,6 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
@@ -10,9 +8,9 @@ import 'package:chessever/screens/group_event/providers/group_event_screen_provi
 import 'package:chessever/screens/group_event/providers/live_group_broadcast_id_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
-/// The phone gates opening an archived event, not browsing the Past list.
-/// Native editions retain their existing discovery policy.
-final desktopPastEventAccessEnabledProvider = Provider<bool>((_) => kIsWeb);
+/// All editions admit archived games at the game boundary. Event lists,
+/// rounds and standings remain available for browsing without membership.
+final desktopPastEventAccessEnabledProvider = Provider<bool>((_) => true);
 
 abstract interface class DesktopEventAccessLookup {
   Future<bool?> isPast(String eventId);
@@ -188,33 +186,6 @@ final desktopEventIsPastProvider = FutureProvider.autoDispose
         now: DateTime.now(),
       );
     });
-
-Future<bool> requireDesktopPastEventAccess(
-  ProviderContainer container,
-  DesktopEventAccessKey event,
-) async {
-  if (!container.read(desktopPastEventAccessEnabledProvider)) return true;
-  if (readDesktopAccess(
-    container.read,
-    desktopPastEventOpenContext,
-  ).isAllowed) {
-    return true;
-  }
-  final subscription = container.listen(
-    desktopEventIsPastProvider(event).future,
-    (_, _) {},
-  );
-  try {
-    if (!await subscription.read()) return true;
-    return await requireDesktopAction(
-      container,
-      desktopPastEventOpenContext,
-      surface: 'past_event_open',
-    );
-  } finally {
-    subscription.close();
-  }
-}
 
 /// Source-specific gates (Favorites, Countrymen, Miniatures, Likes and Smart
 /// Events) remain intact. Ordinary event/profile/archive games are classified

@@ -105,6 +105,22 @@ CollectionSearchQuery collectionQueryFor({
   );
 }
 
+/// [text] and [filter] as one collection's games endpoint takes them, in the
+/// collection's own order.
+///
+/// The catalog's book orders (`lastGameAdded`, `publishedAt`, the columns)
+/// are not orders of a collection's games: the games endpoint refuses them
+/// with a 400 before it even checks Premium, so a reader would see "Couldn't
+/// load the games." for every book.
+@visibleForTesting
+CollectionSearchQuery collectionGamesQueryFor({
+  required String text,
+  required GameFilter filter,
+  DateTime? now,
+}) => collectionGamesSearch(
+  collectionQueryFor(text: text, filter: filter, now: now),
+);
+
 /// What the reader is told when the catalog could not be read in [asked]'s
 /// order. [refused] is the server answering that it does not know the order,
 /// which is how a sort it has yet to learn looks.
@@ -1351,7 +1367,7 @@ class _CollectionWorkspace extends HookConsumerWidget {
     final playersAsync =
         locked ? null : ref.watch(collectionPlayersProvider(slug));
     final players = playersAsync?.valueOrNull;
-    final query = collectionQueryFor(text: text, filter: filter.value);
+    final query = collectionGamesQueryFor(text: text, filter: filter.value);
     final sections = _flatSections(detail.sections);
     final section = sections.firstWhereOrNull((s) => s.id == sectionId.value);
 

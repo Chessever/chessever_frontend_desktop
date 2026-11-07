@@ -1,6 +1,6 @@
 // app.chessever.com: the Flutter web build is served straight from static
-// assets; this script only runs for /_img (run_worker_first in
-// wrangler.web.jsonc).
+// assets; this script only runs for /_img and /_broadcast/ (run_worker_first
+// in wrangler.web.jsonc).
 //
 // Flutter's web renderer decodes images from fetched bytes, so an image host
 // that sends no CORS headers cannot be drawn. index.html rewrites requests for
@@ -36,6 +36,9 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/_img') return relayImage(request, url, ctx);
+    if (url.pathname.startsWith(BROADCAST_RELAY_PREFIX)) {
+      return relayBroadcastStreams(request, url);
+    }
     return env.ASSETS.fetch(request);
   },
 };
@@ -117,4 +120,47 @@ async function relayImage(request, url, ctx) {
   });
   ctx.waitUntil(cache.put(cacheKey, response.clone()));
   return response;
+}
+
+// The Board pane's live-stream panel reads the editor-curated stream list
+// from the public broadcast API. That API only sends CORS headers to
+// chessever.com, so the web build reads it through this origin instead
+// (broadcastApiWebRelayPath in lib/desktop/services/broadcast_video_streams.dart).
+// Only the read-only video-streams endpoint is relayed, GET only, with no
+// cookies or credentials forwarded, so the route is not an open proxy.
+const BROADCAST_RELAY_PREFIX = '/_broadcast/';
+const BROADCAST_API_ORIGIN = 'https://api.broadcast.chessever.com';
+// /_broadcast/api/broadcast/<tourId>/video-streams
+// /_broadcast/api/broadcast/round/<roundId>/video-streams
+const BROADCAST_STREAMS_PATH =
+  /^\/_broadcast(\/api\/broadcast\/(?:round\/)?[A-Za-z0-9_-]{1,64}\/video-streams)$/;
+
+async function relayBroadcastStreams(request, url) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } });
+  }
+  const match = BROADCAST_STREAMS_PATH.exec(url.pathname);
+  if (!match || url.search !== '') {
+    return new Response('Not found', { status: 404 });
+  }
+  let upstream;
+  try {
+    upstream = await fetch(`${BROADCAST_API_ORIGIN}${match[1]}`, {
+      method: request.method,
+      redirect: 'manual',
+      headers: { Accept: 'application/json' },
+    });
+  } catch {
+    return new Response(null, { status: 502 });
+  }
+  if (upstream.status >= 300 && upstream.status < 400) {
+    return new Response(null, { status: 502 });
+  }
+  const headers = {
+    'Content-Type': upstream.headers.get('Content-Type') ?? 'application/json',
+    'X-Content-Type-Options': 'nosniff',
+  };
+  const cacheControl = upstream.headers.get('Cache-Control');
+  if (cacheControl) headers['Cache-Control'] = cacheControl;
+  return new Response(upstream.body, { status: upstream.status, headers });
 }

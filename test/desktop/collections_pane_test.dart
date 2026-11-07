@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'support/current_broadcast_games.dart';
+
 import 'package:chessever/desktop/panes/collections_pane.dart';
 import 'package:chessever/desktop/panes/library_pane.dart'
     show libraryReadOnlyGamesFit;
@@ -53,6 +55,7 @@ Future<ProviderContainer> _pump(
   addTearDown(tester.view.reset);
   final container = ProviderContainer(
     overrides: [
+      currentBroadcastGames,
       collectionsReaderProvider.overrideWithValue(reader),
       favoriteEventsProvider.overrideWith(() => FakeFavoriteEvents(starred)),
       subscriptionProvider.overrideWith(
@@ -1035,6 +1038,7 @@ void main() {
           const CollectionsPane(),
           reader: reader,
           overrides: [
+            currentBroadcastGames,
             collectionStarAccountProvider.overrideWithValue(() => true),
           ],
         );
@@ -2019,6 +2023,7 @@ void main() {
         window: const Size(1400, 800),
         starred: [starredCollection('my-60-memorable-games')],
         overrides: [
+          currentBroadcastGames,
           collectionWorkspaceArgsByTabIdProvider.overrideWith(
             (ref) => {
               't1': const CollectionWorkspaceArgs(
@@ -2168,6 +2173,7 @@ void main() {
             const Size(1100, 620),
             pane: const CollectionWorkspacePane(tabId: 't1'),
             overrides: [
+              currentBroadcastGames,
               collectionWorkspaceArgsByTabIdProvider.overrideWith(
                 (ref) => {'t1': CollectionWorkspaceArgs(slug: slug, title: '')},
               ),
@@ -2180,6 +2186,54 @@ void main() {
       skip: _shots == null,
       variant: TargetPlatformVariant.only(TargetPlatform.macOS),
     );
+  });
+
+  group('a collection\'s games query', () {
+    test('reads the collection in its own order, never a book order', () {
+      // The games endpoint refuses `lastGameAdded` with a 400 before it
+      // checks Premium, which read "Couldn't load the games." on every book.
+      final query = collectionGamesQueryFor(text: '  ', filter: GameFilter());
+
+      expect(query.sort, 'default');
+      expect(query.parameters, isEmpty);
+      expect(
+        query.isActive,
+        isFalse,
+        reason: 'an untouched book reads its full game list',
+      );
+    });
+
+    test('filters still map onto the API\'s own names', () {
+      final query = collectionGamesQueryFor(
+        text: ' carlsen ',
+        filter: GameFilter(
+          result: GameResultFilter.draw,
+          eco: GameEcoFilter.forCode('b90'),
+          minYear: 1990,
+          maxYear: 2000,
+        ),
+        now: DateTime(2026),
+      );
+
+      expect(query.parameters, {
+        'q': 'carlsen',
+        'eco': 'B90',
+        'result': '1/2-1/2',
+        'minYear': 1990,
+        'maxYear': 2000,
+      });
+    });
+
+    test('an unknown order falls back to the collection\'s own', () {
+      for (final sort in ['lastGameAdded', 'publishedAt', 'stars', 'views']) {
+        final asked = collectionGamesSearch(
+          CollectionSearchQuery(eco: 'B90', sort: sort, order: 'desc'),
+        );
+        expect(asked.parameters, {'eco': 'B90'}, reason: sort);
+      }
+      const newest = CollectionSearchQuery(sort: 'newest');
+      expect(identical(collectionGamesSearch(newest), newest), isTrue);
+    });
   });
 
   group('the catalog query', () {

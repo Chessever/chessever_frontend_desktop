@@ -24,6 +24,7 @@ import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/broadcast_video_frame.dart';
 
 /// Live-stream panel for the top of the Board pane's right rail.
 ///
@@ -31,7 +32,8 @@ import 'package:chessever/utils/host_platform.dart';
 /// editor-curated Twitch / YouTube / Kick list for the game's round (or
 /// tour) is polled every 30 seconds, grouped by language, and the selected
 /// stream plays inline. The player is a real WebView (WKWebView on macOS,
-/// WebView2 composited as a Flutter texture on Windows) showing
+/// WebView2 composited as a Flutter texture on Windows, an <iframe> in the
+/// web build at app.chessever.com) showing
 /// chessever.com's own `/embed/video` document, so the provider is framed by
 /// the site exactly as in the browser: no provider player is ever loaded
 /// top-level, and no referrer or `parent` is asserted by the app itself.
@@ -281,6 +283,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   }
 
   WebViewController _createController() {
+    final browserController = createBrowserBroadcastVideoController();
+    if (browserController != null) return browserController;
     if (hostIsMacOS) {
       // Inline HTML5 playback and autoplay, matching the web's autoplay
       // behaviour. Defaults (inline false, media requires a gesture) would

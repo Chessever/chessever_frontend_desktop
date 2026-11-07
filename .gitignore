@@ -241,3 +241,6 @@ sparkle_priv.pem
 !docs/agents/*.md
 # Kiro CLI runtime lock (machine-local).
 .kiro/settings/*.lock
+
+# Local SDK link for this repository only.
+.flutter-sdk

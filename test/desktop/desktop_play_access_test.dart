@@ -26,7 +26,7 @@ void main() {
         subscription: sub,
       ).outcome;
 
-  test('Play entry and starts require a verified Premium decision', () {
+  test('Play starts require a verified Premium decision', () {
     expect(decide(SubscriptionState()), DesktopAccess.premiumRequired);
     expect(decide(SubscriptionState(isLoading: true)), DesktopAccess.checking);
     expect(
@@ -50,7 +50,6 @@ void main() {
       );
       expect(source, contains('args == null || !admitted'));
       final pane = File('lib/desktop/panes/play_pane.dart').readAsStringSync();
-      expect(pane, contains('!access.isAllowed && session == null && !retainedTournament'));
       expect(pane, contains('if (!admitDesktopPlay(ref)) return;'));
       final seed =
           File(

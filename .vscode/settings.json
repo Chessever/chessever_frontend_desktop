@@ -1,3 +1,4 @@
 {
-    "cmake.sourceDirectory": "/Users/mac/Documents/chessever-frontend/linux"
+    "cmake.sourceDirectory": "/Users/mac/Documents/chessever-frontend/linux",
+    "dart.flutterSdkPath": ".flutter-sdk"
 }
