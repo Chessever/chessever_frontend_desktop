@@ -36,7 +36,9 @@ PY
 # emits a JavaScript build; web/flutter_bootstrap.js never selects it and shows
 # an HTML unsupported-browser notice instead.
 # Extra flags (e.g. --no-strip-wasm for readable stack traces) pass through.
-flutter build web --wasm --release \
+# Keep the complete icon fonts: Flutter 3.47 Wasm tree shaking drops glyphs
+# used by the signed-in UI, leaving controls visually blank.
+flutter build web --wasm --release --no-tree-shake-icons \
   -t lib/web/web_main.dart \
   --dart-define-from-file="$WEB_PUBLIC_CONFIG" \
   "$@"
