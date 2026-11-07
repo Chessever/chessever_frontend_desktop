@@ -4156,9 +4156,8 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     Future<void> openShareGameDialog() async {
       try {
-        // The context menu has already dismissed when this runs. Wait for the
-        // next frame so the capture is the settled Board-pane surface, not a
-        // synthetic reconstruction or a menu-overlay snapshot.
+        // Let the initiating toolbar/menu interaction settle before capturing.
+        // Capture the Board-pane surface, not a menu-overlay snapshot.
         await WidgetsBinding.instance.endOfFrame;
         if (!context.mounted) return;
 
@@ -5392,6 +5391,21 @@ class _BoardPaneContent extends HookConsumerWidget {
       );
     }
 
+    final boardLikeGame = desktopLikeableBoardGame(boardArgs?.sourceGame);
+    final boardLikeAction =
+        boardFocusMode || boardLikeGame == null
+            ? null
+            : DesktopBoardLikeButton(
+              key: ValueKey('board-like:${boardLikeGame.likeId}'),
+              game: boardLikeGame,
+            );
+    final boardSecondaryActions =
+        boardFocusMode
+            ? null
+            : _RightRailBoardSecondaryActions(
+              onFlipBoard: () => invokeBoardAction(BoardActionKey.flipBoard),
+              onShareGame: shareGameAction,
+            );
     final boardActionCluster =
         boardFocusMode
             ? null
@@ -5415,7 +5429,6 @@ class _BoardPaneContent extends HookConsumerWidget {
                           startPlayAgainFromBoardHeaders(ref, pgnHeaders.value)
                       : null,
               onPlayFromHere: openPlayFromHereDialog,
-              likeGame: desktopLikeableBoardGame(boardArgs?.sourceGame),
             );
 
     // Broadcasts resolve from an event; author analyses can belong to any game.
@@ -5827,6 +5840,11 @@ class _BoardPaneContent extends HookConsumerWidget {
                                 onPreviousMove: goPrevManually,
                                 onNextMove: () => unawaited(goNextManually()),
                                 onLastMove: goLastManually,
+                                onPlayPause: toggleAutoReplayAction,
+                                autoReplayShortcutLabel: shortcutLabelFor(
+                                  BoardActionKey.autoReplay,
+                                ),
+                                hasUnseenLiveMove: hasUnseenMoves.value,
                                 onPreviousGame: navigatePreviousGameManually,
                                 onNextGame: navigateNextGameManually,
                                 openExplorerShortcutLabel: shortcutLabelFor(
@@ -5879,6 +5897,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                                           .toggle();
                                   reportRevealRevision.value++;
                                 },
+                                leadingActions: boardLikeAction,
+                                secondaryActions: boardSecondaryActions,
                                 trailingActions: boardActionCluster,
                                 onFullToolbarWidthChanged:
                                     publishAnalysisToolbarWidth,
@@ -8439,9 +8459,62 @@ Intent? _intentFor(BoardActionKey action) {
   }
 }
 
-/// Compact board actions hosted in the right-rail tab strip so the board
-/// column keeps the extra vertical space. Tooltips carry the labels that used
-/// to be printed on the board chrome row.
+/// Existing Board actions exposed as shortcuts on sufficiently wide rails.
+/// Narrow rails retain both actions in the Board context menu.
+class _RightRailBoardSecondaryActions extends StatelessWidget {
+  const _RightRailBoardSecondaryActions({
+    required this.onFlipBoard,
+    required this.onShareGame,
+  });
+  final VoidCallback onFlipBoard;
+  final VoidCallback onShareGame;
+
+  @override
+  Widget build(BuildContext context) => FTheme(
+    data: FThemes.zinc.dark,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _RailIconAction(
+          tooltip: 'Flip board',
+          icon: Icons.flip_camera_android_rounded,
+          onPress: onFlipBoard,
+        ),
+        const SizedBox(width: 4),
+        _RailIconAction(
+          tooltip: 'Share Game',
+          icon: Icons.share_rounded,
+          onPress: onShareGame,
+        ),
+      ],
+    ),
+  );
+}
+
+@visibleForTesting
+Widget boardSecondaryToolbarActionsForTesting({
+  required VoidCallback onFlipBoard,
+  required VoidCallback onShareGame,
+}) => _RightRailBoardSecondaryActions(
+  onFlipBoard: onFlipBoard,
+  onShareGame: onShareGame,
+);
+
+@visibleForTesting
+Widget boardGameToolbarActionsForTesting({
+  required VoidCallback onSaveGame,
+  required VoidCallback onPlayFromHere,
+  VoidCallback? onPlayAgain,
+}) => _RightRailBoardActions(
+  headers: const {'Event': 'Toolbar verification'},
+  eventInfoTrigger: 0,
+  onPlayFromHere: onPlayFromHere,
+  onSaveGame: onSaveGame,
+  canSaveGame: true,
+  saveShortcutLabel: 'Ctrl+S',
+  onPlayAgain: onPlayAgain,
+);
+
 class _RightRailBoardActions extends StatelessWidget {
   const _RightRailBoardActions({
     required this.headers,
@@ -8451,12 +8524,7 @@ class _RightRailBoardActions extends StatelessWidget {
     required this.canSaveGame,
     required this.saveShortcutLabel,
     this.onPlayAgain,
-    this.likeGame,
   });
-
-  /// The game Like acts on, or null when the board holds no likeable game
-  /// (an analysis board, a pasted PGN, the board editor).
-  final GamesTourModel? likeGame;
 
   final Map<String, String> headers;
   final int eventInfoTrigger;
@@ -8477,13 +8545,6 @@ class _RightRailBoardActions extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (likeGame case final game?) ...[
-            DesktopBoardLikeButton(
-              key: ValueKey('board-like:${game.likeId}'),
-              game: game,
-            ),
-            const SizedBox(width: 4),
-          ],
           _RailIconAction(
             tooltip: saveTooltip,
             icon: FIcons.bookmarkPlus,
@@ -8501,13 +8562,13 @@ class _RightRailBoardActions extends StatelessWidget {
           ],
           _RailIconAction(
             tooltip: 'Play from here',
-            icon: FIcons.play,
+            icon: Icons.sports_esports_outlined,
             primary: true,
             onPress: onPlayFromHere,
           ),
           const SizedBox(width: 4),
           SizedBox.square(
-            dimension: 36,
+            dimension: 40,
             child: EventInfoPopover(
               headers: headers,
               openTrigger: eventInfoTrigger,
@@ -8856,7 +8917,7 @@ class _RailIconAction extends StatelessWidget {
     return DesktopTooltip(
       message: tooltip,
       child: SizedBox.square(
-        dimension: 36,
+        dimension: 40,
         child: FButton.icon(
           style: FButtonStyle.ghost(
             (style) => style.copyWith(

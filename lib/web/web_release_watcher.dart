@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/services.dart' show appBuildName, appBuildNumber;
 import 'package:http/http.dart' as http;
 
 import 'package:chessever/desktop/services/desktop_updater_state.dart';
@@ -46,11 +45,13 @@ class WebReleaseWatcher {
   /// build carries none. Embedded at build time, so unlike `version.json` it
   /// always describes the code that is running, even after a newer deploy.
   static String compiledVersion() {
-    final name = appBuildName?.trim() ?? '';
+    // Same defines as Flutter's appBuildName/appBuildNumber, without requiring
+    // the newer SDK constants on native Development toolchains.
+    final name = const String.fromEnvironment('FLUTTER_BUILD_NAME').trim();
     if (name.isEmpty) return '';
     return DesktopUpdateState.composeReleaseVersion(
       shortVersion: name,
-      buildNumber: appBuildNumber?.trim() ?? '',
+      buildNumber: const String.fromEnvironment('FLUTTER_BUILD_NUMBER').trim(),
     );
   }
 
