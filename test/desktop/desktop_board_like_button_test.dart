@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/panes/board_pane.dart'
-    show desktopLikeableBoardGame;
+    show
+        desktopLikeableBoardGame,
+        boardSecondaryToolbarActionsForTesting,
+        boardGameToolbarActionsForTesting;
 import 'package:chessever/desktop/state/game_like_count.dart';
 import 'package:chessever/desktop/widgets/board_like_button.dart';
+import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
+import 'package:chessever/desktop/services/likes/community_likes_models.dart'
+    show compactLikeCount;
 import 'package:chessever/providers/auth_state_provider.dart';
 import 'package:chessever/repository/authentication/model/app_user.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
@@ -96,6 +104,8 @@ Future<_FakeLikes> _pump(
   AppUser? user,
   List<SavedAnalysis> liked = const [],
   int? count,
+  int? Function()? readCount,
+  double? railWidth,
 }) async {
   final likes = _FakeLikes(liked);
   await tester.pumpWidget(
@@ -103,11 +113,42 @@ Future<_FakeLikes> _pump(
       overrides: [
         currentUserProvider.overrideWithValue(user),
         likedGamesProvider.overrideWith(() => likes),
-        desktopGameLikeCountProvider.overrideWith((ref, id) async => count),
+        desktopGameLikeCountProvider.overrideWith(
+          (ref, id) async => readCount != null ? readCount() : count,
+        ),
       ],
       child: MaterialApp(
         home: Scaffold(
-          body: Center(child: DesktopBoardLikeButton(game: _game())),
+          body: Center(
+            child:
+                railWidth == null
+                    ? DesktopBoardLikeButton(game: _game())
+                    : SizedBox(
+                      key: const ValueKey('count-test-rail'),
+                      width: railWidth,
+                      child: boardToolbarForTesting(
+                        canGoBack: true,
+                        canGoForward: true,
+                        onFirst: () {},
+                        onPrevious: () {},
+                        onNext: () {},
+                        onLast: () {},
+                        onPlayPause: () {},
+                        onPreviousGame: () {},
+                        onNextGame: () {},
+                        leadingActions: DesktopBoardLikeButton(game: _game()),
+                        secondaryActions:
+                            boardSecondaryToolbarActionsForTesting(
+                              onFlipBoard: () {},
+                              onShareGame: () {},
+                            ),
+                        trailingActions: boardGameToolbarActionsForTesting(
+                          onSaveGame: () {},
+                          onPlayFromHere: () {},
+                        ),
+                      ),
+                    ),
+          ),
         ),
       ),
     ),
@@ -120,6 +161,160 @@ Future<_FakeLikes> _pump(
 final _member = AppUser(id: 'user-1', createdAt: DateTime(2026));
 
 void main() {
+  testWidgets(
+    'Like stays borderless at rest and on hover in both liked states',
+    (tester) async {
+      for (final liked in [false, true]) {
+        await _pump(
+          tester,
+          user: _member,
+          count: 99,
+          liked: liked ? [_liked('game-1')] : [],
+        );
+        final target = find.byKey(const ValueKey('board-like-button'));
+        expect(tester.widget<AnimatedContainer>(target).decoration, isNull);
+        expect(tester.getSize(target), const Size(40, 40));
+        final pointer = await tester.createGesture(
+          kind: PointerDeviceKind.mouse,
+        );
+        await pointer.addPointer(location: Offset.zero);
+        await pointer.moveTo(tester.getCenter(target));
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(tester.widget<AnimatedContainer>(target).decoration, isNull);
+        await pointer.removePointer();
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 1));
+      }
+    },
+  );
+  for (final liked in [false, true]) {
+    for (final count in [null, 0, 1, 9, 10, 99, 100, 101, 999, 1000, 1000000]) {
+      testWidgets('count $count placement with liked=$liked', (tester) async {
+        await _pump(
+          tester,
+          user: _member,
+          count: count,
+          liked: liked ? [_liked('game-1')] : [],
+        );
+        await tester.pump(const Duration(milliseconds: 200));
+        final heartFinder = find.byIcon(
+          liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+        );
+        final heart = tester.getRect(heartFinder);
+        final button = tester.getRect(
+          find.byKey(const ValueKey('board-like-button')),
+        );
+        expect(button.height, 40);
+        expect(button.width, greaterThanOrEqualTo(40));
+        if (count == null || count == 0) {
+          expect(find.byType(Text), findsNothing);
+          expect(button.width, 40);
+        } else {
+          final number = find.text(compactLikeCount(count));
+          expect(number, findsOneWidget);
+          final bounds = tester.getRect(number);
+          if (count < 100) {
+            expect(bounds.left, greaterThanOrEqualTo(heart.left));
+            expect(bounds.right, lessThanOrEqualTo(heart.right));
+            expect(bounds.top, greaterThanOrEqualTo(heart.top));
+            expect(bounds.bottom, lessThanOrEqualTo(heart.bottom));
+            expect(bounds.center.dx, closeTo(heart.center.dx, 0.1));
+            expect(button.width, 40);
+          } else {
+            expect(bounds.left, greaterThan(heart.right));
+            expect(bounds.right, lessThan(button.right));
+          }
+          final semantics = tester.getSemantics(
+            find.byType(DesktopBoardLikeButton),
+          );
+          expect(semantics.value, count == 1 ? '1 like' : '$count likes');
+        }
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 1));
+      });
+    }
+  }
+
+  testWidgets(
+    'server count crosses 99 and 100 in both directions without recreating the button',
+    (tester) async {
+      var count = 99;
+      await _pump(tester, user: _member, readCount: () => count);
+      final button = find.byType(DesktopBoardLikeButton);
+      final state = tester.state(button);
+      final container = ProviderScope.containerOf(tester.element(button));
+      for (final next in [100, 99, 0, 1]) {
+        count = next;
+        container.invalidate(desktopGameLikeCountProvider('game-1'));
+        await tester.pump();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(tester.state(button), same(state));
+        if (next == 0) {
+          expect(find.byType(Text), findsNothing);
+        } else {
+          final bounds = tester.getRect(find.text('$next'));
+          final heart = tester.getRect(
+            find.byIcon(Icons.favorite_border_rounded),
+          );
+          if (next < 100) {
+            expect(bounds.center.dx, closeTo(heart.center.dx, 0.1));
+          } else {
+            expect(bounds.left, greaterThan(heart.right));
+          }
+        }
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    },
+  );
+
+  testWidgets(
+    'real Like count fits narrow and wide two-row toolbars with existing utilities',
+    (tester) async {
+      for (final width in [240.0, 320.0, 400.0, 580.0, 700.0]) {
+        for (final count in [99, 100, 1000000]) {
+          await _pump(tester, user: _member, count: count, railWidth: width);
+          await tester.pump(const Duration(milliseconds: 200));
+          final rail = tester.getRect(
+            find.byKey(const ValueKey('count-test-rail')),
+          );
+          final bounds = tester.getRect(
+            find.byKey(const ValueKey('board-like-button')),
+          );
+          expect(bounds.left, greaterThanOrEqualTo(rail.left));
+          expect(bounds.right, lessThanOrEqualTo(rail.right));
+          expect(find.byIcon(FIcons.bookmarkPlus), findsOneWidget);
+          expect(find.byIcon(Icons.sports_esports_outlined), findsOneWidget);
+          expect(find.byIcon(Icons.info_outline_rounded), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        }
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    },
+  );
+
+  testWidgets(
+    'two-digit like count sits inside the heart without widening its target',
+    (tester) async {
+      await _pump(tester, user: _member, count: 99);
+      final heart = tester.getRect(find.byIcon(Icons.favorite_border_rounded));
+      final count = tester.getRect(find.text('99'));
+      final button = tester.getRect(
+        find.byKey(const ValueKey('board-like-button')),
+      );
+      expect(count.left, greaterThanOrEqualTo(heart.left));
+      expect(count.right, lessThanOrEqualTo(heart.right));
+      expect(count.center.dx, closeTo(heart.center.dx, 0.1));
+      expect(button.size, const Size(40, 40));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    },
+  );
   testWidgets('Tab, Enter and Space can operate the board like', (
     tester,
   ) async {

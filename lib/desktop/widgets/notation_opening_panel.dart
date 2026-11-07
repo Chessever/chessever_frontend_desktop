@@ -98,6 +98,9 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.previewLineStep = 0,
     this.previewLineAutoplay = false,
     this.positionAutoplaying = false,
+    this.onPlayPause,
+    this.autoReplayShortcutLabel,
+    this.hasUnseenLiveMove = false,
     this.onPreviewUciMove,
     this.onPreviewUciLine,
     this.onClearPreviewUciMove,
@@ -127,6 +130,8 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.lastMoveShortcutLabel,
     this.previousGameShortcutLabel,
     this.nextGameShortcutLabel,
+    this.leadingActions,
+    this.secondaryActions,
     this.trailingActions,
     this.onFullToolbarWidthChanged,
     this.reportSelected = false,
@@ -192,9 +197,10 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   final String? previousGameShortcutLabel;
   final String? nextGameShortcutLabel;
 
-  /// Optional compact actions shown on the right side of the top tab strip.
-  /// Used by the desktop board to keep Save / Play-from-here / Info visible
-  /// without consuming a separate board chrome row.
+  /// Board actions hosted in the pinned notation footer: leading Like,
+  /// roomy-only secondary shortcuts, and trailing Save / Play-from-here / Info.
+  final Widget? leadingActions;
+  final Widget? secondaryActions;
   final Widget? trailingActions;
 
   /// Reports the panel width at which the bottom strip shows every control.
@@ -246,6 +252,9 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// games table waits out the replay before asking the server (see
   /// [DesktopPositionGamesTable.positionAutoplaying]).
   final bool positionAutoplaying;
+  final VoidCallback? onPlayPause;
+  final String? autoReplayShortcutLabel;
+  final bool hasUnseenLiveMove;
 
   /// Called when the user activates a move row in the Explorer move table.
   /// The string is raw UCI ("e2e4", "e7e8q"); the caller applies it to the
@@ -748,6 +757,10 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               onPreviousMove: widget.onPreviousMove,
               onNextMove: widget.onNextMove,
               onLastMove: widget.onLastMove,
+              onPlayPause: widget.onPlayPause,
+              isPlaying: widget.positionAutoplaying,
+              autoReplayShortcutLabel: widget.autoReplayShortcutLabel,
+              hasUnseenLiveMove: widget.hasUnseenLiveMove,
               onPreviousGame: widget.onPreviousGame,
               onNextGame: widget.onNextGame,
               openExplorerShortcutLabel: widget.openExplorerShortcutLabel,
@@ -757,6 +770,8 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               lastMoveShortcutLabel: widget.lastMoveShortcutLabel,
               previousGameShortcutLabel: widget.previousGameShortcutLabel,
               nextGameShortcutLabel: widget.nextGameShortcutLabel,
+              leadingActions: widget.leadingActions,
+              secondaryActions: widget.secondaryActions,
               trailingActions: widget.trailingActions,
               onFullWidthChanged: widget.onFullToolbarWidthChanged,
             ),
@@ -934,7 +949,7 @@ class _ExplorerSourceButton extends StatelessWidget {
                     unawaited(_showSourceMenu(context, details.globalPosition)),
             child: Container(
               key: const ValueKey('opening-explorer-source-button'),
-              height: 28,
+              height: 40,
               constraints: const BoxConstraints(minWidth: 68, maxWidth: 220),
               padding: const EdgeInsets.symmetric(horizontal: 9),
               decoration: BoxDecoration(
@@ -949,7 +964,7 @@ class _ExplorerSourceButton extends StatelessWidget {
                 children: [
                   const Icon(
                     Icons.storage_rounded,
-                    size: 14,
+                    size: 20,
                     color: kPrimaryColor,
                   ),
                   const SizedBox(width: 6),
@@ -968,7 +983,7 @@ class _ExplorerSourceButton extends StatelessWidget {
                   const SizedBox(width: 4),
                   const Icon(
                     Icons.expand_more_rounded,
-                    size: 14,
+                    size: 20,
                     color: kPrimaryColor,
                   ),
                 ],
@@ -1043,8 +1058,14 @@ class _SegmentBar extends ConsumerWidget {
     this.lastMoveShortcutLabel,
     this.previousGameShortcutLabel,
     this.nextGameShortcutLabel,
+    this.leadingActions,
+    this.secondaryActions,
     this.trailingActions,
     this.onFullWidthChanged,
+    this.onPlayPause,
+    this.isPlaying = false,
+    this.autoReplayShortcutLabel,
+    this.hasUnseenLiveMove = false,
   });
 
   final bool explorerOpen;
@@ -1071,8 +1092,14 @@ class _SegmentBar extends ConsumerWidget {
   final String? lastMoveShortcutLabel;
   final String? previousGameShortcutLabel;
   final String? nextGameShortcutLabel;
+  final Widget? leadingActions;
+  final Widget? secondaryActions;
   final Widget? trailingActions;
   final ValueChanged<double>? onFullWidthChanged;
+  final VoidCallback? onPlayPause;
+  final bool isPlaying;
+  final String? autoReplayShortcutLabel;
+  final bool hasUnseenLiveMove;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1082,75 +1109,114 @@ class _SegmentBar extends ConsumerWidget {
         onPreviousMove != null ||
         onNextMove != null ||
         onLastMove != null ||
-        onPreviousGame != null ||
-        onNextGame != null;
+        onPlayPause != null;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: kBlack2Color,
         border: Border(top: BorderSide(color: kDividerColor)),
       ),
-      child: DesktopAdaptiveToolbar(
-        onFullWidthChanged:
-            (width) => onFullWidthChanged?.call(
-              // Include the strip's padding and a pixel for fractional split sizes.
-              (width + 20).ceilToDouble() + 1,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (hasNavigationControls) ...[
+            _ExplorerNavigationCluster(
+              canGoBack: canGoBack,
+              canGoForward: canGoForward,
+              canStepForward: canStepForward,
+              onFirstMove: onFirstMove,
+              onPreviousMove: onPreviousMove,
+              onNextMove: onNextMove,
+              onLastMove: onLastMove,
+              onPlayPause: onPlayPause,
+              isPlaying: isPlaying,
+              hasUnseenLiveMove: hasUnseenLiveMove,
+              autoReplayShortcutLabel: autoReplayShortcutLabel,
+              firstMoveShortcutLabel: firstMoveShortcutLabel,
+              previousMoveShortcutLabel: previousMoveShortcutLabel,
+              nextMoveShortcutLabel: nextMoveShortcutLabel,
+              lastMoveShortcutLabel: lastMoveShortcutLabel,
             ),
-        leading: Wrap(
-          spacing: 6,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            _RailIconButton(
-              icon: Icons.menu_book_outlined,
-              tooltip: _tooltipWithShortcut(
-                explorerOpen ? 'Hide Explorer' : 'Open Explorer',
-                openExplorerShortcutLabel,
-              ),
-              selected: explorerOpen,
-              onTap: onToggleExplorer,
-            ),
-            if (showReport)
-              _RailIconButton(
-                icon: Icons.analytics_outlined,
-                tooltip:
-                    reportSelected
-                        ? 'Hide game analysis'
-                        : 'Show game analysis',
-                selected: reportSelected,
-                enabled: reportEnabled && onToggleReport != null,
-                onTap: onToggleReport ?? () {},
-              ),
-            if (explorerOpen) ...[
-              _ExplorerSourceButton(controller: sourceController),
-              ExplorerFiltersPopoverButton(
-                compact: true,
-                scopedPlayer: scopedPlayer,
-              ),
-            ],
+            const SizedBox(height: 6),
           ],
-        ),
-        navigation:
-            hasNavigationControls
-                ? _ExplorerNavigationCluster(
-                  canGoBack: canGoBack,
-                  canGoForward: canGoForward,
-                  canStepForward: canStepForward,
-                  onFirstMove: onFirstMove,
-                  onPreviousMove: onPreviousMove,
-                  onNextMove: onNextMove,
-                  onLastMove: onLastMove,
-                  onPreviousGame: onPreviousGame,
-                  onNextGame: onNextGame,
-                  firstMoveShortcutLabel: firstMoveShortcutLabel,
-                  previousMoveShortcutLabel: previousMoveShortcutLabel,
-                  nextMoveShortcutLabel: nextMoveShortcutLabel,
-                  lastMoveShortcutLabel: lastMoveShortcutLabel,
-                  previousGameShortcutLabel: previousGameShortcutLabel,
-                  nextGameShortcutLabel: nextGameShortcutLabel,
-                )
-                : null,
-        trailing: trailingActions,
+          LayoutBuilder(
+            builder:
+                (context, constraints) => DesktopAdaptiveToolbar(
+                  // Utilities wrap instead of widening the rail for a long replay row.
+                  onFullWidthChanged:
+                      (_) => onFullWidthChanged?.call(5 * 44 + 4 * 6 + 20),
+                  leading: Wrap(
+                    spacing: 6,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      if (leadingActions != null) leadingActions!,
+                      _RailIconButton(
+                        icon: Icons.menu_book_outlined,
+                        tooltip: _tooltipWithShortcut(
+                          explorerOpen ? 'Hide Explorer' : 'Open Explorer',
+                          openExplorerShortcutLabel,
+                        ),
+                        selected: explorerOpen,
+                        onTap: onToggleExplorer,
+                      ),
+                      if (showReport)
+                        _RailIconButton(
+                          icon: Icons.analytics_outlined,
+                          tooltip:
+                              reportSelected
+                                  ? 'Hide game analysis'
+                                  : 'Show game analysis',
+                          selected: reportSelected,
+                          enabled: reportEnabled && onToggleReport != null,
+                          onTap: onToggleReport ?? () {},
+                        ),
+                      if (explorerOpen) ...[
+                        _ExplorerSourceButton(controller: sourceController),
+                        SizedBox(
+                          key: const ValueKey('board-explorer-filters'),
+                          height: 40,
+                          child: ExplorerFiltersPopoverButton(
+                            compact: true,
+                            scopedPlayer: scopedPlayer,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  navigation:
+                      onPreviousGame == null && onNextGame == null
+                          ? null
+                          : _GameNavigationCluster(
+                            onPreviousGame: onPreviousGame,
+                            onNextGame: onNextGame,
+                            previousGameShortcutLabel:
+                                previousGameShortcutLabel,
+                            nextGameShortcutLabel: nextGameShortcutLabel,
+                            showLabels:
+                                constraints.maxWidth >=
+                                (explorerOpen
+                                    ? 1100
+                                    : secondaryActions != null
+                                    ? 780
+                                    : 560),
+                          ),
+                  trailing: Wrap(
+                    spacing: 4,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      // Keep these in the existing board menu on narrow rails.
+                      if (secondaryActions != null &&
+                          constraints.maxWidth >= (explorerOpen ? 760 : 500))
+                        secondaryActions!,
+                      if (trailingActions != null) trailingActions!,
+                    ],
+                  ),
+                ),
+          ),
+        ],
       ),
     );
   }
@@ -1171,6 +1237,50 @@ Widget explorerNavigationClusterForTesting({
   onLastMove: onLast,
 );
 
+/// Exposes the production footer without network-backed notation providers.
+@visibleForTesting
+Widget boardToolbarForTesting({
+  required bool canGoBack,
+  required bool canGoForward,
+  bool? canStepForward,
+  required VoidCallback onFirst,
+  required VoidCallback onPrevious,
+  required VoidCallback onNext,
+  required VoidCallback onLast,
+  required VoidCallback onPlayPause,
+  bool isPlaying = false,
+  bool hasUnseenLiveMove = false,
+  VoidCallback? onPreviousGame,
+  VoidCallback? onNextGame,
+  Widget? leadingActions,
+  Widget? secondaryActions,
+  Widget? trailingActions,
+}) => _SegmentBar(
+  explorerOpen: false,
+  onToggleExplorer: () {},
+  reportSelected: false,
+  reportEnabled: true,
+  showReport: true,
+  onToggleReport: () {},
+  sourceController: _ExplorerSourceController(),
+  explorerScope: null,
+  canGoBack: canGoBack,
+  canGoForward: canGoForward,
+  canStepForward: canStepForward,
+  onFirstMove: onFirst,
+  onPreviousMove: onPrevious,
+  onNextMove: onNext,
+  onLastMove: onLast,
+  onPlayPause: onPlayPause,
+  isPlaying: isPlaying,
+  hasUnseenLiveMove: hasUnseenLiveMove,
+  onPreviousGame: onPreviousGame,
+  onNextGame: onNextGame,
+  leadingActions: leadingActions,
+  secondaryActions: secondaryActions,
+  trailingActions: trailingActions,
+);
+
 class _ExplorerNavigationCluster extends StatelessWidget {
   const _ExplorerNavigationCluster({
     required this.canGoBack,
@@ -1180,93 +1290,138 @@ class _ExplorerNavigationCluster extends StatelessWidget {
     this.onPreviousMove,
     this.onNextMove,
     this.onLastMove,
-    this.onPreviousGame,
-    this.onNextGame,
+    this.onPlayPause,
+    this.isPlaying = false,
+    this.hasUnseenLiveMove = false,
+    this.autoReplayShortcutLabel,
     this.firstMoveShortcutLabel,
     this.previousMoveShortcutLabel,
     this.nextMoveShortcutLabel,
     this.lastMoveShortcutLabel,
-    this.previousGameShortcutLabel,
-    this.nextGameShortcutLabel,
   });
-
   final bool canGoBack;
   final bool canGoForward;
   final bool? canStepForward;
-  final VoidCallback? onFirstMove;
-  final VoidCallback? onPreviousMove;
-  final VoidCallback? onNextMove;
-  final VoidCallback? onLastMove;
-  final VoidCallback? onPreviousGame;
-  final VoidCallback? onNextGame;
-  final String? firstMoveShortcutLabel;
-  final String? previousMoveShortcutLabel;
-  final String? nextMoveShortcutLabel;
-  final String? lastMoveShortcutLabel;
-  final String? previousGameShortcutLabel;
-  final String? nextGameShortcutLabel;
-
+  final VoidCallback? onFirstMove,
+      onPreviousMove,
+      onNextMove,
+      onLastMove,
+      onPlayPause;
+  final bool isPlaying, hasUnseenLiveMove;
+  final String? firstMoveShortcutLabel,
+      previousMoveShortcutLabel,
+      nextMoveShortcutLabel,
+      lastMoveShortcutLabel,
+      autoReplayShortcutLabel;
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 4,
-      runSpacing: 8,
-      alignment: WrapAlignment.center,
+    final controls = <Widget>[
+      _RailIconButton(
+        icon: Icons.first_page_rounded,
+        tooltip: _tooltipWithShortcut('First move', firstMoveShortcutLabel),
+        enabled: canGoBack && onFirstMove != null,
+        onTap: onFirstMove ?? () {},
+        quiet: true,
+        width: double.infinity,
+        height: 44,
+      ),
+      _RailIconButton(
+        icon: Icons.chevron_left_rounded,
+        tooltip: _tooltipWithShortcut(
+          'Previous move',
+          previousMoveShortcutLabel,
+        ),
+        enabled: canGoBack && onPreviousMove != null,
+        onTap: onPreviousMove ?? () {},
+        quiet: true,
+        width: double.infinity,
+        height: 44,
+      ),
+      _RailIconButton(
+        icon: isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+        tooltip: _tooltipWithShortcut(
+          isPlaying ? 'Pause replay' : 'Play replay',
+          autoReplayShortcutLabel,
+        ),
+        enabled: onPlayPause != null && (canGoForward || isPlaying),
+        onTap: onPlayPause ?? () {},
+        quiet: true,
+        width: double.infinity,
+        height: 44,
+      ),
+      _RailIconButton(
+        icon: Icons.chevron_right_rounded,
+        tooltip: _tooltipWithShortcut('Next move', nextMoveShortcutLabel),
+        enabled: (canStepForward ?? canGoForward) && onNextMove != null,
+        onTap: onNextMove ?? () {},
+        quiet: true,
+        width: double.infinity,
+        height: 44,
+      ),
+      _RailIconButton(
+        icon: Icons.last_page_rounded,
+        tooltip: _tooltipWithShortcut(
+          hasUnseenLiveMove ? 'New move — jump to live' : 'Last move',
+          lastMoveShortcutLabel,
+        ),
+        enabled: canGoForward && onLastMove != null,
+        onTap: onLastMove ?? () {},
+        quiet: true,
+        width: double.infinity,
+        height: 44,
+        showLiveDot: hasUnseenLiveMove,
+      ),
+    ];
+    return Row(
       children: [
-        if (onPreviousGame != null) ...[
-          _RailIconButton(
-            icon: Icons.keyboard_double_arrow_left_rounded,
-            tooltip: _tooltipWithShortcut(
-              'Previous game',
-              previousGameShortcutLabel,
-            ),
-            onTap: onPreviousGame!,
-          ),
+        for (var i = 0; i < controls.length; i++) ...[
+          if (i > 0) const SizedBox(width: 6),
+          Expanded(child: controls[i]),
         ],
-        if (onFirstMove != null) ...[
-          _RailIconButton(
-            icon: Icons.first_page_rounded,
-            tooltip: _tooltipWithShortcut('First move', firstMoveShortcutLabel),
-            enabled: canGoBack,
-            onTap: onFirstMove!,
-          ),
-        ],
-        if (onPreviousMove != null) ...[
-          _RailIconButton(
-            icon: Icons.chevron_left_rounded,
-            tooltip: _tooltipWithShortcut(
-              'Previous move',
-              previousMoveShortcutLabel,
-            ),
-            enabled: canGoBack,
-            onTap: onPreviousMove!,
-          ),
-        ],
-        if (onNextMove != null) ...[
-          _RailIconButton(
-            icon: Icons.chevron_right_rounded,
-            tooltip: _tooltipWithShortcut('Next move', nextMoveShortcutLabel),
-            enabled: canStepForward ?? canGoForward,
-            onTap: onNextMove!,
-          ),
-        ],
-        if (onLastMove != null) ...[
-          _RailIconButton(
-            icon: Icons.last_page_rounded,
-            tooltip: _tooltipWithShortcut('Last move', lastMoveShortcutLabel),
-            enabled: canGoForward,
-            onTap: onLastMove!,
-          ),
-        ],
-        if (onNextGame != null)
-          _RailIconButton(
-            icon: Icons.keyboard_double_arrow_right_rounded,
-            tooltip: _tooltipWithShortcut('Next game', nextGameShortcutLabel),
-            onTap: onNextGame!,
-          ),
       ],
     );
   }
+}
+
+class _GameNavigationCluster extends StatelessWidget {
+  const _GameNavigationCluster({
+    this.onPreviousGame,
+    this.onNextGame,
+    this.previousGameShortcutLabel,
+    this.nextGameShortcutLabel,
+    this.showLabels = false,
+  });
+  final VoidCallback? onPreviousGame, onNextGame;
+  final String? previousGameShortcutLabel, nextGameShortcutLabel;
+  final bool showLabels;
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 4,
+    runSpacing: 6,
+    alignment: WrapAlignment.center,
+    children: [
+      if (onPreviousGame != null)
+        _RailIconButton(
+          icon: Icons.keyboard_double_arrow_left_rounded,
+          tooltip: _tooltipWithShortcut(
+            'Previous game',
+            previousGameShortcutLabel,
+          ),
+          onTap: onPreviousGame!,
+          label: showLabels ? 'Previous game' : null,
+          width: showLabels ? null : 40,
+        ),
+      if (onNextGame != null)
+        _RailIconButton(
+          icon: Icons.keyboard_double_arrow_right_rounded,
+          tooltip: _tooltipWithShortcut('Next game', nextGameShortcutLabel),
+          onTap: onNextGame!,
+          label: showLabels ? 'Next game' : null,
+          labelBeforeIcon: true,
+          width: showLabels ? null : 40,
+        ),
+    ],
+  );
 }
 
 String _tooltipWithShortcut(String label, String? shortcutLabel) {
@@ -1282,14 +1437,20 @@ class _RailIconButton extends StatefulWidget {
     required this.onTap,
     this.selected = false,
     this.enabled = true,
+    this.width = 40,
+    this.height = 40,
+    this.label,
+    this.labelBeforeIcon = false,
+    this.quiet = false,
+    this.showLiveDot = false,
   });
-
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
-  final bool selected;
-  final bool enabled;
-
+  final bool selected, enabled, quiet, showLiveDot, labelBeforeIcon;
+  final double? width;
+  final double height;
+  final String? label;
   @override
   State<_RailIconButton> createState() => _RailIconButtonState();
 }
@@ -1297,52 +1458,133 @@ class _RailIconButton extends StatefulWidget {
 class _RailIconButtonState extends State<_RailIconButton>
     with DeferredPointerStateMixin<_RailIconButton> {
   bool _hovered = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
-    final active = widget.enabled && (widget.selected || _hovered);
+    final active = widget.enabled && (widget.selected || _hovered || _focused);
+    final foreground =
+        !widget.enabled
+            ? kLightGreyColor
+            : widget.selected && !widget.quiet
+            ? kPrimaryColor
+            : active
+            ? kWhiteColor
+            : kWhiteColor70;
+    final icon = Icon(
+      widget.icon,
+      size: widget.quiet ? 26 : 21,
+      color: foreground,
+    );
+    final caption =
+        widget.label == null
+            ? null
+            : Text(
+              widget.label!,
+              style: TextStyle(
+                color: foreground,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            );
     return DesktopTooltip(
       message: widget.tooltip,
-      child: MouseRegion(
-        cursor:
-            widget.enabled
-                ? SystemMouseCursors.click
-                : SystemMouseCursors.basic,
-        onEnter:
-            widget.enabled
-                ? (_) => setStateAfterPointerEvent(() => _hovered = true)
-                : null,
-        onExit:
-            widget.enabled
-                ? (_) => setStateAfterPointerEvent(() => _hovered = false)
-                : null,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.enabled ? widget.onTap : null,
-          child: Container(
-            width: 36,
-            height: 36,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color:
-                  active
-                      ? kPrimaryColor.withValues(alpha: 0.16)
-                      : Colors.transparent,
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(
-                color:
-                    widget.selected
-                        ? kPrimaryColor.withValues(alpha: 0.55)
-                        : Colors.transparent,
-              ),
+      child: Semantics(
+        button: true,
+        enabled: widget.enabled,
+        label: widget.tooltip,
+        child: FocusableActionDetector(
+          enabled: widget.enabled,
+          onShowFocusHighlight: (value) {
+            if (mounted) setState(() => _focused = value);
+          },
+          shortcuts: const <ShortcutActivator, Intent>{
+            SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+            SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+          },
+          actions: <Type, Action<Intent>>{
+            ActivateIntent: CallbackAction<ActivateIntent>(
+              onInvoke: (_) {
+                if (widget.enabled) widget.onTap();
+                return null;
+              },
             ),
-            child: Icon(
-              widget.icon,
-              size: 21,
-              color:
-                  widget.enabled
-                      ? (widget.selected ? kPrimaryColor : kWhiteColor70)
-                      : kLightGreyColor,
+          },
+          child: MouseRegion(
+            cursor:
+                widget.enabled
+                    ? SystemMouseCursors.click
+                    : SystemMouseCursors.basic,
+            onEnter:
+                widget.enabled
+                    ? (_) => setStateAfterPointerEvent(() => _hovered = true)
+                    : null,
+            onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.enabled ? widget.onTap : null,
+              child: Container(
+                width: widget.width,
+                height: widget.height,
+                padding: EdgeInsets.symmetric(
+                  horizontal: caption == null ? 0 : 7,
+                ),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color:
+                      widget.quiet
+                          ? (active ? kBlack3Color : kBlack2Color)
+                          : (active
+                              ? kPrimaryColor.withValues(alpha: 0.16)
+                              : Colors.transparent),
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(
+                    color:
+                        _focused
+                            ? kPrimaryColor
+                            : widget.selected && !widget.quiet
+                            ? kPrimaryColor.withValues(alpha: 0.55)
+                            : widget.quiet
+                            ? kDividerColor
+                            : Colors.transparent,
+                  ),
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (caption == null)
+                      icon
+                    else
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (widget.labelBeforeIcon) ...[
+                            caption,
+                            const SizedBox(width: 4),
+                          ],
+                          icon,
+                          if (!widget.labelBeforeIcon) ...[
+                            const SizedBox(width: 4),
+                            caption,
+                          ],
+                        ],
+                      ),
+                    if (widget.showLiveDot)
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: Container(
+                          width: 6,
+                          height: 6,
+                          decoration: const BoxDecoration(
+                            color: kPrimaryColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),

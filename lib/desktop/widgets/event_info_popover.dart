@@ -7,6 +7,7 @@ import 'package:chessever/desktop/services/desktop_share_actions.dart'
     show chessEverEventUrlPgnTag, chessEverGameUrlPgnTag;
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart'
     show
@@ -80,15 +81,26 @@ class _EventInfoPopoverState extends State<EventInfoPopover>
         popoverBuilder: (context, _) => EventInfoBody(headers: widget.headers),
         child: DesktopTooltip(
           message: hasAny ? 'Event info (I)' : 'No event info available',
-          child: FButton.icon(
-            onPress: hasAny ? _controller.toggle : null,
-            child: Icon(
-              Icons.info_outline_rounded,
-              color:
-                  hasAny
-                      ? kWhiteColor70
-                      : kLightGreyColor.withValues(alpha: 0.45),
-              size: 18,
+          child: ClickCursor(
+            child: FTappable.static(
+              semanticsLabel: 'Event info',
+              behavior: HitTestBehavior.opaque,
+              onPress: hasAny ? _controller.toggle : null,
+              shortcuts: const {
+                SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+                SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+              },
+              child: SizedBox.square(
+                dimension: 40,
+                child: Icon(
+                  Icons.info_outline_rounded,
+                  color:
+                      hasAny
+                          ? kWhiteColor70
+                          : kLightGreyColor.withValues(alpha: 0.45),
+                  size: 21,
+                ),
+              ),
             ),
           ),
         ),
