@@ -4950,14 +4950,16 @@ _GameSourceMetadata? _tryParseGameSourceMetadata(String sourceLabel) {
   return meta;
 }
 
+/// Result tint: a decisive game takes the brand primary whichever side won
+/// (the score itself says who), a draw takes the passive grey the move
+/// numbers use, so it reads as settled rather than as a result to notice.
 Color _resultChipTint(String? chip) {
   switch (chip) {
     case '1–0':
-      return kPrimaryColor;
     case '0–1':
-      return const Color(0xFFFF8A65);
+      return kPrimaryColor;
     case '½–½':
-      return const Color(0xFF9AA3AD);
+      return kLightGreyColor;
     default:
       return kWhiteColor70;
   }
