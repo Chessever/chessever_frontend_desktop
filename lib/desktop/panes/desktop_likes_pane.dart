@@ -325,11 +325,10 @@ _Ranking _watchRanking(
         case CommunityLikesStatus.ranked:
           final all = [...result.entries, ...paging.entries];
           if (all.isEmpty) {
-            placeholder = _Message(
-              title: emptyTitle,
-              body:
-                  'A game enters the ranking once two people like it. '
-                  'Open a game and press its heart to add yours.',
+            placeholder = _EmptyRankingFallback(
+              key: ValueKey(query),
+              query: query,
+              emptyTitle: emptyTitle,
             );
           } else {
             entries = all;
@@ -1053,6 +1052,64 @@ class _LikesAboutView extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Stands in for an empty ranking: moves the tab to the nearest ranking with
+/// a game (a wider period holding this one, then earlier ones), so a new week,
+/// month or day never opens on "No games liked". The empty message shows only
+/// when no ranking has a game yet.
+class _EmptyRankingFallback extends ConsumerStatefulWidget {
+  const _EmptyRankingFallback({
+    super.key,
+    required this.query,
+    required this.emptyTitle,
+  });
+
+  final CommunityLikesQuery query;
+  final String emptyTitle;
+
+  @override
+  ConsumerState<_EmptyRankingFallback> createState() =>
+      _EmptyRankingFallbackState();
+}
+
+class _EmptyRankingFallbackState extends ConsumerState<_EmptyRankingFallback> {
+  bool _searching = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fallBack();
+  }
+
+  Future<void> _fallBack() async {
+    final pick = await firstRankedCommunityLikesQuery(
+      communityLikesFallbackQueries(widget.query),
+      (query) => ref.read(communityLikesProvider(query).future),
+    );
+    if (!mounted) return;
+    // Only if the tab still shows the empty ranking this search began from.
+    if (pick != null &&
+        communityLikesActiveQuery(ref, now: DateTime.now()) == widget.query) {
+      final now = DateTime.now();
+      ref.read(communityLikesPeriodProvider.notifier).state = pick.period;
+      ref.read(communityLikesDayProvider.notifier).state =
+          pick.isCurrent(now) ? null : pick.start;
+      return;
+    }
+    setState(() => _searching = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_searching) return const _Spinner();
+    return _Message(
+      title: widget.emptyTitle,
+      body:
+          'A game enters the ranking once two people like it. '
+          'Open a game and press its heart to add yours.',
     );
   }
 }

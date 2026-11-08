@@ -1281,6 +1281,52 @@ Widget boardToolbarForTesting({
   trailingActions: trailingActions,
 );
 
+/// The board toolbar's first / previous / play / next / last strip, for a
+/// surface that shows a board without the full toolbar (the Library and
+/// collection previews). Same buttons, same look, so a preview steps through
+/// a game exactly the way the board does.
+class BoardMoveNavigationStrip extends StatelessWidget {
+  const BoardMoveNavigationStrip({
+    super.key,
+    required this.canGoBack,
+    required this.canGoForward,
+    required this.onFirst,
+    required this.onPrevious,
+    required this.onNext,
+    required this.onLast,
+    this.onPlayPause,
+    this.isPlaying = false,
+    this.firstMoveShortcutLabel,
+    this.previousMoveShortcutLabel,
+    this.nextMoveShortcutLabel,
+    this.lastMoveShortcutLabel,
+  });
+
+  final bool canGoBack, canGoForward, isPlaying;
+  final VoidCallback onFirst, onPrevious, onNext, onLast;
+  final VoidCallback? onPlayPause;
+  final String? firstMoveShortcutLabel,
+      previousMoveShortcutLabel,
+      nextMoveShortcutLabel,
+      lastMoveShortcutLabel;
+
+  @override
+  Widget build(BuildContext context) => _ExplorerNavigationCluster(
+    canGoBack: canGoBack,
+    canGoForward: canGoForward,
+    onFirstMove: onFirst,
+    onPreviousMove: onPrevious,
+    onNextMove: onNext,
+    onLastMove: onLast,
+    onPlayPause: onPlayPause,
+    isPlaying: isPlaying,
+    firstMoveShortcutLabel: firstMoveShortcutLabel,
+    previousMoveShortcutLabel: previousMoveShortcutLabel,
+    nextMoveShortcutLabel: nextMoveShortcutLabel,
+    lastMoveShortcutLabel: lastMoveShortcutLabel,
+  );
+}
+
 class _ExplorerNavigationCluster extends StatelessWidget {
   const _ExplorerNavigationCluster({
     required this.canGoBack,

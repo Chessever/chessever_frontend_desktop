@@ -776,13 +776,9 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                                         widget.autoCollapseMoveThreshold,
                                     useFigurine: widget.useFigurine,
                                     pieceAssets: widget.pieceAssets,
+                                    trailingResult: gameResult,
                                   ),
                                 ),
-                                if (gameResult != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 14),
-                                    child: _GameResultRow(result: gameResult),
-                                  ),
                               ],
                             ),
                           ),
@@ -1486,6 +1482,7 @@ class _LineBlock extends StatelessWidget {
     }
     var i = 0;
     var ply = startPly;
+    var resultShown = false;
     while (i < line.length) {
       final isWhiteFirst = ply.isEven;
 
@@ -1511,6 +1508,14 @@ class _LineBlock extends StatelessWidget {
 
       final moveNumber = (ply ~/ 2) + 1;
       final pairChildren = <Widget>[];
+      final isLastPair =
+          i + (isWhiteFirst && blackMove != null ? 2 : 1) >= line.length;
+      final showResultInBlackSlot =
+          isMainlineRoot &&
+          depth == 0 &&
+          gameResult != null &&
+          isLastPair &&
+          blackMove == null;
       final whiteIsActive =
           whitePointer != null && _pointersEqual(whitePointer, activePointer);
       final blackIsActive =
@@ -1597,8 +1602,10 @@ class _LineBlock extends StatelessWidget {
           variationHeadPointer: depth > 0 ? <int>[...pointerPrefix, 0] : null,
           useFigurine: useFigurine,
           pieceAssets: pieceAssets,
+          result: showResultInBlackSlot ? gameResult : null,
         ),
       );
+      if (showResultInBlackSlot) resultShown = true;
 
       void appendMoveComments(ChessMove? move) {
         if (move == null ||
@@ -1718,8 +1725,14 @@ class _LineBlock extends StatelessWidget {
       }
     }
 
-    if (isMainlineRoot && depth == 0 && gameResult != null) {
-      children.add(_GameResultRow(result: gameResult!));
+    // Black played the last move: the result takes the next half-move
+    // slot, the white column of a fresh row, like a written scoresheet.
+    if (isMainlineRoot &&
+        depth == 0 &&
+        gameResult != null &&
+        !resultShown &&
+        line.isNotEmpty) {
+      children.add(_LadderResultLine(result: gameResult!));
     }
 
     return Column(
@@ -2124,6 +2137,7 @@ class _InlineNotationBlock extends StatelessWidget {
     this.lichessStyle = false,
     this.closingBracketGlyph,
     this.closingBracketStyle,
+    this.trailingResult,
   });
 
   final ChessLine line;
@@ -2166,6 +2180,10 @@ class _InlineNotationBlock extends StatelessWidget {
   /// of reserving a standalone bracket-only row.
   final String? closingBracketGlyph;
   final TextStyle? closingBracketStyle;
+
+  /// Game result (`1–0`, `0–1`, `½–½`) written right after the last
+  /// mainline half-move, like a printed scoresheet, instead of a banner row.
+  final String? trailingResult;
 
   @override
   Widget build(BuildContext context) {
@@ -2373,6 +2391,11 @@ class _InlineNotationBlock extends StatelessWidget {
     final closeStyle = closingBracketStyle;
     if (closeGlyph != null && closeGlyph.isNotEmpty && closeStyle != null) {
       spans.add(TextSpan(text: '$closeGlyph ', style: closeStyle));
+    }
+
+    final result = trailingResult;
+    if (result != null && spans.isNotEmpty) {
+      spans.add(TextSpan(text: ' $result', style: _resultTextStyle(result)));
     }
 
     if (spans.isEmpty) return const SizedBox.shrink();
@@ -3133,6 +3156,7 @@ class _PairRow extends StatelessWidget {
     required this.variationHeadPointer,
     required this.useFigurine,
     required this.pieceAssets,
+    this.result,
   });
 
   final int moveNumber;
@@ -3167,6 +3191,10 @@ class _PairRow extends StatelessWidget {
   final ChessMovePointer? variationHeadPointer;
   final bool useFigurine;
   final PieceAssets? pieceAssets;
+
+  /// Game result shown in the empty black slot when white made the last
+  /// mainline move.
+  final String? result;
 
   @override
   Widget build(BuildContext context) {
@@ -3287,7 +3315,9 @@ class _PairRow extends StatelessWidget {
             Expanded(
               child:
                   blackMove == null
-                      ? const SizedBox.shrink()
+                      ? (result == null
+                          ? const SizedBox.shrink()
+                          : _LadderResultText(result: result!))
                       : _LadderChip(
                         pointer: blackPointer!,
                         san: blackMove!.san,
@@ -4280,67 +4310,55 @@ class _ElapsedTimeBadge extends StatelessWidget {
   }
 }
 
-/// Final score banner appended after the mainline. Visually anchors the
-/// notation pane so the eye lands on the outcome immediately when scrolled
-/// to the end. Hidden for `*` (in-progress) games.
-class _GameResultRow extends StatelessWidget {
-  const _GameResultRow({required this.result});
+/// Result text shared by the inline and ladder notation layouts.
+TextStyle _resultTextStyle(String result) => TextStyle(
+  color: _resultChipTint(result),
+  fontSize: 13,
+  fontWeight: FontWeight.w700,
+  fontStyle: FontStyle.normal,
+  letterSpacing: 0.4,
+  height: 1.32,
+  fontFeatures: const [FontFeature.tabularFigures()],
+);
+
+/// Result written in a ladder half-move slot, aligned with the SAN chips.
+class _LadderResultText extends StatelessWidget {
+  const _LadderResultText({required this.result});
 
   final String result;
 
   @override
   Widget build(BuildContext context) {
-    Color tintFor(String r) {
-      switch (r) {
-        case '1–0':
-          return kPrimaryColor;
-        case '0–1':
-          return const Color(0xFFFF8A65); // warm coral, matches black-move tone
-        case '½–½':
-          return const Color(0xFF9AA3AD);
-        default:
-          return kWhiteColor70;
-      }
-    }
-
-    final tint = tintFor(result);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: Container(
-              height: 1,
-              color: kDividerColor.withValues(alpha: 0.6),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-            decoration: BoxDecoration(
-              color: tint.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: tint.withValues(alpha: 0.5), width: 1),
-            ),
-            child: Text(
-              result,
-              style: TextStyle(
-                color: tint,
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.6,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Container(
-              height: 1,
-              color: kDividerColor.withValues(alpha: 0.6),
-            ),
-          ),
-        ],
+      // Matches `_LadderChip`'s 8px inset so result and SAN align.
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: Text(result, style: _resultTextStyle(result)),
+    );
+  }
+}
+
+/// Ladder row holding only the result, in the white column, used when black
+/// made the last move. Mirrors `_PairRow` padding so the column lines up.
+class _LadderResultLine extends StatelessWidget {
+  const _LadderResultLine({required this.result});
+
+  final String result;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
+      child: Padding(
+        // 4px row padding + the 2px active-row left border slot.
+        padding: const EdgeInsets.fromLTRB(6, 1, 4, 1),
+        child: Row(
+          children: [
+            const SizedBox(width: 28),
+            Expanded(child: _LadderResultText(result: result)),
+            const SizedBox(width: 6),
+            const Spacer(),
+          ],
+        ),
       ),
     );
   }
@@ -4821,7 +4839,7 @@ class _GameSourceMetadata {
 
   /// Resolve the headline result chip text. Normalises hyphen-minus to
   /// the en-dash version so the footer matches the trailing
-  /// `_GameResultRow` chip in the ladder.
+  /// result shown after the last move in the ladder.
   String? get resultChip {
     final raw = result;
     if (raw == null) return null;

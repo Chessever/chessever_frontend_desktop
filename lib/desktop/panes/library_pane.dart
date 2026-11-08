@@ -94,6 +94,8 @@ import 'package:chessever/desktop/widgets/list_keyboard_scroll.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
+import 'package:chessever/desktop/widgets/notation_opening_panel.dart'
+    show BoardMoveNavigationStrip;
 import 'package:chessever/desktop/widgets/library/folder_drop_target.dart';
 import 'package:chessever/desktop/widgets/library/library_actions_toolbar.dart';
 import 'package:chessever/desktop/widgets/library/library_chrome_bar.dart';
@@ -13889,6 +13891,76 @@ class _LibraryBoardPreviewPanel extends ConsumerStatefulWidget {
 
 class _LibraryBoardPreviewPanelState
     extends ConsumerState<_LibraryBoardPreviewPanel> {
+  /// Same pace as the board's own autoplay.
+  static const _autoplayStep = Duration(milliseconds: 700);
+
+  Timer? _autoplay;
+
+  /// The ply the last autoplay step started from. When the next tick finds
+  /// the preview still there, the step was refused (an access gate said no),
+  /// so autoplay stops instead of asking again every tick.
+  int? _autoplayStepFrom;
+
+  bool get _isAutoplaying => _autoplay != null;
+
+  void _toggleAutoplay() {
+    if (_isAutoplaying) {
+      _stopAutoplay();
+      return;
+    }
+    if (widget.ply >= widget.totalPlies) return;
+    _autoplayStepFrom = null;
+    setState(() {
+      _autoplay = Timer.periodic(_autoplayStep, (_) => _autoplayTick());
+    });
+  }
+
+  void _autoplayTick() {
+    if (!mounted ||
+        widget.ply >= widget.totalPlies ||
+        _autoplayStepFrom == widget.ply) {
+      _stopAutoplay();
+      return;
+    }
+    _autoplayStepFrom = widget.ply;
+    widget.onPlyChanged(widget.ply + 1);
+  }
+
+  void _stopAutoplay() {
+    final timer = _autoplay;
+    if (timer == null) return;
+    timer.cancel();
+    _autoplay = null;
+    _autoplayStepFrom = null;
+    if (mounted) setState(() {});
+  }
+
+  /// A manual step takes over from autoplay.
+  void _step(int ply) {
+    _stopAutoplay();
+    widget.onPlyChanged(ply);
+  }
+
+  @override
+  void didUpdateWidget(covariant _LibraryBoardPreviewPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.game, widget.game)) {
+      _autoplay?.cancel();
+      _autoplay = null;
+      _autoplayStepFrom = null;
+    } else if (_isAutoplaying && widget.ply >= widget.totalPlies) {
+      _autoplay?.cancel();
+      _autoplay = null;
+      _autoplayStepFrom = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _autoplay?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings =
@@ -13919,61 +13991,95 @@ class _LibraryBoardPreviewPanelState
       canGoBack: canGoBack,
       canGoForward: canGoForward,
     );
-    final board = _LibraryPreviewBoard(
-      fen: widget.fen,
-      lastMoveUci: widget.lastMoveUci,
-      settings: settings,
+    // Double-click opens the game from the header, board or notation, but
+    // not from the move controls: a double-tap recognizer above them would
+    // hold every click for the double-tap timeout, and a quick double click
+    // on "next" would open the game.
+    Widget openOnDoubleTap(Widget child) => GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onDoubleTap: widget.onOpen,
+      child: child,
     );
+    final board = _LibraryPreviewBoardWithControls(
+      board: openOnDoubleTap(
+        _LibraryPreviewBoard(
+          fen: widget.fen,
+          lastMoveUci: widget.lastMoveUci,
+          settings: settings,
+        ),
+      ),
+      controls: BoardMoveNavigationStrip(
+        canGoBack: canGoBack,
+        canGoForward: canGoForward,
+        isPlaying: _isAutoplaying,
+        onFirst: () => _step(0),
+        onPrevious: () => _step(widget.ply - 1),
+        onPlayPause: _toggleAutoplay,
+        onNext: () => _step(widget.ply + 1),
+        onLast: () => _step(widget.totalPlies),
+        firstMoveShortcutLabel: 'Shift+←',
+        previousMoveShortcutLabel: '←',
+        nextMoveShortcutLabel: '→',
+        lastMoveShortcutLabel: 'Shift+→',
+      ),
+    );
+    final notationPane = openOnDoubleTap(notation);
     return Padding(
       padding: const EdgeInsets.all(14),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onDoubleTap: widget.onOpen,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _PreviewPlayersHeader(
-              whiteName: playerLine.white,
-              blackName: playerLine.black,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          openOnDoubleTap(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _PreviewPlayersHeader(
+                  whiteName: playerLine.white,
+                  blackName: playerLine.black,
+                ),
+                const SizedBox(height: 4),
+                _PreviewGameMeta(
+                  game: widget.game,
+                  fallbackTitle: widget.title,
+                ),
+              ],
             ),
-            const SizedBox(height: 4),
-            _PreviewGameMeta(game: widget.game, fallbackTitle: widget.title),
-            const SizedBox(height: 10),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final sideBySide = constraints.maxWidth >= 560;
-                  if (!sideBySide) {
-                    final notationHeight =
-                        constraints.maxHeight < 220
-                            ? 96.0
-                            : math.min(340.0, constraints.maxHeight * 0.50);
-                    return Column(
-                      children: [
-                        Expanded(child: board),
-                        const SizedBox(height: 10),
-                        SizedBox(height: notationHeight, child: notation),
-                      ],
-                    );
-                  }
-
-                  final notationWidth = math.min(
-                    520.0,
-                    math.max(320.0, constraints.maxWidth * 0.52),
-                  );
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final sideBySide = constraints.maxWidth >= 560;
+                if (!sideBySide) {
+                  final notationHeight =
+                      constraints.maxHeight < 260
+                          ? 96.0
+                          : math.min(340.0, constraints.maxHeight * 0.45);
+                  return Column(
                     children: [
                       Expanded(child: board),
-                      const SizedBox(width: 10),
-                      SizedBox(width: notationWidth, child: notation),
+                      const SizedBox(height: 10),
+                      SizedBox(height: notationHeight, child: notationPane),
                     ],
                   );
-                },
-              ),
+                }
+
+                final notationWidth = math.min(
+                  520.0,
+                  math.max(320.0, constraints.maxWidth * 0.52),
+                );
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: board),
+                    const SizedBox(width: 10),
+                    SizedBox(width: notationWidth, child: notationPane),
+                  ],
+                );
+              },
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -14169,6 +14275,52 @@ class _PreviewPlayerName extends StatelessWidget {
         fontSize: 13,
         fontWeight: FontWeight.w700,
       ),
+    );
+  }
+}
+
+/// The preview board with the move controls directly under it, the strip
+/// exactly as wide as the board so the two read as one object.
+class _LibraryPreviewBoardWithControls extends StatelessWidget {
+  const _LibraryPreviewBoardWithControls({
+    required this.board,
+    required this.controls,
+  });
+
+  static const _controlsHeight = 44.0;
+  static const _gap = 8.0;
+
+  final Widget board;
+  final Widget controls;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final side = math.max(
+          0.0,
+          math.min(
+            constraints.maxWidth,
+            constraints.maxHeight - _controlsHeight - _gap,
+          ),
+        );
+        // Too short for a board and controls: the board alone, as before;
+        // the arrow keys still step the game.
+        if (side < 120) return board;
+        return Center(
+          child: SizedBox(
+            width: side,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox.square(dimension: side, child: board),
+                const SizedBox(height: _gap),
+                SizedBox(height: _controlsHeight, child: controls),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

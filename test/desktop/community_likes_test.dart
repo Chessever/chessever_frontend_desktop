@@ -116,6 +116,86 @@ void main() {
     });
   });
 
+  group('empty ranking fallback', () {
+    // Monday 2 November 2026: the week and month have only just begun.
+    final now = DateTime(2026, 11, 2, 9);
+    final week = CommunityLikesQuery(CommunityLikesPeriod.week, now);
+
+    test('widens to the month and year, then looks back', () {
+      final candidates = communityLikesFallbackQueries(week);
+      expect(candidates.take(3), [
+        CommunityLikesQuery(CommunityLikesPeriod.month, now),
+        CommunityLikesQuery(CommunityLikesPeriod.year, now),
+        CommunityLikesQuery(CommunityLikesPeriod.week, DateTime(2026, 10, 26)),
+      ]);
+      expect(candidates.skip(2), hasLength(kCommunityLikesFallbackLookback));
+    });
+
+    test('a day widens to its own week first', () {
+      final candidates = communityLikesFallbackQueries(
+        CommunityLikesQuery(CommunityLikesPeriod.today, now),
+      );
+      expect(candidates.first, week);
+      expect(
+        candidates[3],
+        CommunityLikesQuery(CommunityLikesPeriod.today, DateTime(2026, 11, 1)),
+      );
+    });
+
+    test('a year only looks back as far as the first ranked day', () {
+      expect(
+        communityLikesFallbackQueries(
+          CommunityLikesQuery(CommunityLikesPeriod.year, now),
+        ),
+        isEmpty,
+      );
+    });
+
+    final ranked = CommunityLikesResult.ranked([
+      CommunityLikesEntry(
+        rank: 1,
+        likes: 2,
+        game: _game('g', _player('A'), _player('B')),
+      ),
+    ]);
+    const empty = CommunityLikesResult.ranked([]);
+
+    test('picks the first ranking holding a game', () async {
+      final fetched = <CommunityLikesPeriod>[];
+      final pick = await firstRankedCommunityLikesQuery(
+        communityLikesFallbackQueries(week),
+        (query) async {
+          fetched.add(query.period);
+          return query.period == CommunityLikesPeriod.year ? ranked : empty;
+        },
+      );
+      expect(pick?.period, CommunityLikesPeriod.year);
+      expect(fetched, [CommunityLikesPeriod.month, CommunityLikesPeriod.year]);
+    });
+
+    test('keeps the default when nothing ranks or a ranking fails', () async {
+      final candidates = communityLikesFallbackQueries(week);
+      expect(
+        await firstRankedCommunityLikesQuery(candidates, (_) async => empty),
+        isNull,
+      );
+      expect(
+        await firstRankedCommunityLikesQuery(
+          candidates,
+          (_) async => const CommunityLikesResult.notLive(),
+        ),
+        isNull,
+      );
+      expect(
+        await firstRankedCommunityLikesQuery(
+          candidates,
+          (_) async => throw StateError('offline'),
+        ),
+        isNull,
+      );
+    });
+  });
+
   group('ranking rows', () {
     test('drop single likes, bad rows and duplicates; order is stable', () {
       final rows = parseCommunityLikesRows([

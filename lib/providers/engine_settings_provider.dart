@@ -177,7 +177,7 @@ class EngineSettings {
     this.showPvArrows = true,
     this.showEngineAnalysis = false,
     this.searchTimeIndex = 0,
-    int principalVariationIndex = 4, // Default to 5 lines (index 4)
+    int principalVariationIndex = 1, // Default to 2 lines (index 1)
     int maxArrowsOnBoard = 2, // Default to 3 arrows (index 2)
   }) : principalVariationIndex =
            principalVariationIndex < 0

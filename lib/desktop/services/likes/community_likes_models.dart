@@ -174,6 +174,29 @@ class CommunityLikesQuery {
   String toString() => 'CommunityLikesQuery(${period.name}, $start)';
 }
 
+/// Earlier periods a fallback looks back through at most.
+const int kCommunityLikesFallbackLookback = 12;
+
+/// Where an empty [query] falls back to, nearest first: the wider periods
+/// holding it (a day's week, month and year), then earlier periods of its
+/// own kind. A new week or month starts empty, so the tab moves to the
+/// first of these with a game instead of showing an empty ranking.
+List<CommunityLikesQuery> communityLikesFallbackQueries(
+  CommunityLikesQuery query,
+) {
+  final out = [
+    for (final period in CommunityLikesPeriod.values)
+      if (period.index > query.period.index)
+        CommunityLikesQuery(period, query.start),
+  ];
+  var earlier = query.previous;
+  for (var i = 0; earlier != null && i < kCommunityLikesFallbackLookback; i++) {
+    out.add(earlier);
+    earlier = earlier.previous;
+  }
+  return out;
+}
+
 /// One ranked row as the backend returns it.
 @immutable
 class CommunityLikesCount {

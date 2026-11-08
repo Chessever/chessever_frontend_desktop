@@ -22,6 +22,26 @@ final communityLikesPeriodProvider = StateProvider<CommunityLikesPeriod>(
 /// the clock (the current period). Changing period clears it.
 final communityLikesDayProvider = StateProvider<DateTime?>((ref) => null);
 
+/// The first of [candidates] whose ranking holds at least one game, or null
+/// when none does. Stops at the first ranking that is not live, needs
+/// Premium or fails, so the tab shows that state instead of guessing.
+Future<CommunityLikesQuery?> firstRankedCommunityLikesQuery(
+  Iterable<CommunityLikesQuery> candidates,
+  Future<CommunityLikesResult> Function(CommunityLikesQuery query) fetch,
+) async {
+  for (final query in candidates) {
+    final CommunityLikesResult result;
+    try {
+      result = await fetch(query);
+    } catch (_) {
+      return null;
+    }
+    if (result.status != CommunityLikesStatus.ranked) return null;
+    if (result.entries.isNotEmpty) return query;
+  }
+  return null;
+}
+
 /// The query the Likes tab is reading right now.
 CommunityLikesQuery communityLikesActiveQuery(WidgetRef ref, {DateTime? now}) {
   final period = ref.watch(communityLikesPeriodProvider);

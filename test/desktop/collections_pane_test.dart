@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'support/current_broadcast_games.dart';
 
 import 'package:chessever/desktop/panes/collections_pane.dart';
+import 'package:chessground/chessground.dart' as cg;
 import 'package:chessever/desktop/panes/library_pane.dart'
     show libraryReadOnlyGamesFit;
 import 'package:chessever/desktop/services/collections_reader.dart';
@@ -1025,6 +1026,38 @@ void main() {
       expect(args.accessContext?.isCollectionContent, isTrue);
       // Not the reader's record: Save has nothing to write back to.
       expect(args.librarySaveOrigin, isNull);
+    });
+    testWidgets('the preview steps the game from its own move controls', (
+      tester,
+    ) async {
+      final container = await _pump(
+        tester,
+        const CollectionWorkspacePane(tabId: 't1'),
+        reader: FakeCollectionsReader(),
+        overrides: opened('my-60-memorable-games', 'My 60 Memorable Games'),
+      );
+
+      String boardFen() =>
+          tester
+              .widget<cg.StaticChessboard>(find.byType(cg.StaticChessboard))
+              .fen;
+      final start = boardFen();
+      final next = find.bySemanticsLabel('Next move (→)');
+      expect(next, findsOneWidget);
+
+      await tester.tap(next);
+      await _settle(tester);
+      final afterOne = boardFen();
+      expect(afterOne, isNot(start));
+
+      // A quick double click on a control is two steps, never "open".
+      await _doubleTap(tester, next);
+      expect(boardFen(), isNot(afterOne));
+      expect(container.read(boardTabGameArgsByTabIdProvider), isEmpty);
+
+      await tester.tap(find.bySemanticsLabel('First move (Shift+←)'));
+      await _settle(tester);
+      expect(boardFen(), start);
     });
   });
 

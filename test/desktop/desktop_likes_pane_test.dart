@@ -24,9 +24,14 @@ const _kFen =
     'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
 
 class _FakeRepository implements CommunityLikesRepository {
-  _FakeRepository(this.result, {this.laterPages = const []});
+  _FakeRepository(
+    this.result, {
+    this.laterPages = const [],
+    this.byPeriod = const {},
+  });
 
   final CommunityLikesResult result;
+  final Map<CommunityLikesPeriod, CommunityLikesResult> byPeriod;
   final List<CommunityLikesResult> laterPages;
   final List<CommunityLikesQuery> queries = [];
   final List<CommunityLikesCursor> cursors = [];
@@ -42,7 +47,7 @@ class _FakeRepository implements CommunityLikesRepository {
       cursors.add(after);
       return laterPages[cursors.length - 1];
     }
-    return result;
+    return byPeriod[query.period] ?? result;
   }
 
   @override
@@ -133,6 +138,7 @@ Future<_FakeRepository> _pump(
   WidgetTester tester, {
   CommunityLikesResult? result,
   List<CommunityLikesResult> laterPages = const [],
+  Map<CommunityLikesPeriod, CommunityLikesResult> byPeriod = const {},
   SubscriptionState? subscription,
   GamesListViewMode viewMode = GamesListViewMode.gamesCard,
   double width = 1440,
@@ -154,6 +160,7 @@ Future<_FakeRepository> _pump(
           _entry(3, 4, caruana, gukesh),
         ]),
     laterPages: laterPages,
+    byPeriod: byPeriod,
   );
   await tester.pumpWidget(
     ProviderScope(
@@ -447,12 +454,38 @@ void main() {
 
   testWidgets('empty, not-live and About states render', (tester) async {
     await _pump(tester, result: const CommunityLikesResult.ranked([]));
+    // Every fallback ranking is empty too, so the message stays.
+    await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('No games liked in this period'), findsOneWidget);
 
     await tester.tap(find.text('About'));
     await tester.pump();
     expect(find.text('Games the community loves.'), findsOneWidget);
     expect(find.text('Open Library'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 2));
+  });
+
+  testWidgets('an empty week falls back to the month that has games', (
+    tester,
+  ) async {
+    final repository = await _pump(
+      tester,
+      byPeriod: {
+        CommunityLikesPeriod.week: const CommunityLikesResult.ranked([]),
+      },
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(
+      repository.queries.map((query) => query.period),
+      containsAllInOrder([
+        CommunityLikesPeriod.week,
+        CommunityLikesPeriod.month,
+      ]),
+    );
+    expect(find.text('No games liked in this period'), findsNothing);
+    expect(find.byType(DesktopGameCard), findsNWidgets(3));
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(seconds: 2));
   });
