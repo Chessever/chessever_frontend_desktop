@@ -113,18 +113,17 @@ Future<bool> openDesktopWebLocation(
       }
     }
     if (kind == TabKind.tournaments) {
-      // Only the browser root defaults to For You. Explicit broadcast URLs
-      // retain their selected tab and the native startup preference is untouched.
-      final value =
-          current.queryParameters['tab'] ??
-          (current.path == '/' ? 'for-you' : null);
+      // For You is the default Events tab, matching the native app. Explicit
+      // `?tab=` URLs keep their selected tab; a missing or unknown one
+      // (`/`, `/broadcast`, `/broadcast/hubs`) lands on For You.
+      final value = current.queryParameters['tab'];
       container
           .read(selectedGroupCategoryProvider.notifier)
           .state = switch (value) {
-        'for-you' => GroupEventCategory.forYou,
+        'current' => GroupEventCategory.current,
         'past' => GroupEventCategory.past,
         'search' => GroupEventCategory.search,
-        _ => GroupEventCategory.current,
+        _ => GroupEventCategory.forYou,
       };
     }
     if (kind == TabKind.calendar) {

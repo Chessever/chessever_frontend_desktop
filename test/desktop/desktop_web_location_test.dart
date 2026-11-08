@@ -76,7 +76,7 @@ void main() {
   });
 
   test(
-    'browser root defaults to For You without changing explicit tabs',
+    'Events URLs default to For You without changing explicit tabs',
     () async {
       final container = ProviderContainer();
       addTearDown(container.dispose);
@@ -88,7 +88,9 @@ void main() {
             '/broadcast?tab=for-you': '/broadcast?tab=for-you',
             '/broadcast?tab=past': '/broadcast?tab=past',
             '/broadcast?tab=search': '/broadcast?tab=search',
-            '/broadcast': '/broadcast?tab=current',
+            '/broadcast': '/broadcast?tab=for-you',
+            '/broadcast/hubs': '/broadcast?tab=for-you',
+            '/broadcast?tab=bogus': '/broadcast?tab=for-you',
             '/?tab=current': '/broadcast?tab=current',
           }.entries) {
         expect(
