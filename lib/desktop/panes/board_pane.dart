@@ -70,6 +70,7 @@ import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_focus_mode.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
+import 'package:chessever/desktop/services/board_analysis_recovery.dart';
 import 'package:chessever/desktop/state/board_picture_in_picture_mode.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
@@ -90,7 +91,7 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
 import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
-import 'package:chessever/desktop/widgets/board_actions_popover.dart';
+
 import 'package:chessever/desktop/widgets/broadcast_video_panel.dart';
 import 'package:chessever/desktop/services/play/play_from_here.dart';
 import 'package:chessever/desktop/widgets/board_context_menu.dart';
@@ -1006,6 +1007,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       ),
     );
     final suppressUserNagUndoSnapshot = useRef<bool>(false);
+    final suppressShapeUndoSnapshot = useRef<bool>(false);
     final latestBoardActionInvoker =
         useRef<bool Function(BoardActionKey action)?>(null);
     // Live-game "new move arrived" indicator. Set to true inside [applyPgn]
@@ -1324,6 +1326,41 @@ class _BoardPaneContent extends HookConsumerWidget {
             : (latestPgnImport == null
                 ? legacyActiveGameId
                 : latestPgnImport.gameId);
+    BoardAnalysisRecoveryOwner recoveryOwner() => (
+      tabId: activeTabId ?? 'board-default',
+      game: boardArgs?.gameId ?? activeGameId ??
+          boardArgs?.retainedSeedIdentity ?? boardArgs ?? 'scratch',
+    );
+    BoardAnalysisRecovery? currentRecovery() {
+      final recovery = ref.read(boardAnalysisRecoveryProvider)[recoveryOwner()];
+      return recovery?.game.startingFen == chessGame.value.startingFen
+          ? recovery : null;
+    }
+    void putRecovery(BoardAnalysisRecovery? recovery) {
+      final owner = recoveryOwner();
+      ref.read(boardAnalysisRecoveryProvider.notifier).update((all) =>
+        recovery == null ? ({...all}..remove(owner)) : {...all, owner: recovery});
+    }
+    final hasAnalysisRecovery = ref.watch(
+      boardAnalysisRecoveryProvider.select((all) =>
+          all[recoveryOwner()]?.game.startingFen == chessGame.value.startingFen),
+    );
+    void followRecoveryThroughBroadcast(String pgn, ChessGame freshGame) {
+      final recovery = currentRecovery();
+      if (recovery == null || recovery.broadcastPgn == pgn) return;
+      if (recovery.game.startingFen != freshGame.startingFen) return;
+      final reconciled = _reconcileCanonicalBroadcastLocalAnnotations(
+        previousBroadcastPgn: recovery.broadcastPgn,
+        currentGame: recovery.game,
+        freshGame: freshGame,
+        userNags: recovery.userNags,
+      );
+      putRecovery(recovery.followBroadcast(
+        game: reconciled.game,
+        userNags: reconciled.userNags,
+        broadcastPgn: pgn,
+      ));
+    }
     useEffect(() {
       return () {
         final pending = pendingLiveRegressionConfirmations.value;
@@ -1461,14 +1498,15 @@ class _BoardPaneContent extends HookConsumerWidget {
       final currentUserNags =
           ref.read(userMoveNagsProvider)[notationStateTabId] ??
           const <int, List<int>>{};
+      final clearedAnalysisActive = currentRecovery() != null;
       final canonicalTreeAlreadyMatches =
-          !canonicalBroadcastUpdate ||
+          clearedAnalysisActive || !canonicalBroadcastUpdate ||
           doesGameTreeMatchBroadcastPgn(
             game: chessGame.value,
             broadcastPgn: trimmed,
           );
       final canonicalLocalStateAlreadyClean =
-          !canonicalBroadcastUpdate ||
+          clearedAnalysisActive || !canonicalBroadcastUpdate ||
           !hasUnprovenLiveNotationState(
             userNags: currentUserNags,
             undoStack: undoStack.value,
@@ -1590,6 +1628,13 @@ class _BoardPaneContent extends HookConsumerWidget {
       final freshGame = parsed
           .copyWith(metadata: finalizedMetadata)
           .rememberGameEndingPlyIndex(parsed.mainline.length - 1);
+      if (isCanonicalBroadcastSource) {
+        followRecoveryThroughBroadcast(trimmed, freshGame);
+      } else if (!isInitialSeed && gameId == null) {
+        // Explicit paste/open replaces a scratch game's identity even when
+        // its new PGN happens to reach the same position as the old game.
+        putRecovery(null);
+      }
 
       final oldGame = chessGame.value;
       final oldPointer = pointer.value;
@@ -1625,7 +1670,11 @@ class _BoardPaneContent extends HookConsumerWidget {
               )
               : null;
       final game =
-          localAnnotations != null
+          clearedAnalysisActive && oldGame.startingFen == freshGame.startingFen
+              ? restoreClearedBoardAnalysis(
+                checkpoint: oldGame, current: clearGameAnalysis(freshGame),
+              )
+              : localAnnotations != null
               ? localAnnotations.game
               : shouldMergeBroadcastTree(gameId: gameId, currentGame: oldGame)
               ? _mergeBroadcastUpdate(
@@ -1890,6 +1939,11 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
       undoStack.value.clear();
       dirtySinceLoad.value = retainedUserNags.isNotEmpty;
+      if (currentRecovery() != null) {
+        // The fast path's working tree may be cleared; recovery needs the
+        // canonical PGN, not that stripped tree, as its new feed baseline.
+        followRecoveryThroughBroadcast(pgn, ChessGame.fromPgn('', pgn));
+      }
       lastAppliedPgn.value = pgn;
       lastBroadcastPgn.value = pgn;
       lastAppliedInitialFenKey.value = initialFenKey;
@@ -3125,6 +3179,20 @@ class _BoardPaneContent extends HookConsumerWidget {
     // `hasShapes` / `hasUserNags` watches still read it further down).
     final editsTabId = activeTabId ?? 'board-default';
 
+    void restoreAllAnnotations(BoardAnnotations annotations) {
+      suppressShapeUndoSnapshot.value = true;
+      try {
+        final notifier = ref.read(boardAnnotationsProvider(editsTabId).notifier);
+        notifier.clear();
+        for (final entry in annotations.positionShapes.entries) {
+          notifier.restore(entry.value, positionKey: entry.key);
+        }
+        notifier.restore(annotations.shapes);
+      } finally {
+        suppressShapeUndoSnapshot.value = false;
+      }
+    }
+
     void undoLastEditAction() {
       final stack = undoStack.value;
       if (stack.isEmpty) {
@@ -3136,6 +3204,23 @@ class _BoardPaneContent extends HookConsumerWidget {
       chessGame.value = snapshot.game;
       pointer.value = snapshot.pointer;
       dirtySinceLoad.value = snapshot.dirtySinceLoad;
+      if (snapshot.restoreRecovery) putRecovery(snapshot.recovery);
+      if (snapshot.annotations != null) {
+        restoreAllAnnotations(snapshot.annotations!);
+      }
+      if (snapshot.restoreReport) {
+        final report = snapshot.report;
+        final fingerprint = gameReportFingerprint(snapshot.game);
+        final eligible = report != null && report.fingerprint == fingerprint;
+        gameReport.value = eligible ? report : null;
+        reportRunning.value = false;
+        reportRevealState.value = GameReportRevealState(
+          gameFingerprint: (reportActivation.value, fingerprint),
+          isVisible: eligible,
+        );
+        reportRevealRevision.value++;
+        reportResetRevision.value++;
+      }
       // Restore shapes / NAGs only when the snapshot carries them. Move-
       // only snapshots leave the user's later annotation work untouched.
       // We swallow the listen-callback that fires for *our own* restore
@@ -3721,15 +3806,15 @@ class _BoardPaneContent extends HookConsumerWidget {
       prev,
       next,
     ) {
+      if (suppressShapeUndoSnapshot.value) return;
       if (prev == null) return;
-      if (prev.shapes == next.shapes) return;
-      if (_setsEqual(prev.shapes, next.shapes)) return;
+      if (identical(prev, next)) return;
       undoStack.value.add(
         BoardUndoSnapshot(
           game: chessGame.value,
           pointer: List<int>.unmodifiable(pointer.value),
           dirtySinceLoad: dirtySinceLoad.value,
-          shapes: Set<cg.Shape>.unmodifiable(prev.shapes),
+          annotations: prev,
         ),
       );
       if (undoStack.value.length > 50) undoStack.value.removeAt(0);
@@ -3756,59 +3841,92 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     Future<void> resetEditsAction() async {
       final currentGame = chessGame.value;
-      final hasDetachedAnalysis =
-          currentGame.detachedRootAnalysis?.any((line) => line.isNotEmpty) ??
-          false;
-      final hasVars = _gameHasVariations(currentGame) || hasDetachedAnalysis;
-      final hasComments =
-          _gameHasComments(currentGame) ||
-          _gameHasMachineAnnotations(currentGame);
-      final hasMoveNags = _gameHasNags(currentGame);
-      final hasReportAnalysis =
-          completedReportForCurrentGame() != null || reportRunning.value;
-      final hasTreeAnalysis = gameHasClearableAnalysis(currentGame);
-      if (!hasTreeAnalysis &&
-          !hasShapes &&
-          !hasUserNags &&
-          !hasReportAnalysis) {
-        showToast('Nothing to reset');
+      final recovery = currentRecovery();
+      final annotations = ref.read(boardAnnotationsProvider(editsTabId));
+      final nags = currentUserNags();
+      final selectedPath = [
+        for (final move in _pathFromPointer(currentGame, pointer.value)) move.uci,
+      ];
+      if (recovery == null &&
+          !gameHasClearableAnalysis(currentGame) &&
+          annotations.shapes.isEmpty && annotations.positionShapes.isEmpty &&
+          nags.isEmpty && completedReportForCurrentGame() == null &&
+          !reportRunning.value) {
+        showToast('Nothing to clear');
         return;
       }
-      final confirmed = await showResetEditsConfirmation(
-        context,
-        hasVariations: hasVars,
-        hasComments: hasComments,
-        hasShapes: hasShapes,
-        hasNags: hasMoveNags || hasUserNags,
-        hasReport: hasReportAnalysis,
-      );
-      if (!confirmed) return;
-      if (!context.mounted) return;
-      // Re-snapshot after confirmation: a live update may have reshaped the
-      // tree while the dialog was open. Preserve the raw mainline, but remove
-      // every PGN comment, NAG, and variation currently attached to it.
-      final freshGame = chessGame.value;
-      if (gameHasClearableAnalysis(freshGame)) {
-        pushUndoSnapshot();
-        final cleared = clearGameAnalysis(freshGame);
-        final nextPointer =
-            _isPointerValid(cleared, pointer.value)
-                ? pointer.value
-                : _truncateToValidPointer(cleared, pointer.value);
-        chessGame.value = cleared;
-        pointer.value = nextPointer;
+      // One undo entry for the entire transaction, including all position ink
+      // and the row's recovery state. No await/confirmation ownership gap.
+      undoStack.value.add(BoardUndoSnapshot(
+        game: currentGame,
+        pointer: List<int>.unmodifiable(pointer.value),
+        dirtySinceLoad: dirtySinceLoad.value,
+        annotations: annotations,
+        userNags: _cloneNagMap(nags),
+        recovery: recovery,
+        restoreRecovery: true,
+        report: completedReportForCurrentGame(),
+        restoreReport: true,
+      ));
+      if (undoStack.value.length > 50) undoStack.value.removeAt(0);
+      suppressUserNagUndoSnapshot.value = true;
+      try {
+        if (recovery != null) {
+          final restored = restoreClearedBoardAnalysis(
+            checkpoint: recovery.game, current: currentGame,
+          );
+          final mergedNags = restoreBoardAnalysisUserNags(
+            checkpoint: recovery, current: restored, userNags: nags,
+          );
+          chessGame.value = restored;
+          pointer.value = _pointerForLongestSurvivingUciPrefix(
+            restored, recovery.restorePath(selectedPath),
+          );
+          restoreAllAnnotations(restoreBoardAnalysisShapes(recovery.annotations, annotations));
+          ref.read(userMoveNagsProvider.notifier).restoreTab(editsTabId, mergedNags);
+          // Restore only a previously visible completed report for this exact
+          // move fingerprint. Never resume a cancelled job or reveal a stale
+          // report after a live append, and never replace a newer report.
+          final report = recovery.report;
+          if (gameReport.value == null && report != null &&
+              report.fingerprint == gameReportFingerprint(restored)) {
+            gameReport.value = report;
+            reportRevealState.value = GameReportRevealState(
+              gameFingerprint: (reportActivation.value, gameReportFingerprint(restored)),
+              isVisible: true,
+            );
+            reportRevealRevision.value++;
+          }
+          putRecovery(null);
+          showToast('Analysis restored');
+        } else {
+          final cleared = clearGameAnalysis(currentGame);
+          final clearedPointer = _pointerForLongestSurvivingUciPrefix(cleared, selectedPath);
+          putRecovery(BoardAnalysisRecovery(
+            game: currentGame,
+            annotations: annotations,
+            userNags: nags,
+            selectedPath: selectedPath,
+            clearedPath: [for (final move in _pathFromPointer(cleared, clearedPointer)) move.uci],
+            broadcastPgn: lastBroadcastPgn.value ?? lastAppliedPgn.value,
+            report: completedReportForCurrentGame(),
+          ));
+          chessGame.value = cleared;
+          pointer.value = clearedPointer;
+          gameReport.value = null;
+          reportRunning.value = false;
+          reportRevealState.value = GameReportRevealState(gameFingerprint: currentReportRevealKey);
+          reportRevealRevision.value++;
+          reportResetRevision.value++;
+          restoreAllAnnotations(const BoardAnnotations());
+          ref.read(userMoveNagsProvider.notifier).clearTab(editsTabId);
+          showToast('Analysis cleared');
+        }
+      } finally {
+        suppressUserNagUndoSnapshot.value = false;
       }
-      gameReport.value = null;
-      reportRunning.value = false;
-      reportRevealState.value = GameReportRevealState(
-        gameFingerprint: currentReportRevealKey,
-      );
-      reportRevealRevision.value++;
-      reportResetRevision.value++;
-      ref.read(boardAnnotationsProvider(editsTabId).notifier).clear();
-      ref.read(userMoveNagsProvider.notifier).clearTab(editsTabId);
       dirtySinceLoad.value = true;
-      showToast('Analysis cleared');
+      focusNode.requestFocus();
     }
 
     void openBoardSettingsTab() {
@@ -4628,7 +4746,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     // index deep — anything longer means we've descended into a sub-line.
     final isOnMainline = pointer.value.length == 1;
     final annotationsAsync =
-        (lichessGameId == null || originalMainlineSans.isEmpty || isResultLive)
+        (hasAnalysisRecovery || lichessGameId == null || originalMainlineSans.isEmpty || isResultLive)
             ? const AsyncValue<Map<int, LichessMoveAnnotation>?>.data(null)
             : ref.watch(
               lichessMoveAnnotationsProvider(
@@ -5335,6 +5453,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     void openBoardContextMenu(Offset position) {
+      final menuActivation = reportActivation.value;
       showBoardContextMenu(
         ref,
         context,
@@ -5372,8 +5491,9 @@ class _BoardPaneContent extends HookConsumerWidget {
 
         onOpenBoardSettings: openBoardSettingsTab,
         onOpenPositionSetup: openPositionSetup,
+        restoreAnalysis: hasAnalysisRecovery,
         onClearAnalysis:
-            shouldOfferClearAnalysis(
+            hasAnalysisRecovery || shouldOfferClearAnalysis(
                   game: chessGame.value,
                   hasShapes: hasShapes,
                   hasUserNags: hasUserNags,
@@ -5381,7 +5501,11 @@ class _BoardPaneContent extends HookConsumerWidget {
                       completedReportForCurrentGame() != null ||
                       reportRunning.value,
                 )
-                ? () => unawaited(resetEditsAction())
+                ? () {
+                  if (identical(menuActivation, reportActivation.value)) {
+                    unawaited(resetEditsAction());
+                  }
+                }
                 : null,
         canCopyOrSavePgn:
             chessGame.value.mainline.isNotEmpty && !collectionGame,
@@ -8976,7 +9100,7 @@ bool shouldOfferClearAnalysis({
 /// separately by the owning pane.
 @visibleForTesting
 bool gameHasClearableAnalysis(ChessGame game) {
-  return _gameHasVariations(game) ||
+  return game.rootComments.isNotEmpty || _gameHasVariations(game) ||
       _gameHasComments(game) ||
       _gameHasNags(game) ||
       _gameHasMachineAnnotations(game) ||
@@ -8987,7 +9111,8 @@ bool _gameHasVariations(ChessGame game) =>
     game.mainline.any(_moveHasVariations);
 
 bool _gameHasComments(ChessGame game) => game.mainline.any(
-  (move) => move.comments?.any((comment) => comment.trim().isNotEmpty) ?? false,
+  (move) => [...?move.comments, ...?move.startingComments]
+      .any((comment) => comment.trim().isNotEmpty),
 );
 
 bool _gameHasNags(ChessGame game) =>
@@ -9008,6 +9133,7 @@ bool _moveHasVariations(ChessMove move) => move.variations?.isNotEmpty ?? false;
 ChessGame clearGameAnalysis(ChessGame game) {
   if (!gameHasClearableAnalysis(game)) return game;
   return game.copyWith(
+    rootComments: const <String>[],
     mainline: <ChessMove>[
       for (final move in game.mainline)
         ChessMove(

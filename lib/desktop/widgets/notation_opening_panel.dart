@@ -52,7 +52,7 @@ const String desktopEngineRightRailSplitStorageKey =
     'board_pane.right_rail.engine_top.v2';
 
 @visibleForTesting
-const double desktopEngineRightRailInitialWeight = 0.22;
+const double desktopEngineRightRailInitialWeight = 0.1763;
 
 @visibleForTesting
 const double desktopEngineRightRailGutterThickness = 12;
