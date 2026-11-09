@@ -1,3 +1,5 @@
+import { handleSignInPreview } from './signin_preview.js';
+
 // app.chessever.com: the Flutter web build is served straight from static
 // assets; this script only runs for /_img and /_broadcast/ (run_worker_first
 // in wrangler.web.jsonc).
@@ -35,6 +37,9 @@ const CACHE_SECONDS = 7 * 86400;
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/api/signin-preview/')) {
+      return handleSignInPreview(request, env, ctx);
+    }
     if (url.pathname === '/_img') return relayImage(request, url, ctx);
     if (url.pathname.startsWith(BROADCAST_RELAY_PREFIX)) {
       return relayBroadcastStreams(request, url);

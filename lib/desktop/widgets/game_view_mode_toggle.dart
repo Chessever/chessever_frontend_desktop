@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -36,8 +37,12 @@ class GameViewModeToggle extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final mode = ref.watch(gamesListViewModeProvider);
+    final presentation = SignedOutEventsPresentationScope.maybeOf(context);
+    final mode = presentation != null
+        ? presentation.data?.viewMode ?? GamesListViewMode.chessBoardGrid
+        : ref.watch(gamesListViewModeProvider);
     void select(GamesListViewMode next) {
+      if (presentation != null) return;
       ref
           .read(boardSettingsProviderNew.notifier)
           .setGamesListViewModeIndex(next.index);

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
@@ -88,6 +89,7 @@ class DesktopEventContextMenu extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (SignedOutEventsPresentationScope.maybeOf(context) != null) return child;
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onSecondaryTapUp:

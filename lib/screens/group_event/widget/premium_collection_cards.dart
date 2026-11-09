@@ -598,10 +598,13 @@ class _FloatingHeartsPainter extends CustomPainter {
 
 /// Full background country flag for Countrymen card
 class FlagFullBackground extends ConsumerWidget {
-  const FlagFullBackground({super.key});
+  const FlagFullBackground({super.key, this.readOnlyPresentation = false});
+
+  final bool readOnlyPresentation;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (readOnlyPresentation) return _FlagPlaceholder();
     final countryAsync = ref.watch(effectiveCountryProvider);
 
     return countryAsync.when(

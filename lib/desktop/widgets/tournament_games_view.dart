@@ -2715,9 +2715,14 @@ class LiveDesktopGameCard extends ConsumerWidget {
     this.federationFallback,
     this.accessContext,
     this.lockedReason,
+    this.readOnlyPresentation = false,
   });
 
   final GamesTourModel game;
+
+  /// Paint public card data without live, PGN, engine or admission work.
+  /// This is inert presentation, not a grant of access.
+  final bool readOnlyPresentation;
   final String tournamentTitle;
 
   /// Draws the card locked at rest; see [DesktopGameCard.lockedReason].
@@ -2771,6 +2776,16 @@ class LiveDesktopGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (readOnlyPresentation) {
+      return DesktopGameCard(
+        data: GameCardData.fromGamesTourModel(game),
+        onTap: null,
+        layout: layout,
+        selected: selected,
+        allowStockfishFallback: false,
+        visualPreviewOnly: true,
+      );
+    }
     final batchScope = _TournamentLiveBatchScope.maybeOf(context);
     final effectiveLiveBatchKey =
         liveBatchKey ??

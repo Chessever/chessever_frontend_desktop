@@ -64,12 +64,14 @@ class DesktopTabBar extends ConsumerStatefulWidget {
     this.showSidebarToggle = false,
     this.sidebarAutoCollapsed = false,
     this.onToggleSidebar,
+    this.readOnlyPresentation = false,
   });
 
   final VoidCallback? onOpenUserProfile;
   final bool showSidebarToggle;
   final bool sidebarAutoCollapsed;
   final VoidCallback? onToggleSidebar;
+  final bool readOnlyPresentation;
 
   @override
   ConsumerState<DesktopTabBar> createState() => _DesktopTabBarState();
@@ -85,6 +87,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
   Object? _tabStripActiveId;
   double? _tabStripListWidth;
   bool? _tabStripFillsRest;
+  bool? _tabStripReadOnly;
   Map<String, double>? _tabStripWidths;
 
   // Scrolls the strip when its tabs need more room than it has: the wheel
@@ -164,16 +167,21 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(desktopTabsProvider);
-    final boardArgsByTab = ref.watch(boardTabGameArgsByTabIdProvider);
+    final boardArgsByTab =
+        widget.readOnlyPresentation
+            ? const <String, BoardTabGameArgs>{}
+            : ref.watch(boardTabGameArgsByTabIdProvider);
     final notifier = ref.read(desktopTabsProvider.notifier);
 
     return DragTarget<GameTabDragPayload>(
       onWillAcceptWithDetails: (details) {
+        if (widget.readOnlyPresentation) return false;
         setState(() => _hoverPayload = details.data);
         return true;
       },
       onLeave: (_) => setState(() => _hoverPayload = null),
       onAcceptWithDetails: (details) {
+        if (widget.readOnlyPresentation) return;
         setState(() => _hoverPayload = null);
         // Drag-drop intent is "open this game and look at it now" — pass
         // focus: true so the new tab foregrounds itself.
@@ -245,6 +253,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                           _tabStripActiveId == state.activeId &&
                           _tabStripListWidth == listWidth &&
                           _tabStripFillsRest == fillsRest &&
+                          _tabStripReadOnly == widget.readOnlyPresentation &&
                           const MapEquality<String, double>().equals(
                             _tabStripWidths,
                             widths,
@@ -255,6 +264,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                       _tabStripActiveId = state.activeId;
                       _tabStripListWidth = listWidth;
                       _tabStripFillsRest = fillsRest;
+                      _tabStripReadOnly = widget.readOnlyPresentation;
                       _tabStripWidths = widths;
                       return _tabStrip = Row(
                         children: [
@@ -314,6 +324,8 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                                     child: ReorderableDragStartListener(
                                       index: i,
                                       child: _TabChip(
+                                        readOnlyPresentation:
+                                            widget.readOnlyPresentation,
                                         tab: tab,
                                         active: tab.id == state.activeId,
                                         onActivate:
@@ -344,7 +356,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                 ),
                 if (_hoverPayload != null)
                   _DropPlaceholderChip(label: _hoverPayload!.label),
-                const DesktopUpdateChip(),
+                if (!widget.readOnlyPresentation) const DesktopUpdateChip(),
                 if (widget.onOpenUserProfile != null) ...[
                   const SizedBox(width: 8),
                   DesktopUserProfileButton(
@@ -588,12 +600,14 @@ class _DropPlaceholderChip extends StatelessWidget {
 class _TabChip extends ConsumerStatefulWidget {
   const _TabChip({
     required this.tab,
+    this.readOnlyPresentation = false,
     required this.active,
     required this.onActivate,
     required this.onClose,
   });
 
   final DesktopTab tab;
+  final bool readOnlyPresentation;
   final bool active;
   final VoidCallback onActivate;
   final VoidCallback? onClose;
@@ -733,27 +747,30 @@ class _TabChipState extends ConsumerState<_TabChip>
     // the plain icon + title. The default scratch Board tab has no args
     // — falls through to the regular chip layout.
     final gameArgs =
-        widget.tab.kind == TabKind.board
+        !widget.readOnlyPresentation && widget.tab.kind == TabKind.board
             ? ref.watch(
               boardTabGameArgsByTabIdProvider.select((m) => m[widget.tab.id]),
             )
             : null;
     final boardFen =
-        widget.tab.kind == TabKind.board
+        !widget.readOnlyPresentation && widget.tab.kind == TabKind.board
             ? ref.watch(boardTabFenProvider.select((m) => m[widget.tab.id]))
             : null;
     final playerProfileArgs =
-        widget.tab.kind == TabKind.playerProfile
+        !widget.readOnlyPresentation && widget.tab.kind == TabKind.playerProfile
             ? ref.watch(
               playerProfileByTabIdProvider.select((m) => m[widget.tab.id]),
             )
             : null;
     final hasGameFen =
         boardFen != null && boardFen.isNotEmpty && boardFen != _initialFen;
-    final showGameCardEvalBar = shouldShowGameCardEvalBarFromSettings(
-      ref.watch(engineSettingsProviderNew),
-    );
+    final showGameCardEvalBar =
+        !widget.readOnlyPresentation &&
+        shouldShowGameCardEvalBarFromSettings(
+          ref.watch(engineSettingsProviderNew),
+        );
     final soundMuted =
+        !widget.readOnlyPresentation &&
         widget.tab.kind == TabKind.board &&
         ref.watch(isBoardTabSoundMutedProvider(widget.tab.id));
 

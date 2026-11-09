@@ -142,6 +142,7 @@ Future<_FakeRepository> _pump(
   SubscriptionState? subscription,
   GamesListViewMode viewMode = GamesListViewMode.gamesCard,
   double width = 1440,
+  bool readOnlyPresentation = false,
 }) async {
   // Wide enough that the test font's full-em glyphs fit the compact
   // scorecards' rating rows, the column width every games list uses.
@@ -179,7 +180,12 @@ Future<_FakeRepository> _pump(
         home: Builder(
           builder: (context) {
             ResponsiveHelper.init(context);
-            return const Scaffold(body: DesktopLikesPane(tabId: 'likes-1'));
+            return Scaffold(
+              body: DesktopLikesPane(
+                tabId: 'likes-1',
+                readOnlyPresentation: readOnlyPresentation,
+              ),
+            );
           },
         ),
       ),
@@ -191,6 +197,42 @@ Future<_FakeRepository> _pump(
 }
 
 void main() {
+  testWidgets(
+    'read-only production Likes keeps ranking identities and counts without live card work',
+    (tester) async {
+      await _pump(
+        tester,
+        readOnlyPresentation: true,
+        viewMode: GamesListViewMode.chessBoardGrid,
+      );
+      final cards =
+          tester
+              .widgetList<LiveDesktopGameCard>(find.byType(LiveDesktopGameCard))
+              .toList();
+      expect(cards.map((c) => c.game.gameId).toList(), [
+        'game-1',
+        'game-2',
+        'game-3',
+      ]);
+      expect(
+        cards.every((c) => c.readOnlyPresentation && !c.streamingEnabled),
+        isTrue,
+      );
+      expect(
+        tester
+            .widgetList<DesktopBoardLikeBadge>(
+              find.byType(DesktopBoardLikeBadge),
+            )
+            .map((b) => b.likes)
+            .toList(),
+        [1240, 31, 4],
+      );
+      expect(find.text('Public game preview'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 500));
+    },
+  );
+
   for (final mode in GamesListViewMode.values) {
     testWidgets(
       '${mode.name} keeps every slot filled after overlapping pages',

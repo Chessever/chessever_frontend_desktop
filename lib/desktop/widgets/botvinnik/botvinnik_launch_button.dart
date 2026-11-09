@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -38,11 +39,12 @@ class BotvinnikLaunchButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final enabled =
+    final readOnly = SignedOutEventsPresentationScope.maybeOf(context) != null;
+    final enabled = readOnly ||
         ChatApi.buildEnabled &&
         (ref.watch(botvinnikEnabledProvider).valueOrNull ?? true);
     if (!enabled) return const SizedBox.shrink();
-    void launch() => openBotvinnikDock(ref, screenContext: screenContext);
+    void launch() { if (!readOnly) openBotvinnikDock(ref, screenContext: screenContext); }
     final button = switch (variant) {
       BotvinnikLaunchVariant.header => DesktopHeaderActionButton(
         label: 'Ask Botvinnik',

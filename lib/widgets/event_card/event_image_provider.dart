@@ -178,14 +178,20 @@ String? _getDominantFederation(List players) {
 
   // Only use if >50% of players are from this federation
   if (dominant != null && maxCount / totalWithFed > 0.5) {
-    // Convert 3-letter FIDE code to 2-letter ISO if needed
-    if (dominant.length == 3) {
-      return _fideToIso2[dominant.toUpperCase()] ?? dominant.substring(0, 2);
-    }
-    return dominant.toUpperCase();
+    return countryCodeFromEventFederation(dominant);
   }
 
   return null;
+}
+
+/// Pure canonical federation conversion shared by public preview decoding.
+/// Keep the unknown-three-letter fallback identical to normal event cards.
+String? countryCodeFromEventFederation(String? dominant) {
+  if (dominant == null) return null;
+  if (dominant.length == 3) {
+    return _fideToIso2[dominant.toUpperCase()] ?? dominant.substring(0, 2);
+  }
+  return dominant.toUpperCase();
 }
 
 /// Common FIDE 3-letter to ISO 2-letter code mappings

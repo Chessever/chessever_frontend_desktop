@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -24,8 +25,9 @@ class DesktopEventFavoriteIconButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final selected = ref.watch(isEventFavoritedProvider(event.id));
-    final favoritePlayerCount =
+    final readOnly = SignedOutEventsPresentationScope.maybeOf(context) != null;
+    final selected = !readOnly && ref.watch(isEventFavoritedProvider(event.id));
+    final favoritePlayerCount = readOnly ? 0 :
         ref.watch(
           eventFavoritePlayersCacheProvider.select(
             (cache) => cache[event.id]?.count,
@@ -45,13 +47,13 @@ class DesktopEventFavoriteIconButton extends ConsumerWidget {
           style: _eventFavoriteIconStyle(selected: selected, compact: compact),
           selected: selected,
           onPress:
-              () => unawaited(
+              () { if (readOnly) return; unawaited(
                 toggleDesktopEventFavorite(
                   context: context,
                   ref: ref,
                   event: event,
                 ),
-              ),
+              ); },
           child: _FavoriteIconWithPlayerCount(
             selected: selected,
             favoritePlayerCount: favoritePlayerCount,

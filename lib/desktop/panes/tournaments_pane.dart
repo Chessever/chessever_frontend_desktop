@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
+import 'package:chessever/widgets/event_card/event_image_provider.dart';
+import 'package:chessever/utils/date_time_provider.dart';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chessever/widgets/raster_country_flag.dart';
@@ -124,20 +127,31 @@ final _desktopForYouEventsProvider = Provider.autoDispose<ForYouState>((ref) {
 /// signed in (or the provider can fetch anonymously) the list shows the
 /// loading or empty state coming straight off the existing AsyncValue.
 class TournamentsPane extends HookConsumerWidget {
-  const TournamentsPane({super.key, required this.tabId});
+  const TournamentsPane({
+    super.key,
+    required this.tabId,
+    this.readOnlyPresentation = false,
+    this.presentationData,
+  });
 
   final String tabId;
+  final bool readOnlyPresentation;
+  final SignedOutEventsPresentationData? presentationData;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedTournamentId = useState<String?>(null);
     final loadingId = useState<String?>(null);
-    final selectedCategory = ref.watch(ge.selectedGroupCategoryProvider);
+    final selectedCategory = readOnlyPresentation
+        ? presentationData?.selectedCategory ?? ge.GroupEventCategory.forYou
+        : ref.watch(ge.selectedGroupCategoryProvider);
     final access = ref.watch(
       desktopEventDiscoveryAccessProvider(selectedCategory),
     );
-    final forYouFilterState = ref.watch(forYouAppliedFilterProvider);
-    final currentPastFilterState = ref.watch(currentPastAppliedFilterProvider);
+    final forYouFilterState = readOnlyPresentation
+        ? defaultFilterPopupState : ref.watch(forYouAppliedFilterProvider);
+    final currentPastFilterState = readOnlyPresentation
+        ? defaultFilterPopupState : ref.watch(currentPastAppliedFilterProvider);
     final selectedFilterState =
         selectedCategory == ge.GroupEventCategory.forYou
             ? forYouFilterState
@@ -146,20 +160,28 @@ class TournamentsPane extends HookConsumerWidget {
     // Pulls live events the For You feed has not paged in yet into the feed,
     // and asks for a fresh ranking when one of them is newly live. Ordering
     // itself belongs to the feed providers' queries.
-    if (access.isAllowed) ref.watch(tournamentLiveEventPrefetchProvider);
-    final globalSearchQuery = ref.watch(desktopGlobalSearchQueryProvider);
+    if (!readOnlyPresentation && access.isAllowed) {
+      ref.watch(tournamentLiveEventPrefetchProvider);
+    }
+    final globalSearchQuery = readOnlyPresentation
+        ? null : ref.watch(desktopGlobalSearchQueryProvider);
     // Stable per-tournament-id GlobalKeys so we can `Scrollable.ensureVisible`
     // the highlighted row when the user navigates with the arrow keys.
     final tileKeys = useRef(<String, GlobalKey>{});
     final listFocusNode = useFocusNode(debugLabel: 'tournaments-list');
-    final listScrollController = useDesktopScrollController();
+    final listScrollController = useDesktopScrollController(
+      keepScrollOffset: !readOnlyPresentation,
+    );
 
     // The "For You" tab is fed by a different provider in the mobile app —
     // forYouEventsProvider holds personalized recommendations rather than
     // the global Current/Past list. Mirror that wiring on desktop so the
     // category actually surfaces useful data.
     final asyncTournaments =
-        !access.isAllowed
+        readOnlyPresentation
+            ? presentationData?.selectedEvents ??
+                const AsyncValue<List<GroupEventCardModel>>.loading()
+            : !access.isAllowed
             ? const AsyncValue<List<GroupEventCardModel>>.data([])
             : selectedCategory == ge.GroupEventCategory.forYou
             ? ref.watch(forYouEventsProvider).toAsyncValue()
@@ -169,7 +191,8 @@ class TournamentsPane extends HookConsumerWidget {
     // the For You tab.
     useEffect(() {
       var disposed = false;
-      if (access.isAllowed &&
+      if (!readOnlyPresentation &&
+          access.isAllowed &&
           selectedCategory == ge.GroupEventCategory.forYou) {
         Future<void>(() async {
           if (disposed) return;
@@ -177,13 +200,14 @@ class TournamentsPane extends HookConsumerWidget {
         });
       }
       return () => disposed = true;
-    }, [selectedCategory, access.isAllowed]);
+    }, [selectedCategory, access.isAllowed, readOnlyPresentation]);
     useEffect(() {
       selectedTournamentId.value = null;
       return null;
     }, [selectedCategory, globalSearchQuery]);
 
     Future<void> openTournament(GroupEventCardModel tournament) async {
+      if (readOnlyPresentation) return;
       // Plain click navigates the current Tournaments tab into the event's
       // game-list scene. Cmd/Ctrl-click takes the browser-style new-tab path.
       await setActiveTournament(
@@ -198,6 +222,7 @@ class TournamentsPane extends HookConsumerWidget {
     final hasQuery = searchQuery.length >= 2;
 
     void openFilters() {
+      if (readOnlyPresentation) return;
       ref.read(filterPopupProvider.notifier).setState(selectedFilterState);
       showFDialog<void>(
         context: context,
@@ -234,7 +259,7 @@ class TournamentsPane extends HookConsumerWidget {
       );
     }
 
-    return Column(
+    final content = Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
@@ -247,6 +272,7 @@ class TournamentsPane extends HookConsumerWidget {
                     tabs: _categoryTabs,
                     selected: selectedCategory,
                     onChanged: (category) {
+                      if (readOnlyPresentation) return;
                       ref
                           .read(desktopGlobalSearchQueryProvider.notifier)
                           .state = null;
@@ -301,7 +327,10 @@ class TournamentsPane extends HookConsumerWidget {
                         )
                         : selectedCategory == ge.GroupEventCategory.forYou
                         ? _ForYouFeed(
+                          key: ValueKey(readOnlyPresentation),
                           tabId: tabId,
+                          readOnlyPresentation: readOnlyPresentation,
+                          presentationData: presentationData,
                           onOpenTournament: openTournament,
                         )
                         : asyncTournaments.when(
@@ -320,6 +349,8 @@ class TournamentsPane extends HookConsumerWidget {
                                     ]
                                     : tournaments;
                             return _TournamentEventGridKeyboardHost(
+                              key: ValueKey(readOnlyPresentation),
+                              enabled: !readOnlyPresentation,
                               focusNode: listFocusNode,
                               tournaments: displayTournaments,
                               selectedId: selectedTournamentId.value,
@@ -335,6 +366,7 @@ class TournamentsPane extends HookConsumerWidget {
                                 ),
                                 selectedId: selectedTournamentId.value,
                                 onSelect: (id) {
+                                  if (readOnlyPresentation) return;
                                   selectedTournamentId.value = id;
                                   listFocusNode.requestFocus();
                                 },
@@ -354,13 +386,40 @@ class TournamentsPane extends HookConsumerWidget {
                           error:
                               (e, _) => _ErrorState(
                                 message: e.toString(),
-                                onRetry:
-                                    () => ref.refresh(groupEventScreenProvider),
+                                onRetry: () {
+                                  if (!readOnlyPresentation) {
+                                    ref.invalidate(groupEventScreenProvider);
+                                  }
+                                },
                               ),
                         ),
           ),
         ),
       ],
+    );
+    if (!readOnlyPresentation) return content;
+    return SignedOutEventsPresentationScope(
+      data: presentationData,
+      child: ProviderScope(
+        overrides: [
+          // AtomicCountdownText uses the captured clock, not its periodic
+          // app-wide provider. No live-game clock timer behind sign-in.
+          dateTimeProvider.overrideWith(
+            (ref) => presentationData == null
+                ? const Stream<DateTime>.empty()
+                : Stream.value(presentationData!.capturedAt),
+          ),
+        ],
+        child: MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          child: TickerMode(
+            enabled: false,
+            child: ExcludeSemantics(
+              child: ExcludeFocus(child: AbsorbPointer(child: content)),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1068,10 +1127,10 @@ class _DesktopEventVisual extends ConsumerWidget {
         color: kBlack3Color,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final fallbackCountry = _countryCodeFromLocation(
-              ref,
-              event.location,
-            );
+            final presentation = SignedOutEventsPresentationScope.maybeOf(context);
+            final fallbackCountry = presentation != null
+                ? presentation.data?.artwork[event.id]?.fallbackCountryCode
+                : _countryCodeFromLocation(ref, event.location);
             if (event.eventSource == EventSource.communityEvent) {
               return _EventFallbackVisual(
                 event: event,
@@ -1092,7 +1151,9 @@ class _DesktopEventVisual extends ConsumerWidget {
             // axis keeps the source aspect intact through decode.
             final cacheWidth =
                 (logicalWidth * dpr).round().clamp(96, 900).toInt();
-            final image = ref.watch(eventArtworkProvider(event.id));
+            final image = presentation != null
+                ? AsyncValue<EventImageData>.data(presentation.data?.artwork[event.id] ?? const EventImageData())
+                : ref.watch(eventArtworkProvider(event.id));
 
             return image.when(
               data: (data) {
@@ -1102,8 +1163,12 @@ class _DesktopEventVisual extends ConsumerWidget {
                     imageUrl: data.imageUrl!,
                     fit: fit,
                     memCacheWidth: cacheWidth,
-                    fadeInDuration: const Duration(milliseconds: 180),
-                    fadeOutDuration: const Duration(milliseconds: 120),
+                    // Frozen presentation must paint the decoded image fully;
+                    // a muted fade ticker can strand it at zero opacity.
+                    fadeInDuration: presentation != null
+                        ? Duration.zero : const Duration(milliseconds: 180),
+                    fadeOutDuration: presentation != null
+                        ? Duration.zero : const Duration(milliseconds: 120),
                     placeholder: (_, __) => const _EventImageSkeleton(),
                     errorWidget:
                         (_, __, ___) => _EventFallbackVisual(
@@ -1715,7 +1780,9 @@ class _TournamentBrowser extends StatelessWidget {
 /// holds primary focus so selection still moves instead of bare scrolling.
 class _TournamentEventGridKeyboardHost extends StatefulWidget {
   const _TournamentEventGridKeyboardHost({
+    super.key,
     required this.focusNode,
+    this.enabled = true,
     required this.tournaments,
     required this.selectedId,
     required this.onSelectedIdChanged,
@@ -1725,6 +1792,7 @@ class _TournamentEventGridKeyboardHost extends StatefulWidget {
   });
 
   final FocusNode focusNode;
+  final bool enabled;
   final List<GroupEventCardModel> tournaments;
   final String? selectedId;
   final ValueChanged<String> onSelectedIdChanged;
@@ -1744,6 +1812,7 @@ class _TournamentEventGridKeyboardHostState
   @override
   void initState() {
     super.initState();
+    if (!widget.enabled) return;
     HardwareKeyboard.instance.addHandler(_handleGlobalKeyboard);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -1756,6 +1825,7 @@ class _TournamentEventGridKeyboardHostState
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (!widget.enabled) return;
     // PersistentIndexedStack wraps inactive tabs in TickerMode+ExcludeFocus.
     // Reclaim focus when this pane becomes the live tab again.
     final notifier = TickerMode.getValuesNotifier(context);
@@ -1777,7 +1847,7 @@ class _TournamentEventGridKeyboardHostState
   @override
   void dispose() {
     _tickerMode?.removeListener(_handleTickerModeChanged);
-    HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboard);
+    if (widget.enabled) HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboard);
     super.dispose();
   }
 
@@ -1919,6 +1989,7 @@ class _TournamentEventGridKeyboardHostState
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.enabled) return widget.child;
     return Focus(
       focusNode: widget.focusNode,
       autofocus: true,
@@ -2499,9 +2570,17 @@ final _forYouNavigationBookmarkProvider =
 ///   - `forYouEventsProvider`         → paginated events
 ///   - `forYouEventSnapshotProvider`  → per-event games (lazily watched per row)
 class _ForYouFeed extends ConsumerStatefulWidget {
-  const _ForYouFeed({required this.tabId, required this.onOpenTournament});
+  const _ForYouFeed({
+    super.key,
+    required this.tabId,
+    required this.onOpenTournament,
+    this.readOnlyPresentation = false,
+    this.presentationData,
+  });
 
   final String tabId;
+  final bool readOnlyPresentation;
+  final SignedOutEventsPresentationData? presentationData;
   final void Function(GroupEventCardModel) onOpenTournament;
 
   @override
@@ -2545,6 +2624,10 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   @override
   void initState() {
     super.initState();
+    if (widget.readOnlyPresentation) {
+      _scroll = DesktopScrollController(keepScrollOffset: false);
+      return;
+    }
     _navigationBookmarkController = ref.read(
       _forYouNavigationBookmarkProvider(widget.tabId).notifier,
     );
@@ -2572,24 +2655,26 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   void dispose() {
     // Category switches unmount this feed during tree finalization. Publish
     // its saved position and resume live cards after that widget lifecycle.
-    scheduleMicrotask(() {
-      if (_navigationBookmarkController.mounted) {
-        _persistNavigationBookmark();
-      }
-      if (_liveCardsPauseReasonsController.mounted) {
-        _setLiveCardsPausedForScroll(false);
-      }
-    });
+    if (!widget.readOnlyPresentation) {
+      scheduleMicrotask(() {
+        if (_navigationBookmarkController.mounted) {
+          _persistNavigationBookmark();
+        }
+        if (_liveCardsPauseReasonsController.mounted) {
+          _setLiveCardsPausedForScroll(false);
+        }
+      });
+    }
     _scrollIdleTimer?.cancel();
     _scroll.removeListener(_onScroll);
-    HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboardScroll);
+    if (!widget.readOnlyPresentation) HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboardScroll);
     _focusNode.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
   void _onScroll() {
-    if (!mounted || !_scroll.hasClients) return;
+    if (widget.readOnlyPresentation || !mounted || !_scroll.hasClients) return;
     _lastScrollOffset = _scroll.position.pixels;
     _markScrolling();
     final max = _scroll.position.maxScrollExtent;
@@ -2600,6 +2685,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   void _persistNavigationBookmark() {
+    if (widget.readOnlyPresentation) return;
     _navigationBookmarkController.state = _ForYouNavigationBookmark(
       selection: _selection,
       scrollOffset: _lastScrollOffset,
@@ -2825,7 +2911,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   bool _handleGlobalKeyboardScroll(KeyEvent event) {
-    if (!mounted ||
+    if (widget.readOnlyPresentation || !mounted ||
         !_focusNode.canRequestFocus ||
         !_keyboardScrollingActive ||
         _hasNavigationModifier()) {
@@ -3078,11 +3164,13 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   void _openEvent(GroupEventCardModel event) {
+    if (widget.readOnlyPresentation) return;
     _persistNavigationBookmark();
     widget.onOpenTournament(event);
   }
 
   void _selectGame(GroupEventCardModel event, String gameId) {
+    if (widget.readOnlyPresentation) return;
     final gameIds = _gameIdsFor(event);
     final gameIndex = gameIds.indexOf(gameId);
     if (gameIndex < 0) return;
@@ -3174,6 +3262,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   void _navigateToTab(TabKind kind) {
+    if (widget.readOnlyPresentation) return;
     ref.read(desktopTabsProvider.notifier).navigateActive(kind);
   }
 
@@ -3184,12 +3273,18 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     // the build phase. Without this, calling `_syncSelectionWithEvents`
     // inside `build()` would assert if any downstream codepath ever
     // triggered `setState`.
-    ref.listen<ForYouState>(_desktopForYouEventsProvider, (prev, next) {
-      _syncSelectionWithEvents(next.events);
-    });
-    final state = ref.watch(_desktopForYouEventsProvider);
-    final viewMode = ref.watch(gamesListViewModeProvider);
-    final streamingEnabled = ref.watch(
+    if (!widget.readOnlyPresentation) {
+      ref.listen<ForYouState>(_desktopForYouEventsProvider, (prev, next) {
+        _syncSelectionWithEvents(next.events);
+      });
+    }
+    final state = widget.readOnlyPresentation
+        ? widget.presentationData?.forYouState ?? const ForYouState(isLoading: true, hasMore: false)
+        : ref.watch(_desktopForYouEventsProvider);
+    final viewMode = widget.readOnlyPresentation
+        ? widget.presentationData?.viewMode ?? GamesListViewMode.chessBoardGrid
+        : ref.watch(gamesListViewModeProvider);
+    final streamingEnabled = !widget.readOnlyPresentation && ref.watch(
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),
     );
     _keyboardScrollingActive = streamingEnabled;
@@ -3201,7 +3296,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     if (state.error != null && state.events.isEmpty) {
       return _ErrorState(
         message: state.error!,
-        onRetry: () => ref.read(forYouEventsProvider.notifier).refresh(),
+        onRetry: () { if (!widget.readOnlyPresentation) ref.read(forYouEventsProvider.notifier).refresh(); },
       );
     }
 
@@ -3210,7 +3305,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     // state changes, so we still need to seed the selection on mount.
     // _syncSelectionWithEvents is idempotent — calling it again when the
     // selection is already valid is a no-op.
-    if (_selection == null && events.isNotEmpty) {
+    if (!widget.readOnlyPresentation && _selection == null && events.isNotEmpty) {
       _syncSelectionWithEvents(events);
     }
     final showTrailingSpinner = state.hasMore && !state.isLoading;
@@ -3232,9 +3327,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
 
     return Focus(
       focusNode: _focusNode,
-      autofocus: true,
-      canRequestFocus: true,
-      onKeyEvent: (_, event) => _handleKeyboard(event, events),
+      autofocus: !widget.readOnlyPresentation,
+      canRequestFocus: !widget.readOnlyPresentation,
+      onKeyEvent: widget.readOnlyPresentation ? null : (_, event) => _handleKeyboard(event, events),
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTapDown: (_) {
@@ -3253,7 +3348,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
             onPointerCancel: _stopMiddleDrag,
             child: RefreshIndicator(
               onRefresh:
-                  () => ref.read(forYouEventsProvider.notifier).refresh(),
+                  () async { if (!widget.readOnlyPresentation) await ref.read(forYouEventsProvider.notifier).refresh(); },
               color: kPrimaryColor,
               backgroundColor: kBlack2Color,
               child: ListView.builder(
@@ -3280,18 +3375,21 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                       children: [
                         DesktopCollectionCards(
                           onFavoritesTap: () {
+                            if (widget.readOnlyPresentation) return;
                             ref
                                 .read(selectedFavoritesModeProvider.notifier)
                                 .update((_) => FavoritesScreenMode.games);
                             _navigateToTab(TabKind.favorites);
                           },
                           onCountrymenTap: () {
+                            if (widget.readOnlyPresentation) return;
                             ref
                                 .read(selectedCountrymenModeProvider.notifier)
                                 .update((_) => CountrymenScreenMode.games);
                             _navigateToTab(TabKind.countrymen);
                           },
                           onSmartCollectionTap: (type) {
+                            if (widget.readOnlyPresentation) return;
                             final tabId = ref
                                 .read(desktopTabsProvider.notifier)
                                 .open(
@@ -3305,12 +3403,12 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                                 )
                                 .update((types) => {...types, tabId: type});
                           },
-                          onLikesTap:
-                              () => ref
-                                  .read(desktopTabsProvider.notifier)
-                                  .open(TabKind.likes),
+                          onLikesTap: () {
+                            if (widget.readOnlyPresentation) return;
+                            ref.read(desktopTabsProvider.notifier).open(TabKind.likes);
+                          },
                         ),
-                        const DesktopSmartEventShelf(),
+                        if (!widget.readOnlyPresentation) const DesktopSmartEventShelf(),
                       ],
                     );
                   }
@@ -3360,6 +3458,8 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       child: _ForYouEventSection(
         key: _eventKey(event.id),
         event: event,
+        readOnlyPresentation: widget.readOnlyPresentation,
+        presentationData: widget.presentationData,
         isFirst: isFirst,
         selection: _selection?.eventId == event.id ? _selection : null,
         eventItemKey: _selectionItemKey(event.id),
@@ -3369,9 +3469,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
         onOpen: () => _openEvent(event),
         onSelectGame: (gameId) => _selectGame(event, gameId),
         onVisibilityChanged:
-            (visible) => _setEventVisibility(event.id, visible),
+            (visible) { if (!widget.readOnlyPresentation) _setEventVisibility(event.id, visible); },
         onVisibleGameIdsChanged:
-            (gameIds) => _setVisibleGameIds(event.id, gameIds),
+            (gameIds) { if (!widget.readOnlyPresentation) _setVisibleGameIds(event.id, gameIds); },
       ),
     );
   }
@@ -3388,6 +3488,8 @@ class _ForYouEventSection extends ConsumerWidget {
   const _ForYouEventSection({
     super.key,
     required this.event,
+    this.readOnlyPresentation = false,
+    this.presentationData,
     required this.isFirst,
     required this.selection,
     required this.eventItemKey,
@@ -3404,6 +3506,8 @@ class _ForYouEventSection extends ConsumerWidget {
   static const double eventToGamesGap = 18;
 
   final GroupEventCardModel event;
+  final bool readOnlyPresentation;
+  final SignedOutEventsPresentationData? presentationData;
   final bool isFirst;
   final _ForYouCardSelection? selection;
   final Key eventItemKey;
@@ -3417,10 +3521,12 @@ class _ForYouEventSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cachedSnapshot = ref.watch(
+    final cachedSnapshot = readOnlyPresentation ? null : ref.watch(
       forYouTopGamesSnapshotCacheProvider.select((cache) => cache[event.id]),
     );
-    final watchedSnapshotAsync = ref.watch(
+    final watchedSnapshotAsync = readOnlyPresentation
+        ? presentationData?.snapshotFor(event.id) ?? const AsyncValue<ForYouEventGamesSnapshot>.loading()
+        : ref.watch(
       streamingEnabled
           ? forYouEventGamesWithAutoRefreshProvider(event.id)
           : forYouEventSnapshotProvider(event.id),
@@ -3441,15 +3547,19 @@ class _ForYouEventSection extends ConsumerWidget {
                       ? AsyncValue.data(cachedSnapshot)
                       : AsyncValue.error(error, stack),
         );
-    final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
+    final layout = (readOnlyPresentation
+        ? presentationData?.viewMode ?? GamesListViewMode.chessBoardGrid
+        : ref.watch(gamesListViewModeProvider)).desktopLayout;
 
     final shouldHide = snapshotAsync.maybeWhen(
       data: (s) => !s.hasGames,
       orElse: () => false,
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      onVisibilityChanged(!shouldHide);
-    });
+    if (!readOnlyPresentation) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onVisibilityChanged(!shouldHide);
+      });
+    }
 
     return AnimatedSize(
       duration: const Duration(milliseconds: 280),
@@ -3468,7 +3578,7 @@ class _ForYouEventSection extends ConsumerWidget {
     AsyncValue<ForYouEventGamesSnapshot> snapshotAsync,
     DesktopCardLayout layout,
   ) {
-    final shouldAnimate = !animatedEventIds.contains(event.id);
+    final shouldAnimate = !readOnlyPresentation && !animatedEventIds.contains(event.id);
     if (shouldAnimate) {
       animatedEventIds.add(event.id);
     }
@@ -3805,6 +3915,7 @@ class _GamesStrip extends ConsumerWidget {
               (context, i) => _selectionTarget(
                 games[i].gameId,
                 LiveDesktopGameCard(
+                  readOnlyPresentation: SignedOutEventsPresentationScope.maybeOf(context) != null,
                   game: games[i],
                   eventGames: gameContext.boardGames,
                   tournamentTitle: tournamentTitle,
@@ -4225,6 +4336,8 @@ class _ForYouGroupedPanelFrame extends StatelessWidget {
                 child: KeyedSubtree(
                   key: gameItemKeyFor(games[i].gameId),
                   child: LiveDesktopGameCard(
+                    readOnlyPresentation:
+                        SignedOutEventsPresentationScope.maybeOf(context) != null,
                     game: games[i],
                     eventGames: eventGames,
                     tournamentTitle: tournamentTitle,
