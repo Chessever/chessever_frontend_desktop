@@ -2566,6 +2566,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     // the same build, in which case we leave the just-replayed tree
     // alone.
     final lastShapeTabId = useRef<String?>(null);
+    final lastLiveSeed = useRef<(String, Object)?>(null);
     useEffect(() {
       final currentTabId = activeTabId;
       final isTabSwitched = currentTabId != lastShapeTabId.value;
@@ -2634,7 +2635,19 @@ class _BoardPaneContent extends HookConsumerWidget {
               .read(liveGameUpdateArrivalStreamProvider(activeGameId))
               .valueOrNull;
       final liveUpdate = liveArrival?.value;
-      if (liveUpdate != null) {
+      // Seed each arrival once. Replaying it on every build re-parsed the PGN
+      // whenever applyPgn's no-op guard missed, built a new game, rebuilt the
+      // pane and seeded again: a full notation rebuild on every frame (about
+      // 8 ms a frame on web) for as long as the game stayed open. New
+      // arrivals still reach handleLiveUpdate through the listener above.
+      final previousSeed = lastLiveSeed.value;
+      final alreadySeeded =
+          previousSeed != null &&
+          previousSeed.$1 == activeGameId &&
+          identical(previousSeed.$2, liveArrival) &&
+          lastAppliedPgn.value != null;
+      if (liveUpdate != null && !alreadySeeded) {
+        lastLiveSeed.value = (activeGameId, liveArrival!);
         Future.microtask(() {
           if (!context.mounted || !focusedGameIsStillActive(activeGameId)) {
             return;
