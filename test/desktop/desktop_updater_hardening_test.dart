@@ -40,7 +40,7 @@ void main() {
           retryAttempt: 2,
           maxRetryAttempts: 5,
           nextRetryAt: DateTime(2026, 10, 2, 12),
-          manualDownloadUrl: 'https://chessever.com/app#download',
+          manualDownloadUrl: 'https://chessever.com/mobile',
         ),
       );
 
@@ -83,7 +83,7 @@ void main() {
           retryAttempt: 1,
           maxRetryAttempts: 5,
           nextRetryAt: DateTime(2026, 10, 2, 12),
-          manualDownloadUrl: 'https://chessever.com/app#download',
+          manualDownloadUrl: 'https://chessever.com/mobile',
         ),
       );
 

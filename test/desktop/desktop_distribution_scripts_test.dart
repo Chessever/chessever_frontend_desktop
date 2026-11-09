@@ -632,7 +632,7 @@ void main() {
       expect(dartService, contains('prepareForExternalTermination'));
       expect(dartService, contains('DesktopUpdateRecoveryMarkerStore'));
       expect(dartService, contains('manualDownloadRequired'));
-      expect(dartService, contains('https://chessever.com/app#download'));
+      expect(dartService, contains('https://chessever.com/mobile'));
       expect(dartService, contains('LaunchMode.externalApplication'));
       expect(dartService, isNot(contains('disposeContainer: true')));
       expect(dartService, isNot(contains('auto_updater')));

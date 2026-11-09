@@ -4,10 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:chessever/desktop/widgets/desktop_sidebar_download_button.dart';
 
 void main() {
-  test('points at the chessever.com download section', () {
+  test('points at the chessever.com/mobile download page', () {
     expect(
       kDesktopDownloadPageUri.toString(),
-      'https://chessever.com/app#download',
+      'https://chessever.com/mobile',
     );
   });
 

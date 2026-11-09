@@ -14,11 +14,10 @@ import 'package:chessever/desktop/widgets/pressable_scale.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-/// The chessever.com/app section that lists every desktop download (macOS
-/// Apple Silicon and Intel, Windows, Linux).
-final Uri kDesktopDownloadPageUri = Uri.parse(
-  'https://chessever.com/app#download',
-);
+/// The chessever.com/mobile page. Its hero already holds every desktop
+/// download (macOS Apple Silicon and Intel, Windows, Linux), so no
+/// fragment is needed to scroll anywhere.
+final Uri kDesktopDownloadPageUri = Uri.parse('https://chessever.com/mobile');
 
 /// Whether the sidebar offers the desktop download. Only the browser build
 /// at app.chessever.com shows it: the desktop builds already are the app.
