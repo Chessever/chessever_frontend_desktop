@@ -32,7 +32,7 @@ class DesktopUpdaterService {
 
   static const String _archiveUrl =
       'https://chessever.com/updates/desktop/app-archive.json';
-  static const String _downloadPageUrl = 'https://chessever.com/#download';
+  static const String _downloadPageUrl = 'https://chessever.com/app#download';
 
   /// Prefer the arch-specific DMG when this is a dual-package macOS build so
   /// "download latest" never hands Silicon users an Intel engine package.
