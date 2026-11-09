@@ -501,7 +501,12 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                         state: reading,
                         sanLines: _display.snapshot?.sanLines ?? const [],
                         interactive: linesCurrent,
-                        playOwner: widget.pvPlayOwner ?? widget.game ?? this,
+                        // Scope presentation to the target position, even while
+                        // the previous formatted reading is retained briefly.
+                        playOwner: (
+                          widget.pvPlayOwner ?? widget.game ?? this,
+                          widget.fen,
+                        ),
                         onPlayUci:
                             linesCurrent && widget.onPlayUci != null
                                 ? playCurrent
@@ -572,10 +577,12 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
       child: Row(
         children: [
-          if (engineActive) ...[
-            _EngineActivityIndicator(fen: widget.fen),
-            const SizedBox(width: 8),
+          if (widget.headerTrailing != null) ...[
+            SizedBox.square(dimension: 28, child: widget.headerTrailing!),
+            const SizedBox(width: 4),
           ],
+          const EngineSettingsPopover(dimension: 28),
+          const SizedBox(width: 8),
           Expanded(
             // A clipped "St…" reads as broken; in a narrow rail the score and
             // controls say enough, so the name steps aside instead.
@@ -610,33 +617,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             ),
             const SizedBox(width: 4),
           ],
-          const EngineSettingsPopover(dimension: 28),
-          if (widget.headerTrailing != null) ...[
-            const SizedBox(width: 4),
-            SizedBox.square(dimension: 28, child: widget.headerTrailing!),
-          ],
         ],
-      ),
-    );
-  }
-}
-
-class _EngineActivityIndicator extends ConsumerWidget {
-  const _EngineActivityIndicator({required this.fen});
-
-  final String fen;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isEvaluating = ref.watch(
-      boardEvalProvider(fen).select((state) => state.isEvaluating),
-    );
-    return Container(
-      width: 6,
-      height: 6,
-      decoration: BoxDecoration(
-        color: isEvaluating ? kGreenColor : kLightGreyColor,
-        shape: BoxShape.circle,
       ),
     );
   }
@@ -1766,6 +1747,12 @@ class _PvLineState extends State<_PvLine> {
   @override
   void didUpdateWidget(covariant _PvLine oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // Expansion belongs only to this position/game, not the next target.
+    // A new PV at the same target must not undo the user's expansion.
+    if (oldWidget.fen != widget.fen ||
+        oldWidget.playOwner != widget.playOwner) {
+      _expanded = false;
+    }
     if (oldWidget.fen != widget.fen ||
         oldWidget.playOwner != widget.playOwner ||
         oldWidget.interactive != widget.interactive ||

@@ -4,6 +4,34 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
+import '../services/board_analysis_recovery.dart';
+import '../services/engine/game_analysis_report.dart';
+import 'board_annotations.dart';
+import 'desktop_tabs.dart';
+
+/// The checkpoint's lifetime is the owning shell tab, not a mounted pane or
+/// global active game. Returning to a game in that tab may recover it; a closed
+/// tab, another tab, detached window or browser reload cannot inherit it.
+typedef BoardAnalysisRecoveryOwner = ({String tabId, Object game});
+
+final boardAnalysisRecoveryProvider = StateProvider<
+  Map<BoardAnalysisRecoveryOwner, BoardAnalysisRecovery>
+>((ref) {
+  ref.listen(desktopTabsProvider.select((tabs) => tabs.tabs), (_, tabs) {
+    final ids = tabs.map((tab) => tab.id).toSet();
+    if (ref.controller.state.keys.every(
+      (owner) => owner.tabId == 'board-default' || ids.contains(owner.tabId),
+    )) {
+      return;
+    }
+    ref.controller.state = {
+      for (final entry in ref.controller.state.entries)
+        if (entry.key.tabId == 'board-default' || ids.contains(entry.key.tabId))
+          entry.key: entry.value,
+    };
+  });
+  return {};
+});
 
 @immutable
 class BoardUndoSnapshot {
@@ -13,6 +41,11 @@ class BoardUndoSnapshot {
     required this.dirtySinceLoad,
     this.shapes,
     this.userNags,
+    this.annotations,
+    this.recovery,
+    this.restoreRecovery = false,
+    this.report,
+    this.restoreReport = false,
   });
 
   final ChessGame game;
@@ -26,6 +59,13 @@ class BoardUndoSnapshot {
   /// User-applied NAG codes per half-move at snapshot time. Same
   /// "null = don't restore" rule as [shapes].
   final Map<int, List<int>>? userNags;
+
+  /// Atomic Clear/Restore and graphic undo include every position's ink.
+  final BoardAnnotations? annotations;
+  final BoardAnalysisRecovery? recovery;
+  final bool restoreRecovery;
+  final GameAnalysisReport? report;
+  final bool restoreReport;
 }
 
 @immutable

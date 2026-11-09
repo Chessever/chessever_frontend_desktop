@@ -38,6 +38,7 @@ Future<void> showBoardContextMenu(
   required bool boardFocusMode,
   VoidCallback? onAttachVideo,
   VoidCallback? onClearAnalysis,
+  bool restoreAnalysis = false,
   VoidCallback? onOpenPictureInPicture,
   bool showPictureInPictureAction = false,
   bool pictureInPictureSelected = false,
@@ -124,12 +125,20 @@ Future<void> showBoardContextMenu(
       ),
       if (onClearAnalysis != null) ...[
         const DesktopContextMenuDivider(),
-        DesktopContextMenuItem(
-          value: _BoardContextAction.clearAnalysis,
-          icon: Icons.cleaning_services_outlined,
-          label: 'Clear analysis',
-          shortcut: hintFor(BoardActionKey.clearAnalysis),
-        ),
+        if (restoreAnalysis)
+          DesktopContextMenuItem(
+            value: _BoardContextAction.clearAnalysis,
+            icon: Icons.restore_rounded,
+            label: 'Restore analysis',
+            shortcut: hintFor(BoardActionKey.clearAnalysis),
+          )
+        else
+          DesktopContextMenuItem(
+            value: _BoardContextAction.clearAnalysis,
+            icon: Icons.cleaning_services_outlined,
+            label: 'Clear analysis',
+            shortcut: hintFor(BoardActionKey.clearAnalysis),
+          ),
       ],
       const DesktopContextMenuDivider(),
       DesktopContextMenuItem(
