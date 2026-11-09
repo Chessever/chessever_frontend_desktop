@@ -11,6 +11,7 @@ import 'package:chessever/desktop/auth/desktop_guest_interaction_gate.dart';
 import 'package:chessever/desktop/auth/desktop_welcome_screen.dart';
 import 'package:chessever/desktop/auth/web_sign_in_preview_gate.dart';
 import 'package:chessever/web/auth_return_location.dart';
+import 'package:chessever/web/web_url_sync_lifecycle.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
@@ -149,6 +150,30 @@ class DesktopAuthGate extends HookConsumerWidget {
         unawaited(sub.cancel());
       };
     }, const []);
+
+    // Opening an incoming game URL hydrates event/game providers. Admit that
+    // work only after real browser authentication; stop history subscriptions
+    // again on sign-out. OAuth return hints are restored above, before start.
+    final browserAdmitted =
+        kIsWeb &&
+        !restoring.value &&
+        session.value != null &&
+        !session.value!.user.isAnonymous;
+    useEffect(() {
+      if (!kIsWeb) return null;
+      if (!browserAdmitted) {
+        stopWebUrlSync();
+        return null;
+      }
+      var disposed = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!disposed && context.mounted) unawaited(startWebUrlSync(container));
+      });
+      return () {
+        disposed = true;
+        stopWebUrlSync();
+      };
+    }, [browserAdmitted, session.value?.user.id, container]);
 
     switch (resolveDesktopAuthGateView(
       restoring: restoring.value,

@@ -454,82 +454,88 @@ class _PrivateLayout extends StatelessWidget {
   const _PrivateLayout({required this.title, required this.kind});
   final String title, kind;
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(20),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (MediaQuery.sizeOf(context).width > 700)
-          Container(
-            width: 190,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: kBlack2Color,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: kDividerColor),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder:
+        (context, constraints) => Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (constraints.maxWidth > 700)
+                Container(
+                  width: 190,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: kBlack2Color,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: kDividerColor),
                   ),
-                ),
-                const SizedBox(height: 24),
-                const Icon(Icons.folder_outlined, color: kWhiteColor70),
-                const SizedBox(height: 12),
-                const Divider(color: kDividerColor),
-              ],
-            ),
-          ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: kBlack2Color,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: kDividerColor),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.search_rounded,
-                      color: kWhiteColor70,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Search $title',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
                         style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 12,
+                          color: kWhiteColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 24),
+                      const Icon(Icons.folder_outlined, color: kWhiteColor70),
+                      const SizedBox(height: 12),
+                      const Divider(color: kDividerColor),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 18),
-                const Divider(color: kDividerColor),
-                const SizedBox(height: 24),
-                Text(
-                  'Your ${title.toLowerCase()} will appear after sign-in.',
-                  style: const TextStyle(color: kWhiteColor70, fontSize: 13),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: kBlack2Color,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: kDividerColor),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.search_rounded,
+                            color: kWhiteColor70,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Search $title',
+                              style: const TextStyle(
+                                color: kWhiteColor70,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      const Divider(color: kDividerColor),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Your ${title.toLowerCase()} will appear after sign-in.',
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
-      ],
-    ),
   );
 }
 

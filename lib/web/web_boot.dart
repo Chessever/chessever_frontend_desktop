@@ -24,7 +24,7 @@ import 'package:chessever/utils/chessground_image_cache.dart';
 import 'package:chessever/web/web_file_system.dart';
 import 'package:chessever/web/web_frame_stats.dart';
 import 'package:chessever/web/web_path_provider.dart';
-import 'package:chessever/web/web_url_sync.dart';
+
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:web/web.dart' as web;
 
@@ -131,7 +131,7 @@ Future<void> _boot() async {
   // Board sounds are a few small files; fetch them once the shell has drawn.
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(AudioPlayerService.instance.initializeAndLoadAllAssets());
-    // Open the page the address names, then keep the address in step.
-    unawaited(WebUrlSync.start(container));
+    // URL routing starts at the authenticated gate, not while a visitor is
+    // viewing the inert destination backdrop.
   });
 }
