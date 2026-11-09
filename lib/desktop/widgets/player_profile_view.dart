@@ -88,6 +88,7 @@ import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
+import 'motion_translate.dart';
 
 @visibleForTesting
 List<PlayerProfileSection> playerProfileSectionsFor({
@@ -2104,7 +2105,7 @@ class _TabUnderlineItemState extends State<_TabUnderlineItem> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, dy, child) =>
-                    Transform.translate(offset: Offset(0, dy), child: child),
+                    MotionTranslate(offset: Offset(0, dy), child: child),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(

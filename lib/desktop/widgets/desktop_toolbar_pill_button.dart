@@ -6,6 +6,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:motor/motor.dart';
+import 'motion_translate.dart';
 
 /// Visual weight of a [DesktopToolbarPillButton].
 ///
@@ -135,7 +136,7 @@ class _DesktopToolbarPillButtonState extends State<DesktopToolbarPillButton>
         motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
         builder:
             (context, x, child) =>
-                Transform.translate(offset: Offset(x, 0), child: child),
+                MotionTranslate(offset: Offset(x, 0), child: child),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

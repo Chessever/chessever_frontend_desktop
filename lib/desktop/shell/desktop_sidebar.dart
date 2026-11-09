@@ -25,6 +25,7 @@ import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/app_version_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/host_platform.dart';
+import '../widgets/motion_translate.dart';
 
 /// Vertical rhythm of the sidebar rail.
 ///
@@ -278,7 +279,8 @@ class _SidebarBodyState extends ConsumerState<_SidebarBody> {
   Widget build(BuildContext context) {
     final botvinnikVisible =
         ChatApi.buildEnabled &&
-        (widget.readOnlyPreview || (ref.watch(botvinnikEnabledProvider).valueOrNull ?? true));
+        (widget.readOnlyPreview ||
+            (ref.watch(botvinnikEnabledProvider).valueOrNull ?? true));
     final entries = _navEntriesInOrder(botvinnikVisible: botvinnikVisible);
     return FutureBuilder<EntitlementSnapshot?>(
       future: _entitlementFuture,
@@ -775,7 +777,7 @@ class _SidebarItemState extends State<_SidebarItem>
                   value: nudgeX,
                   motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
                   builder:
-                      (context, x, child) => Transform.translate(
+                      (context, x, child) => MotionTranslate(
                         offset: Offset(widget.expanded ? x : x * 0.35, 0),
                         child: child,
                       ),

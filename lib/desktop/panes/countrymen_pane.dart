@@ -55,6 +55,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
+import '../widgets/motion_translate.dart';
 
 /// Desktop Countrymen pane.
 ///
@@ -1437,7 +1438,7 @@ class _FlagBadgeState extends State<_FlagBadge> {
         motion: DesktopMotion.hover,
         builder:
             (context, y, child) =>
-                Transform.translate(offset: Offset(0, y), child: child),
+                MotionTranslate(offset: Offset(0, y), child: child),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
           curve: Curves.easeOut,

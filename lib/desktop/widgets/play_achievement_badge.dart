@@ -28,6 +28,7 @@ class PlayAchievementBadgeArt extends StatelessWidget {
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
       scale: unlocked ? 1 : 0.94,
+      filterQuality: FilterQuality.medium,
       child: SizedBox.square(
         dimension: size,
         child: Stack(

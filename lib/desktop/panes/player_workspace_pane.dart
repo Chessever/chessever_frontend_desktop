@@ -65,6 +65,7 @@ import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 import 'package:chessever/utils/host_platform.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
+import '../widgets/motion_translate.dart';
 
 const _startingFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -420,9 +421,7 @@ class PlayerWorkspacePane extends HookConsumerWidget {
           Expanded(
             child:
                 isLoading || (selected == null && pinnedPlayerId != null)
-                    ? const Center(
-                      child: DesktopSpinner(color: kPrimaryColor),
-                    )
+                    ? const Center(child: DesktopSpinner(color: kPrimaryColor))
                     : selected == null
                     ? _PlayerLibraryHome(
                       players: players,
@@ -2772,10 +2771,7 @@ class _EmbeddedLocalGames extends ConsumerWidget {
             child: SizedBox(
               width: 22,
               height: 22,
-              child: DesktopSpinner(
-                strokeWidth: 2,
-                color: kPrimaryColor,
-              ),
+              child: DesktopSpinner(strokeWidth: 2, color: kPrimaryColor),
             ),
           ),
       error:
@@ -6015,10 +6011,7 @@ class _StagedUsernameRow extends StatelessWidget {
       builder: (context, t, child) {
         return Opacity(
           opacity: t.clamp(0.0, 1.0),
-          child: Transform.translate(
-            offset: Offset(0, (1 - t) * 8),
-            child: child,
-          ),
+          child: MotionTranslate(offset: Offset(0, (1 - t) * 8), child: child),
         );
       },
       child: row,
@@ -6094,10 +6087,7 @@ class _StageStatusDot extends StatelessWidget {
         return const SizedBox(
           width: 16,
           height: 16,
-          child: DesktopSpinner(
-            strokeWidth: 2,
-            color: kPrimaryColor,
-          ),
+          child: DesktopSpinner(strokeWidth: 2, color: kPrimaryColor),
         );
       case _UsernameStageStatus.ok:
         return const Icon(
@@ -6630,9 +6620,7 @@ class _AddPlayerDialogState extends ConsumerState<_AddPlayerDialog> {
                             if (snapshot.connectionState !=
                                 ConnectionState.done) {
                               return const Center(
-                                child: DesktopSpinner(
-                                  color: kPrimaryColor,
-                                ),
+                                child: DesktopSpinner(color: kPrimaryColor),
                               );
                             }
                             if (snapshot.error

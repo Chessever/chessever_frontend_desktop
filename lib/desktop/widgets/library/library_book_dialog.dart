@@ -59,6 +59,7 @@ Future<void> _showLibraryBookDialog(
     if (MediaQuery.disableAnimationsOf(context)) return fade;
     return ScaleTransition(
       scale: Tween<double>(begin: 0.97, end: 1).animate(curved),
+      filterQuality: FilterQuality.medium,
       child: fade,
     );
   },
@@ -3060,6 +3061,7 @@ class _PhotoButtonState extends State<_PhotoButton> {
             onTap: widget.onPress,
             child: AnimatedScale(
               scale: _pressed && !still ? 0.96 : 1,
+              filterQuality: FilterQuality.medium,
               duration: const Duration(milliseconds: 120),
               curve: _easeOut,
               child: DecoratedBox(

@@ -36,6 +36,7 @@ import 'package:chessever/desktop/widgets/tournament_category_switcher.dart'
 import 'package:chessever/providers/auth_state_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
+import '../motion_translate.dart';
 
 const _tabular = [FontFeature.tabularFigures()];
 
@@ -779,7 +780,7 @@ class _SuggestionRowState extends State<_SuggestionRow>
                     value: _pressed ? 0.0 : (hovered ? 2.5 : 0.0),
                     motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
                     builder:
-                        (context, shift, child) => Transform.translate(
+                        (context, shift, child) => MotionTranslate(
                           offset: Offset(shift, -shift),
                           child: child,
                         ),

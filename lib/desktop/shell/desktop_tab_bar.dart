@@ -41,6 +41,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/utils/host_platform.dart';
+import '../widgets/motion_translate.dart';
 
 /// Chrome-style tab bar that sits between the top bar and the content area.
 ///
@@ -735,12 +736,10 @@ class _TabChipState extends ConsumerState<_TabChip>
     // step *above* the strip (#1A) using `kBlack3Color` (#25) so each
     // chip is a discrete shape rather than dissolving into the strip;
     // hover lifts another step to `kDividerColor` (#2C).
-    final Color color =
-        widget.active
-            ? kBackgroundColor
-            : (_hovered ? kDividerColor : kBlack3Color);
-    final Color fg =
-        widget.active ? kWhiteColor : (_hovered ? kWhiteColor : kWhiteColor70);
+    //
+    // Fill, foreground and lift all ride ONE hover spring (see the
+    // SingleMotionBuilder below) so they move together; a fast fill fade
+    // next to an instant label swap and a slower lift read as flicker.
 
     // Game-bearing Board tabs carry a `BoardTabGameArgs` (white/black
     // names, federations, ELOs) we can render in the chip in place of
@@ -783,9 +782,9 @@ class _TabChipState extends ConsumerState<_TabChip>
     // Inactive-tab hover gets a tiny upward lift (1.5 px) — the chip
     // floats toward the cursor before settling back when it leaves.
     // Active tabs sit flush; lifting them would break the merge with
-    // the content area. The ease pairs with the existing colour
-    // animation below.
-    final lift = (!widget.active && _hovered) ? -1.5 : 0.0;
+    // the content area. The lift goes through MotionTranslate so the
+    // label glides instead of stepping between pixel rows.
+    final double hoverTarget = (!widget.active && _hovered) ? 1.0 : 0.0;
     return Padding(
       padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
       child: ClickCursor(
@@ -829,106 +828,119 @@ class _TabChipState extends ConsumerState<_TabChip>
             onPointerUp: (_) => _primaryDragStart = null,
             onPointerCancel: (_) => _primaryDragStart = null,
             child: SingleMotionBuilder(
-              value: lift,
+              value: hoverTarget,
               motion: DesktopMotion.hover,
-              builder:
-                  (context, y, child) =>
-                      Transform.translate(offset: Offset(0, y), child: child),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 100),
-                constraints: const BoxConstraints(minHeight: 40),
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(10),
-                    topRight: Radius.circular(10),
-                  ),
-                ),
-                // Chip body. Game tabs stack a title row + flush-bottom
-                // eval strip; everything else is a single padded row.
-                // The active tab gets a 2px primary-color accent painted
-                // over the top edge — overlaid via Stack so inactive and
-                // active tabs share the same inner content geometry
-                // (a Border.top would shove the content down 2px on the
-                // active tab only).
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    ClipRRect(
+              builder: (context, h, _) {
+                final t = h.clamp(0.0, 1.0);
+                // Active tabs merge into the pane (kBackgroundColor);
+                // inactive ones blend #25 -> #2C and 70% -> 100% white.
+                final Color color =
+                    widget.active
+                        ? kBackgroundColor
+                        : Color.lerp(kBlack3Color, kDividerColor, t)!;
+                final Color fg =
+                    widget.active
+                        ? kWhiteColor
+                        : Color.lerp(kWhiteColor70, kWhiteColor, t)!;
+                return MotionTranslate(
+                  offset: Offset(0, -1.5 * t),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 40),
+                    decoration: BoxDecoration(
+                      color: color,
                       borderRadius: const BorderRadius.only(
                         topLeft: Radius.circular(10),
                         topRight: Radius.circular(10),
                       ),
-                      child:
-                          gameArgs != null
-                              ? Column(
-                                mainAxisSize: MainAxisSize.max,
-                                children: [
-                                  Expanded(
-                                    child: Padding(
-                                      padding: const EdgeInsets.fromLTRB(
-                                        12,
-                                        6,
-                                        8,
-                                        4,
-                                      ),
-                                      child: _GameTabChipContent(
-                                        args: gameArgs,
-                                        active: widget.active,
-                                        fg: fg,
-                                        muted: soundMuted,
-                                        onClose: widget.onClose,
-                                        showClose: _hovered || widget.active,
-                                      ),
-                                    ),
-                                  ),
-                                  if (showGameCardEvalBar)
-                                    // Eval strip pinned to the chip's bottom edge —
-                                    // full bleed, Chrome-style indicator under the
-                                    // tab title.
-                                    SizedBox(
-                                      height: 3,
-                                      child: _HorizontalEvalBar(
-                                        fen:
-                                            (boardFen != null &&
-                                                    boardFen.isNotEmpty)
-                                                ? boardFen
-                                                : (gameArgs.fenSeed ?? ''),
-                                      ),
-                                    ),
-                                ],
-                              )
-                              : _RegularTabChipContent(
-                                tab: widget.tab,
-                                active: widget.active,
-                                fg: fg,
-                                hovered: _hovered,
-                                boardFen: boardFen,
-                                hasGameFen: hasGameFen,
-                                showGameCardEvalBar: showGameCardEvalBar,
-                                playerProfileArgs: playerProfileArgs,
-                                onClose: widget.onClose,
-                              ),
                     ),
-                    if (widget.active)
-                      const Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        height: 2,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: kPrimaryColor,
-                            borderRadius: BorderRadius.only(
-                              topLeft: Radius.circular(10),
-                              topRight: Radius.circular(10),
+                    // Chip body. Game tabs stack a title row + flush-bottom
+                    // eval strip; everything else is a single padded row.
+                    // The active tab gets a 2px primary-color accent painted
+                    // over the top edge — overlaid via Stack so inactive and
+                    // active tabs share the same inner content geometry
+                    // (a Border.top would shove the content down 2px on the
+                    // active tab only).
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ClipRRect(
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(10),
+                            topRight: Radius.circular(10),
+                          ),
+                          child:
+                              gameArgs != null
+                                  ? Column(
+                                    mainAxisSize: MainAxisSize.max,
+                                    children: [
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            12,
+                                            6,
+                                            8,
+                                            4,
+                                          ),
+                                          child: _GameTabChipContent(
+                                            args: gameArgs,
+                                            active: widget.active,
+                                            fg: fg,
+                                            muted: soundMuted,
+                                            onClose: widget.onClose,
+                                            showClose:
+                                                _hovered || widget.active,
+                                          ),
+                                        ),
+                                      ),
+                                      if (showGameCardEvalBar)
+                                        // Eval strip pinned to the chip's bottom edge —
+                                        // full bleed, Chrome-style indicator under the
+                                        // tab title.
+                                        SizedBox(
+                                          height: 3,
+                                          child: _HorizontalEvalBar(
+                                            fen:
+                                                (boardFen != null &&
+                                                        boardFen.isNotEmpty)
+                                                    ? boardFen
+                                                    : (gameArgs.fenSeed ?? ''),
+                                          ),
+                                        ),
+                                    ],
+                                  )
+                                  : _RegularTabChipContent(
+                                    tab: widget.tab,
+                                    active: widget.active,
+                                    fg: fg,
+                                    hovered: _hovered,
+                                    boardFen: boardFen,
+                                    hasGameFen: hasGameFen,
+                                    showGameCardEvalBar: showGameCardEvalBar,
+                                    playerProfileArgs: playerProfileArgs,
+                                    onClose: widget.onClose,
+                                  ),
+                        ),
+                        if (widget.active)
+                          const Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            height: 2,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: kPrimaryColor,
+                                borderRadius: BorderRadius.only(
+                                  topLeft: Radius.circular(10),
+                                  topRight: Radius.circular(10),
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ),

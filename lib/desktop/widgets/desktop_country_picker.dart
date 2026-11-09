@@ -31,6 +31,7 @@ Future<Country?> showDesktopCountryPicker(
         opacity: eased,
         child: ScaleTransition(
           scale: Tween<double>(begin: 0.97, end: 1).animate(eased),
+          filterQuality: FilterQuality.medium,
           child: child,
         ),
       );

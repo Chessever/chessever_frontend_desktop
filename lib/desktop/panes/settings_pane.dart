@@ -37,6 +37,7 @@ import 'package:chessever/providers/guest_session_provider.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/host_platform.dart';
+import '../widgets/motion_translate.dart';
 
 /// Desktop preferences pane.
 ///
@@ -782,7 +783,7 @@ class _SettingsLinkRowState extends State<_SettingsLinkRow> {
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
                   (context, x, child) =>
-                      Transform.translate(offset: Offset(x, 0), child: child),
+                      MotionTranslate(offset: Offset(x, 0), child: child),
               child: Row(
                 children: [
                   Container(

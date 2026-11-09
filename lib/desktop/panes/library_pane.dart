@@ -149,6 +149,7 @@ import 'package:chessever/utils/pgn_multi_parser.dart';
 import 'package:chessever/utils/time_utils.dart';
 import 'package:chessever/utils/host_platform.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
+import '../widgets/motion_translate.dart';
 
 /// Desktop library: complete cloud navigation in the rail plus a mixed local
 /// and selected-cloud working catalog on Library Home.
@@ -1043,7 +1044,7 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
                 motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
                 builder:
                     (context, x, child) =>
-                        Transform.translate(offset: Offset(x, 0), child: child),
+                        MotionTranslate(offset: Offset(x, 0), child: child),
                 child: Row(
                   children: [
                     widget.leading ?? Icon(widget.icon, size: 14, color: fg),
@@ -1410,7 +1411,7 @@ class _FolderRowState extends ConsumerState<_FolderRow>
                         motion:
                             _pressed ? DesktopMotion.tap : DesktopMotion.hover,
                         builder:
-                            (context, x, child) => Transform.translate(
+                            (context, x, child) => MotionTranslate(
                               offset: Offset(x, 0),
                               child: child,
                             ),
