@@ -386,6 +386,18 @@ class _NotationLadderViewState extends State<NotationLadderView> {
 
   /// The highlighted move, for [_InlineMoveSlot]s: a ply step re-renders the
   /// two slots whose highlight changed instead of the paragraph holding them.
+  /// Stable key of the highlighted [_InlineMoveSlot], the scroll target.
+  /// A per-step key would reparent the move and lay its paragraph out again.
+  GlobalKey? _activeSlotKey;
+
+  void _setActiveSlot(GlobalKey key, {required bool active}) {
+    if (active) {
+      _activeSlotKey = key;
+    } else if (identical(_activeSlotKey, key)) {
+      _activeSlotKey = null;
+    }
+  }
+
   final ValueNotifier<_ActiveInlineMove> _activeInlineMove = ValueNotifier(
     const _ActiveInlineMove('', null),
   );
@@ -455,6 +467,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
     if (!identical(old.game, widget.game)) {
       _inlineMoveCache.clear();
       _rowCache.clear();
+      _activeSlotKey = null;
     }
   }
 
@@ -554,7 +567,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final ctx = _activeKey.currentContext;
+      final ctx = _activeSlotKey?.currentContext ?? _activeKey.currentContext;
       if (ctx == null) return;
       // Stepping through moves used to start a 180 ms centering scroll on
       // every step, alongside the board's piece animation. Leave the list
@@ -1766,6 +1779,7 @@ class _LineBlock extends StatelessWidget {
         row = _InlineMoveSlot(
           pointerKeys: rowKeys,
           active: owner!._activeInlineMove,
+          onActiveChanged: owner._setActiveSlot,
           builder: buildRow,
         );
         owner._rowCache[rowCacheKey] = (rowSignature, row);
@@ -2550,6 +2564,7 @@ class _InlineNotationBlock extends StatelessWidget {
           spanChild = _InlineMoveSlot(
             pointerKeys: [cacheKey],
             active: owner!._activeInlineMove,
+            onActiveChanged: owner._setActiveSlot,
             builder: (selectedKey, key) => buildMove(selectedKey != null, key),
           );
           owner._inlineMoveCache[cacheKey] = (signature, spanChild);
@@ -5345,12 +5360,16 @@ class _InlineMoveSlot extends StatefulWidget {
   const _InlineMoveSlot({
     required this.pointerKeys,
     required this.active,
+    required this.onActiveChanged,
     required this.builder,
   });
 
   /// The moves this slot draws (one inline move, or a ladder pair).
   final List<String> pointerKeys;
   final ValueListenable<_ActiveInlineMove> active;
+
+  /// Tells the view this slot's key while it holds the highlight.
+  final void Function(GlobalKey key, {required bool active}) onActiveChanged;
 
   /// Builds the slot with the highlighted move among [pointerKeys], if any.
   final Widget Function(String? selectedKey, GlobalKey? activeKey) builder;
@@ -5360,13 +5379,13 @@ class _InlineMoveSlot extends StatefulWidget {
 }
 
 class _InlineMoveSlotState extends State<_InlineMoveSlot> {
+  final GlobalKey _slotKey = GlobalKey();
   String? _selected;
-  GlobalKey? _key;
 
   @override
   void initState() {
     super.initState();
-    _read();
+    _selected = _selectedIn(widget.active.value);
     widget.active.addListener(_onActiveChanged);
   }
 
@@ -5377,40 +5396,35 @@ class _InlineMoveSlotState extends State<_InlineMoveSlot> {
       oldWidget.active.removeListener(_onActiveChanged);
       widget.active.addListener(_onActiveChanged);
     }
-    _read();
+    _selected = _selectedIn(widget.active.value);
   }
 
   @override
   void dispose() {
     widget.active.removeListener(_onActiveChanged);
+    widget.onActiveChanged(_slotKey, active: false);
     super.dispose();
   }
 
   String? _selectedIn(_ActiveInlineMove active) =>
       widget.pointerKeys.contains(active.pointerKey) ? active.pointerKey : null;
 
-  void _read() {
-    final active = widget.active.value;
-    _selected = _selectedIn(active);
-    _key = _selected == null ? null : active.key;
-  }
-
   void _onActiveChanged() {
-    final active = widget.active.value;
-    final selected = _selectedIn(active);
-    final key = selected == null ? null : active.key;
-    if (selected == _selected && identical(key, _key)) return;
-    setState(() {
-      _selected = selected;
-      _key = key;
-    });
+    final selected = _selectedIn(widget.active.value);
+    if (selected == _selected) return;
+    setState(() => _selected = selected);
   }
 
-  // Its own layer: a highlight change re-records this move, not every move
-  // and comment in the paragraph around it.
   @override
-  Widget build(BuildContext context) =>
-      RepaintBoundary(child: widget.builder(_selected, _key));
+  Widget build(BuildContext context) {
+    widget.onActiveChanged(_slotKey, active: _selected != null);
+    // The key never changes, so a highlight change rebuilds this subtree in
+    // place; its own layer means only this move is re-recorded.
+    return KeyedSubtree(
+      key: _slotKey,
+      child: RepaintBoundary(child: widget.builder(_selected, null)),
+    );
+  }
 }
 
 /// Value equality over a ladder row's inputs: moves by identity, lists and

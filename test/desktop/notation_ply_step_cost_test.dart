@@ -90,6 +90,17 @@ void main() {
         lessThanOrEqualTo(2),
         reason: '$rebuilt',
       );
+
+      // The stable slot key still brings a far jump into view.
+      pointer.value = const [86];
+      await tester.pumpAndSettle();
+      final viewport = tester.getRect(find.byType(NotationLadderView));
+      final last = tester.getRect(find.text('Qa7', findRichText: true).last);
+      expect(
+        viewport.contains(last.center),
+        isTrue,
+        reason: '$last in $viewport',
+      );
     });
   }
 }

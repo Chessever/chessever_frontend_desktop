@@ -86,7 +86,11 @@ class PersistentIndexedStack extends StatelessWidget {
                   frozen: index != i,
                   child: ExcludeFocus(
                     excluding: index != i,
-                    child: children[i],
+                    // Each tab records its own layer. Without it, any repaint
+                    // in the visible tab (a hover, a board move) re-recorded
+                    // the whole window, sidebar and tab bar included; on web
+                    // and Impeller that is a full re-raster too.
+                    child: RepaintBoundary(child: children[i]),
                   ),
                 ),
               ),

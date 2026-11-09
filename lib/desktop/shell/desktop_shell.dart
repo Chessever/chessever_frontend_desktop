@@ -800,27 +800,33 @@ class DesktopShell extends HookConsumerWidget {
                           child: DesktopSidebarLayout(
                             showSidebar: !boardFocusActive,
                             expanded: sidebarExpanded,
-                            sidebar: DesktopSidebar(
-                              current: activeSidebarPane,
-                              expanded: sidebarExpanded,
-                              autoCollapsed: autoCollapsed,
-                              onToggleExpanded: toggleSidebar,
-                              onSearch: () => unawaited(openCommandPalette()),
-                              onHowToUse:
-                                  () => tabsNotifier.open(TabKind.howToUse),
-                              onSelect: handleSidebarSelect,
-                              feedbackScreenshotKey: feedbackScreenshotKey,
+                            // Own layers: sidebar hovers and tab-bar changes
+                            // must not re-record the pane beside them.
+                            sidebar: RepaintBoundary(
+                              child: DesktopSidebar(
+                                current: activeSidebarPane,
+                                expanded: sidebarExpanded,
+                                autoCollapsed: autoCollapsed,
+                                onToggleExpanded: toggleSidebar,
+                                onSearch: () => unawaited(openCommandPalette()),
+                                onHowToUse:
+                                    () => tabsNotifier.open(TabKind.howToUse),
+                                onSelect: handleSidebarSelect,
+                                feedbackScreenshotKey: feedbackScreenshotKey,
+                              ),
                             ),
                             content: Column(
                               children: [
                                 if (!boardFocusActive)
-                                  DesktopTabBar(
-                                    onOpenUserProfile:
-                                        () => openCurrentUserProfileTab(ref),
-                                    showSidebarToggle:
-                                        hostIsMacOS && !sidebarExpanded,
-                                    sidebarAutoCollapsed: autoCollapsed,
-                                    onToggleSidebar: toggleSidebar,
+                                  RepaintBoundary(
+                                    child: DesktopTabBar(
+                                      onOpenUserProfile:
+                                          () => openCurrentUserProfileTab(ref),
+                                      showSidebarToggle:
+                                          hostIsMacOS && !sidebarExpanded,
+                                      sidebarAutoCollapsed: autoCollapsed,
+                                      onToggleSidebar: toggleSidebar,
+                                    ),
                                   ),
                                 Expanded(
                                   // The Botvinnik dock sits beside the tab
