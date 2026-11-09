@@ -26,6 +26,7 @@ class DesktopWelcomeScreen extends HookConsumerWidget {
     super.key,
     this.onContinueAsGuest,
     this.guestFailed = false,
+    this.compact = false,
   });
 
   /// Creates a guest session. Hidden when null.
@@ -34,6 +35,9 @@ class DesktopWelcomeScreen extends HookConsumerWidget {
   /// The last attempt to create a guest session failed, so the screen says
   /// why it is still here instead of silently coming back.
   final bool guestFailed;
+
+  /// Browser overlay form; native welcome presentation stays unchanged.
+  final bool compact;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -72,96 +76,124 @@ class DesktopWelcomeScreen extends HookConsumerWidget {
       }
     }
 
-    return Scaffold(
-      backgroundColor: kBackgroundColor,
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 360),
-          child: Padding(
-            padding: const EdgeInsets.all(48),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(28),
-                    child: Image.asset(
-                      'assets/pngs/new_app_logo.png',
-                      width: 128,
-                      height: 128,
-                      fit: BoxFit.cover,
-                      filterQuality: FilterQuality.high,
-                      cacheWidth:
-                          (128 * MediaQuery.devicePixelRatioOf(context))
-                              .round(),
-                      cacheHeight:
-                          (128 * MediaQuery.devicePixelRatioOf(context))
-                              .round(),
-                    ),
-                  ),
+    final form = ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: compact ? 400 : 360),
+      child: Padding(
+        padding: EdgeInsets.all(compact ? 28 : 48),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(compact ? 12 : 28),
+                child: Image.asset(
+                  'assets/pngs/new_app_logo.png',
+                  width: compact ? 48 : 128,
+                  height: compact ? 48 : 128,
+                  fit: BoxFit.cover,
+                  filterQuality: FilterQuality.high,
+                  cacheWidth:
+                      ((compact ? 48 : 128) *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round(),
+                  cacheHeight:
+                      ((compact ? 48 : 128) *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round(),
                 ),
-                const SizedBox(height: 40),
-                _AuthButton(
-                  iconAsset: SvgAsset.googleColorIcon,
-                  label:
-                      signingIn.value
-                          ? (kIsWeb
-                              ? 'Taking you to Google…'
-                              : DesktopAuthBrowser.inApp
-                              ? 'Signing in…'
-                              : 'Opening browser…')
-                          : 'Continue with Google',
-                  primary: true,
-                  disabled: signingIn.value,
-                  onTap: handleGoogleSignIn,
-                ),
-                const SizedBox(height: 12),
-                _AuthButton(
-                  iconAsset: SvgAsset.appleIcon,
-                  label:
-                      signingIn.value
-                          ? 'Opening Apple sign-in…'
-                          : 'Continue with Apple',
-                  primary: false,
-                  disabled: signingIn.value,
-                  onTap: handleAppleSignIn,
-                ),
-                if (onContinueAsGuest != null) ...[
-                  const SizedBox(height: 16),
-                  Center(
-                    child: DesktopDialogButton(
-                      label: 'Continue as guest',
-                      tone: DesktopDialogButtonTone.ghost,
-                      onPress:
-                          signingIn.value
-                              ? null
-                              : () => unawaited(onContinueAsGuest!()),
-                    ),
-                  ),
-                ],
-                if (errorText != null) ...[
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: kRedColor.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: kRedColor.withValues(alpha: 0.4),
-                      ),
-                    ),
-                    child: Text(
-                      errorText,
-                      style: const TextStyle(color: kRedColor, fontSize: 12),
-                    ),
-                  ),
-                ],
-              ],
+              ),
             ),
-          ),
+            SizedBox(height: compact ? 18 : 40),
+            if (compact) ...[
+              const Text(
+                'Sign in to explore ChessEver',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 21,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+            _AuthButton(
+              iconAsset: SvgAsset.googleColorIcon,
+              label:
+                  signingIn.value
+                      ? (kIsWeb
+                          ? 'Taking you to Google…'
+                          : DesktopAuthBrowser.inApp
+                          ? 'Signing in…'
+                          : 'Opening browser…')
+                      : 'Continue with Google',
+              primary: true,
+              disabled: signingIn.value,
+              onTap: handleGoogleSignIn,
+            ),
+            const SizedBox(height: 12),
+            _AuthButton(
+              iconAsset: SvgAsset.appleIcon,
+              label:
+                  signingIn.value
+                      ? 'Opening Apple sign-in…'
+                      : 'Continue with Apple',
+              primary: false,
+              disabled: signingIn.value,
+              onTap: handleAppleSignIn,
+            ),
+            if (onContinueAsGuest != null) ...[
+              const SizedBox(height: 16),
+              Center(
+                child: DesktopDialogButton(
+                  label: 'Continue as guest',
+                  tone: DesktopDialogButtonTone.ghost,
+                  onPress:
+                      signingIn.value
+                          ? null
+                          : () => unawaited(onContinueAsGuest!()),
+                ),
+              ),
+            ],
+            if (errorText != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: kRedColor.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: kRedColor.withValues(alpha: 0.4)),
+                ),
+                child: Text(
+                  errorText,
+                  style: const TextStyle(color: kRedColor, fontSize: 12),
+                ),
+              ),
+            ],
+          ],
         ),
       ),
+    );
+    if (!compact) {
+      return Scaffold(
+        backgroundColor: kBackgroundColor,
+        body: Center(child: form),
+      );
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kDividerColor),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 40,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
+      child: form,
     );
   }
 }

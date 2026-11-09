@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 22.34.1+585
+version: 22.34.2+586
 environment:
   sdk: ^3.7.2
 
@@ -281,6 +281,7 @@ flutter:
     - assets/sounds/futuristic/
     - assets/sounds/lisp/
     - assets/cursor/
+    - assets/web_preview/
     # Bundled Stockfish 17.1 binaries — engine "just works" out of the box.
     # The desktop driver (lib/desktop/services/engine/uci_engine.dart) copies
     # the right one to the app-support dir at first launch, chmod +x on macOS.
