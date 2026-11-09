@@ -2,6 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:chessever/desktop/auth/web_auth_return_destination.dart';
+import 'package:chessever/desktop/auth/web_sign_in_public_data.dart';
+import 'package:chessever/desktop/auth/web_sign_in_events_data.dart';
+import 'package:chessever/desktop/panes/tournaments_pane.dart';
+import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
+import 'package:chessever/desktop/panes/desktop_likes_pane.dart';
+import 'package:chessever/desktop/services/likes/community_likes_models.dart';
+import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
 import 'package:chessever/desktop/auth/web_sign_in_preview_data.dart';
 import 'package:chessever/desktop/auth/web_sign_in_preview_gate.dart';
 import 'package:chessever/desktop/services/desktop_web_location.dart';
@@ -17,6 +24,83 @@ class _SearchIntent extends Intent {
 }
 
 void main() {
+  testWidgets(
+    'Events gate mounts real For You without a sample-game fallback',
+    (tester) async {
+      var legacySampleLoads = 0;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            home: WebSignInPreviewGate(
+              location: Uri.parse('/broadcast'),
+              loadPreview: () async {
+                legacySampleLoads++;
+                throw StateError(
+                  'Events must never load the unrelated game sample',
+                );
+              },
+              loadEvents:
+                  () async => PublicEventsPreview(
+                    presentation: SignedOutEventsPresentationData(
+                      capturedAt: DateTime.utc(2026, 11, 8),
+                      forYouEvents: const AsyncValue.data([]),
+                    ),
+                  ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(TournamentsPane), findsOneWidget);
+      expect(
+        tester
+            .widget<TournamentsPane>(find.byType(TournamentsPane))
+            .readOnlyPresentation,
+        isTrue,
+      );
+      expect(find.byType(DesktopTabBar), findsOneWidget);
+      expect(legacySampleLoads, 0);
+      expect(find.byKey(const ValueKey('web-sign-in-barrier')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Likes gate mounts the actual production pane, not sample cards',
+    (tester) async {
+      var legacySampleLoads = 0;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            home: WebSignInPreviewGate(
+              location: Uri.parse('/app/likes/week'),
+              loadPreview: () async {
+                legacySampleLoads++;
+                throw StateError('The legacy sample must not be requested');
+              },
+              loadLikes:
+                  (_) async => PublicLikesPreview(
+                    generatedAt: DateTime.utc(2026, 11, 8),
+                    result: const CommunityLikesResult.ranked([]),
+                  ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(DesktopLikesPane), findsOneWidget);
+      expect(
+        tester
+            .widget<DesktopLikesPane>(find.byType(DesktopLikesPane))
+            .readOnlyPresentation,
+        isTrue,
+      );
+      expect(find.byType(DesktopTabBar), findsOneWidget);
+      expect(legacySampleLoads, 0);
+      expect(find.byKey(const ValueKey('web-sign-in-barrier')), findsOneWidget);
+      expect(find.text('Sign in to explore ChessEver'), findsOneWidget);
+    },
+  );
+
   test(
     'every shell kind and canonical entry route has a preview presentation',
     () {

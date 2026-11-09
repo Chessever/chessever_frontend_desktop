@@ -51,9 +51,14 @@ extension on CommunityLikesSection {
 /// narrows Games to their games. Browsing every ranking is free; opening a
 /// game outside today's ranking is Premium (checked at the click).
 class DesktopLikesPane extends ConsumerStatefulWidget {
-  const DesktopLikesPane({super.key, required this.tabId});
+  const DesktopLikesPane({
+    super.key,
+    required this.tabId,
+    this.readOnlyPresentation = false,
+  });
 
   final String tabId;
+  final bool readOnlyPresentation;
 
   @override
   ConsumerState<DesktopLikesPane> createState() => _DesktopLikesPaneState();
@@ -93,7 +98,7 @@ class _DesktopLikesPaneState extends ConsumerState<DesktopLikesPane> {
   @override
   Widget build(BuildContext context) {
     // Re-derive "today" at local midnight so the free day and labels move.
-    ref.watch(desktopLocalDayProvider);
+    if (!widget.readOnlyPresentation) ref.watch(desktopLocalDayProvider);
     final now = DateTime.now();
     final query = communityLikesActiveQuery(ref, now: now);
     final current = ref.watch(communityLikesSectionProvider);
@@ -168,6 +173,7 @@ class _DesktopLikesPaneState extends ConsumerState<DesktopLikesPane> {
                 tabId: widget.tabId,
                 query: query,
                 player: _player,
+                readOnlyPresentation: widget.readOnlyPresentation,
                 onClearPlayer: () => setState(() => _player = null),
               ),
               _LikesSection.players => _RankedPlayersView(
@@ -358,12 +364,14 @@ class _RankedGamesView extends ConsumerStatefulWidget {
     required this.query,
     required this.player,
     required this.onClearPlayer,
+    this.readOnlyPresentation = false,
   });
 
   final String tabId;
   final CommunityLikesQuery query;
   final CommunityLikesPlayer? player;
   final VoidCallback onClearPlayer;
+  final bool readOnlyPresentation;
 
   @override
   ConsumerState<_RankedGamesView> createState() => _RankedGamesViewState();
@@ -414,9 +422,11 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
       routeGames: games,
     );
 
-    final active = ref.watch(
-      desktopTabsProvider.select((tabs) => tabs.activeId == widget.tabId),
-    );
+    final active =
+        !widget.readOnlyPresentation &&
+        ref.watch(
+          desktopTabsProvider.select((tabs) => tabs.activeId == widget.tabId),
+        );
     final metrics = DesktopGameCardsFlow.metricsFor(layout);
     final compact = layout == DesktopCardLayout.compact;
     return Column(
@@ -433,10 +443,12 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
                   )
                   : DesktopGameKeyboardFocus(
                     scopeId: 'community-likes-${query.hashCode}',
+                    enabled: !widget.readOnlyPresentation,
+                    ensureInitialSelectionVisible: !widget.readOnlyPresentation,
                     games: games,
                     scrollController: _scroll,
                     resolveColumnCount: () => _columns,
-                    onActivateGame: open,
+                    onActivateGame: widget.readOnlyPresentation ? null : open,
                     builder: (context, selectedId, select, keyFor) {
                       return LayoutBuilder(
                         builder: (context, constraints) {
@@ -493,6 +505,8 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
                                       accessContext: accessContext,
                                       onTap: () => open(game),
                                       streamingEnabled: active,
+                                      readOnlyPresentation:
+                                          widget.readOnlyPresentation,
                                     );
                                     return DesktopGameKeyboardItem(
                                       itemKey: keyFor(game.gameId),

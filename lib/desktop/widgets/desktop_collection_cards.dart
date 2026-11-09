@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -62,7 +63,7 @@ class DesktopCollectionCards extends StatelessWidget {
               child: _CollectionCard(
                 title: 'Countrymen',
                 hint: 'Players from your federation',
-                background: const FlagFullBackground(),
+                background: FlagFullBackground(readOnlyPresentation: SignedOutEventsPresentationScope.maybeOf(context) != null),
                 onTap: onCountrymenTap,
               ),
             ),
@@ -318,8 +319,8 @@ class _FavoritesCollectionCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final hasFavorites =
-        ref.watch(favoritePlayersProviderNew).valueOrNull?.isNotEmpty ?? false;
+    final hasFavorites = SignedOutEventsPresentationScope.maybeOf(context) == null &&
+        (ref.watch(favoritePlayersProviderNew).valueOrNull?.isNotEmpty ?? false);
 
     return _CollectionCard(
       title: 'Favorites',

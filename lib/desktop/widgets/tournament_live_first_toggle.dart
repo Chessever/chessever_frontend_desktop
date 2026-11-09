@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -9,7 +10,8 @@ class TournamentLiveFirstToggle extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final enabled = ref.watch(tournamentLiveFirstProvider);
+    final readOnly = SignedOutEventsPresentationScope.maybeOf(context) != null;
+    final enabled = !readOnly && ref.watch(tournamentLiveFirstProvider);
 
     return DesktopToolbarPillButton(
       key: const ValueKey<String>('tournament-live-first-chrome'),
@@ -24,7 +26,7 @@ class TournamentLiveFirstToggle extends ConsumerWidget {
           enabled
               ? 'Live events are shown first'
               : 'Keep the current event order',
-      onPress: () => ref.read(tournamentLiveFirstProvider.notifier).toggle(),
+      onPress: () { if (!readOnly) ref.read(tournamentLiveFirstProvider.notifier).toggle(); },
     );
   }
 }

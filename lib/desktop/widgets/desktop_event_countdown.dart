@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -26,14 +27,17 @@ class DesktopEventCountdownLine extends ConsumerWidget {
       return const SizedBox.shrink();
     }
 
-    final nextRound = ref.watch(eventNextRoundProvider(event.id)).valueOrNull;
+    final presentation = SignedOutEventsPresentationScope.maybeOf(context);
+    final nextRound = presentation != null
+        ? presentation.data?.nextRounds[event.id]
+        : ref.watch(eventNextRoundProvider(event.id)).valueOrNull;
     if (nextRound == null) return const SizedBox.shrink();
 
-    var now = DateTime.now();
+    var now = presentation?.data?.capturedAt ?? DateTime.now();
     var remaining = nextRound.startsAt.difference(now);
     if (remaining <= Duration.zero) return const SizedBox.shrink();
 
-    if (remaining < const Duration(hours: 24)) {
+    if (presentation == null && remaining < const Duration(hours: 24)) {
       now = ref.watch(_desktopEventCountdownTickProvider).valueOrNull ?? now;
       remaining = nextRound.startsAt.difference(now);
       if (remaining <= Duration.zero) return const SizedBox.shrink();

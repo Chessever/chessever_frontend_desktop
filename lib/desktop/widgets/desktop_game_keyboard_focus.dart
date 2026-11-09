@@ -84,6 +84,7 @@ class DesktopGameKeyboardFocus extends StatefulWidget {
     this.pageStride = kDesktopGameKeyboardDefaultPageStride,
     this.onActivateGame,
     this.ensureInitialSelectionVisible = true,
+    this.enabled = true,
     this.resolveColumnCount,
     this.scrollController,
   });
@@ -93,6 +94,7 @@ class DesktopGameKeyboardFocus extends StatefulWidget {
   final int pageStride;
   final ValueChanged<GamesTourModel>? onActivateGame;
   final bool ensureInitialSelectionVisible;
+  final bool enabled;
   final ScrollController? scrollController;
 
   /// Live column count of the grid that renders [games], read at key-press
@@ -134,7 +136,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
       if (_canClaimFocus()) {
         _focusNode.requestFocus();
       }
-      if (widget.ensureInitialSelectionVisible) {
+      if (widget.enabled && widget.ensureInitialSelectionVisible) {
         _ensureSelectedVisible();
       }
     });
@@ -173,6 +175,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
   /// false before the pending unfocus is applied). A focused sibling — a
   /// search field, a dialog — keeps focus.
   bool _canClaimFocus() {
+    if (!widget.enabled || !TickerMode.valuesOf(context).enabled) return false;
     final primary = FocusManager.instance.primaryFocus;
     if (primary == null || primary == _focusNode) return true;
     if (!primary.canRequestFocus) return true;
@@ -221,7 +224,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
       if (scopeChanged || ownedPrimaryFocus) {
         _focusNode.requestFocus();
       }
-      if (widget.ensureInitialSelectionVisible) {
+      if (widget.enabled && widget.ensureInitialSelectionVisible) {
         _ensureSelectedVisible();
       }
     });
@@ -263,6 +266,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     ScrollPositionAlignmentPolicy alignment =
         ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
   }) {
+    if (!widget.enabled) return;
     if (_selectedGameId == gameId) {
       _focusNode.requestFocus();
       if (ensureVisible) {
@@ -303,6 +307,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
   }
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
+    if (!widget.enabled) return KeyEventResult.ignored;
     if (_hasNavigationModifier()) return KeyEventResult.ignored;
     final key = event.logicalKey;
     final isNavigationKey =
@@ -453,7 +458,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
       // No `autofocus: true` here — initState's post-frame guard claims focus
       // only when nothing else owns it. autofocus runs unconditionally on
       // every rebuild and would re-steal focus from sibling inputs.
-      canRequestFocus: true,
+      canRequestFocus: widget.enabled,
       onKeyEvent: _handleKey,
       child: widget.builder(context, _selectedGameId, _selectGame, _keyForGame),
     );

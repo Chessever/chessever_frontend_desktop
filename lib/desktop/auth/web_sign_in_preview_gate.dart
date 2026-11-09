@@ -1,5 +1,15 @@
 import 'dart:math' as math;
 
+import 'package:chessever/desktop/auth/web_sign_in_public_data.dart';
+import 'package:chessever/desktop/auth/web_sign_in_events_data.dart';
+import 'package:chessever/desktop/panes/tournaments_pane.dart';
+import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
+import 'package:chessever/desktop/panes/desktop_likes_pane.dart';
+import 'package:chessever/desktop/services/likes/community_likes_models.dart';
+import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
+import 'package:chessever/desktop/state/community_likes_providers.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
+
 import 'package:chessever/desktop/auth/desktop_welcome_screen.dart';
 import 'package:chessever/desktop/auth/web_sign_in_preview_data.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
@@ -20,9 +30,17 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 /// DesktopShell. No user tabs, private libraries, chat, membership, live feeds,
 /// engine jobs, navigation callbacks or account mutation services are started.
 class WebSignInPreviewGate extends StatefulWidget {
-  const WebSignInPreviewGate({super.key, this.location, this.loadPreview});
+  const WebSignInPreviewGate({
+    super.key,
+    this.location,
+    this.loadPreview,
+    this.loadLikes,
+    this.loadEvents,
+  });
   final Uri? location;
   final Future<WebSignInPreviewData> Function()? loadPreview;
+  final Future<PublicLikesPreview> Function(CommunityLikesQuery)? loadLikes;
+  final Future<PublicEventsPreview> Function()? loadEvents;
 
   @override
   State<WebSignInPreviewGate> createState() => _WebSignInPreviewGateState();
@@ -32,13 +50,54 @@ class _WebSignInPreviewGateState extends State<WebSignInPreviewGate> {
   late final Future<WebSignInPreviewData> _data =
       (widget.loadPreview ?? WebSignInPreviewData.load)();
   final GlobalKey _previewKey = GlobalKey();
+  late final WebSignInPublicDataClient _publicData =
+      WebSignInPublicDataClient();
+  late final Future<PublicEventsPreview> _events =
+      widget.loadEvents?.call() ??
+      _publicData.events().then(PublicEventsPreview.fromJson);
   final FocusScopeNode _authFocus = FocusScopeNode(
     debugLabel: 'Required web sign-in',
     traversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
   );
 
+  Widget _destination(WebSignInPreviewLocation location) {
+    if (location.kind == 'likes') {
+      return const DesktopLikesPane(
+        tabId: 'public-signin-destination',
+        readOnlyPresentation: true,
+      );
+    }
+    if (location.kind == 'events') {
+      return FutureBuilder<PublicEventsPreview>(
+        future: _events,
+        builder:
+            (context, value) => TournamentsPane(
+              tabId: 'public-signin-destination',
+              readOnlyPresentation: true,
+              presentationData:
+                  value.hasError
+                      ? SignedOutEventsPresentationData(
+                        capturedAt: DateTime.now().toUtc(),
+                        forYouEvents: AsyncValue.error(
+                          StateError('Public Events feed is unavailable'),
+                          StackTrace.empty,
+                        ),
+                      )
+                      : value.data?.presentation,
+            ),
+      );
+    }
+    return FutureBuilder<WebSignInPreviewData>(
+      future: _data,
+      builder:
+          (context, value) =>
+              _PreviewPage(location: location, data: value.data),
+    );
+  }
+
   @override
   void dispose() {
+    _publicData.close();
     _authFocus.dispose();
     super.dispose();
   }
@@ -60,6 +119,34 @@ class _WebSignInPreviewGateState extends State<WebSignInPreviewGate> {
                   enabled: false,
                   child: ProviderScope(
                     overrides: [
+                      desktopTabsProvider.overrideWith(
+                        (ref) => _PublicDestinationTabs(location),
+                      ),
+                      communityLikesPeriodProvider.overrideWith(
+                        (ref) => CommunityLikesPeriod.values.firstWhere(
+                          (period) => period.name == location.period,
+                          orElse: () => CommunityLikesPeriod.week,
+                        ),
+                      ),
+                      communityLikesSectionProvider.overrideWith(
+                        (ref) => CommunityLikesSection.games,
+                      ),
+                      communityLikesDayProvider.overrideWith((ref) => null),
+                      communityLikesProvider.overrideWith(
+                        (ref, query) async =>
+                            (await (widget.loadLikes ?? _publicData.likes)(
+                              query,
+                            )).result,
+                      ),
+                      communityLikesPagesProvider.overrideWith(
+                        (ref, query) => CommunityLikesPages(
+                          null,
+                          (_) async =>
+                              throw StateError(
+                                'Sign in to explore further pages',
+                              ),
+                        ),
+                      ),
                       boardSettingsProviderNew.overrideWith(
                         _PreviewBoardSettings.new,
                       ),
@@ -86,19 +173,14 @@ class _WebSignInPreviewGateState extends State<WebSignInPreviewGate> {
                                 Expanded(
                                   child: Column(
                                     children: [
-                                      _PreviewTabs(title: location.title),
-                                      Expanded(
-                                        child:
-                                            FutureBuilder<WebSignInPreviewData>(
-                                              future: _data,
-                                              builder:
-                                                  (context, value) =>
-                                                      _PreviewPage(
-                                                        location: location,
-                                                        data: value.data,
-                                                      ),
-                                            ),
-                                      ),
+                                      if (location.kind == 'likes' ||
+                                          location.kind == 'events')
+                                        const DesktopTabBar(
+                                          readOnlyPresentation: true,
+                                        )
+                                      else
+                                        _PreviewTabs(title: location.title),
+                                      Expanded(child: _destination(location)),
                                     ],
                                   ),
                                 ),
@@ -153,6 +235,30 @@ class _WebSignInPreviewGateState extends State<WebSignInPreviewGate> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// In-memory destination tabs only. Never restores or mutates a previous
+/// account's tabs, and never calls navigation/analytics admission methods.
+class _PublicDestinationTabs extends DesktopTabsNotifier {
+  _PublicDestinationTabs(WebSignInPreviewLocation location) {
+    final kind = location.kind == 'likes' ? TabKind.likes : TabKind.tournaments;
+    state = DesktopTabsState(
+      tabs: [
+        if (kind != TabKind.tournaments)
+          const DesktopTab(
+            id: 'public-signin-events',
+            kind: TabKind.tournaments,
+            title: 'Events',
+          ),
+        DesktopTab(
+          id: 'public-signin-destination',
+          kind: kind,
+          title: location.title,
+        ),
+      ],
+      activeId: 'public-signin-destination',
     );
   }
 }
@@ -263,6 +369,18 @@ class _PreviewPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (location.kind == 'likes') {
+      return const DesktopLikesPane(
+        tabId: 'public-signin-destination',
+        readOnlyPresentation: true,
+      );
+    }
+    if (location.kind == 'events') {
+      return const TournamentsPane(
+        tabId: 'public-signin-destination',
+        readOnlyPresentation: true,
+      );
+    }
     final likes = location.kind == 'likes';
     final games =
         data?.games(likes ? location.period : 'week') ??
@@ -400,9 +518,6 @@ class _PreviewPage extends StatelessWidget {
                       .toList(),
             ),
             'board' => _BoardPreview(games: games),
-            'events' when data?.events.isNotEmpty == true => _EventsPreview(
-              events: data!.events,
-            ),
             _ => _GamesPreview(games: games, showLikes: likes),
           },
         ),
@@ -805,57 +920,4 @@ class _CalendarPreview extends StatelessWidget {
       ),
     );
   }
-}
-
-class _EventsPreview extends StatelessWidget {
-  const _EventsPreview({required this.events});
-  final List<Map<String, dynamic>> events;
-  @override
-  Widget build(BuildContext context) => ListView.separated(
-    padding: const EdgeInsets.all(20),
-    physics: const NeverScrollableScrollPhysics(),
-    itemCount: events.length,
-    separatorBuilder: (_, i) => const SizedBox(height: 10),
-    itemBuilder:
-        (_, i) => Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: kBlack2Color,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: kDividerColor),
-          ),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.emoji_events_outlined,
-                size: 28,
-                color: kPrimaryColor,
-              ),
-              const SizedBox(width: 18),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      events[i]['name']?.toString() ?? '',
-                      style: const TextStyle(
-                        color: kWhiteColor,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      events[i]['location']?.toString() ?? '',
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-  );
 }
