@@ -8,6 +8,7 @@ import 'package:chessever/desktop/services/editorial/inbox_provider.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
+import 'package:chessever/desktop/widgets/desktop_sidebar_download_button.dart';
 import 'package:chessever/providers/app_version_provider.dart';
 
 /// Trello #1247: on a laptop at Windows 125 % scaling the sidebar's Settings
@@ -77,6 +78,32 @@ void main() {
       }
     });
 
+    test('the web Download app button tightens rows instead of clipping', () {
+      for (final windowHeight in [826.0, 752.0, 728.0, 688.0, 640.0]) {
+        for (final pro in [false, true]) {
+          final bodyHeight = windowHeight - kDesktopChromeBarHeight;
+          final density = desktopSidebarDensityFor(
+            bodyHeight: bodyHeight,
+            navRows: navRows,
+            showPremium: !pro,
+            showDownload: true,
+          );
+          final extent = density.bodyExtent(
+            navRows: navRows,
+            showPremium: !pro,
+            showDownload: true,
+          );
+          if (density != DesktopSidebarDensity.tightest) {
+            expect(extent, lessThanOrEqualTo(bodyHeight));
+          }
+          expect(
+            density.rowHeight,
+            lessThanOrEqualTo(densityAt(windowHeight, pro: pro).rowHeight),
+          );
+        }
+      }
+    });
+
     test('taller windows never get shorter rows', () {
       for (final pro in [false, true]) {
         var previous = 0.0;
@@ -110,68 +137,101 @@ void main() {
   for (final MapEntry(key: setup, value: height) in windowHeights.entries) {
     for (final expanded in [false, true]) {
       for (final pro in [false, true]) {
-        final state =
-            '${expanded ? 'expanded' : 'collapsed'}, ${pro ? 'Pro' : 'free'}';
-        testWidgets('$setup ($state): Settings and footer stay whole', (
-          tester,
-        ) async {
-          final selected = <DesktopPane>[];
-          await _pumpSidebar(
+        for (final web in [false, true]) {
+          final state =
+              '${expanded ? 'expanded' : 'collapsed'}, ${pro ? 'Pro' : 'free'}'
+              '${web ? ', web' : ''}';
+          testWidgets('$setup ($state): Settings and footer stay whole', (
             tester,
-            height: height,
-            expanded: expanded,
-            pro: pro,
-            onSelect: selected.add,
-          );
+          ) async {
+            final selected = <DesktopPane>[];
+            await _pumpSidebar(
+              tester,
+              height: height,
+              expanded: expanded,
+              pro: pro,
+              web: web,
+              onSelect: selected.add,
+            );
 
-          expect(tester.takeException(), isNull);
+            expect(tester.takeException(), isNull);
 
-          final settings = find.byIcon(Icons.settings_outlined);
-          expect(settings, findsOneWidget);
-          final settingsRect = tester.getRect(settings);
-          expect(settingsRect.top, greaterThanOrEqualTo(0));
-          expect(settingsRect.bottom, lessThanOrEqualTo(height));
+            final settings = find.byIcon(Icons.settings_outlined);
+            expect(settings, findsOneWidget);
+            final settingsRect = tester.getRect(settings);
+            expect(settingsRect.top, greaterThanOrEqualTo(0));
+            expect(settingsRect.bottom, lessThanOrEqualTo(height));
 
-          final versionRect = tester.getRect(find.text('v$version'));
-          expect(versionRect.bottom, lessThanOrEqualTo(height));
-          expect(versionRect.top, greaterThan(settingsRect.bottom));
+            final versionRect = tester.getRect(find.text('v$version'));
+            expect(versionRect.bottom, lessThanOrEqualTo(height));
+            expect(versionRect.top, greaterThan(settingsRect.bottom));
 
-          if (!pro) {
-            final premium = find.byIcon(Icons.workspace_premium_rounded);
-            expect(premium, findsOneWidget);
-            expect(tester.getRect(premium).bottom, lessThan(settingsRect.top));
-          }
-
-          await tester.tap(settings);
-          await tester.pumpAndSettle();
-          expect(selected, [DesktopPane.settings]);
-
-          final nav = _navScrollPosition(tester);
-          final bodyHeight = height - kDesktopChromeBarHeight;
-          final fitsWithoutScrolling =
-              bodyHeight >=
-              DesktopSidebarDensity.tightest.bodyExtent(
-                navRows: navRows,
-                showPremium: !pro,
+            if (!pro) {
+              final premium = find.byIcon(Icons.workspace_premium_rounded);
+              expect(premium, findsOneWidget);
+              expect(
+                tester.getRect(premium).bottom,
+                lessThan(settingsRect.top),
               );
-          if (fitsWithoutScrolling) {
-            expect(nav.maxScrollExtent, 0);
-          } else {
-            expect(nav.maxScrollExtent, greaterThan(0));
-          }
+            }
 
-          // The last nav row is always reachable, scrolling if it must.
-          await tester.scrollUntilVisible(
-            find.byIcon(Icons.forum_outlined),
-            40,
-            scrollable: find.descendant(
-              of: find.byKey(const ValueKey('desktop-sidebar-nav-scroll')),
-              matching: find.byType(Scrollable),
-            ),
-          );
-          final lastRow = tester.getRect(find.byIcon(Icons.forum_outlined));
-          expect(lastRow.bottom, lessThanOrEqualTo(settingsRect.top));
-        });
+            // The web build's Download app button sits between Get Premium
+            // and Settings, whole, and never on the desktop builds.
+            final download = find.byIcon(DesktopSidebarDownloadButton.icon);
+            if (web) {
+              expect(download, findsOneWidget);
+              final downloadRect = tester.getRect(download);
+              expect(downloadRect.bottom, lessThan(settingsRect.top));
+              if (!pro) {
+                expect(
+                  downloadRect.top,
+                  greaterThan(
+                    tester
+                        .getRect(find.byIcon(Icons.workspace_premium_rounded))
+                        .bottom,
+                  ),
+                );
+              }
+              expect(
+                find.text(DesktopSidebarDownloadButton.label),
+                expanded ? findsOneWidget : findsNothing,
+              );
+            } else {
+              expect(download, findsNothing);
+            }
+
+            await tester.tap(settings);
+            await tester.pumpAndSettle();
+            expect(selected, [DesktopPane.settings]);
+
+            final nav = _navScrollPosition(tester);
+            final bodyHeight = height - kDesktopChromeBarHeight;
+            final fitsWithoutScrolling =
+                bodyHeight >=
+                DesktopSidebarDensity.tightest.bodyExtent(
+                  navRows: navRows,
+                  showPremium: !pro,
+                  showDownload: web,
+                );
+            if (fitsWithoutScrolling) {
+              expect(nav.maxScrollExtent, 0);
+            } else {
+              expect(nav.maxScrollExtent, greaterThan(0));
+            }
+
+            // The last nav row is always reachable, scrolling if it must.
+            await tester.scrollUntilVisible(
+              find.byIcon(Icons.forum_outlined),
+              40,
+              scrollable: find.descendant(
+                of: find.byKey(const ValueKey('desktop-sidebar-nav-scroll')),
+                matching: find.byType(Scrollable),
+              ),
+            );
+            final lastRow = tester.getRect(find.byIcon(Icons.forum_outlined));
+            expect(lastRow.bottom, lessThanOrEqualTo(settingsRect.top));
+          });
+        }
       }
     }
   }
@@ -250,6 +310,7 @@ Future<void> _pumpSidebar(
   required double height,
   required bool expanded,
   required bool pro,
+  bool web = false,
   DesktopPane? current,
   required void Function(DesktopPane pane) onSelect,
 }) async {
@@ -281,6 +342,7 @@ Future<void> _pumpSidebar(
                 loadEntitlement:
                     () async =>
                         pro ? const EntitlementSnapshot(isActive: true) : null,
+                showDownloadButton: web,
               ),
             ),
           ),

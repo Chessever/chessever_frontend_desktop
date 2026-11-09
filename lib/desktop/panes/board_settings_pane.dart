@@ -141,7 +141,7 @@ class _SettingsShell extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _EngineCard(settings: engine, ref: ref),
+        _EngineCard(settings: engine, board: board, ref: ref),
         const SizedBox(height: 16),
         _DisplayCard(settings: board, ref: ref),
         const SizedBox(height: 16),
@@ -386,9 +386,14 @@ class _MiniStatus extends StatelessWidget {
 // ─── Engine ──────────────────────────────────────────────────────────────────
 
 class _EngineCard extends StatelessWidget {
-  const _EngineCard({required this.settings, required this.ref});
+  const _EngineCard({
+    required this.settings,
+    required this.board,
+    required this.ref,
+  });
 
   final EngineSettings settings;
+  final BoardSettingsNew board;
   final WidgetRef ref;
 
   @override
@@ -415,6 +420,15 @@ class _EngineCard extends StatelessWidget {
                 'Show the bar beside the board indicating who stands better.',
             value: settings.showEngineGauge,
             onChange: notifier.toggleEngineGauge,
+          ),
+          const _RowDivider(),
+          _SwitchRow(
+            label: 'Eval bar while playing',
+            description:
+                'Show a live evaluation bar beside the board in Play games.',
+            value: board.showPlayEvalBar,
+            onChange:
+                ref.read(boardSettingsProviderNew.notifier).togglePlayEvalBar,
           ),
           const _RowDivider(),
           _SwitchRow(

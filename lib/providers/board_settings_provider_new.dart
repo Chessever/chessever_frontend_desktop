@@ -40,6 +40,7 @@ class BoardSettingsNew {
         false, // Use letters (KQRBN) instead of chess piece symbols by default
     this.notationInline = true,
     this.showMoveNavigation = false,
+    this.showPlayEvalBar = false,
   });
 
   /// DEPRECATED: Kept for backwards compatibility migration only
@@ -72,6 +73,11 @@ class BoardSettingsNew {
   /// the board can use the freed vertical space; keyboard and notation clicks
   /// remain the primary navigation path.
   final bool showMoveNavigation;
+
+  /// Desktop-only: show a live engine evaluation bar beside the board while
+  /// playing a bot. Off by default so games stay engine-free unless the
+  /// player opts in.
+  final bool showPlayEvalBar;
 
   /// Get the current piece set from chessground
   PieceSet get pieceSet => getPieceSetByIndex(pieceStyleIndex);
@@ -144,6 +150,7 @@ class BoardSettingsNew {
     bool? useFigurine,
     bool? notationInline,
     bool? showMoveNavigation,
+    bool? showPlayEvalBar,
   }) {
     return BoardSettingsNew(
       boardColorIndex: boardColorIndex ?? this.boardColorIndex,
@@ -159,6 +166,7 @@ class BoardSettingsNew {
       useFigurine: useFigurine ?? this.useFigurine,
       notationInline: notationInline ?? this.notationInline,
       showMoveNavigation: showMoveNavigation ?? this.showMoveNavigation,
+      showPlayEvalBar: showPlayEvalBar ?? this.showPlayEvalBar,
     );
   }
 }
@@ -347,6 +355,15 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
     await _persist(newSettings);
   }
 
+  /// Toggle the live engine evaluation bar on the desktop Play board.
+  Future<void> togglePlayEvalBar(bool value) async {
+    final currentState = state.valueOrNull ?? const BoardSettingsNew();
+    if (currentState.showPlayEvalBar == value) return;
+    final newSettings = currentState.copyWith(showPlayEvalBar: value);
+    state = AsyncValue.data(newSettings);
+    await _persist(newSettings);
+  }
+
   /// Toggle figurine notation (chess piece symbols instead of letters)
   Future<void> toggleFigurine(bool value) async {
     final currentState = state.valueOrNull ?? const BoardSettingsNew();
@@ -416,6 +433,7 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
         'useFigurine': settings.useFigurine,
         'notationInline': settings.notationInline,
         'showMoveNavigation': settings.showMoveNavigation,
+        'showPlayEvalBar': settings.showPlayEvalBar,
       });
       await db.setString(_cacheKey, json);
       debugPrint('[BoardSettings] Cached settings locally');
@@ -475,6 +493,8 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
             map['notationInline'] as bool? ?? defaults.notationInline,
         showMoveNavigation:
             map['showMoveNavigation'] as bool? ?? defaults.showMoveNavigation,
+        showPlayEvalBar:
+            map['showPlayEvalBar'] as bool? ?? defaults.showPlayEvalBar,
       );
       debugPrint('[BoardSettings] Loaded settings from cache');
       return settings;

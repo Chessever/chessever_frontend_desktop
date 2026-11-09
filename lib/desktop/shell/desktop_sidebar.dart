@@ -19,6 +19,7 @@ import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_feedback_dialog.dart';
+import 'package:chessever/desktop/widgets/desktop_sidebar_download_button.dart';
 import 'package:chessever/desktop/widgets/desktop_sidebar_premium_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
@@ -83,19 +84,30 @@ class DesktopSidebarDensity {
   /// Height of [navRows] nav rows including the gaps around them.
   double navExtent(int navRows) => navGap * 2 + navRows * rowExtent;
 
-  /// Height of the pinned footer: Get Premium, divider, Settings, version.
-  /// The Premium term uses [rowHeight], which is never shorter than either
-  /// the collapsed or the expanded button.
-  double footerExtent({required bool showPremium}) =>
+  /// Height of the pinned footer: Get Premium, Download app (web only),
+  /// divider, Settings, version. The button terms use [rowHeight], which is
+  /// never shorter than either the collapsed or the expanded button.
+  double footerExtent({required bool showPremium, bool showDownload = false}) =>
       (showPremium ? rowHeight + premiumGap * 2 : 0) +
+      (showDownload ? downloadExtent(showPremium: showPremium) : 0) +
       1 +
       rowExtent +
       versionTopGap +
       versionLineHeight +
       versionBottomGap;
 
-  double bodyExtent({required int navRows, required bool showPremium}) =>
-      navExtent(navRows) + footerExtent(showPremium: showPremium);
+  /// Download app button plus its gaps. Directly under Get Premium it
+  /// shares Premium's bottom gap instead of adding a second one.
+  double downloadExtent({required bool showPremium}) =>
+      rowHeight + premiumGap * (showPremium ? 1 : 2);
+
+  double bodyExtent({
+    required int navRows,
+    required bool showPremium,
+    bool showDownload = false,
+  }) =>
+      navExtent(navRows) +
+      footerExtent(showPremium: showPremium, showDownload: showDownload);
 
   /// Gaps scale with the row height so every density keeps the regular
   /// proportions.
@@ -122,6 +134,7 @@ DesktopSidebarDensity desktopSidebarDensityFor({
   required double bodyHeight,
   required int navRows,
   required bool showPremium,
+  bool showDownload = false,
 }) {
   for (
     var rowHeight = DesktopSidebarDensity.maxRowHeight;
@@ -130,7 +143,11 @@ DesktopSidebarDensity desktopSidebarDensityFor({
   ) {
     final density = DesktopSidebarDensity._(rowHeight);
     if (bodyHeight >=
-        density.bodyExtent(navRows: navRows, showPremium: showPremium)) {
+        density.bodyExtent(
+          navRows: navRows,
+          showPremium: showPremium,
+          showDownload: showDownload,
+        )) {
       return density;
     }
   }
@@ -164,6 +181,7 @@ class DesktopSidebar extends StatelessWidget {
     this.autoCollapsed = false,
     this.loadEntitlement = _loadCurrentEntitlement,
     this.readOnlyPreview = false,
+    this.showDownloadButton,
   });
 
   final DesktopPane? current;
@@ -184,6 +202,10 @@ class DesktopSidebar extends StatelessWidget {
 
   /// Prevent account, inbox and chat work in the inert sign-in backdrop.
   final bool readOnlyPreview;
+
+  /// Shows the "Download app" button above Settings. Defaults to
+  /// [showSidebarDownloadButton] (the web build only); tests override it.
+  final bool? showDownloadButton;
 
   static const double collapsedWidth = 72;
   static const double expandedWidth = 240;
@@ -236,6 +258,8 @@ class DesktopSidebar extends StatelessWidget {
               feedbackScreenshotKey: feedbackScreenshotKey,
               loadEntitlement: loadEntitlement,
               readOnlyPreview: readOnlyPreview,
+              showDownloadButton:
+                  showDownloadButton ?? showSidebarDownloadButton,
             ),
           ),
         ],
@@ -256,6 +280,7 @@ class _SidebarBody extends ConsumerStatefulWidget {
     required this.feedbackScreenshotKey,
     required this.loadEntitlement,
     required this.readOnlyPreview,
+    required this.showDownloadButton,
   });
 
   final DesktopPane? current;
@@ -266,6 +291,7 @@ class _SidebarBody extends ConsumerStatefulWidget {
   final GlobalKey feedbackScreenshotKey;
   final Future<EntitlementSnapshot?> Function() loadEntitlement;
   final bool readOnlyPreview;
+  final bool showDownloadButton;
 
   @override
   ConsumerState<_SidebarBody> createState() => _SidebarBodyState();
@@ -286,6 +312,7 @@ class _SidebarBodyState extends ConsumerState<_SidebarBody> {
       future: _entitlementFuture,
       builder: (context, snapshot) {
         final showPremium = !(snapshot.data?.isActive ?? false);
+        final showDownload = widget.showDownloadButton;
         // Rebuilds only when the density tier flips, not on every frame of a
         // window resize.
         return BucketedLayoutBuilder<DesktopSidebarDensity>(
@@ -294,6 +321,7 @@ class _SidebarBodyState extends ConsumerState<_SidebarBody> {
                 bodyHeight: constraints.maxHeight,
                 navRows: entries.length,
                 showPremium: showPremium,
+                showDownload: showDownload,
               ),
           builder:
               (context, density) => Column(
@@ -324,6 +352,14 @@ class _SidebarBodyState extends ConsumerState<_SidebarBody> {
                             DesktopPane.settings,
                             inNewTab: false,
                           ),
+                    ),
+                  if (showDownload)
+                    DesktopSidebarDownloadButton(
+                      expanded: widget.expanded,
+                      collapsedSize: density.rowHeight,
+                      expandedHeight: density.premiumExpandedHeight,
+                      topPadding: showPremium ? 0 : density.premiumGap,
+                      bottomPadding: density.premiumGap,
                     ),
                   const Divider(height: 1, color: kDividerColor),
                   _SidebarItem(

@@ -34,6 +34,7 @@ import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
 import 'package:chessever/desktop/widgets/move_navigation_bar.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
+import 'package:chessever/desktop/widgets/play_live_eval_bar.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -60,6 +61,15 @@ const _playHeaderHeight = 52.0;
 const _playHeaderGap = 10.0;
 const _playBoardPadding = 16.0;
 const _playResizeGripTarget = 16.0;
+
+/// Optional live eval bar to the left of the board ("Eval bar while playing"
+/// in Settings, off by default). The board gives up this width when shown.
+const _playEvalBarWidth = 22.0;
+const _playEvalBarGap = 10.0;
+const _playEvalBarReservedWidth = _playEvalBarWidth + _playEvalBarGap;
+
+bool _showPlayEvalBar(BoardSettingsNew? settings) =>
+    settings?.showPlayEvalBar ?? const BoardSettingsNew().showPlayEvalBar;
 
 const _playSplitStorageKey = 'play_pane.active_game.v1';
 const _playBoardInitialWeight = 0.64;
@@ -123,7 +133,14 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
     // A grow-drag is bounded by the column width until the column itself
     // grows, so hand the split view the width the board now needs. The side
     // panel surrenders the difference down to its own minimum.
-    _splitController.setSize(0, clamped + (_playBoardPadding * 2) + 16);
+    final evalBarWidth =
+        _showPlayEvalBar(ref.read(boardSettingsProviderNew).valueOrNull)
+            ? _playEvalBarReservedWidth
+            : 0.0;
+    _splitController.setSize(
+      0,
+      clamped + evalBarWidth + (_playBoardPadding * 2) + 16,
+    );
   }
 
   void _persistBoardSize() {
@@ -633,12 +650,13 @@ computePlayBoardMetrics({
   required double width,
   required double height,
   double? boardSizePreference,
+  double reservedWidth = 0,
 }) {
   final vLimit = math.max(
     0.0,
     height - (_playHeaderHeight * 2) - (_playHeaderGap * 2),
   );
-  final maxBoardSize = math.max(0.0, math.min(width, vLimit));
+  final maxBoardSize = math.max(0.0, math.min(width - reservedWidth, vLimit));
   final minBoardSize = math.min(kDesktopBoardMinSize, maxBoardSize);
   final defaultSize = math.min(maxBoardSize, kDesktopBoardDefaultSize);
   final boardSize =
@@ -699,6 +717,10 @@ class _PlayBoardColumn extends ConsumerWidget {
             const BoardSettingsNew().showMoveNavigation,
       ),
     );
+    final showEvalBar = ref.watch(
+      boardSettingsProviderNew.select((s) => _showPlayEvalBar(s.valueOrNull)),
+    );
+    final evalBarReserved = showEvalBar ? _playEvalBarReservedWidth : 0.0;
 
     return Column(
       children: [
@@ -713,61 +735,95 @@ class _PlayBoardColumn extends ConsumerWidget {
                   width: constraints.maxWidth,
                   height: constraints.maxHeight,
                   boardSizePreference: boardSizePreference,
+                  reservedWidth: evalBarReserved,
                 );
                 final boardSize = metrics.boardSize;
                 if (boardSize <= 0) return const SizedBox.shrink();
 
                 return Center(
-                  child: SizedBox(
-                    width: boardSize,
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (showEvalBar) ...[
+                        Padding(
+                          // Line the bar up with the board square, between
+                          // the two player rows.
+                          padding: const EdgeInsets.only(
+                            top: _playHeaderHeight + _playHeaderGap,
+                          ),
+                          child: PlayLiveEvalBar(
+                            tabId: tabId,
+                            fen:
+                                _playReviewSnapshot(
+                                  state,
+                                  reviewPly,
+                                ).position.fen,
+                            width: _playEvalBarWidth,
+                            height: boardSize,
+                            isFlipped: orientation == Side.black,
+                          ),
+                        ),
+                        const SizedBox(width: _playEvalBarGap),
+                      ],
+                      SizedBox(
+                        width: boardSize,
+                        child: Stack(
+                          clipBehavior: Clip.none,
                           children: [
-                            SizedBox(
-                              height: _playHeaderHeight,
-                              child: _PlayerRow(state: state, side: topSide),
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  height: _playHeaderHeight,
+                                  child: _PlayerRow(
+                                    state: state,
+                                    side: topSide,
+                                  ),
+                                ),
+                                const SizedBox(height: _playHeaderGap),
+                                SizedBox(
+                                  width: boardSize,
+                                  height: boardSize,
+                                  child: _BoardInteractive(
+                                    state: state,
+                                    tabId: tabId,
+                                    reviewPly: reviewPly,
+                                    onReviewPlyChanged: onReviewPlyChanged,
+                                  ),
+                                ),
+                                const SizedBox(height: _playHeaderGap),
+                                SizedBox(
+                                  height: _playHeaderHeight,
+                                  child: _PlayerRow(
+                                    state: state,
+                                    side: bottomSide,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: _playHeaderGap),
-                            SizedBox(
-                              width: boardSize,
-                              height: boardSize,
-                              child: _BoardInteractive(
-                                state: state,
-                                tabId: tabId,
-                                reviewPly: reviewPly,
-                                onReviewPlyChanged: onReviewPlyChanged,
+                            // Same placement as the Board pane: a 16px target in
+                            // the board's extreme bottom-right corner, clear of
+                            // the piece centre and out of the player row.
+                            Positioned(
+                              right: 0,
+                              bottom: _playHeaderHeight + _playHeaderGap,
+                              child: SizedBox.square(
+                                dimension: _playResizeGripTarget,
+                                child: BoardResizeHandle(
+                                  boardSize: boardSize,
+                                  minSize: metrics.minBoardSize,
+                                  maxSize: metrics.growLimit,
+                                  onResize: onBoardSizeChanged,
+                                  onResizeEnd: onBoardSizeChangeEnd,
+                                  onReset: onBoardSizeReset,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: _playHeaderGap),
-                            SizedBox(
-                              height: _playHeaderHeight,
-                              child: _PlayerRow(state: state, side: bottomSide),
                             ),
                           ],
                         ),
-                        // Same placement as the Board pane: a 16px target in
-                        // the board's extreme bottom-right corner, clear of
-                        // the piece centre and out of the player row.
-                        Positioned(
-                          right: 0,
-                          bottom: _playHeaderHeight + _playHeaderGap,
-                          child: SizedBox.square(
-                            dimension: _playResizeGripTarget,
-                            child: BoardResizeHandle(
-                              boardSize: boardSize,
-                              minSize: metrics.minBoardSize,
-                              maxSize: metrics.growLimit,
-                              onResize: onBoardSizeChanged,
-                              onResizeEnd: onBoardSizeChangeEnd,
-                              onReset: onBoardSizeReset,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 );
               },
@@ -1388,7 +1444,9 @@ class _GameSidePanel extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _GameHeader(state: state),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
+          const _EvalBarToggle(),
+          const SizedBox(height: 10),
           const Divider(height: 1, color: kDividerColor),
           const SizedBox(height: 12),
           Expanded(
@@ -1411,6 +1469,44 @@ class _GameSidePanel extends ConsumerWidget {
             _GameActions(state: state, tabId: tabId),
         ],
       ),
+    );
+  }
+}
+
+/// In-game shortcut for Settings > "Eval bar while playing", so the player
+/// can show or hide the live eval mid-game without leaving the board.
+class _EvalBarToggle extends ConsumerWidget {
+  const _EvalBarToggle();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final show = ref.watch(
+      boardSettingsProviderNew.select((s) => _showPlayEvalBar(s.valueOrNull)),
+    );
+    return Row(
+      children: [
+        const Expanded(
+          child: Text(
+            'Live eval bar',
+            style: TextStyle(
+              color: kWhiteColor70,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        FTheme(
+          data: FThemes.zinc.dark,
+          child: FSwitch(
+            semanticsLabel: 'Live eval bar',
+            value: show,
+            onChange:
+                (value) => ref
+                    .read(boardSettingsProviderNew.notifier)
+                    .togglePlayEvalBar(value),
+          ),
+        ),
+      ],
     );
   }
 }
