@@ -14,10 +14,10 @@ import 'package:chessever/desktop/widgets/pressable_scale.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-/// The chessever.com section that lists every desktop download (macOS
+/// The chessever.com/app section that lists every desktop download (macOS
 /// Apple Silicon and Intel, Windows, Linux).
 final Uri kDesktopDownloadPageUri = Uri.parse(
-  'https://chessever.com/#download',
+  'https://chessever.com/app#download',
 );
 
 /// Whether the sidebar offers the desktop download. Only the browser build

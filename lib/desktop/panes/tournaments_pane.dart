@@ -1118,6 +1118,7 @@ class _EventPosterInfoPanel extends StatelessWidget {
                 Icon(Icons.open_in_new_rounded, size: 14, color: color),
               ],
             ),
+            DesktopEventCountdownLine(event: event, topGap: 6),
           ],
         ),
       ),
@@ -2245,6 +2246,10 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                                   fontSize: 11,
                                 ),
                               ),
+                              // "Round 7 · starts in 16h 50m": the next round,
+                              // at a glance, like the For You card and the web
+                              // directory. Hidden for live/completed events.
+                              DesktopEventCountdownLine(event: t, topGap: 2),
                               const SizedBox(height: 8),
                               Row(
                                 children: [

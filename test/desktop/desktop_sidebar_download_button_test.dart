@@ -7,7 +7,7 @@ void main() {
   test('points at the chessever.com download section', () {
     expect(
       kDesktopDownloadPageUri.toString(),
-      'https://chessever.com/#download',
+      'https://chessever.com/app#download',
     );
   });
 

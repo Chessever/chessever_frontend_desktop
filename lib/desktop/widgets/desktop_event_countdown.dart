@@ -15,9 +15,17 @@ final _desktopEventCountdownTickProvider = StreamProvider.autoDispose<DateTime>(
 );
 
 class DesktopEventCountdownLine extends ConsumerWidget {
-  const DesktopEventCountdownLine({required this.event, super.key});
+  const DesktopEventCountdownLine({
+    required this.event,
+    this.topGap = 0,
+    super.key,
+  });
 
   final GroupEventCardModel event;
+
+  /// Space above the line, applied only when the line renders, so a card with
+  /// no scheduled round keeps exactly the layout it had without it.
+  final double topGap;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -28,9 +36,10 @@ class DesktopEventCountdownLine extends ConsumerWidget {
     }
 
     final presentation = SignedOutEventsPresentationScope.maybeOf(context);
-    final nextRound = presentation != null
-        ? presentation.data?.nextRounds[event.id]
-        : ref.watch(eventNextRoundProvider(event.id)).valueOrNull;
+    final nextRound =
+        presentation != null
+            ? presentation.data?.nextRounds[event.id]
+            : ref.watch(eventNextRoundProvider(event.id)).valueOrNull;
     if (nextRound == null) return const SizedBox.shrink();
 
     var now = presentation?.data?.capturedAt ?? DateTime.now();
@@ -50,7 +59,7 @@ class DesktopEventCountdownLine extends ConsumerWidget {
     );
     if (label.isEmpty) return const SizedBox.shrink();
 
-    return Text(
+    final line = Text(
       label,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -62,6 +71,8 @@ class DesktopEventCountdownLine extends ConsumerWidget {
         height: 1.2,
       ),
     );
+    if (topGap <= 0) return line;
+    return Padding(padding: EdgeInsets.only(top: topGap), child: line);
   }
 }
 
