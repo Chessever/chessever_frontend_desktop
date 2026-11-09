@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -28,10 +30,14 @@ class _FakeRepository implements CommunityLikesRepository {
     this.result, {
     this.laterPages = const [],
     this.byPeriod = const {},
+    this.pendingByPeriod = const {},
+    this.byQuery = const {},
   });
 
   final CommunityLikesResult result;
   final Map<CommunityLikesPeriod, CommunityLikesResult> byPeriod;
+  final Map<CommunityLikesPeriod, Future<CommunityLikesResult>> pendingByPeriod;
+  final Map<CommunityLikesQuery, CommunityLikesResult> byQuery;
   final List<CommunityLikesResult> laterPages;
   final List<CommunityLikesQuery> queries = [];
   final List<CommunityLikesCursor> cursors = [];
@@ -47,7 +53,9 @@ class _FakeRepository implements CommunityLikesRepository {
       cursors.add(after);
       return laterPages[cursors.length - 1];
     }
-    return byPeriod[query.period] ?? result;
+    final pending = pendingByPeriod[query.period];
+    if (pending != null) return await pending;
+    return byQuery[query] ?? byPeriod[query.period] ?? result;
   }
 
   @override
@@ -139,6 +147,9 @@ Future<_FakeRepository> _pump(
   CommunityLikesResult? result,
   List<CommunityLikesResult> laterPages = const [],
   Map<CommunityLikesPeriod, CommunityLikesResult> byPeriod = const {},
+  Map<CommunityLikesPeriod, Future<CommunityLikesResult>> pendingByPeriod =
+      const {},
+  Map<CommunityLikesQuery, CommunityLikesResult> byQuery = const {},
   SubscriptionState? subscription,
   GamesListViewMode viewMode = GamesListViewMode.gamesCard,
   double width = 1440,
@@ -162,6 +173,8 @@ Future<_FakeRepository> _pump(
         ]),
     laterPages: laterPages,
     byPeriod: byPeriod,
+    pendingByPeriod: pendingByPeriod,
+    byQuery: byQuery,
   );
   await tester.pumpWidget(
     ProviderScope(
@@ -528,6 +541,159 @@ void main() {
     );
     expect(find.text('No games liked in this period'), findsNothing);
     expect(find.byType(DesktopGameCard), findsNWidgets(3));
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 2));
+  });
+
+  for (final section in ['Games', 'Players']) {
+    for (final period in [
+      CommunityLikesPeriod.today,
+      CommunityLikesPeriod.week,
+    ]) {
+      testWidgets('$section keeps a manually selected empty ${period.name}', (
+        tester,
+      ) async {
+        await _pump(
+          tester,
+          byPeriod: {
+            CommunityLikesPeriod.week: const CommunityLikesResult.ranked([]),
+            CommunityLikesPeriod.today: const CommunityLikesResult.ranked([]),
+          },
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+        final container = ProviderScope.containerOf(
+          tester.element(find.byType(DesktopLikesPane)),
+        );
+        // Preserve the initial automatic choice, then exercise real controls.
+        expect(
+          container.read(communityLikesPeriodProvider),
+          CommunityLikesPeriod.month,
+        );
+        if (section == 'Players') {
+          await tester.tap(find.text('Players'));
+          await tester.pump();
+        }
+        await tester.tap(find.text(period.label));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(container.read(communityLikesPeriodProvider), period);
+        expect(container.read(communityLikesDayProvider), isNull);
+        expect(
+          find.text(
+            period == CommunityLikesPeriod.today
+                ? 'No games liked yet today'
+                : 'No games liked in this period',
+          ),
+          findsOneWidget,
+        );
+        expect(find.byType(DesktopGameCard), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pump(const Duration(seconds: 2));
+      });
+    }
+  }
+
+  testWidgets('date arrows retain an empty historical ranking', (tester) async {
+    final previous =
+        CommunityLikesQuery(
+          CommunityLikesPeriod.month,
+          DateTime.now(),
+        ).previous!;
+    await _pump(
+      tester,
+      byQuery: {previous: const CommunityLikesResult.ranked([])},
+    );
+    await tester.tap(find.text('Month'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byIcon(Icons.chevron_left_rounded));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(DesktopLikesPane)),
+    );
+    expect(
+      container.read(communityLikesPeriodProvider),
+      CommunityLikesPeriod.month,
+    );
+    expect(container.read(communityLikesDayProvider), previous.start);
+    expect(find.text(previous.label(DateTime.now())), findsOneWidget);
+    expect(find.text('No games liked in this period'), findsOneWidget);
+    expect(find.byType(DesktopGameCard), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 2));
+  });
+
+  for (final returnToWeek in [false, true]) {
+    testWidgets(
+      'manual ${returnToWeek ? 'Today to Week' : 'active Week'} cancels a pending fallback',
+      (tester) async {
+        final month = Completer<CommunityLikesResult>();
+        final repository = await _pump(
+          tester,
+          byPeriod: {
+            CommunityLikesPeriod.week: const CommunityLikesResult.ranked([]),
+            CommunityLikesPeriod.today: const CommunityLikesResult.ranked([]),
+          },
+          pendingByPeriod: {CommunityLikesPeriod.month: month.future},
+        );
+        expect(
+          repository.queries.map((q) => q.period),
+          contains(CommunityLikesPeriod.month),
+        );
+        if (returnToWeek) {
+          await tester.tap(find.text('Today'));
+          await tester.pump();
+        }
+        await tester.tap(find.text('Week'));
+        await tester.pump();
+        month.complete(const CommunityLikesResult.ranked([]));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        final container = ProviderScope.containerOf(
+          tester.element(find.byType(DesktopLikesPane)),
+        );
+        expect(
+          container.read(communityLikesPeriodProvider),
+          CommunityLikesPeriod.week,
+        );
+        expect(
+          repository.queries.any((q) => q.period == CommunityLikesPeriod.year),
+          isFalse,
+        );
+        expect(find.text('No games liked in this period'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.pump(const Duration(seconds: 2));
+      },
+    );
+  }
+
+  testWidgets('a later empty refresh does not restart initial auto-selection', (
+    tester,
+  ) async {
+    final byPeriod = <CommunityLikesPeriod, CommunityLikesResult>{};
+    final repository = await _pump(tester, byPeriod: byPeriod);
+    expect(find.byType(DesktopGameCard), findsNWidgets(3));
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(DesktopLikesPane)),
+    );
+    final query = CommunityLikesQuery(
+      CommunityLikesPeriod.week,
+      DateTime.now(),
+    );
+    byPeriod[CommunityLikesPeriod.week] = const CommunityLikesResult.ranked([]);
+    container.invalidate(communityLikesProvider(query));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      container.read(communityLikesPeriodProvider),
+      CommunityLikesPeriod.week,
+    );
+    expect(
+      repository.queries.every((q) => q.period == CommunityLikesPeriod.week),
+      isTrue,
+    );
+    expect(find.text('No games liked in this period'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(seconds: 2));
   });

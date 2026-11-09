@@ -27,15 +27,19 @@ final communityLikesDayProvider = StateProvider<DateTime?>((ref) => null);
 /// Premium or fails, so the tab shows that state instead of guessing.
 Future<CommunityLikesQuery?> firstRankedCommunityLikesQuery(
   Iterable<CommunityLikesQuery> candidates,
-  Future<CommunityLikesResult> Function(CommunityLikesQuery query) fetch,
-) async {
+  Future<CommunityLikesResult> Function(CommunityLikesQuery query) fetch, {
+  bool Function()? canContinue,
+}) async {
   for (final query in candidates) {
+    if (canContinue != null && !canContinue()) return null;
     final CommunityLikesResult result;
     try {
       result = await fetch(query);
     } catch (_) {
       return null;
     }
+    // Cancellation must stop downstream fetches as well as publication.
+    if (canContinue != null && !canContinue()) return null;
     if (result.status != CommunityLikesStatus.ranked) return null;
     if (result.entries.isNotEmpty) return query;
   }
