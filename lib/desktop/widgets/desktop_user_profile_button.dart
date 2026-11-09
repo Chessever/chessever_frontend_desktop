@@ -6,16 +6,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/play/play_profile_repository.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/pressable_scale.dart';
+import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/auth_state_provider.dart';
 import 'package:chessever/repository/authentication/auth_repository.dart';
 import 'package:chessever/repository/authentication/model/auth_state.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-class DesktopUserProfileButton extends ConsumerWidget {
+class DesktopUserProfileButton extends HookConsumerWidget {
   const DesktopUserProfileButton({
     super.key,
     required this.onPress,
@@ -32,44 +35,64 @@ class DesktopUserProfileButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final name = _resolveDisplayName(ref);
-    final button = FButton.raw(
-      style: _profileButtonStyle(showLabel: showLabel),
-      onPress: onPress,
-      child: Padding(
-        padding:
-            showLabel
-                ? const EdgeInsets.fromLTRB(5, 4, 10, 4)
-                : const EdgeInsets.all(3),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DesktopInboxUnreadAnchor(
-              child: DesktopUserAvatar(size: size, displayName: name),
-            ),
-            if (showLabel) ...[
-              const SizedBox(width: 9),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 160),
-                child: Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                  ),
+    final hovered = useState(false);
+    final content = Padding(
+      padding:
+          showLabel
+              ? const EdgeInsets.fromLTRB(5, 4, 10, 4)
+              : const EdgeInsets.all(3),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DesktopInboxUnreadAnchor(
+            child: DesktopUserAvatar(size: size, displayName: name),
+          ),
+          if (showLabel) ...[
+            const SizedBox(width: 9),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 160),
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(width: 7),
-              const Icon(
-                Icons.chevron_right_rounded,
-                size: 16,
-                color: kWhiteColor70,
-              ),
-            ],
+            ),
+            const SizedBox(width: 7),
+            const Icon(
+              Icons.chevron_right_rounded,
+              size: 16,
+              color: kWhiteColor70,
+            ),
           ],
-        ),
+        ],
+      ),
+    );
+    // One hover spring eases the fill, rim and shadow in together instead
+    // of forui swapping the whole decoration on the hover frame. The press
+    // is PressableScale's filtered 0.97 (forui's own bounce is off: it is an
+    // unfiltered scale that re-shapes the name and avatar glyphs each frame).
+    final button = PressableScale(
+      enabled: onPress != null,
+      hoveredScale: 1,
+      child: SingleMotionBuilder(
+        value: hovered.value && onPress != null ? 1.0 : 0.0,
+        motion: DesktopMotion.hover,
+        child: content,
+        builder:
+            (context, hover, child) => FButton.raw(
+              style: _profileButtonStyle(
+                showLabel: showLabel,
+                hover: hover.clamp(0.0, 1.0),
+              ),
+              onPress: onPress,
+              onHoverChange: (value) => hovered.value = value,
+              child: child!,
+            ),
       ),
     );
 
@@ -255,35 +278,41 @@ class _PremiumAvatarRingPainter extends CustomPainter {
 
 FBaseButtonStyle Function(FButtonStyle style) _profileButtonStyle({
   required bool showLabel,
+  required double hover,
 }) {
+  final radius = BorderRadius.circular(showLabel ? 999 : 8);
+  final hovered = BoxDecoration(
+    color: kBlack3Color,
+    borderRadius: radius,
+    border: Border.all(color: kPrimaryColor.withValues(alpha: 0.45)),
+    boxShadow: [
+      BoxShadow(
+        color: kPrimaryColor.withValues(alpha: 0.12),
+        blurRadius: 18,
+        offset: const Offset(0, 8),
+      ),
+    ],
+  );
+  final focused = BoxDecoration(
+    color: kBlack2Color,
+    borderRadius: radius,
+    border: Border.all(color: kPrimaryColor.withValues(alpha: 0.70)),
+  );
+  final rest = BoxDecoration(
+    color: showLabel ? kBlack2Color : Colors.transparent,
+    borderRadius: radius,
+    border: Border.all(color: showLabel ? kDividerColor : Colors.transparent),
+  );
   return FButtonStyle.ghost(
     (style) => style.copyWith(
       decoration: FWidgetStateMap({
-        WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-          color: kBlack3Color,
-          borderRadius: BorderRadius.circular(showLabel ? 999 : 8),
-          border: Border.all(color: kPrimaryColor.withValues(alpha: 0.45)),
-          boxShadow: [
-            BoxShadow(
-              color: kPrimaryColor.withValues(alpha: 0.12),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        WidgetState.focused: BoxDecoration(
-          color: kBlack2Color,
-          borderRadius: BorderRadius.circular(showLabel ? 999 : 8),
-          border: Border.all(color: kPrimaryColor.withValues(alpha: 0.70)),
-        ),
-        WidgetState.any: BoxDecoration(
-          color: showLabel ? kBlack2Color : Colors.transparent,
-          borderRadius: BorderRadius.circular(showLabel ? 999 : 8),
-          border: Border.all(
-            color: showLabel ? kDividerColor : Colors.transparent,
-          ),
-        ),
+        // Keyboard presses (no pointer hover) still show the full hover look.
+        WidgetState.pressed: hovered,
+        WidgetState.focused: BoxDecoration.lerp(focused, hovered, hover)!,
+        WidgetState.any: BoxDecoration.lerp(rest, hovered, hover)!,
       }),
+      tappableStyle:
+          (tappable) => tappable.copyWith(motion: (_) => FTappableMotion.none),
     ),
   );
 }

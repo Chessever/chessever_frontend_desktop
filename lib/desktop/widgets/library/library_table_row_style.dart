@@ -243,7 +243,7 @@ BoxDecoration librarySelectedRowDecoration({
     color:
         selected
             ? kPrimaryColor.withValues(alpha: selectedTint)
-            : (hovered ? kBlack3Color.withValues(alpha: 0.55) : null),
+            : kBlack3Color.withValues(alpha: hovered ? 0.55 : 0),
     border: Border(
       left: BorderSide(
         color: selected ? kPrimaryColor : Colors.transparent,

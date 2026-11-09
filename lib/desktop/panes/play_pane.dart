@@ -22,6 +22,7 @@ import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/state/play_setup.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/play_achievement_badge.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
 import 'package:chessever/desktop/widgets/play_strength_control.dart';
@@ -236,55 +237,73 @@ class _AchievementClaimOverlayState extends State<_AchievementClaimOverlay>
     final primary = definitions.isEmpty ? null : definitions.last;
     if (primary == null) return const SizedBox.shrink();
 
-    return AnimatedBuilder(
-      animation: Listenable.merge([_entry, _effects]),
-      builder: (context, child) {
-        final t = _entry.value.clamp(0.0, 1.0);
-        return Material(
-          color: Colors.transparent,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _claim,
-            child: Stack(
-              children: [
-                Opacity(
-                  opacity: t,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: kBlackColor.withValues(alpha: 0.78),
-                    ),
-                    child: CustomPaint(
-                      painter: _ClaimBurstPainter(
-                        accent: primary.color,
-                        progress: t,
-                        pulse: _effects.value,
+    // The looping burst only repaints its own layer; the card listens to the
+    // entry spring alone and sits behind a RepaintBoundary, so the 1.8 s
+    // effect loop never rebuilds or re-rasterizes the card's text.
+    return Material(
+      color: Colors.transparent,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _claim,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: AnimatedBuilder(
+                  animation: Listenable.merge([_entry, _effects]),
+                  builder: (context, _) {
+                    final t = _entry.value.clamp(0.0, 1.0);
+                    return Opacity(
+                      opacity: t,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: kBlackColor.withValues(alpha: 0.78),
+                        ),
+                        child: CustomPaint(
+                          painter: _ClaimBurstPainter(
+                            accent: primary.color,
+                            progress: t,
+                            pulse: _effects.value,
+                          ),
+                          child: const SizedBox.expand(),
+                        ),
                       ),
-                      child: const SizedBox.expand(),
-                    ),
-                  ),
+                    );
+                  },
                 ),
-                Center(
-                  child: Opacity(
+              ),
+            ),
+            Center(
+              child: AnimatedBuilder(
+                animation: _entry,
+                builder: (context, child) {
+                  final t = _entry.value.clamp(0.0, 1.0);
+                  final scale = 0.86 + t * 0.14;
+                  return Opacity(
                     opacity: t,
-                    child: Transform.translate(
+                    child: MotionTranslate(
                       offset: Offset(0, (1 - t) * 34),
+                      // Filtered only while scaling; at rest the card paints
+                      // as crisp vectors with no image-filter layer.
                       child: Transform.scale(
-                        scale: 0.86 + t * 0.14,
-                        filterQuality: FilterQuality.medium,
+                        scale: scale,
+                        filterQuality: scale == 1 ? null : FilterQuality.medium,
                         child: child,
                       ),
                     ),
+                  );
+                },
+                child: RepaintBoundary(
+                  child: _ClaimCard(
+                    definitions: definitions,
+                    claiming: _claiming,
+                    onClaim: _claim,
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
-        );
-      },
-      child: _ClaimCard(
-        definitions: definitions,
-        claiming: _claiming,
-        onClaim: _claim,
+          ],
+        ),
       ),
     );
   }

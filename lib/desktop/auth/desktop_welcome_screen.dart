@@ -16,6 +16,7 @@ import 'package:chessever/desktop/widgets/desktop_icon.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/svg_asset.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 
 /// Welcome for a desktop window with no session at all: after an explicit
 /// sign-out, or when the automatic guest session could not be created.
@@ -246,38 +247,48 @@ class _AuthButtonState extends State<_AuthButton> {
       data: FThemes.zinc.dark,
       child: ClickCursor(
         enabled: !widget.disabled,
+        // One hover spring drives the fill, border and shadow so the surface
+        // eases in step with the scale instead of snapping beside it.
         child: SingleMotionBuilder(
-          value: scale,
-          motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
+          value: !widget.disabled && _hovered ? 1.0 : 0.0,
+          motion: DesktopMotion.hover,
           builder:
-              (context, value, child) => Transform.scale(
-                scale: value,
-                filterQuality: FilterQuality.medium,
-                child: child,
+              (context, hover, _) => SingleMotionBuilder(
+                value: scale,
+                motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
+                builder:
+                    (context, value, child) =>
+                        MotionScale(scale: value, child: child),
+                child: FButton(
+                  style: _welcomeAuthButtonStyle(
+                    primary: widget.primary,
+                    hover: hover.clamp(0.0, 1.0),
+                  ),
+                  onPress: widget.disabled ? null : widget.onTap,
+                  onHoverChange: widget.disabled ? null : _setHovered,
+                  onStateChange: widget.disabled ? null : _setStates,
+                  mainAxisSize: MainAxisSize.max,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DesktopIcon(
+                        widget.iconAsset,
+                        size: 20,
+                        color: widget.primary ? null : kWhiteColor,
+                      ),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: Text(
+                          widget.label,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-          child: FButton(
-            style: _welcomeAuthButtonStyle(primary: widget.primary),
-            onPress: widget.disabled ? null : widget.onTap,
-            onHoverChange: widget.disabled ? null : _setHovered,
-            onStateChange: widget.disabled ? null : _setStates,
-            mainAxisSize: MainAxisSize.max,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DesktopIcon(
-                  widget.iconAsset,
-                  size: 20,
-                  color: widget.primary ? null : kWhiteColor,
-                ),
-                const SizedBox(width: 12),
-                Flexible(
-                  child: Text(widget.label, overflow: TextOverflow.ellipsis),
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );
@@ -286,7 +297,31 @@ class _AuthButtonState extends State<_AuthButton> {
 
 FBaseButtonStyle Function(FButtonStyle style) _welcomeAuthButtonStyle({
   required bool primary,
+  required double hover,
 }) {
+  final hovered = BoxDecoration(
+    color: primary ? kPrimaryColor : kBlack2Color,
+    borderRadius: BorderRadius.circular(10),
+    border:
+        primary
+            ? Border.all(color: kLightYellowColor.withValues(alpha: 0.55))
+            : Border.all(color: kWhiteColor.withValues(alpha: 0.22)),
+    boxShadow: [
+      BoxShadow(
+        color:
+            primary
+                ? kPrimaryColor.withValues(alpha: 0.18)
+                : Colors.black.withValues(alpha: 0.22),
+        blurRadius: 16,
+        offset: const Offset(0, 5),
+      ),
+    ],
+  );
+  final rest = BoxDecoration(
+    color: primary ? kPrimaryColor.withValues(alpha: 0.92) : kBlack3Color,
+    borderRadius: BorderRadius.circular(10),
+    border: primary ? null : Border.all(color: kDividerColor),
+  );
   return FButtonStyle.ghost(
     (style) => style.copyWith(
       decoration: FWidgetStateMap({
@@ -297,30 +332,15 @@ FBaseButtonStyle Function(FButtonStyle style) _welcomeAuthButtonStyle({
           borderRadius: BorderRadius.circular(10),
           border: primary ? null : Border.all(color: kDividerColor),
         ),
-        WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-          color: primary ? kPrimaryColor : kBlack2Color,
-          borderRadius: BorderRadius.circular(10),
-          border:
-              primary
-                  ? Border.all(color: kLightYellowColor.withValues(alpha: 0.55))
-                  : Border.all(color: kWhiteColor.withValues(alpha: 0.22)),
-          boxShadow: [
-            BoxShadow(
-              color:
-                  primary
-                      ? kPrimaryColor.withValues(alpha: 0.18)
-                      : Colors.black.withValues(alpha: 0.22),
-              blurRadius: 16,
-              offset: const Offset(0, 5),
-            ),
-          ],
-        ),
-        WidgetState.any: BoxDecoration(
-          color: primary ? kPrimaryColor.withValues(alpha: 0.92) : kBlack3Color,
-          borderRadius: BorderRadius.circular(10),
-          border: primary ? null : Border.all(color: kDividerColor),
-        ),
+        // Keyboard presses (no pointer hover) still show the full hover look.
+        WidgetState.pressed: hovered,
+        WidgetState.any: BoxDecoration.lerp(rest, hovered, hover)!,
       }),
+      // The press scale above is the only press motion: forui's own
+      // unfiltered 0.97 tappable bounce would stack on it and re-shape the
+      // label glyphs every frame.
+      tappableStyle:
+          (tappable) => tappable.copyWith(motion: (_) => FTappableMotion.none),
       contentStyle:
           (content) => content.copyWith(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),

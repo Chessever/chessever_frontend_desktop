@@ -247,6 +247,7 @@ class _LockedSectionRowState extends State<_LockedSectionRow>
             onTap: widget.onTap,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
+              curve: Curves.easeOutCubic,
               height: kLibraryCatalogRowHeight,
               padding: EdgeInsets.only(
                 left: widget.indented ? 28 : 12,
@@ -582,13 +583,21 @@ class _CreditLinkState extends State<_CreditLink>
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
-            child: Text(
-              widget.label,
-              style: TextStyle(
-                color: _hovered ? kPrimaryColor : kWhiteColor,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
+            // Fades rather than snapping, on the same clock as the
+            // hover fills elsewhere in the reader.
+            child: AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
+              style: DefaultTextStyle.of(context).style.merge(
+                // Merged over the ambient style so the label keeps the app
+                // typeface (Inter on web); only the colour animates.
+                TextStyle(
+                  color: _hovered ? kPrimaryColor : kWhiteColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
+              child: Text(widget.label),
             ),
           ),
         ),
@@ -882,6 +891,7 @@ class _PlayerRowState extends State<_PlayerRow>
             onDoubleTap: widget.onOpen,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
+              curve: Curves.easeOutCubic,
               decoration: librarySelectedRowDecoration(
                 selected: widget.selected,
                 hovered: _hovered,

@@ -26,6 +26,7 @@ import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/state/my_databases_focus.dart';
 import 'package:chessever/desktop/widgets/library/library_save_section.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tappable.dart';
@@ -370,12 +371,22 @@ Future<LibrarySaveOutcome?> showLibrarySaveToFolderDialog({
       final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
       return FadeTransition(
         opacity: eased,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.02),
-            end: Offset.zero,
-          ).animate(eased),
-          child: child,
+        // MotionTranslate, not SlideTransition: the ease-out tail is
+        // sub-pixel, where an unfiltered translate steps the glyphs.
+        child: LayoutBuilder(
+          builder:
+              (context, constraints) => AnimatedBuilder(
+                animation: eased,
+                child: child,
+                builder:
+                    (context, child) => MotionTranslate(
+                      offset: Offset(
+                        0,
+                        0.02 * constraints.maxHeight * (1 - eased.value),
+                      ),
+                      child: child,
+                    ),
+              ),
         ),
       );
     },
@@ -2242,6 +2253,9 @@ class _EmptyHint extends StatelessWidget {
   }
 }
 
+/// Hover/selection fill fade shared by the destination rows.
+const Duration _rowHoverFade = Duration(milliseconds: 120);
+
 class _AddLocalFolderTile extends StatefulWidget {
   const _AddLocalFolderTile({required this.onTap});
 
@@ -2274,7 +2288,11 @@ class _AddLocalFolderTileState extends State<_AddLocalFolderTile>
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
-            child: Container(
+            // The fill fades like the rest of the row vocabulary instead of
+            // snapping on enter/exit; geometry stays fixed.
+            child: AnimatedContainer(
+              duration: _rowHoverFade,
+              curve: Curves.easeOutCubic,
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
               decoration: BoxDecoration(
                 color: _hovered ? kBlack3Color : Colors.transparent,
@@ -2351,7 +2369,11 @@ class _LocalFolderRowState extends State<_LocalFolderRow>
           onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
           child: DesktopTappable(
             onPress: widget.disabled ? null : widget.onToggle,
-            child: Container(
+            // The fill fades like the rest of the row vocabulary instead of
+            // snapping on enter/exit; geometry stays fixed.
+            child: AnimatedContainer(
+              duration: _rowHoverFade,
+              curve: Curves.easeOutCubic,
               padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
               decoration: BoxDecoration(
                 color: bg,
@@ -2750,7 +2772,11 @@ class _FolderRowState extends State<_FolderRow>
           onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
           child: DesktopTappable(
             onPress: widget.disabled ? null : widget.onToggle,
-            child: Container(
+            // The fill fades like the rest of the row vocabulary instead of
+            // snapping on enter/exit; geometry stays fixed.
+            child: AnimatedContainer(
+              duration: _rowHoverFade,
+              curve: Curves.easeOutCubic,
               padding: EdgeInsets.fromLTRB(10 + indent, 8, 10, 8),
               decoration: BoxDecoration(
                 color: bg,

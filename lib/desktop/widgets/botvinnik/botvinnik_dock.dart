@@ -306,9 +306,20 @@ class _DockResizeEdgeState extends ConsumerState<_DockResizeEdge> {
           width: 6,
           child: Align(
             alignment: Alignment.centerLeft,
-            child: ColoredBox(
-              color:
-                  _active ? kWhiteColor.withValues(alpha: 0.22) : kDividerColor,
+            // Lights on the shared hover spring instead of snapping.
+            child: SingleMotionBuilder(
+              value: _active ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder:
+                  (context, h, child) => ColoredBox(
+                    color:
+                        Color.lerp(
+                          kDividerColor,
+                          kWhiteColor.withValues(alpha: 0.22),
+                          h.clamp(0.0, 1.0),
+                        )!,
+                    child: child,
+                  ),
               child: const SizedBox(width: 1, height: double.infinity),
             ),
           ),
@@ -738,60 +749,74 @@ class _SuggestionRowState extends State<_SuggestionRow>
             button: true,
             enabled: enabled,
             label: widget.suggestion.label,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              padding: const EdgeInsets.fromLTRB(14, 11, 12, 11),
-              decoration: BoxDecoration(
-                color: hovered ? kBlack3Color : Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: kDividerColor),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.suggestion.label,
-                          style: TextStyle(
-                            color: enabled ? kWhiteColor : kLightGreyColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          widget.suggestion.prompt,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            // A muted row dims as one unit, so the prompt
-                            // never outshines its own label.
-                            color: enabled ? kWhiteColor70 : kLightGreyColor,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+            // Fill and arrow colour ride one hover spring, the same one the
+            // arrow's nudge uses, so the row lights as the arrow lifts.
+            child: SingleMotionBuilder(
+              value: hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, h, _) {
+                final t = h.clamp(0.0, 1.0);
+                return Container(
+                  padding: const EdgeInsets.fromLTRB(14, 11, 12, 11),
+                  decoration: BoxDecoration(
+                    color: Color.lerp(
+                      kBlack3Color.withValues(alpha: 0),
+                      kBlack3Color,
+                      t,
                     ),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: kDividerColor),
                   ),
-                  const SizedBox(width: 10),
-                  SingleMotionBuilder(
-                    value: _pressed ? 0.0 : (hovered ? 2.5 : 0.0),
-                    motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-                    builder:
-                        (context, shift, child) => MotionTranslate(
-                          offset: Offset(shift, -shift),
-                          child: child,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.suggestion.label,
+                              style: TextStyle(
+                                color: enabled ? kWhiteColor : kLightGreyColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              widget.suggestion.prompt,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                // A muted row dims as one unit, so the prompt
+                                // never outshines its own label.
+                                color:
+                                    enabled ? kWhiteColor70 : kLightGreyColor,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                         ),
-                    child: Icon(
-                      Icons.north_east_rounded,
-                      size: 15,
-                      color: hovered ? kWhiteColor : kLightGreyColor,
-                    ),
+                      ),
+                      const SizedBox(width: 10),
+                      SingleMotionBuilder(
+                        value: _pressed ? 0.0 : (hovered ? 2.5 : 0.0),
+                        motion:
+                            _pressed ? DesktopMotion.tap : DesktopMotion.hover,
+                        builder:
+                            (context, shift, child) => MotionTranslate(
+                              offset: Offset(shift, -shift),
+                              child: child,
+                            ),
+                        child: Icon(
+                          Icons.north_east_rounded,
+                          size: 15,
+                          color: Color.lerp(kLightGreyColor, kWhiteColor, t),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                );
+              },
             ),
           ),
         ),
@@ -1417,8 +1442,6 @@ class _ConversationRowState extends State<_ConversationRow>
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    final fg =
-        selected ? kPrimaryColor : (_hovered ? kWhiteColor : kWhiteColor70);
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: CursorAware(
@@ -1430,53 +1453,68 @@ class _ConversationRowState extends State<_ConversationRow>
             behavior: HitTestBehavior.opaque,
             onTap: widget.onOpen,
             onSecondaryTapUp: (details) => _showMenu(details.globalPosition),
-            child: Container(
-              padding: const EdgeInsets.only(left: 12),
-              decoration: BoxDecoration(
-                color:
+            // Fill, title colour and the delete control's fade ride one
+            // hover spring, like the sidebar rows this list mirrors.
+            child: SingleMotionBuilder(
+              value: _hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, h, _) {
+                final t = h.clamp(0.0, 1.0);
+                final fg =
                     selected
-                        ? kPrimaryColor.withValues(
-                          alpha: _hovered ? 0.16 : 0.10,
-                        )
-                        : (_hovered ? kBlack3Color : Colors.transparent),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color:
-                      selected
-                          ? kPrimaryColor.withValues(alpha: 0.35)
-                          : Colors.transparent,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      widget.conversation.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: fg,
-                        fontSize: 13,
-                        fontWeight:
-                            selected ? FontWeight.w600 : FontWeight.w500,
-                      ),
+                        ? kPrimaryColor
+                        : Color.lerp(kWhiteColor70, kWhiteColor, t)!;
+                return Container(
+                  padding: const EdgeInsets.only(left: 12),
+                  decoration: BoxDecoration(
+                    color:
+                        selected
+                            ? kPrimaryColor.withValues(alpha: 0.10 + 0.06 * t)
+                            : Color.lerp(
+                              kBlack3Color.withValues(alpha: 0),
+                              kBlack3Color,
+                              t,
+                            ),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color:
+                          selected
+                              ? kPrimaryColor.withValues(alpha: 0.35)
+                              : Colors.transparent,
                     ),
                   ),
-                  // The slot is always reserved so rows never shift on hover.
-                  Opacity(
-                    opacity: _hovered || selected ? 1 : 0,
-                    child: IgnorePointer(
-                      ignoring: !(_hovered || selected),
-                      child: _DockIconButton(
-                        icon: Icons.delete_outline_rounded,
-                        iconSize: 16,
-                        tooltip: 'Delete chat',
-                        onPress: widget.onDelete,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.conversation.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: fg,
+                            fontSize: 13,
+                            fontWeight:
+                                selected ? FontWeight.w600 : FontWeight.w500,
+                          ),
+                        ),
                       ),
-                    ),
+                      // The slot is always reserved so rows never shift on hover.
+                      Opacity(
+                        opacity: selected ? 1 : t,
+                        child: IgnorePointer(
+                          ignoring: !(_hovered || selected),
+                          child: _DockIconButton(
+                            icon: Icons.delete_outline_rounded,
+                            iconSize: 16,
+                            tooltip: 'Delete chat',
+                            onPress: widget.onDelete,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                );
+              },
             ),
           ),
         ),
@@ -1925,16 +1963,6 @@ class _DockIconButtonState extends State<_DockIconButton>
   Widget build(BuildContext context) {
     final enabled = widget.onPress != null;
     final hovered = enabled && _hovered;
-    final fg =
-        !enabled
-            ? kLightGreyColor
-            : widget.selected
-            ? kPrimaryColor
-            : (hovered ? kWhiteColor : kWhiteColor70);
-    final bg =
-        widget.selected
-            ? kPrimaryColor.withValues(alpha: hovered ? 0.16 : 0.10)
-            : (hovered ? kBlack3Color : Colors.transparent);
     return DesktopTooltip(
       message: widget.tooltip,
       child: CursorAware(
@@ -1958,29 +1986,72 @@ class _DockIconButtonState extends State<_DockIconButton>
               enabled: enabled,
               selected: widget.selected,
               label: widget.tooltip,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 120),
-                width: 40,
-                height: 40,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color:
-                        widget.selected
-                            ? kPrimaryColor.withValues(alpha: 0.35)
-                            : Colors.transparent,
-                  ),
-                ),
-                child: SingleMotionBuilder(
-                  value: _pressed ? 0.94 : 1.0,
-                  motion: DesktopMotion.tap,
-                  builder:
-                      (context, scale, child) =>
-                          Transform.scale(scale: scale, child: child),
-                  child: Icon(widget.icon, size: widget.iconSize, color: fg),
-                ),
+              // Fill and glyph colour ride one hover spring (the fill used
+              // to fade over 120 ms while the glyph snapped white); the
+              // selected state blends in on its own spring so toggling
+              // History fades fill, border and glyph together.
+              child: SingleMotionBuilder(
+                value: widget.selected ? 1.0 : 0.0,
+                motion: DesktopMotion.hover,
+                builder:
+                    (context, sv, _) => SingleMotionBuilder(
+                      value: hovered ? 1.0 : 0.0,
+                      motion: DesktopMotion.hover,
+                      builder: (context, h, _) {
+                        final t = h.clamp(0.0, 1.0);
+                        final s = sv.clamp(0.0, 1.0);
+                        final fg =
+                            !enabled
+                                ? kLightGreyColor
+                                : Color.lerp(
+                                  Color.lerp(kWhiteColor70, kWhiteColor, t)!,
+                                  kPrimaryColor,
+                                  s,
+                                )!;
+                        final bg = Color.lerp(
+                          Color.lerp(
+                            kBlack3Color.withValues(alpha: 0),
+                            kBlack3Color,
+                            t,
+                          ),
+                          kPrimaryColor.withValues(alpha: 0.10 + 0.06 * t),
+                          s,
+                        );
+                        final borderColor = kPrimaryColor.withValues(
+                          alpha: 0.35 * s,
+                        );
+                        return Container(
+                          width: 40,
+                          height: 40,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: bg,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: borderColor),
+                          ),
+                          child: SingleMotionBuilder(
+                            value: _pressed ? 0.94 : 1.0,
+                            motion: DesktopMotion.tap,
+                            // Rasterized only while the press dip is in flight, so
+                            // the glyph scales smoothly and stays crisp at rest.
+                            builder:
+                                (context, scale, child) => Transform.scale(
+                                  scale: scale,
+                                  filterQuality:
+                                      (scale - 1).abs() < 0.0002
+                                          ? null
+                                          : FilterQuality.medium,
+                                  child: child,
+                                ),
+                            child: Icon(
+                              widget.icon,
+                              size: widget.iconSize,
+                              color: fg,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
               ),
             ),
           ),
@@ -2020,13 +2091,23 @@ class _DockTextButtonState extends State<_DockTextButton>
               widthFactor: 1,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Text(
-                  widget.label,
-                  style: TextStyle(
-                    color: _hovered ? kWhiteColor : kPrimaryColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: SingleMotionBuilder(
+                  value: _hovered ? 1.0 : 0.0,
+                  motion: DesktopMotion.hover,
+                  builder:
+                      (context, h, _) => Text(
+                        widget.label,
+                        style: TextStyle(
+                          color:
+                              Color.lerp(
+                                kPrimaryColor,
+                                kWhiteColor,
+                                h.clamp(0.0, 1.0),
+                              )!,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                 ),
               ),
             ),

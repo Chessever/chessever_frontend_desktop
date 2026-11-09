@@ -92,7 +92,11 @@ class _PlayRatingChartState extends State<PlayRatingChart>
   @override
   void didUpdateWidget(covariant PlayRatingChart oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final swappedData = oldWidget.points != widget.points ||
+    // Compare by content, not identity: callers rebuild the list on every
+    // build, and restarting the 850 ms draw-in on each unrelated parent
+    // rebuild made the line snap back and redraw mid-view.
+    final swappedData =
+        !_samePoints(oldWidget.points, widget.points) ||
         oldWidget.range != widget.range;
     if (swappedData) {
       _controller
@@ -101,6 +105,24 @@ class _PlayRatingChartState extends State<PlayRatingChart>
         ..forward();
       _hover = null;
     }
+  }
+
+  static bool _samePoints(List<PlayRatingPoint> a, List<PlayRatingPoint> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final x = a[i];
+      final y = b[i];
+      if (x.playedAt != y.playedAt ||
+          x.rating != y.rating ||
+          x.delta != y.delta ||
+          x.opponentElo != y.opponentElo ||
+          x.score != y.score ||
+          x.gameKey != y.gameKey) {
+        return false;
+      }
+    }
+    return true;
   }
 
   @override
@@ -195,21 +217,19 @@ class _PlayRatingChartPainter extends CustomPainter {
 
     final firstDate = points.first.playedAt;
     final lastDate = points.last.playedAt;
-    final dayspan = math.max(
-      1,
-      lastDate.difference(firstDate).inSeconds,
-    );
+    final dayspan = math.max(1, lastDate.difference(firstDate).inSeconds);
 
     Offset xy(int i) {
       final p = points[i];
-      final tx = points.length == 1
-          ? plotRect.right
-          : plotRect.left +
-              (plotRect.width *
-                  p.playedAt.difference(firstDate).inSeconds /
-                  dayspan);
-      final ty = plotRect.bottom -
-          (plotRect.height * (p.rating - ymin) / yspan);
+      final tx =
+          points.length == 1
+              ? plotRect.right
+              : plotRect.left +
+                  (plotRect.width *
+                      p.playedAt.difference(firstDate).inSeconds /
+                      dayspan);
+      final ty =
+          plotRect.bottom - (plotRect.height * (p.rating - ymin) / yspan);
       return Offset(tx, ty);
     }
 
@@ -247,10 +267,7 @@ class _PlayRatingChartPainter extends CustomPainter {
         ..shader = ui.Gradient.linear(
           Offset(plotRect.left, plotRect.top),
           Offset(plotRect.left, plotRect.bottom),
-          [
-            accent.withValues(alpha: 0.32),
-            accent.withValues(alpha: 0.02),
-          ],
+          [accent.withValues(alpha: 0.32), accent.withValues(alpha: 0.02)],
         ),
     );
 
@@ -294,28 +311,26 @@ class _PlayRatingChartPainter extends CustomPainter {
     if (hover != null && progress >= 0.95 && points.isNotEmpty) {
       final nearestIdx = _nearestIndex(hover.dx, xy);
       final pt = xy(nearestIdx);
-      final guidePaint = Paint()
-        ..color = kWhiteColor.withValues(alpha: 0.18)
-        ..strokeWidth = 1;
+      final guidePaint =
+          Paint()
+            ..color = kWhiteColor.withValues(alpha: 0.18)
+            ..strokeWidth = 1;
       canvas.drawLine(
         Offset(pt.dx, plotRect.top),
         Offset(pt.dx, plotRect.bottom),
         guidePaint,
       );
-      canvas.drawCircle(
-        pt,
-        6,
-        Paint()..color = accent.withValues(alpha: 0.22),
-      );
+      canvas.drawCircle(pt, 6, Paint()..color = accent.withValues(alpha: 0.22));
       canvas.drawCircle(pt, 3.5, Paint()..color = accent);
       _paintTooltip(canvas, plotRect, pt, points[nearestIdx]);
     }
   }
 
   void _paintGrid(Canvas canvas, Rect rect) {
-    final gridPaint = Paint()
-      ..color = kDividerColor.withValues(alpha: 0.55)
-      ..strokeWidth = 1;
+    final gridPaint =
+        Paint()
+          ..color = kDividerColor.withValues(alpha: 0.55)
+          ..strokeWidth = 1;
     for (var i = 0; i <= 4; i++) {
       final y = rect.top + rect.height * i / 4;
       canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), gridPaint);
@@ -326,17 +341,11 @@ class _PlayRatingChartPainter extends CustomPainter {
     final tp = TextPainter(
       text: const TextSpan(
         text: 'No rated games yet.',
-        style: TextStyle(
-          color: kSecondaryTextColor,
-          fontSize: 12,
-        ),
+        style: TextStyle(color: kSecondaryTextColor, fontSize: 12),
       ),
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: rect.width);
-    tp.paint(
-      canvas,
-      rect.center.translate(-tp.width / 2, -tp.height / 2),
-    );
+    tp.paint(canvas, rect.center.translate(-tp.width / 2, -tp.height / 2));
   }
 
   void _paintYAxisLabels(Canvas canvas, Rect rect, double ymin, double ymax) {
@@ -413,10 +422,7 @@ class _PlayRatingChartPainter extends CustomPainter {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    rightTp.paint(
-      canvas,
-      Offset(rect.right - rightTp.width, rect.bottom + 6),
-    );
+    rightTp.paint(canvas, Offset(rect.right - rightTp.width, rect.bottom + 6));
   }
 
   void _paintTooltip(
@@ -426,9 +432,10 @@ class _PlayRatingChartPainter extends CustomPainter {
     PlayRatingPoint point,
   ) {
     final deltaText = point.delta >= 0 ? '+${point.delta}' : '${point.delta}';
-    final deltaColor = point.delta > 0
-        ? kGreenColor
-        : point.delta < 0
+    final deltaColor =
+        point.delta > 0
+            ? kGreenColor
+            : point.delta < 0
             ? kRedColor
             : kSecondaryTextColor;
 
@@ -488,16 +495,17 @@ class _PlayRatingChartPainter extends CustomPainter {
 
     final boxPadX = 10.0;
     final boxPadY = 8.0;
-    final boxWidth =
-        math.max(tpDate.width, tpRating.width) + boxPadX * 2;
+    final boxWidth = math.max(tpDate.width, tpRating.width) + boxPadX * 2;
     final boxHeight = tpDate.height + tpRating.height + 6 + boxPadY * 2;
 
     var left = anchor.dx + 10;
     if (left + boxWidth > plotRect.right) {
       left = anchor.dx - boxWidth - 10;
     }
-    final top = (anchor.dy - boxHeight / 2)
-        .clamp(plotRect.top, plotRect.bottom - boxHeight);
+    final top = (anchor.dy - boxHeight / 2).clamp(
+      plotRect.top,
+      plotRect.bottom - boxHeight,
+    );
 
     final box = RRect.fromRectAndRadius(
       Rect.fromLTWH(left, top, boxWidth, boxHeight),
@@ -539,10 +547,7 @@ class _PlayRatingChartPainter extends CustomPainter {
         out.addPath(metric.extractPath(0, metric.length), Offset.zero);
         consumed += metric.length;
       } else {
-        out.addPath(
-          metric.extractPath(0, target - consumed),
-          Offset.zero,
-        );
+        out.addPath(metric.extractPath(0, target - consumed), Offset.zero);
         break;
       }
     }

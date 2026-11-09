@@ -720,6 +720,60 @@ class _PrepSetup extends ConsumerWidget {
   }
 }
 
+/// A label whose colour fades on the shared 120 ms hover curve, so the
+/// hover tint moves with the fill beside it instead of snapping. The weight
+/// is applied as given (it only changes on selection, a click).
+class _FadingLabel extends StatelessWidget {
+  const _FadingLabel(
+    this.label, {
+    required this.color,
+    required this.fontSize,
+    required this.fontWeight,
+  });
+
+  final String label;
+  final Color color;
+  final double fontSize;
+  final FontWeight fontWeight;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<Color?>(
+      tween: ColorTween(end: color),
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+      builder:
+          (context, value, _) => Text(
+            label,
+            style: TextStyle(
+              color: value,
+              fontSize: fontSize,
+              fontWeight: fontWeight,
+            ),
+          ),
+    );
+  }
+}
+
+/// An [Icon] whose colour fades with the surrounding hover fill.
+class _FadingIcon extends StatelessWidget {
+  const _FadingIcon(this.icon, {required this.size, required this.color});
+
+  final IconData icon;
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<Color?>(
+      tween: ColorTween(end: color),
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+      builder: (context, value, _) => Icon(icon, size: size, color: value),
+    );
+  }
+}
+
 /// One source's mark in the Prep empty state; clicking it opens the attach
 /// flow straight at that source, skipping the source choice.
 class _SourceMarkButton extends StatelessWidget {
@@ -737,6 +791,7 @@ class _SourceMarkButton extends StatelessWidget {
         builder:
             (hovered) => AnimatedContainer(
               duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOut,
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
                 color: hovered ? kBlack3Color : Colors.transparent,
@@ -770,6 +825,7 @@ class _PrepProfileChoice extends StatelessWidget {
       builder:
           (hovered) => AnimatedContainer(
             duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
             decoration: BoxDecoration(
               color: hovered ? kBlack3Color : Colors.transparent,
@@ -963,18 +1019,16 @@ class _ViewLink extends StatelessWidget {
       builder:
           (hovered) => Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-            child: Text(
+            child: _FadingLabel(
               label,
-              style: TextStyle(
-                color:
-                    selected
-                        ? kWhiteColor
-                        : hovered
-                        ? kWhiteColor70
-                        : kSecondaryTextColor,
-                fontSize: 13,
-                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-              ),
+              color:
+                  selected
+                      ? kWhiteColor
+                      : hovered
+                      ? kWhiteColor70
+                      : kSecondaryTextColor,
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
             ),
           ),
     );
@@ -1224,6 +1278,7 @@ class _FactRow extends StatelessWidget {
       builder:
           (hovered) => AnimatedContainer(
             duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
             decoration: BoxDecoration(
               color: hovered ? kBlack3Color : Colors.transparent,
@@ -1255,7 +1310,7 @@ class _FactRow extends StatelessWidget {
                   child:
                       onTap == null
                           ? null
-                          : Icon(
+                          : _FadingIcon(
                             Icons.chevron_right_rounded,
                             size: 16,
                             color: hovered ? kWhiteColor : kLightGreyColor,
@@ -1306,23 +1361,23 @@ class _FilterChip extends StatelessWidget {
       builder:
           (hovered) => AnimatedContainer(
             duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: selected ? kBlack3Color : Colors.transparent,
+              color:
+                  selected ? kBlack3Color : kBlack3Color.withValues(alpha: 0),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Text(
+            child: _FadingLabel(
               label,
-              style: TextStyle(
-                color:
-                    selected
-                        ? kWhiteColor
-                        : hovered
-                        ? kWhiteColor70
-                        : kSecondaryTextColor,
-                fontSize: 12,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-              ),
+              color:
+                  selected
+                      ? kWhiteColor
+                      : hovered
+                      ? kWhiteColor70
+                      : kSecondaryTextColor,
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
             ),
           ),
     );
@@ -1774,6 +1829,7 @@ class _AchievementsBody extends ConsumerWidget {
               final value = (progress / def.target).clamp(0.0, 1.0);
               final card = AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
+                curve: Curves.easeOut,
                 decoration: _surface(raised: claimable),
                 padding: const EdgeInsets.all(12),
                 child: Row(

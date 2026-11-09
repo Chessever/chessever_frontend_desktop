@@ -905,6 +905,7 @@ class _CompactStandingRowState extends State<_CompactStandingRow> {
               child: AnimatedContainer(
                 key: Key('event-rail-standing-$playerKey'),
                 duration: const Duration(milliseconds: 100),
+                curve: Curves.easeOutCubic,
                 height: 44,
                 padding: const EdgeInsets.symmetric(horizontal: 6),
                 decoration: BoxDecoration(

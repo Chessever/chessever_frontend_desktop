@@ -1019,32 +1019,53 @@ class _OverviewRatingCardState extends State<_OverviewRatingCard> {
               value: _hover ? 1.008 : 1.0,
               motion: DesktopMotion.hover,
               builder:
-                  (context, scale, child) => Transform.scale(
-                    scale: scale,
-                    filterQuality: FilterQuality.medium,
+                  (context, scale, child) =>
+                      MotionScale(scale: scale, child: child),
+              // Fill and border ride the same hover spring as the scale
+              // (dx = hover, dy = selected) instead of a separate 140 ms
+              // tween, so the hover reads as one motion. The 0.2 px of
+              // extra selected border is taken back out of the padding so
+              // the content never shifts while the border width blends.
+              child: MotionBuilder<Offset>(
+                value: Offset(_hover ? 1.0 : 0.0, selected ? 1.0 : 0.0),
+                motion: DesktopMotion.hover,
+                converter: MotionConverter.offset,
+                builder: (context, v, child) {
+                  final h = v.dx.clamp(0.0, 1.0);
+                  final s = v.dy.clamp(0.0, 1.0);
+                  final extraBorder = 0.2 * s;
+                  return Container(
+                    height: 112,
+                    padding: EdgeInsets.fromLTRB(
+                      16 - extraBorder,
+                      14 - extraBorder,
+                      14 - extraBorder,
+                      13 - extraBorder,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Color.lerp(
+                        Color.lerp(kBlack2Color, kBlack3Color, h),
+                        kPrimaryColor.withValues(alpha: 0.12),
+                        s,
+                      ),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color:
+                            Color.lerp(
+                              Color.lerp(
+                                kDividerColor,
+                                kPrimaryColor.withValues(alpha: 0.3),
+                                h,
+                              ),
+                              kPrimaryColor.withValues(alpha: 0.62),
+                              s,
+                            )!,
+                        width: 1 + extraBorder,
+                      ),
+                    ),
                     child: child,
-                  ),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 140),
-                curve: Curves.easeOut,
-                height: 112,
-                padding: const EdgeInsets.fromLTRB(16, 14, 14, 13),
-                decoration: BoxDecoration(
-                  color:
-                      selected
-                          ? kPrimaryColor.withValues(alpha: 0.12)
-                          : (_hover ? kBlack3Color : kBlack2Color),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color:
-                        selected
-                            ? kPrimaryColor.withValues(alpha: 0.62)
-                            : (_hover
-                                ? kPrimaryColor.withValues(alpha: 0.3)
-                                : kDividerColor),
-                    width: selected ? 1.2 : 1,
-                  ),
-                ),
+                  );
+                },
                 child: Row(
                   children: [
                     Expanded(
@@ -2084,8 +2105,6 @@ class _TabUnderlineItemState extends State<_TabUnderlineItem> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    final fg =
-        selected ? kPrimaryColor : (_hover ? kWhiteColor : kWhiteColor70);
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) => setState(() => _hover = true),
@@ -2106,70 +2125,85 @@ class _TabUnderlineItemState extends State<_TabUnderlineItem> {
             builder:
                 (context, dy, child) =>
                     MotionTranslate(offset: Offset(0, dy), child: child),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(
-                    color: selected ? kPrimaryColor : Colors.transparent,
-                    width: 2,
-                  ),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    widget.label,
-                    style: TextStyle(
-                      color: fg,
-                      fontSize: 13,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                      letterSpacing: 0.1,
-                    ),
-                  ),
-                  if (widget.badge != null) ...[
-                    const SizedBox(width: 7),
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 120),
-                      constraints: const BoxConstraints(minWidth: 24),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color:
-                            widget.emphasizeBadge
-                                ? kPrimaryColor.withValues(alpha: 0.14)
-                                : kWhiteColor.withValues(alpha: 0.055),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color:
-                              widget.emphasizeBadge
-                                  ? kPrimaryColor.withValues(alpha: 0.32)
-                                  : kDividerColor,
-                        ),
-                      ),
-                      child: Text(
-                        widget.badge!,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color:
-                              widget.emphasizeBadge
-                                  ? kPrimaryColor
-                                  : kWhiteColor70,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w800,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+            // The label colour fades on the same hover spring as the
+            // lift instead of snapping 70% -> 100% white under a glide.
+            child: SingleMotionBuilder(
+              value: _hover ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, h, _) {
+                final fg =
+                    selected
+                        ? kPrimaryColor
+                        : Color.lerp(
+                          kWhiteColor70,
+                          kWhiteColor,
+                          h.clamp(0.0, 1.0),
+                        )!;
+                return _tabUnderlineBody(selected, fg);
+              },
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _tabUnderlineBody(bool selected, Color fg) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: selected ? kPrimaryColor : Colors.transparent,
+            width: 2,
+          ),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            widget.label,
+            style: TextStyle(
+              color: fg,
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              letterSpacing: 0.1,
+            ),
+          ),
+          if (widget.badge != null) ...[
+            const SizedBox(width: 7),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
+              constraints: const BoxConstraints(minWidth: 24),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color:
+                    widget.emphasizeBadge
+                        ? kPrimaryColor.withValues(alpha: 0.14)
+                        : kWhiteColor.withValues(alpha: 0.055),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color:
+                      widget.emphasizeBadge
+                          ? kPrimaryColor.withValues(alpha: 0.32)
+                          : kDividerColor,
+                ),
+              ),
+              child: Text(
+                widget.badge!,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: widget.emphasizeBadge ? kPrimaryColor : kWhiteColor70,
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w800,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -2598,6 +2632,7 @@ class _RecentEventRowState extends State<_RecentEventRow> {
           onTap: widget.onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 110),
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 9),
             decoration: BoxDecoration(
               color: kBlack3Color.withValues(alpha: _hover ? 0.78 : 0.42),
@@ -5871,6 +5906,7 @@ class _ContextGameCard extends StatelessWidget {
       children: [
         AnimatedContainer(
           duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOutCubic,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(9),
             border: Border.all(
@@ -5997,7 +6033,6 @@ class _PlayerGamesEventHeaderState
             : (event?.dominantTimeControl ?? '');
     final canOpen = section.canOpenEvent && card != null;
     final color = card == null ? kPrimaryColor : _eventStatusColor(card);
-    final highlighted = widget.selected || (_hover && canOpen);
 
     return ClickCursor(
       enabled: canOpen,
@@ -6018,35 +6053,57 @@ class _PlayerGamesEventHeaderState
             value: _pressed ? 0.992 : (_hover && canOpen ? 1.003 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
-              decoration: BoxDecoration(
-                color: highlighted ? kBlack3Color : kBlack2Color,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color:
-                      widget.selected
-                          ? kPrimaryColor
-                          : _hover && canOpen
-                          ? color.withValues(alpha: 0.5)
-                          : kDividerColor,
-                ),
-                boxShadow:
-                    widget.selected
-                        ? [
-                          BoxShadow(
-                            color: kPrimaryColor.withValues(alpha: 0.16),
-                            blurRadius: 16,
-                          ),
-                        ]
-                        : null,
+                (context, scale, child) =>
+                    MotionScale(scale: scale, child: child),
+            // Fill, border and selection glow ride the hover spring the
+            // scale uses (dx = hover, dy = selected) so the card changes
+            // as one motion instead of a 120 ms tween beside a spring.
+            child: MotionBuilder<Offset>(
+              value: Offset(
+                _hover && canOpen ? 1.0 : 0.0,
+                widget.selected ? 1.0 : 0.0,
               ),
+              motion: DesktopMotion.hover,
+              converter: MotionConverter.offset,
+              builder: (context, v, child) {
+                final h = v.dx.clamp(0.0, 1.0);
+                final s = v.dy.clamp(0.0, 1.0);
+                return Container(
+                  padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
+                  decoration: BoxDecoration(
+                    color: Color.lerp(
+                      kBlack2Color,
+                      kBlack3Color,
+                      h > s ? h : s,
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color:
+                          Color.lerp(
+                            Color.lerp(
+                              kDividerColor,
+                              color.withValues(alpha: 0.5),
+                              h,
+                            ),
+                            kPrimaryColor,
+                            s,
+                          )!,
+                    ),
+                    boxShadow:
+                        s > 0
+                            ? [
+                              BoxShadow(
+                                color: kPrimaryColor.withValues(
+                                  alpha: 0.16 * s,
+                                ),
+                                blurRadius: 16,
+                              ),
+                            ]
+                            : null,
+                  ),
+                  child: child,
+                );
+              },
               child: Row(
                 children: [
                   Container(
@@ -6227,6 +6284,7 @@ class _FilterButtonState extends State<_FilterButton> {
             onLongPress: widget.onLongPress,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
               width: 36,
               height: 36,
               decoration: BoxDecoration(
@@ -6546,24 +6604,32 @@ class _EventRowState extends State<_EventRow> {
             value: _pressed ? 0.985 : (_hover ? 1.005 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
+                (context, scale, child) =>
+                    MotionScale(scale: scale, child: child),
+            // Fill and border fade on the same hover spring as the scale
+            // instead of a separate 120 ms tween.
+            child: SingleMotionBuilder(
+              value: _hover ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, hv, child) {
+                final h = hv.clamp(0.0, 1.0);
+                return Container(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                  decoration: BoxDecoration(
+                    color: Color.lerp(kBlack2Color, kBlack3Color, h),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color:
+                          Color.lerp(
+                            kDividerColor,
+                            kPrimaryColor.withValues(alpha: 0.4),
+                            h,
+                          )!,
+                    ),
+                  ),
                   child: child,
-                ),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-              decoration: BoxDecoration(
-                color: _hover ? kBlack3Color : kBlack2Color,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color:
-                      _hover
-                          ? kPrimaryColor.withValues(alpha: 0.4)
-                          : kDividerColor,
-                ),
-              ),
+                );
+              },
               child: Row(
                 children: [
                   Expanded(

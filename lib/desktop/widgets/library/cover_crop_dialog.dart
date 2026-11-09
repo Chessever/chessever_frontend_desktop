@@ -197,18 +197,13 @@ class _CoverCropCardState extends State<CoverCropCard> {
     final dx = (_child.width - _frame.width) / 2;
     final dy = (_child.height - _frame.height) / 2;
     _transform.value = Matrix4.translationValues(-dx, -dy, 0);
-    _transform.addListener(_onTransform);
   }
 
   @override
   void dispose() {
-    _transform
-      ..removeListener(_onTransform)
-      ..dispose();
+    _transform.dispose();
     super.dispose();
   }
-
-  void _onTransform() => setState(() {});
 
   /// Slider zoom keeps the frame's centre on the same point of the image,
   /// then keeps the image covering the frame.
@@ -341,14 +336,21 @@ class _CoverCropCardState extends State<CoverCropCard> {
                           overlayShape: SliderComponentShape.noOverlay,
                           trackHeight: 2,
                         ),
-                        child: Slider(
-                          key: const ValueKey('cover_crop_zoom'),
-                          value: _zoom.clamp(1.0, _maxZoom),
-                          min: 1,
-                          max: canZoom ? _maxZoom : 1.0001,
-                          semanticFormatterCallback:
-                              (v) => 'Zoom ${(v * 100).round()}%',
-                          onChanged: canZoom ? _zoomTo : null,
+                        // Only the slider follows the pan/zoom; rebuilding
+                        // the whole card on every drag frame made the image
+                        // under the frame drop frames and stutter.
+                        child: ListenableBuilder(
+                          listenable: _transform,
+                          builder:
+                              (context, _) => Slider(
+                                key: const ValueKey('cover_crop_zoom'),
+                                value: _zoom.clamp(1.0, _maxZoom),
+                                min: 1,
+                                max: canZoom ? _maxZoom : 1.0001,
+                                semanticFormatterCallback:
+                                    (v) => 'Zoom ${(v * 100).round()}%',
+                                onChanged: canZoom ? _zoomTo : null,
+                              ),
                         ),
                       ),
                     ),

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
@@ -25,6 +26,7 @@ import 'package:chessever/screens/premium_games/providers/premium_games_provider
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
+import 'package:chessever/desktop/widgets/spring_tokens.dart';
 
 /// One player's miniatures, newest UTC day first, then average rating.
 final desktopMiniaturePlayerGamesProvider = FutureProvider.autoDispose
@@ -267,7 +269,9 @@ class _PlayerRowState extends ConsumerState<_PlayerRow> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 100),
+          curve: Curves.easeOutCubic,
           constraints: const BoxConstraints(minHeight: 40),
           padding: const EdgeInsets.only(right: 12),
           decoration: librarySelectedRowDecoration(
@@ -589,7 +593,9 @@ class _ScorecardGameRowState extends State<_ScorecardGameRow> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onOpen,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 100),
+          curve: Curves.easeOutCubic,
           constraints: const BoxConstraints(minHeight: 40),
           padding: const EdgeInsets.only(right: 12),
           decoration: librarySelectedRowDecoration(
@@ -706,39 +712,49 @@ class _TitleToggleState extends State<_TitleToggle> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onPressed,
           // 34px toggle inside a 40px hit area.
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3),
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 34, minWidth: 44),
-              alignment: Alignment.center,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: BoxDecoration(
-                color:
-                    selected
-                        ? kPrimaryColor.withValues(
-                          alpha: _hovered ? 0.16 : 0.10,
-                        )
-                        : (_hovered ? kBlack3Color : Colors.transparent),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color:
-                      selected
-                          ? kPrimaryColor.withValues(alpha: 0.35)
-                          : kDividerColor,
+          // Fill and label colour ride one hover spring, like the sidebar
+          // buttons, instead of snapping on enter/exit.
+          child: SingleMotionBuilder(
+            value: _hovered ? 1.0 : 0.0,
+            motion: DesktopMotion.hover,
+            builder: (context, h, _) {
+              final t = h.clamp(0.0, 1.0);
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minHeight: 34,
+                    minWidth: 44,
+                  ),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color:
+                        selected
+                            ? kPrimaryColor.withValues(alpha: 0.10 + 0.06 * t)
+                            : kBlack3Color.withValues(alpha: t),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color:
+                          selected
+                              ? kPrimaryColor.withValues(alpha: 0.35)
+                              : kDividerColor,
+                    ),
+                  ),
+                  child: Text(
+                    widget.label,
+                    style: TextStyle(
+                      color:
+                          selected
+                              ? kPrimaryColor
+                              : Color.lerp(kWhiteColor70, kWhiteColor, t),
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
-              ),
-              child: Text(
-                widget.label,
-                style: TextStyle(
-                  color:
-                      selected
-                          ? kPrimaryColor
-                          : (_hovered ? kWhiteColor : kWhiteColor70),
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
+              );
+            },
           ),
         ),
       ),

@@ -363,7 +363,12 @@ class _DesktopBoardHoverAffordanceState
           child: Stack(
             fit: StackFit.expand,
             children: [
-              widget.child,
+              // Own layers for the board and the cue: the cue's 240 ms hover
+              // spring (and its add/remove on every square change) must not
+              // repaint the chessground scene each frame. The outer
+              // RepaintBoundary in DesktopChessBoard holds both, so without
+              // these the whole board re-rasterized while the cue animated.
+              RepaintBoundary(child: widget.child),
               if (cueSquare != null)
                 _HoverSquareCue(
                   key: ValueKey(cueSquare),
@@ -459,29 +464,31 @@ class _HoverSquareCue extends StatelessWidget {
       width: squareSize,
       height: squareSize,
       child: IgnorePointer(
-        child: SingleMotionBuilder(
-          motion: DesktopMotion.hover,
-          from: 0,
-          value: 1,
-          builder: (context, value, child) {
-            final t = value.clamp(0.0, 1.0);
-            // No filterQuality: it turns the transform into an image-filter
-            // layer re-rendered on every frame of the hover animation, and
-            // the cue is a vector box that scales crisply without it.
-            return Transform.scale(
-              scale: 0.88 + (0.12 * t),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: kPrimaryColor.withValues(alpha: 0.08 * t),
-                  border: Border.all(
-                    color: kPrimaryColor.withValues(alpha: 0.42 * t),
-                    width: 1.25,
+        child: RepaintBoundary(
+          child: SingleMotionBuilder(
+            motion: DesktopMotion.hover,
+            from: 0,
+            value: 1,
+            builder: (context, value, child) {
+              final t = value.clamp(0.0, 1.0);
+              // No filterQuality: it turns the transform into an image-filter
+              // layer re-rendered on every frame of the hover animation, and
+              // the cue is a vector box that scales crisply without it.
+              return Transform.scale(
+                scale: 0.88 + (0.12 * t),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: kPrimaryColor.withValues(alpha: 0.08 * t),
+                    border: Border.all(
+                      color: kPrimaryColor.withValues(alpha: 0.42 * t),
+                      width: 1.25,
+                    ),
+                    borderRadius: BorderRadius.circular(6),
                   ),
-                  borderRadius: BorderRadius.circular(6),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );

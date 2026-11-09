@@ -37,6 +37,7 @@ import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_value_slider.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -1879,13 +1880,18 @@ class _AnimatedStandingRow extends StatelessWidget {
       onAnimationStatusChanged: (status) {
         if (status == AnimationStatus.completed) onSettled();
       },
+      // The row's slot is laid out at its final [top]; the spring only
+      // translates it there. MotionTranslate moves the row as a filtered
+      // raster while it travels, so the names glide instead of stepping
+      // through whole pixels on the spring's slow tail, and the row is
+      // plain crisp vectors once it settles.
       builder: (context, value, child) {
         return Positioned(
           left: 0,
           right: 0,
-          top: value,
+          top: top,
           height: _StandingsRail.rowHeight,
-          child: child!,
+          child: MotionTranslate(offset: Offset(0, value - top), child: child),
         );
       },
       child: _StandingRowContent(
@@ -1940,14 +1946,33 @@ class _StandingRowContent extends StatelessWidget {
                       children: [
                         AnimatedSwitcher(
                           duration: const Duration(milliseconds: 280),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          // Left-anchored so "#10" -> "#9" doesn't recentre
+                          // (and then jump back left) mid-crossfade.
+                          layoutBuilder:
+                              (current, previous) => Stack(
+                                alignment: Alignment.centerLeft,
+                                children: [
+                                  ...previous,
+                                  if (current != null) current,
+                                ],
+                              ),
                           transitionBuilder: (child, anim) {
-                            final offset = Tween<Offset>(
-                              begin: Offset(0, delta >= 0 ? 0.6 : -0.6),
-                              end: Offset.zero,
-                            ).animate(anim);
+                            // ~0.6 of the 11 px label's line height, as a
+                            // filtered translate so the 8 px slide glides.
+                            final travel = delta >= 0 ? 8.0 : -8.0;
                             return ClipRect(
-                              child: SlideTransition(
-                                position: offset,
+                              child: AnimatedBuilder(
+                                animation: anim,
+                                builder:
+                                    (context, child) => MotionTranslate(
+                                      offset: Offset(
+                                        0,
+                                        travel * (1 - anim.value),
+                                      ),
+                                      child: child,
+                                    ),
                                 child: FadeTransition(
                                   opacity: anim,
                                   child: child,

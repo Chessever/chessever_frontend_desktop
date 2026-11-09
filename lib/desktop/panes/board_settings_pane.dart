@@ -730,14 +730,23 @@ class _BoardThemeTileState extends State<_BoardThemeTile> {
         child: GestureDetector(
           onTap: widget.onTap,
           behavior: HitTestBehavior.opaque,
+          // The border is painted as a foreground decoration so its 1 ->
+          // 1.5 px width change on selection animates paint only. Inside a
+          // layout decoration the lerping width re-inset the preview and
+          // label every frame, so they shimmied while the colour faded.
+          // The padding (outside the animation, so it snaps rather than
+          // lerps) carries the same 6 px + border inset as before.
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 140),
-            padding: const EdgeInsets.all(6),
+            curve: Curves.easeOutCubic,
             decoration: BoxDecoration(
               color:
                   selected
                       ? kPrimaryColor.withValues(alpha: 0.10)
                       : (_hovered ? kBlack3Color : Colors.transparent),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            foregroundDecoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
                 color:
@@ -747,33 +756,47 @@ class _BoardThemeTileState extends State<_BoardThemeTile> {
                 width: selected ? 1.5 : 1,
               ),
             ),
-            child: Column(
-              children: [
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: CustomPaint(
-                      painter: _BoardPreviewPainter(
-                        light: widget.theme.colorScheme.lightSquare,
-                        dark: widget.theme.colorScheme.darkSquare,
+            child: Padding(
+              padding: EdgeInsets.all(selected ? 7.5 : 7),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: CustomPaint(
+                        painter: _BoardPreviewPainter(
+                          light: widget.theme.colorScheme.lightSquare,
+                          dark: widget.theme.colorScheme.darkSquare,
+                        ),
+                        child: const SizedBox.expand(),
                       ),
-                      child: const SizedBox.expand(),
                     ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  widget.theme.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: selected ? kPrimaryColor : kWhiteColor,
-                    fontSize: 11,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  const SizedBox(height: 6),
+                  // Label colour follows the fill's 140 ms fade instead of
+                  // snapping ahead of it.
+                  AnimatedDefaultTextStyle(
+                    duration: const Duration(milliseconds: 140),
+                    curve: Curves.easeOutCubic,
+                    style: DefaultTextStyle.of(context).style.merge(
+                      // Merged over the ambient style so the label keeps the app
+                      // typeface (Inter on web); only the colour animates.
+                      TextStyle(
+                        color: selected ? kPrimaryColor : kWhiteColor,
+                        fontSize: 11,
+                        fontWeight:
+                            selected ? FontWeight.w600 : FontWeight.w500,
+                      ),
+                    ),
+                    child: Text(
+                      widget.theme.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -893,14 +916,23 @@ class _PieceSetTileState extends State<_PieceSetTile> {
         child: GestureDetector(
           onTap: widget.onTap,
           behavior: HitTestBehavior.opaque,
+          // The border is painted as a foreground decoration so its 1 ->
+          // 1.5 px width change on selection animates paint only. Inside a
+          // layout decoration the lerping width re-inset the preview and
+          // label every frame, so they shimmied while the colour faded.
+          // The padding (outside the animation, so it snaps rather than
+          // lerps) carries the same 6 px + border inset as before.
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 140),
-            padding: const EdgeInsets.all(6),
+            curve: Curves.easeOutCubic,
             decoration: BoxDecoration(
               color:
                   selected
                       ? kPrimaryColor.withValues(alpha: 0.10)
                       : (_hovered ? kBlack3Color : Colors.transparent),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            foregroundDecoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
                 color:
@@ -910,83 +942,97 @@ class _PieceSetTileState extends State<_PieceSetTile> {
                 width: selected ? 1.5 : 1,
               ),
             ),
-            child: Column(
-              children: [
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        CustomPaint(
-                          painter: _BoardPreviewPainter(
-                            light: widget.lightSquare,
-                            dark: widget.darkSquare,
+            child: Padding(
+              padding: EdgeInsets.all(selected ? 7.5 : 7),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          CustomPaint(
+                            painter: _BoardPreviewPainter(
+                              light: widget.lightSquare,
+                              dark: widget.darkSquare,
+                            ),
                           ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.all(4),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Expanded(
-                                child: Image(
-                                  image: ResizeImage.resizeIfNeeded(
-                                    (48 *
-                                            MediaQuery.devicePixelRatioOf(
-                                              context,
-                                            ))
-                                        .round(),
-                                    (48 *
-                                            MediaQuery.devicePixelRatioOf(
-                                              context,
-                                            ))
-                                        .round(),
-                                    widget.pieceSet.assets[PieceKind
-                                        .whiteKing]!,
+                          Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: Image(
+                                    image: ResizeImage.resizeIfNeeded(
+                                      (48 *
+                                              MediaQuery.devicePixelRatioOf(
+                                                context,
+                                              ))
+                                          .round(),
+                                      (48 *
+                                              MediaQuery.devicePixelRatioOf(
+                                                context,
+                                              ))
+                                          .round(),
+                                      widget.pieceSet.assets[PieceKind
+                                          .whiteKing]!,
+                                    ),
+                                    fit: BoxFit.contain,
                                   ),
-                                  fit: BoxFit.contain,
                                 ),
-                              ),
-                              Expanded(
-                                child: Image(
-                                  image: ResizeImage.resizeIfNeeded(
-                                    (48 *
-                                            MediaQuery.devicePixelRatioOf(
-                                              context,
-                                            ))
-                                        .round(),
-                                    (48 *
-                                            MediaQuery.devicePixelRatioOf(
-                                              context,
-                                            ))
-                                        .round(),
-                                    widget.pieceSet.assets[PieceKind
-                                        .blackQueen]!,
+                                Expanded(
+                                  child: Image(
+                                    image: ResizeImage.resizeIfNeeded(
+                                      (48 *
+                                              MediaQuery.devicePixelRatioOf(
+                                                context,
+                                              ))
+                                          .round(),
+                                      (48 *
+                                              MediaQuery.devicePixelRatioOf(
+                                                context,
+                                              ))
+                                          .round(),
+                                      widget.pieceSet.assets[PieceKind
+                                          .blackQueen]!,
+                                    ),
+                                    fit: BoxFit.contain,
                                   ),
-                                  fit: BoxFit.contain,
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  widget.pieceSet.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: selected ? kPrimaryColor : kWhiteColor,
-                    fontSize: 11,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  const SizedBox(height: 6),
+                  // Label colour follows the fill's 140 ms fade instead of
+                  // snapping ahead of it.
+                  AnimatedDefaultTextStyle(
+                    duration: const Duration(milliseconds: 140),
+                    curve: Curves.easeOutCubic,
+                    style: DefaultTextStyle.of(context).style.merge(
+                      // Merged over the ambient style so the label keeps the app
+                      // typeface (Inter on web); only the colour animates.
+                      TextStyle(
+                        color: selected ? kPrimaryColor : kWhiteColor,
+                        fontSize: 11,
+                        fontWeight:
+                            selected ? FontWeight.w600 : FontWeight.w500,
+                      ),
+                    ),
+                    child: Text(
+                      widget.pieceSet.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -1203,6 +1249,7 @@ class _SegmentOptionState extends State<_SegmentOption> {
           behavior: HitTestBehavior.opaque,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(vertical: 7),
             alignment: Alignment.center,
             decoration: BoxDecoration(
@@ -1212,13 +1259,21 @@ class _SegmentOptionState extends State<_SegmentOption> {
                       : (_hovered ? kBlack2Color : Colors.transparent),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Text(
-              widget.label,
-              style: TextStyle(
-                color: selected ? kBackgroundColor : kWhiteColor70,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+            // Label colour fades on the fill's clock; a snapped label over
+            // a still-fading fill flashed dark-on-dark for a few frames.
+            child: AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
+              style: DefaultTextStyle.of(context).style.merge(
+                // Merged over the ambient style so the label keeps the app
+                // typeface (Inter on web); only the colour animates.
+                TextStyle(
+                  color: selected ? kBackgroundColor : kWhiteColor70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
+              child: Text(widget.label),
             ),
           ),
         ),
@@ -1246,10 +1301,7 @@ class _Loading extends StatelessWidget {
         child: SizedBox(
           width: 22,
           height: 22,
-          child: DesktopSpinner(
-            strokeWidth: 2,
-            color: kWhiteColor70,
-          ),
+          child: DesktopSpinner(strokeWidth: 2, color: kWhiteColor70),
         ),
       ),
     );

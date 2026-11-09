@@ -153,6 +153,7 @@ class _SwitcherTriggerState extends State<_SwitcherTrigger> {
           onTap: widget.onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             decoration: BoxDecoration(
               color: _hovered ? kBlack3Color : kBlack2Color,
@@ -328,13 +329,18 @@ class _CategoryRowState extends State<_CategoryRow> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 110),
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
             decoration: BoxDecoration(
               color:
                   selected
                       ? kPrimaryColor.withValues(alpha: 0.14)
-                      : (_hovered ? kBlack3Color : Colors.transparent),
+                      // Same-hue transparent rest, so the hover fade does
+                      // not dip through translucent black.
+                      : (_hovered
+                          ? kBlack3Color
+                          : kBlack3Color.withValues(alpha: 0)),
               borderRadius: BorderRadius.circular(7),
               border: Border.all(
                 color:

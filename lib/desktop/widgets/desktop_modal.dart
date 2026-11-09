@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/host_platform.dart';
 
@@ -51,15 +52,26 @@ Future<T?> showDesktopModal<T>(
     transitionBuilder: (ctx, anim, secondary, child) {
       // Subtle fade + slight upward slide. No bouncy spring — desktop
       // dialogs should feel quick, not playful.
+      //
+      // The slide is 2% of the route's height (the old SlideTransition
+      // offset; the dialog route fills the screen), driven through
+      // MotionTranslate so the dialog's text glides through the fractional
+      // offsets instead of stepping row by row, and paints as crisp vectors
+      // again once it lands.
       final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
       return FadeTransition(
         opacity: eased,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.02),
-            end: Offset.zero,
-          ).animate(eased),
+        child: AnimatedBuilder(
+          animation: eased,
           child: child,
+          builder:
+              (context, child) => MotionTranslate(
+                offset: Offset(
+                  0,
+                  MediaQuery.sizeOf(context).height * 0.02 * (1 - eased.value),
+                ),
+                child: child,
+              ),
         ),
       );
     },

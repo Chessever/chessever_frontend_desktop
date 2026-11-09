@@ -1,6 +1,8 @@
 import 'package:flutter/widgets.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/spring_tokens.dart';
+
 /// InkWell-equivalent tap target for desktop chrome, backed by forui's
 /// [FTappable] instead of Material ink.
 ///
@@ -51,25 +53,35 @@ class DesktopTappable extends StatelessWidget {
       child: FTappable.static(
         onPress: onPress,
         semanticsLabel: semanticsLabel,
-        style: (style) => style.copyWith(
-          cursor: const FWidgetStateMap({
-            WidgetState.disabled: SystemMouseCursors.basic,
-            WidgetState.any: SystemMouseCursors.click,
-          }),
-        ),
+        style:
+            (style) => style.copyWith(
+              cursor: const FWidgetStateMap({
+                WidgetState.disabled: SystemMouseCursors.basic,
+                WidgetState.any: SystemMouseCursors.click,
+              }),
+            ),
         builder: (context, states, child) {
           final hover = hoverColor;
-          if (hover == null ||
-              states.contains(WidgetState.disabled) ||
-              !states.contains(WidgetState.hovered)) {
-            return child!;
-          }
-          return DecoratedBox(
-            decoration: BoxDecoration(
-              color: hover,
-              borderRadius: borderRadius,
-            ),
+          if (hover == null) return child!;
+          final active =
+              !states.contains(WidgetState.disabled) &&
+              states.contains(WidgetState.hovered);
+          // Always a DecoratedBox, so hover enter/exit never remounts the
+          // child. The highlight fades from the same hue at alpha 0 (not
+          // transparent black) on the shared hover-fade timing.
+          return TweenAnimationBuilder<Color?>(
+            tween: ColorTween(end: active ? hover : hover.withValues(alpha: 0)),
+            duration: DesktopMotion.hoverFadeDuration,
+            curve: DesktopMotion.hoverFadeCurve,
             child: child,
+            builder:
+                (context, color, child) => DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: borderRadius,
+                  ),
+                  child: child,
+                ),
           );
         },
         child: child,

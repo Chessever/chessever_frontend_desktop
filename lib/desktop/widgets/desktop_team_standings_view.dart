@@ -525,6 +525,7 @@ class _CompactTeamStandingRowState extends State<_CompactTeamStandingRow> {
               child: AnimatedContainer(
                 key: Key('event-rail-team-standing-${team.teamName}'),
                 duration: const Duration(milliseconds: 100),
+                curve: Curves.easeOutCubic,
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 decoration: BoxDecoration(
                   color: active ? kBlack3Color : Colors.transparent,

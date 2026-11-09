@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -58,19 +59,8 @@ Future<LibraryFolderDraft?> showLibraryCreateFolderDialog(
                   : (isDatabase ? 'New database' : 'New folder'),
           confirmLabel: 'Create',
         ),
-    transitionBuilder: (ctx, anim, _, child) {
-      final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
-      return FadeTransition(
-        opacity: eased,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.02),
-            end: Offset.zero,
-          ).animate(eased),
-          child: child,
-        ),
-      );
-    },
+    transitionBuilder:
+        (ctx, anim, _, child) => _dialogEntrance(anim, child, rise: 0.02),
   );
 }
 
@@ -97,19 +87,8 @@ Future<String?> showLibraryRenameFolderDialog(
           initialName: folder.name,
           isRename: true,
         ),
-    transitionBuilder: (ctx, anim, _, child) {
-      final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
-      return FadeTransition(
-        opacity: eased,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.02),
-            end: Offset.zero,
-          ).animate(eased),
-          child: child,
-        ),
-      );
-    },
+    transitionBuilder:
+        (ctx, anim, _, child) => _dialogEntrance(anim, child, rise: 0.02),
   );
 }
 
@@ -622,4 +601,35 @@ class _NameField extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Dialog entrance: a fade plus a short rise of [rise] x the route height
+/// (the same distance the old `SlideTransition` covered). The rise goes
+/// through [MotionTranslate], so the slow sub-pixel tail of the ease glides
+/// instead of stepping the dialog's text a pixel at a time; once settled the
+/// dialog paints as crisp vectors with no filter layer.
+Widget _dialogEntrance(
+  Animation<double> anim,
+  Widget child, {
+  required double rise,
+}) {
+  final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+  return FadeTransition(
+    opacity: eased,
+    child: LayoutBuilder(
+      builder:
+          (context, constraints) => AnimatedBuilder(
+            animation: eased,
+            child: child,
+            builder:
+                (context, child) => MotionTranslate(
+                  offset: Offset(
+                    0,
+                    constraints.maxHeight * rise * (1 - eased.value),
+                  ),
+                  child: child,
+                ),
+          ),
+    ),
+  );
 }

@@ -1412,20 +1412,28 @@ class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell>
       ),
       child:
           classificationType == null
-              ? Text(
-                widget.item.symbol,
-                maxLines: 1,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: foreground,
-                  fontSize:
-                      widget.compact
-                          ? (widget.item.symbol.length > 1 ? 11.5 : 13)
-                          : (widget.item.symbol.length > 1 ? 13 : 15),
-                  fontWeight: FontWeight.w800,
-                  height: 1,
-                  letterSpacing: -0.2,
-                ),
+              // The glyph colour eases with the fill above instead of
+              // snapping while the background is still fading.
+              ? TweenAnimationBuilder<Color?>(
+                duration: const Duration(milliseconds: 110),
+                curve: Curves.easeOutCubic,
+                tween: ColorTween(end: foreground),
+                builder:
+                    (context, color, _) => Text(
+                      widget.item.symbol,
+                      maxLines: 1,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: color,
+                        fontSize:
+                            widget.compact
+                                ? (widget.item.symbol.length > 1 ? 11.5 : 13)
+                                : (widget.item.symbol.length > 1 ? 13 : 15),
+                        fontWeight: FontWeight.w800,
+                        height: 1,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
               )
               : Padding(
                 padding: const EdgeInsets.all(2),

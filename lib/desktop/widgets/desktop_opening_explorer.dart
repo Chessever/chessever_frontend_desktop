@@ -1603,16 +1603,22 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 80),
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOut,
               constraints: BoxConstraints(minHeight: dims.rowMinHeight),
-              decoration: BoxDecoration(
-                color: backgroundColor,
-                border:
-                    selected
-                        ? const Border(
-                          left: BorderSide(color: kPrimaryColor, width: 2),
-                        )
-                        : null,
+              decoration: BoxDecoration(color: backgroundColor),
+              // The selection bar is painted as a foreground decoration with
+              // a constant 2 px width (transparent when unselected). As a
+              // `decoration` border it added its width to the padding, so
+              // hovering (which focuses the row) lerped the content 0 -> 2 px
+              // sideways on every row the pointer crossed.
+              foregroundDecoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: selected ? kPrimaryColor : const Color(0x00000000),
+                    width: 2,
+                  ),
+                ),
               ),
               padding: EdgeInsets.symmetric(
                 horizontal: dims.horizontalPad,
@@ -2049,7 +2055,11 @@ class _OpenGamesIconState extends State<_OpenGamesIcon> {
             onTap: () {
               widget.onTap();
             },
-            child: Container(
+            // Fill and glyph colour fade together on the row's hover
+            // duration/curve instead of snapping beside the row's fade.
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOut,
               width: 22,
               height: 22,
               alignment: Alignment.center,
@@ -2057,16 +2067,21 @@ class _OpenGamesIconState extends State<_OpenGamesIcon> {
                 color:
                     _hovered
                         ? kPrimaryColor.withValues(alpha: 0.18)
-                        : Colors.transparent,
+                        : kPrimaryColor.withValues(alpha: 0),
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: Icon(
-                Icons.list_alt_rounded,
-                size: 14,
-                color:
-                    _hovered
-                        ? kPrimaryColor
-                        : (active ? kWhiteColor70 : kLightGreyColor),
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(
+                  end:
+                      _hovered
+                          ? kPrimaryColor
+                          : (active ? kWhiteColor70 : kLightGreyColor),
+                ),
+                duration: const Duration(milliseconds: 120),
+                curve: Curves.easeOut,
+                builder:
+                    (context, color, _) =>
+                        Icon(Icons.list_alt_rounded, size: 14, color: color),
               ),
             ),
           ),

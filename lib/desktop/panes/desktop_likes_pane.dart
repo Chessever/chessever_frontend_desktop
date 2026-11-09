@@ -840,7 +840,9 @@ class _PlayerRowState extends ConsumerState<_PlayerRow> {
         child: DesktopKeyboardAction(
           excludeChildFocus: false,
           onPress: widget.onPick,
-          child: Container(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            curve: Curves.easeOutCubic,
             constraints: const BoxConstraints(minHeight: 40),
             decoration: librarySelectedRowDecoration(
               selected: widget.selected,

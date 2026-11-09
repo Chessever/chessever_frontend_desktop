@@ -2915,7 +2915,7 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
             : widget.style.copyWith(
               color: _hovered ? kWhiteColor : widget.style.color ?? kWhiteColor,
             );
-    final tokenChild =
+    Widget buildToken(TextStyle style) =>
         widget.useFigurine
             ? RichText(
               maxLines: 1,
@@ -2924,7 +2924,7 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
                 children: buildFigurineSpans(
                   text: widget.token,
                   pieceAssets: widget.pieceAssets,
-                  style: tokenStyle,
+                  style: style,
                   pieceSize: 12,
                 ),
               ),
@@ -2933,10 +2933,21 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
               widget.token,
               maxLines: 1,
               overflow: TextOverflow.clip,
-              style: tokenStyle,
+              style: style,
             );
+    // The label colour eases on the same 120 ms curve as the fill and
+    // border, instead of snapping while the box is still fading.
+    final tokenChild = TweenAnimationBuilder<Color?>(
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOutCubic,
+      tween: ColorTween(end: tokenStyle.color),
+      builder:
+          (context, color, _) => buildToken(tokenStyle.copyWith(color: color)),
+    );
+    // The active key lives on the label, not on this AnimatedContainer:
+    // keying the container remounted it whenever a token became (or stopped
+    // being) active, so the fill/border snapped instead of easing.
     final child = AnimatedContainer(
-      key: widget.activeKey,
       duration: const Duration(milliseconds: 120),
       curve: Curves.easeOutCubic,
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
@@ -2971,7 +2982,7 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          tokenChild,
+          KeyedSubtree(key: widget.activeKey, child: tokenChild),
           if (widget.active)
             Positioned(
               left: 1,
@@ -3204,13 +3215,19 @@ class _NoticeActionState extends State<_NoticeAction> {
           onTap: widget.onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            child: Text(
-              widget.label,
-              style: TextStyle(
-                color: _hovered ? kWhiteColor : kWhiteColor70,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
+            child: TweenAnimationBuilder<Color?>(
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOutCubic,
+              tween: ColorTween(end: _hovered ? kWhiteColor : kWhiteColor70),
+              builder:
+                  (context, color, _) => Text(
+                    widget.label,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
             ),
           ),
         ),

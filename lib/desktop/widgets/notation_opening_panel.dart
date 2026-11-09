@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart'
@@ -30,6 +31,7 @@ import 'package:chessever/desktop/widgets/explorer_filter_bar.dart';
 import 'package:chessever/desktop/widgets/explorer_filters_popover.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
+import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/variation_fork_chooser.dart';
 import 'package:chessever/screens/gamebase/models/move_aggregate.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
@@ -1509,30 +1511,6 @@ class _RailIconButtonState extends State<_RailIconButton>
   @override
   Widget build(BuildContext context) {
     final active = widget.enabled && (widget.selected || _hovered || _focused);
-    final foreground =
-        !widget.enabled
-            ? kLightGreyColor
-            : widget.selected && !widget.quiet
-            ? kPrimaryColor
-            : active
-            ? kWhiteColor
-            : kWhiteColor70;
-    final icon = Icon(
-      widget.icon,
-      size: widget.quiet ? 26 : 21,
-      color: foreground,
-    );
-    final caption =
-        widget.label == null
-            ? null
-            : Text(
-              widget.label!,
-              style: TextStyle(
-                color: foreground,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            );
     return DesktopTooltip(
       message: widget.tooltip,
       child: Semantics(
@@ -1569,71 +1547,99 @@ class _RailIconButtonState extends State<_RailIconButton>
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: widget.enabled ? widget.onTap : null,
-              child: Container(
-                width: widget.width,
-                height: widget.height,
-                padding: EdgeInsets.symmetric(
-                  horizontal: caption == null ? 0 : 7,
-                ),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color:
-                      widget.quiet
-                          ? (active ? kBlack3Color : kBlack2Color)
-                          : (active
-                              ? kPrimaryColor.withValues(alpha: 0.16)
-                              : Colors.transparent),
-                  borderRadius: BorderRadius.circular(7),
-                  border: Border.all(
-                    color:
-                        _focused
-                            ? kPrimaryColor
-                            : widget.selected && !widget.quiet
-                            ? kPrimaryColor.withValues(alpha: 0.55)
-                            : widget.quiet
-                            ? kDividerColor
-                            : Colors.transparent,
-                  ),
-                ),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    if (caption == null)
-                      icon
-                    else
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (widget.labelBeforeIcon) ...[
-                            caption,
-                            const SizedBox(width: 4),
-                          ],
-                          icon,
-                          if (!widget.labelBeforeIcon) ...[
-                            const SizedBox(width: 4),
-                            caption,
-                          ],
-                        ],
-                      ),
-                    if (widget.showLiveDot)
-                      Positioned(
-                        top: 0,
-                        right: 0,
-                        child: Container(
-                          width: 6,
-                          height: 6,
-                          decoration: const BoxDecoration(
-                            color: kPrimaryColor,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
+              // Fill and foreground fade on the shared hover spring
+              // rather than swapping instantly on enter/exit.
+              child: SingleMotionBuilder(
+                value: active ? 1.0 : 0.0,
+                motion: DesktopMotion.hover,
+                builder: (context, a, _) => _buildBody(a.clamp(0.0, 1.0)),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildBody(double a) {
+    final foreground =
+        !widget.enabled
+            ? kLightGreyColor
+            : widget.selected && !widget.quiet
+            ? kPrimaryColor
+            : Color.lerp(kWhiteColor70, kWhiteColor, a)!;
+    final icon = Icon(
+      widget.icon,
+      size: widget.quiet ? 26 : 21,
+      color: foreground,
+    );
+    final caption =
+        widget.label == null
+            ? null
+            : Text(
+              widget.label!,
+              style: TextStyle(
+                color: foreground,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            );
+    return Container(
+      width: widget.width,
+      height: widget.height,
+      padding: EdgeInsets.symmetric(horizontal: caption == null ? 0 : 7),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color:
+            widget.quiet
+                ? Color.lerp(kBlack2Color, kBlack3Color, a)
+                : kPrimaryColor.withValues(alpha: 0.16 * a),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(
+          color:
+              _focused
+                  ? kPrimaryColor
+                  : widget.selected && !widget.quiet
+                  ? kPrimaryColor.withValues(alpha: 0.55)
+                  : widget.quiet
+                  ? kDividerColor
+                  : Colors.transparent,
+        ),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (caption == null)
+            icon
+          else
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.labelBeforeIcon) ...[
+                  caption,
+                  const SizedBox(width: 4),
+                ],
+                icon,
+                if (!widget.labelBeforeIcon) ...[
+                  const SizedBox(width: 4),
+                  caption,
+                ],
+              ],
+            ),
+          if (widget.showLiveDot)
+            Positioned(
+              top: 0,
+              right: 0,
+              child: Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: kPrimaryColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

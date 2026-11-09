@@ -463,32 +463,45 @@ class PlayerSourceChip extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          padding: const EdgeInsets.fromLTRB(8, 6, 11, 6),
-          decoration: BoxDecoration(
-            color: selected ? accent.withValues(alpha: 0.16) : kBlack3Color,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: selected ? accent.withValues(alpha: 0.6) : kDividerColor,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _PlayerSourceBrandMark(kind: source.kind, size: 14),
-              const SizedBox(width: 7),
-              Text(
-                source.label,
-                style: TextStyle(
-                  color: selected ? kWhiteColor : kWhiteColor70,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.2,
+        child: _SelectionFade(
+          selected: selected,
+          child: _PlayerSourceBrandMark(kind: source.kind, size: 14),
+          builder:
+              (context, t, mark) => Container(
+                padding: const EdgeInsets.fromLTRB(8, 6, 11, 6),
+                decoration: BoxDecoration(
+                  color: Color.lerp(
+                    kBlack3Color,
+                    accent.withValues(alpha: 0.16),
+                    t,
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color:
+                        Color.lerp(
+                          kDividerColor,
+                          accent.withValues(alpha: 0.6),
+                          t,
+                        )!,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    mark!,
+                    const SizedBox(width: 7),
+                    Text(
+                      source.label,
+                      style: TextStyle(
+                        color: Color.lerp(kWhiteColor70, kWhiteColor, t),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
         ),
       ),
     );
@@ -938,46 +951,57 @@ class _RecordChunk extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final chip = AnimatedContainer(
-      duration: const Duration(milliseconds: 120),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: selected ? 0.22 : 0.10),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: color.withValues(alpha: selected ? 0.75 : 0.32),
-          width: selected ? 1.4 : 1,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 7),
-          Text(
-            _formatInt(count),
-            style: TextStyle(
-              color: kWhiteColor,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-              fontFeatures: const [FontFeature.tabularFigures()],
+    final chip = _SelectionFade(
+      selected: selected,
+      builder:
+          (context, t, _) => Container(
+            // The selected border is 0.4 px wider; the padding gives that
+            // back so the chip keeps one size and its label never shifts.
+            padding: EdgeInsets.symmetric(
+              horizontal: 10 - 0.4 * t,
+              vertical: 7 - 0.4 * t,
+            ),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.10 + 0.12 * t),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: color.withValues(alpha: 0.32 + 0.43 * t),
+                width: 1 + 0.4 * t,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  _formatInt(count),
+                  style: TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: Color.lerp(kSecondaryTextColor, kWhiteColor, t),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: TextStyle(
-              color: selected ? kWhiteColor : kSecondaryTextColor,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
     );
     if (onTap == null) return chip;
     return ClickCursor(
@@ -1192,72 +1216,85 @@ class _ColorCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final score = tally.scorePercent;
-    final panel = AnimatedContainer(
-      duration: const Duration(milliseconds: 120),
-      decoration: BoxDecoration(
-        color: kBlack2Color,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color:
-              selected ? kPrimaryColor.withValues(alpha: 0.65) : kDividerColor,
-          width: selected ? 1.4 : 1,
-        ),
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                icon,
-                size: 14,
-                color: selected ? kPrimaryColor : kWhiteColor70,
+    final panel = _SelectionFade(
+      selected: selected,
+      builder:
+          (context, t, _) => Container(
+            decoration: BoxDecoration(
+              color: kBlack2Color,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color:
+                    Color.lerp(
+                      kDividerColor,
+                      kPrimaryColor.withValues(alpha: 0.65),
+                      t,
+                    )!,
+                width: 1 + 0.4 * t,
               ),
-              const SizedBox(width: 8),
-              Text(
-                label.toUpperCase(),
-                style: TextStyle(
-                  color: selected ? kPrimaryColor : kSecondaryTextColor,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1,
+            ),
+            // Gives back the wider selected border so the panel content holds
+            // still when the colour filter toggles.
+            padding: EdgeInsets.all(16 - 0.4 * t),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      icon,
+                      size: 14,
+                      color: Color.lerp(kWhiteColor70, kPrimaryColor, t),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      label.toUpperCase(),
+                      style: TextStyle(
+                        color: Color.lerp(
+                          kSecondaryTextColor,
+                          kPrimaryColor,
+                          t,
+                        ),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      score == null ? '—' : '${score.round()}%',
+                      style: TextStyle(
+                        color: _scoreColor(score),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              const Spacer(),
-              Text(
-                score == null ? '—' : '${score.round()}%',
-                style: TextStyle(
-                  color: _scoreColor(score),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+                const SizedBox(height: 11),
+                _ScoreBar(tally: tally, height: 9),
+                const SizedBox(height: 9),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      '${_formatInt(tally.games)} games',
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    _ResultBreakdownChips(tally: tally, includeScore: false),
+                  ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-          const SizedBox(height: 11),
-          _ScoreBar(tally: tally, height: 9),
-          const SizedBox(height: 9),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Text(
-                '${_formatInt(tally.games)} games',
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-              _ResultBreakdownChips(tally: tally, includeScore: false),
-            ],
-          ),
-        ],
-      ),
     );
     if (onTap == null) return panel;
     return ClickCursor(
@@ -1627,11 +1664,17 @@ class _YearsPanelState extends State<_YearsPanel> {
 
   final ScrollController _chartScrollController = DesktopScrollController();
   int? _hoveredYear;
-  double? _hoverViewportX;
+
+  /// Pointer x inside the chart viewport. Kept out of [setState] so the
+  /// hover card tracks the cursor 1:1 by rebuilding only its own
+  /// [Positioned]; the year (which repaints the bars) still goes through
+  /// [setState], but only when the hovered slot changes.
+  final ValueNotifier<double?> _hoverViewportX = ValueNotifier<double?>(null);
 
   @override
   void dispose() {
     _chartScrollController.dispose();
+    _hoverViewportX.dispose();
     super.dispose();
   }
 
@@ -1712,22 +1755,25 @@ class _YearsPanelState extends State<_YearsPanel> {
                                 math.max(0.0, constraints.maxWidth - 16),
                               )
                               .toDouble();
-                      final double pointerX =
-                          (_hoverViewportX ?? 8)
-                              .clamp(
-                                8.0,
-                                math.max(8.0, constraints.maxWidth - 8),
-                              )
-                              .toDouble();
-                      final fitsOnRight =
-                          pointerX + 12 + overlayWidth <=
-                          constraints.maxWidth - 8;
-                      final double overlayLeft =
-                          fitsOnRight
-                              ? pointerX + 12
-                              : math
-                                  .max(8.0, pointerX - 12 - overlayWidth)
-                                  .toDouble();
+                      double overlayLeftFor(double? viewportX) {
+                        final double pointerX =
+                            (viewportX ?? 8)
+                                .clamp(
+                                  8.0,
+                                  math.max(8.0, constraints.maxWidth - 8),
+                                )
+                                .toDouble();
+                        final fitsOnRight =
+                            pointerX + 12 + overlayWidth <=
+                            constraints.maxWidth - 8;
+                        // Whole pixels keep the card's text crisp while it
+                        // follows the cursor.
+                        return (fitsOnRight
+                                ? pointerX + 12
+                                : math.max(8.0, pointerX - 12 - overlayWidth))
+                            .roundToDouble();
+                      }
+
                       return Stack(
                         key: const ValueKey<String>(
                           'player-games-by-year-chart',
@@ -1758,23 +1804,15 @@ class _YearsPanelState extends State<_YearsPanel> {
                                               : 0.0;
                                       final viewportX =
                                           event.localPosition.dx - scrollOffset;
-                                      if (year != _hoveredYear ||
-                                          _hoverViewportX == null ||
-                                          (viewportX - _hoverViewportX!).abs() >
-                                              6) {
-                                        setState(() {
-                                          _hoveredYear = year;
-                                          _hoverViewportX = viewportX;
-                                        });
+                                      _hoverViewportX.value = viewportX;
+                                      if (year != _hoveredYear) {
+                                        setState(() => _hoveredYear = year);
                                       }
                                     },
                                     onExit: (_) {
-                                      if (_hoveredYear != null ||
-                                          _hoverViewportX != null) {
-                                        setState(() {
-                                          _hoveredYear = null;
-                                          _hoverViewportX = null;
-                                        });
+                                      _hoverViewportX.value = null;
+                                      if (_hoveredYear != null) {
+                                        setState(() => _hoveredYear = null);
                                       }
                                     },
                                     child: GestureDetector(
@@ -1816,10 +1854,15 @@ class _YearsPanelState extends State<_YearsPanel> {
                             ),
                           ),
                           if (hovered != null && overlayWidth >= 160)
-                            Positioned(
-                              left: overlayLeft,
-                              top: 8,
-                              width: overlayWidth,
+                            ValueListenableBuilder<double?>(
+                              valueListenable: _hoverViewportX,
+                              builder:
+                                  (context, viewportX, child) => Positioned(
+                                    left: overlayLeftFor(viewportX),
+                                    top: 8,
+                                    width: overlayWidth,
+                                    child: child!,
+                                  ),
                               child: IgnorePointer(
                                 child: _YearHoverOverlay(point: hovered),
                               ),
@@ -2202,7 +2245,9 @@ class _GamesByYearChartPainter extends CustomPainter {
             color:
                 hovered ? hoverLabelColor : labelColor.withValues(alpha: 0.92),
             fontSize: dense ? 9 : 10,
-            fontWeight: hovered ? FontWeight.w800 : FontWeight.w700,
+            // Constant weight: the hovered year brightens instead of
+            // emboldening, so the label never re-measures under the cursor.
+            fontWeight: FontWeight.w700,
             fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
@@ -2574,29 +2619,40 @@ class _Pill extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-          decoration: BoxDecoration(
-            color:
-                selected ? kPrimaryColor.withValues(alpha: 0.15) : kBlack3Color,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color:
-                  selected
-                      ? kPrimaryColor.withValues(alpha: 0.55)
-                      : kDividerColor,
-            ),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? kPrimaryColor : kWhiteColor70,
-              fontSize: 10,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.8,
-            ),
-          ),
+        child: _SelectionFade(
+          selected: selected,
+          builder:
+              (context, t, _) => Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Color.lerp(
+                    kBlack3Color,
+                    kPrimaryColor.withValues(alpha: 0.15),
+                    t,
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color:
+                        Color.lerp(
+                          kDividerColor,
+                          kPrimaryColor.withValues(alpha: 0.55),
+                          t,
+                        )!,
+                  ),
+                ),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: Color.lerp(kWhiteColor70, kPrimaryColor, t),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
         ),
       ),
     );
@@ -2624,36 +2680,52 @@ class _TempoPill extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? accent.withValues(alpha: 0.16) : kBlack3Color,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: selected ? accent.withValues(alpha: 0.55) : kDividerColor,
-            ),
+        child: _SelectionFade(
+          selected: selected,
+          child: TempoIcon(
+            key: ValueKey<String>('player-overview-tempo-$category'),
+            category: category,
+            size: 16,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TempoIcon(
-                key: ValueKey<String>('player-overview-tempo-$category'),
-                category: category,
-                size: 16,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: selected ? accent : kWhiteColor70,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.6,
+          builder:
+              (context, t, icon) => Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Color.lerp(
+                    kBlack3Color,
+                    accent.withValues(alpha: 0.16),
+                    t,
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color:
+                        Color.lerp(
+                          kDividerColor,
+                          accent.withValues(alpha: 0.55),
+                          t,
+                        )!,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    icon!,
+                    const SizedBox(width: 6),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: Color.lerp(kWhiteColor70, accent, t),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
         ),
       ),
     );
@@ -2688,10 +2760,7 @@ class _StatsMessage extends StatelessWidget {
         child: SizedBox(
           width: 22,
           height: 22,
-          child: DesktopSpinner(
-            strokeWidth: 2,
-            color: kPrimaryColor,
-          ),
+          child: DesktopSpinner(strokeWidth: 2, color: kPrimaryColor),
         ),
       );
     }
@@ -2834,4 +2903,30 @@ String _formatInt(int value) {
     if (remaining > 1 && remaining % 3 == 1) buffer.write(',');
   }
   return buffer.toString();
+}
+
+/// Drives a chip's or panel's selected look from one eased 0..1 value, so
+/// fill, border and label colour cross-fade together instead of the box
+/// fading while its text snaps. Mounting starts at rest (no animation).
+class _SelectionFade extends StatelessWidget {
+  const _SelectionFade({
+    required this.selected,
+    required this.builder,
+    this.child,
+  });
+
+  final bool selected;
+  final ValueWidgetBuilder<double> builder;
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: selected ? 1 : 0),
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.easeOutCubic,
+      builder: builder,
+      child: child,
+    );
+  }
 }

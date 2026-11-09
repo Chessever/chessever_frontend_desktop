@@ -37,3 +37,40 @@ class MotionTranslate extends StatelessWidget {
     );
   }
 }
+
+/// [Transform.scale] for animated hover / press scales; the scale twin of
+/// [MotionTranslate].
+///
+/// A spring passing through 1.003, 1.007 ... re-shapes glyphs at a new
+/// pixel snap every frame, so a hover grow or press dip shudders
+/// (flutter#149652). While the scale is off 1 this rasterizes the child and
+/// scales the bitmap with bilinear filtering; at rest it paints crisp
+/// vectors with no image-filter layer. The [Transform] always stays in the
+/// tree, so crossing rest swaps only the layer type and the child keeps its
+/// state.
+class MotionScale extends StatelessWidget {
+  const MotionScale({
+    super.key,
+    required this.scale,
+    this.alignment = Alignment.center,
+    this.child,
+  });
+
+  final double scale;
+  final AlignmentGeometry alignment;
+  final Widget? child;
+
+  /// Scale deltas below this read as rest (0.12 px on a 240 px surface).
+  static const double _restEpsilon = 0.0005;
+
+  @override
+  Widget build(BuildContext context) {
+    final atRest = (scale - 1.0).abs() < _restEpsilon;
+    return Transform.scale(
+      scale: atRest ? 1.0 : scale,
+      alignment: alignment,
+      filterQuality: atRest ? null : FilterQuality.medium,
+      child: child,
+    );
+  }
+}

@@ -1612,7 +1612,9 @@ class _SmartGamesTableRowState extends State<_SmartGamesTableRow> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onSelect,
         onDoubleTap: widget.onOpen,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
           height: 38,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(

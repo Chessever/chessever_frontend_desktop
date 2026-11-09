@@ -126,9 +126,17 @@ class _DesktopBoardLikeButtonState extends ConsumerState<DesktopBoardLikeButton>
                         motion: DesktopMotion.select,
                         from: _pops == 0 ? 1 : _popFrom,
                         value: 1,
+                        // Filtered while the pop runs so the settle's sub-pixel
+                        // tail glides (flutter#149652); crisp vectors at rest.
                         builder:
-                            (context, scale, child) =>
-                                Transform.scale(scale: scale, child: child),
+                            (context, scale, child) => Transform.scale(
+                              scale: scale,
+                              filterQuality:
+                                  (scale - 1).abs() < 0.0005
+                                      ? null
+                                      : FilterQuality.medium,
+                              child: child,
+                            ),
                         child: SizedBox.square(
                           dimension: 32,
                           child: Stack(
@@ -168,15 +176,25 @@ class _DesktopBoardLikeButtonState extends ConsumerState<DesktopBoardLikeButton>
                       ),
                       if (countAdjacent) ...[
                         const SizedBox(width: 4),
-                        Text(
-                          countLabel!,
-                          style: TextStyle(
-                            color:
+                        TweenAnimationBuilder<Color?>(
+                          tween: ColorTween(
+                            end:
                                 liked || _hovered ? kWhiteColor : kWhiteColor70,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            fontFeatures: const [FontFeature.tabularFigures()],
                           ),
+                          duration: const Duration(milliseconds: 140),
+                          curve: Curves.easeOut,
+                          builder:
+                              (context, color, _) => Text(
+                                countLabel!,
+                                style: TextStyle(
+                                  color: color,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
                         ),
                       ],
                     ],

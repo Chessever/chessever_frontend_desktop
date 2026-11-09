@@ -44,6 +44,7 @@ import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 
 /// Favorites pane built on the same Supabase-backed providers the mobile
 /// Favorites entry uses.
@@ -850,7 +851,8 @@ class _PlayerFilterChipState extends State<_PlayerFilterChip> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 130),
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             decoration: BoxDecoration(
               color:
@@ -886,12 +888,34 @@ class _PlayerFilterChipState extends State<_PlayerFilterChip> {
                   ),
                   const SizedBox(width: 6),
                 ],
-                Text(
-                  widget.label,
-                  style: TextStyle(
-                    color: selected ? kWhiteColor : kWhiteColor70,
-                    fontSize: 11.5,
-                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                // The chip always reserves the bold (selected) label width,
+                // so selecting a chip never widens it and shoves its
+                // neighbours along the row. The label colour eases on the
+                // same curve as the fill instead of snapping beside it.
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minWidth: _boldLabelWidth(context, widget.label),
+                  ),
+                  child: Center(
+                    widthFactor: 1,
+                    heightFactor: 1,
+                    child: TweenAnimationBuilder<Color?>(
+                      duration: const Duration(milliseconds: 140),
+                      curve: Curves.easeOutCubic,
+                      tween: ColorTween(
+                        end: selected ? kWhiteColor : kWhiteColor70,
+                      ),
+                      builder:
+                          (context, color, _) => Text(
+                            widget.label,
+                            style: TextStyle(
+                              color: color,
+                              fontSize: 11.5,
+                              fontWeight:
+                                  selected ? FontWeight.w800 : FontWeight.w600,
+                            ),
+                          ),
+                    ),
                   ),
                 ),
               ],
@@ -1189,9 +1213,10 @@ class _PlayerTileState extends ConsumerState<_PlayerTile> {
               (details) => unawaited(_showContextMenu(details.globalPosition)),
           child: MotionCard(
             borderRadius: 10,
+            // Same 140 ms easeOutCubic as the MotionCard shadow around it.
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 160),
-              curve: Curves.easeOut,
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOutCubic,
               decoration: BoxDecoration(
                 color: _hovered ? kBlack3Color : kBlack2Color,
                 borderRadius: BorderRadius.circular(10),
@@ -1466,11 +1491,8 @@ class _StarToggleState extends State<_StarToggle> {
               value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
-                  (context, scale, child) => Transform.scale(
-                    scale: scale,
-                    filterQuality: FilterQuality.medium,
-                    child: child,
-                  ),
+                  (context, scale, child) =>
+                      MotionScale(scale: scale, child: child),
               child: Padding(
                 padding: const EdgeInsets.all(6),
                 child: Icon(
@@ -1586,4 +1608,23 @@ class _PaneMessage extends StatelessWidget {
       ),
     ).animate().fadeIn(duration: 240.ms);
   }
+}
+
+/// Width of [label] at the bold (selected) weight. Chips reserve it so that
+/// toggling selection never widens the chip and reflows its neighbours.
+double _boldLabelWidth(BuildContext context, String label) {
+  final painter = TextPainter(
+    text: TextSpan(
+      text: label,
+      style: DefaultTextStyle.of(context).style.merge(
+        const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800),
+      ),
+    ),
+    maxLines: 1,
+    textDirection: Directionality.of(context),
+    textScaler: MediaQuery.textScalerOf(context),
+  )..layout();
+  final width = painter.width.ceilToDouble();
+  painter.dispose();
+  return width;
 }

@@ -5,6 +5,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:motor/motor.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 
 /// Canonical 28×28 icon button for board/engine pane header chrome
 /// (engine quick toggle, picture-in-picture, engine gear, board
@@ -60,9 +61,8 @@ class _DesktopHeaderIconButtonState extends State<DesktopHeaderIconButton> {
     } else {
       foreground = _hovered ? kWhiteColor : kWhiteColor70;
       background = _hovered ? kBlack3Color : Colors.transparent;
-      borderColor = _hovered
-          ? kWhiteColor.withValues(alpha: 0.20)
-          : kDividerColor;
+      borderColor =
+          _hovered ? kWhiteColor.withValues(alpha: 0.20) : kDividerColor;
     }
 
     return DesktopTooltip(
@@ -74,38 +74,35 @@ class _DesktopHeaderIconButtonState extends State<DesktopHeaderIconButton> {
         child: ClickCursor(
           enabled: interactive,
           child: MouseRegion(
-            onEnter: interactive
-                ? (_) => setState(() => _hovered = true)
-                : null,
-            onExit: interactive
-                ? (_) => setState(() {
-                    _hovered = false;
-                    _pressed = false;
-                  })
-                : null,
+            onEnter:
+                interactive ? (_) => setState(() => _hovered = true) : null,
+            onExit:
+                interactive
+                    ? (_) => setState(() {
+                      _hovered = false;
+                      _pressed = false;
+                    })
+                    : null,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: interactive ? widget.onPress : null,
-              onTapDown: interactive
-                  ? (_) => setState(() => _pressed = true)
-                  : null,
-              onTapUp: interactive
-                  ? (_) => setState(() => _pressed = false)
-                  : null,
-              onTapCancel: interactive
-                  ? () => setState(() => _pressed = false)
-                  : null,
+              onTapDown:
+                  interactive ? (_) => setState(() => _pressed = true) : null,
+              onTapUp:
+                  interactive ? (_) => setState(() => _pressed = false) : null,
+              onTapCancel:
+                  interactive ? () => setState(() => _pressed = false) : null,
               child: SingleMotionBuilder(
                 value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
                 motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
                 builder:
-                    (context, scale, child) => Transform.scale(
-                      scale: scale,
-                      filterQuality: FilterQuality.medium,
-                      child: child,
-                    ),
+                    (context, scale, child) =>
+                        MotionScale(scale: scale, child: child),
+                // Fill, border and glyph colour share one eased timeline;
+                // the glyph used to snap while the fill faded beside it.
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 110),
+                  duration: _kHoverColorDuration,
+                  curve: Curves.easeOutCubic,
                   width: 28,
                   height: 28,
                   decoration: BoxDecoration(
@@ -114,10 +111,16 @@ class _DesktopHeaderIconButtonState extends State<DesktopHeaderIconButton> {
                     border: Border.all(color: borderColor),
                   ),
                   alignment: Alignment.center,
-                  child: Icon(
-                    widget.icon,
-                    size: 16,
-                    color: foreground,
+                  child: TweenAnimationBuilder<Color?>(
+                    tween: ColorTween(end: foreground),
+                    duration: _kHoverColorDuration,
+                    curve: Curves.easeOutCubic,
+                    builder:
+                        (context, color, _) => Icon(
+                          widget.icon,
+                          size: 16,
+                          color: color ?? foreground,
+                        ),
                   ),
                 ),
               ),
@@ -128,3 +131,5 @@ class _DesktopHeaderIconButtonState extends State<DesktopHeaderIconButton> {
     );
   }
 }
+
+const Duration _kHoverColorDuration = Duration(milliseconds: 120);

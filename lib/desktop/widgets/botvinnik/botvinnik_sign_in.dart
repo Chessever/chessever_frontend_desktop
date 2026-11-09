@@ -164,7 +164,8 @@ class _ProviderButtonState extends State<_ProviderButton>
             enabled: enabled,
             label: widget.label,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOutCubic,
               height: 44,
               padding: const EdgeInsets.symmetric(horizontal: 14),
               decoration: BoxDecoration(

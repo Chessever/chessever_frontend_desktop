@@ -8,6 +8,7 @@ import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/pressable_scale.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/country_utils.dart';
 import 'package:chessever/utils/png_asset.dart';
@@ -359,6 +360,7 @@ class _StreamMarkButton extends StatelessWidget {
     return FTheme(
       data: FThemes.zinc.dark,
       child: FTappable(
+        style: _withoutForuiBounce,
         onPress: onPress,
         semanticsLabel: semanticsLabel,
         builder: (context, states, child) {
@@ -400,10 +402,12 @@ class _StreamMarkButton extends StatelessWidget {
               ),
             ),
           );
-          if (!pinned) return circle;
-          return CustomPaint(
-            painter: _DashedCirclePainter(color: rim, strokeWidth: 1),
-            child: circle,
+          if (!pinned) return _PressScale(child: circle);
+          return _PressScale(
+            child: CustomPaint(
+              painter: _DashedCirclePainter(color: rim, strokeWidth: 1),
+              child: circle,
+            ),
           );
         },
         child: _StreamMark(group: group),
@@ -584,31 +588,34 @@ class _StreamCountBadge extends StatelessWidget {
     return FTheme(
       data: FThemes.zinc.dark,
       child: FTappable(
+        style: _withoutForuiBounce,
         onPress: onPress,
         semanticsLabel: semanticsLabel,
         builder: (context, states, _) {
           final hovered = states.contains(WidgetState.hovered);
           final focused = states.contains(WidgetState.focused);
-          return Container(
-            constraints: const BoxConstraints(minWidth: 20),
-            height: 20,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color:
-                  hovered || focused
-                      ? kPrimaryColor.withValues(alpha: 0.18)
-                      : kBlack2Color,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: kPrimaryColor),
-            ),
-            child: Text(
-              '$count',
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                color: kPrimaryColor,
-                height: 1,
+          return _PressScale(
+            child: Container(
+              constraints: const BoxConstraints(minWidth: 20),
+              height: 20,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color:
+                    hovered || focused
+                        ? kPrimaryColor.withValues(alpha: 0.18)
+                        : kBlack2Color,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kPrimaryColor),
+              ),
+              child: Text(
+                '$count',
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  color: kPrimaryColor,
+                  height: 1,
+                ),
               ),
             ),
           );
@@ -789,24 +796,27 @@ class _MenuRow extends StatelessWidget {
     return FTheme(
       data: FThemes.zinc.dark,
       child: FTappable(
+        style: _withoutForuiBounce,
         onPress: onTap,
         semanticsLabel: label,
         builder: (context, states, _) {
           final hovered = states.contains(WidgetState.hovered);
           final focused = states.contains(WidgetState.focused);
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            color:
-                selected || hovered || focused
-                    ? kPrimaryColor.withValues(alpha: 0.12)
-                    : Colors.transparent,
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                color: selected ? kPrimaryColor : kWhiteColor,
+          return _PressScale(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              color:
+                  selected || hovered || focused
+                      ? kPrimaryColor.withValues(alpha: 0.12)
+                      : Colors.transparent,
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: selected ? kPrimaryColor : kWhiteColor,
+                ),
               ),
             ),
           );
@@ -840,6 +850,7 @@ class _IconAction extends StatelessWidget {
     final button = FTheme(
       data: FThemes.zinc.dark,
       child: FTappable(
+        style: _withoutForuiBounce,
         onPress: onPress,
         semanticsLabel: tooltip.isEmpty ? null : tooltip,
         builder: (context, states, _) {
@@ -851,23 +862,25 @@ class _IconAction extends StatelessWidget {
           final border = highlighted ? kPrimaryColor : kDividerColor;
           final foreground =
               selected || highlighted ? kPrimaryColor : kWhiteColor70;
-          return Container(
-            width: BroadcastVideoToolbar.button,
-            height: BroadcastVideoToolbar.button,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(border: Border.all(color: border)),
-            child:
-                label != null
-                    ? Text(
-                      label!,
-                      style: TextStyle(
-                        fontSize: 18,
-                        height: 1,
-                        fontWeight: FontWeight.w600,
-                        color: foreground,
-                      ),
-                    )
-                    : Icon(icon, size: 18, color: foreground),
+          return _PressScale(
+            child: Container(
+              width: BroadcastVideoToolbar.button,
+              height: BroadcastVideoToolbar.button,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(border: Border.all(color: border)),
+              child:
+                  label != null
+                      ? Text(
+                        label!,
+                        style: TextStyle(
+                          fontSize: 18,
+                          height: 1,
+                          fontWeight: FontWeight.w600,
+                          color: foreground,
+                        ),
+                      )
+                      : Icon(icon, size: 18, color: foreground),
+            ),
           );
         },
       ),
@@ -908,4 +921,23 @@ class _DashedCirclePainter extends CustomPainter {
   bool shouldRepaint(covariant _DashedCirclePainter oldDelegate) {
     return oldDelegate.color != color || oldDelegate.strokeWidth != strokeWidth;
   }
+}
+
+/// forui's stock tappable bounce is an unfiltered 0.97 [ScaleTransition]:
+/// Impeller re-shapes the flag, icon and label glyphs at each fractional
+/// scale, so a press shudders. [_PressScale] replaces it.
+FTappableStyle _withoutForuiBounce(FTappableStyle style) =>
+    style.copyWith(motion: (_) => FTappableMotion.none);
+
+/// The same 0.97 press as forui's bounce, but through [PressableScale]'s
+/// spring and filtered raster scale, so it eases smoothly. No hover scale:
+/// the toolbar's hover is the rim / ink colour change alone.
+class _PressScale extends StatelessWidget {
+  const _PressScale({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      PressableScale(hoveredScale: 1, child: child);
 }

@@ -296,9 +296,8 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                                         shadowColor: Colors.black.withValues(
                                           alpha: 0.4,
                                         ),
-                                        child: Transform.scale(
+                                        child: MotionScale(
                                           scale: 1 + 0.03 * t,
-                                          filterQuality: FilterQuality.medium,
                                           child: child,
                                         ),
                                       );
@@ -889,6 +888,8 @@ class _TabChipState extends ConsumerState<_TabChip>
                                             onClose: widget.onClose,
                                             showClose:
                                                 _hovered || widget.active,
+                                            closeReveal:
+                                                widget.active ? 1.0 : t,
                                           ),
                                         ),
                                       ),
@@ -913,6 +914,7 @@ class _TabChipState extends ConsumerState<_TabChip>
                                     active: widget.active,
                                     fg: fg,
                                     hovered: _hovered,
+                                    closeReveal: widget.active ? 1.0 : t,
                                     boardFen: boardFen,
                                     hasGameFen: hasGameFen,
                                     showGameCardEvalBar: showGameCardEvalBar,
@@ -966,6 +968,7 @@ class _GameTabChipContent extends StatelessWidget {
     required this.muted,
     required this.onClose,
     required this.showClose,
+    required this.closeReveal,
   });
 
   final BoardTabGameArgs args;
@@ -974,6 +977,11 @@ class _GameTabChipContent extends StatelessWidget {
   final bool muted;
   final VoidCallback? onClose;
   final bool showClose;
+
+  /// 0..1 from the chip's hover spring (1 on the active tab). Fades the
+  /// close button and, on narrow chips, opens its slot in step with the
+  /// chip fill, so hovering never snaps the title sideways.
+  final double closeReveal;
 
   /// Pull a "last name" out of "Last, First" or "First Last" — game
   /// PGNs use both conventions. Falls back to the whole string when
@@ -1065,9 +1073,10 @@ class _GameTabChipContent extends StatelessWidget {
         final showResult = hasResult && w >= 170;
         final showTitles = w >= 210 && (whiteHasTitle || blackHasTitle);
         final useFullNames = w >= 280;
-        final reserveClose = onClose != null && (showClose || w >= 150);
-        final rightInset =
-            reserveClose ? (muted ? 40.0 : 22.0) : (muted ? 18.0 : 0.0);
+        final double closeSlot =
+            onClose == null ? 0.0 : (w >= 150 ? 1.0 : closeReveal);
+        final reserveClose = closeSlot > 0;
+        final rightInset = (muted ? 18.0 : 0.0) + 22.0 * closeSlot;
 
         if (!hasNamedSides || args.eventPlayerScope != null) {
           final label = args.label.trim().isEmpty ? 'Board' : args.label.trim();
@@ -1110,7 +1119,11 @@ class _GameTabChipContent extends StatelessWidget {
                   top: 0,
                   bottom: 0,
                   child: Center(
-                    child: _CloseButton(visible: showClose, onTap: onClose!),
+                    child: _CloseButton(
+                      enabled: showClose,
+                      opacity: closeReveal,
+                      onTap: onClose!,
+                    ),
                   ),
                 ),
             ],
@@ -1208,7 +1221,7 @@ class _GameTabChipContent extends StatelessWidget {
             ),
             if (muted)
               Positioned(
-                right: reserveClose ? 22 : 0,
+                right: 22 * closeSlot,
                 top: 0,
                 bottom: 0,
                 child: Center(
@@ -1225,7 +1238,11 @@ class _GameTabChipContent extends StatelessWidget {
                 top: 0,
                 bottom: 0,
                 child: Center(
-                  child: _CloseButton(visible: showClose, onTap: onClose!),
+                  child: _CloseButton(
+                    enabled: showClose,
+                    opacity: closeReveal,
+                    onTap: onClose!,
+                  ),
                 ),
               ),
           ],
@@ -1267,6 +1284,7 @@ class _RegularTabChipContent extends StatelessWidget {
     required this.active,
     required this.fg,
     required this.hovered,
+    required this.closeReveal,
     required this.boardFen,
     required this.hasGameFen,
     required this.showGameCardEvalBar,
@@ -1278,6 +1296,10 @@ class _RegularTabChipContent extends StatelessWidget {
   final bool active;
   final Color fg;
   final bool hovered;
+
+  /// 0..1 from the chip's hover spring (1 on the active tab); see
+  /// [_GameTabChipContent.closeReveal].
+  final double closeReveal;
   final String? boardFen;
   final bool hasGameFen;
   final bool showGameCardEvalBar;
@@ -1289,7 +1311,10 @@ class _RegularTabChipContent extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final w = constraints.maxWidth;
-        final reserveClose = onClose != null && (hovered || active || w >= 140);
+        final double closeSlot =
+            onClose == null ? 0.0 : ((active || w >= 140) ? 1.0 : closeReveal);
+        final reserveClose = closeSlot > 0;
+        final double closeInset = 12 + 16 * closeSlot;
 
         final titleStyle = TextStyle(
           color: fg,
@@ -1352,12 +1377,7 @@ class _RegularTabChipContent extends StatelessWidget {
             children: [
               Positioned.fill(
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    12,
-                    6,
-                    reserveClose ? 28 : 12,
-                    6,
-                  ),
+                  padding: EdgeInsets.fromLTRB(12, 6, closeInset, 6),
                   child: profileContent,
                 ),
               ),
@@ -1368,7 +1388,8 @@ class _RegularTabChipContent extends StatelessWidget {
                   bottom: 0,
                   child: Center(
                     child: _CloseButton(
-                      visible: hovered || active,
+                      enabled: hovered || active,
+                      opacity: closeReveal,
                       onTap: onClose!,
                     ),
                   ),
@@ -1426,7 +1447,7 @@ class _RegularTabChipContent extends StatelessWidget {
           children: [
             Positioned.fill(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(12, 6, reserveClose ? 28 : 12, 6),
+                padding: EdgeInsets.fromLTRB(12, 6, closeInset, 6),
                 child: content,
               ),
             ),
@@ -1437,7 +1458,8 @@ class _RegularTabChipContent extends StatelessWidget {
                 bottom: 0,
                 child: Center(
                   child: _CloseButton(
-                    visible: hovered || active,
+                    enabled: hovered || active,
+                    opacity: closeReveal,
                     onTap: onClose!,
                   ),
                 ),
@@ -1547,8 +1569,18 @@ const String _initialFen =
     'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 class _CloseButton extends StatefulWidget {
-  const _CloseButton({required this.visible, required this.onTap});
-  final bool visible;
+  const _CloseButton({
+    required this.enabled,
+    required this.opacity,
+    required this.onTap,
+  });
+
+  /// Whether the button takes clicks (chip hovered or active).
+  final bool enabled;
+
+  /// Driven by the owning chip's hover spring so the button fades in
+  /// lockstep with the chip fill instead of on its own faster clock.
+  final double opacity;
   final VoidCallback onTap;
 
   @override
@@ -1560,13 +1592,20 @@ class _CloseButtonState extends State<_CloseButton>
   bool _hovered = false;
   bool _pressed = false;
 
+  // Translucent white pad so the hover affordance reads on any underlying
+  // chip fill — `kBlack3Color` was fine on the active tab (#0C) but matched
+  // the inactive chip fill exactly, making the hover invisible. Fades from
+  // the same white at zero alpha so the blend never passes through grey.
+  static const Color _padRest = Color(0x00FFFFFF);
+  static const Color _padHover = Color(0x33FFFFFF);
+
   @override
   Widget build(BuildContext context) {
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 80),
-      opacity: widget.visible ? 1 : 0,
+    final enabled = widget.enabled;
+    return Opacity(
+      opacity: widget.opacity.clamp(0.0, 1.0),
       child: ClickCursor(
-        enabled: widget.visible,
+        enabled: enabled,
         child: MouseRegion(
           onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
           onExit:
@@ -1576,47 +1615,48 @@ class _CloseButtonState extends State<_CloseButton>
               }),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: widget.visible ? widget.onTap : null,
+            onTap: enabled ? widget.onTap : null,
             onTapDown:
-                widget.visible
+                enabled
                     ? (_) => setStateAfterPointerEvent(() => _pressed = true)
                     : null,
             onTapUp:
-                widget.visible
+                enabled
                     ? (_) => setStateAfterPointerEvent(() => _pressed = false)
                     : null,
             onTapCancel:
-                widget.visible
+                enabled
                     ? () => setStateAfterPointerEvent(() => _pressed = false)
                     : null,
+            // Pad fill and glyph colour ride one hover spring; the scale
+            // nudge rides its own (tap while pressed) inside it.
             child: SingleMotionBuilder(
-              value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
-              motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-              builder:
-                  (context, scale, child) => Transform.scale(
-                    scale: scale,
-                    filterQuality: FilterQuality.medium,
-                    child: child,
+              value: _hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, h, _) {
+                final t = h.clamp(0.0, 1.0);
+                return SingleMotionBuilder(
+                  value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
+                  motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
+                  builder:
+                      (context, scale, child) =>
+                          MotionScale(scale: scale, child: child),
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: Color.lerp(_padRest, _padHover, t),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: 14,
+                      color: Color.lerp(kWhiteColor70, kWhiteColor, t),
+                    ),
                   ),
-              child: Container(
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  // Translucent white pad so the hover affordance reads on
-                  // any underlying chip fill — `kBlack3Color` was fine on
-                  // the active tab (#0C) but matched the new inactive
-                  // chip fill exactly, making the hover invisible.
-                  color:
-                      _hovered ? const Color(0x33FFFFFF) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                alignment: Alignment.center,
-                child: Icon(
-                  Icons.close_rounded,
-                  size: 14,
-                  color: _hovered ? kWhiteColor : kWhiteColor70,
-                ),
-              ),
+                );
+              },
             ),
           ),
         ),

@@ -6,14 +6,7 @@ import 'package:flutter/widgets.dart';
 /// `MouseRegion` + `SystemMouseCursors` so the OS pointer is what users see.
 /// Kept as named modes so call sites can express intent (`hover`, `text`,
 /// `grab`, …) without leaking `SystemMouseCursor` everywhere.
-enum CursorMode {
-  pointer,
-  hover,
-  pressing,
-  grab,
-  text,
-  wait,
-}
+enum CursorMode { pointer, hover, pressing, grab, text, wait }
 
 extension _CursorModeSystem on CursorMode {
   MouseCursor get systemCursor {
@@ -48,28 +41,28 @@ class CursorAware extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!enabled) return child;
-    return MouseRegion(cursor: mode.systemCursor, child: child);
+    // Always the same MouseRegion, never the bare child: toggling [enabled]
+    // must not change the element tree, or every animated widget below
+    // (hover fades, press springs) would remount and snap to its rest value.
+    // Disabled, it defers the cursor and stays transparent to regions behind
+    // it, which is what having no region did.
+    return MouseRegion(
+      cursor: enabled ? mode.systemCursor : MouseCursor.defer,
+      opaque: enabled,
+      child: child,
+    );
   }
 }
 
 /// "This widget is clickable" — shows the system click cursor on hover.
 class ClickCursor extends StatelessWidget {
-  const ClickCursor({
-    super.key,
-    required this.child,
-    this.enabled = true,
-  });
+  const ClickCursor({super.key, required this.child, this.enabled = true});
 
   final Widget child;
   final bool enabled;
 
   @override
   Widget build(BuildContext context) {
-    return CursorAware(
-      mode: CursorMode.hover,
-      enabled: enabled,
-      child: child,
-    );
+    return CursorAware(mode: CursorMode.hover, enabled: enabled, child: child);
   }
 }

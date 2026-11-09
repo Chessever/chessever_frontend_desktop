@@ -3032,6 +3032,7 @@ class _PrepSidePill extends StatelessWidget {
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
           padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
           decoration: BoxDecoration(
             color:
@@ -3044,14 +3045,22 @@ class _PrepSidePill extends StatelessWidget {
                       : kDividerColor,
             ),
           ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? kPrimaryColor : kWhiteColor70,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.2,
-            ),
+          // Label colour fades on the same duration/curve as the fill and
+          // border so selection reads as one change, not a snap beside a fade.
+          child: TweenAnimationBuilder<Color?>(
+            tween: ColorTween(end: selected ? kPrimaryColor : kWhiteColor70),
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            builder:
+                (context, color, _) => Text(
+                  label,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.2,
+                  ),
+                ),
           ),
         ),
       ),

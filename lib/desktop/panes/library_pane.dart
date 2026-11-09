@@ -1027,7 +1027,8 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
             onTapCancel:
                 () => setStateAfterPointerEvent(() => _pressed = false),
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
+              duration: _kLibraryHoverColorDuration,
+              curve: _kLibraryHoverColorCurve,
               padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
               decoration: BoxDecoration(
                 color: bg,
@@ -1045,46 +1046,55 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
                 builder:
                     (context, x, child) =>
                         MotionTranslate(offset: Offset(x, 0), child: child),
-                child: Row(
-                  children: [
-                    widget.leading ?? Icon(widget.icon, size: 14, color: fg),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        widget.label,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: fg,
-                          fontSize: 13,
-                          fontWeight:
-                              widget.selected
-                                  ? FontWeight.w600
-                                  : FontWeight.w500,
-                        ),
+                // The label/icon colour eases on the fill's timeline instead
+                // of snapping beside a fading background.
+                child: _EasedColor(
+                  color: fg,
+                  builder:
+                      (context, fg, _) => Row(
+                        children: [
+                          widget.leading ??
+                              Icon(widget.icon, size: 14, color: fg),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              widget.label,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: fg,
+                                fontSize: 13,
+                                fontWeight:
+                                    widget.selected
+                                        ? FontWeight.w600
+                                        : FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          if (widget.trailingLabel != null) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              widget.trailingLabel!,
+                              style: TextStyle(
+                                color: kLightGreyColor.withValues(alpha: 0.85),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                          ],
+                          if (widget.trailingIcon != null)
+                            DesktopTooltip(
+                              message: widget.trailingTooltip ?? '',
+                              child: Icon(
+                                widget.trailingIcon,
+                                size: 11,
+                                color: kLightGreyColor,
+                              ),
+                            ),
+                        ],
                       ),
-                    ),
-                    if (widget.trailingLabel != null) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        widget.trailingLabel!,
-                        style: TextStyle(
-                          color: kLightGreyColor.withValues(alpha: 0.85),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ],
-                    if (widget.trailingIcon != null)
-                      DesktopTooltip(
-                        message: widget.trailingTooltip ?? '',
-                        child: Icon(
-                          widget.trailingIcon,
-                          size: 11,
-                          color: kLightGreyColor,
-                        ),
-                      ),
-                  ],
                 ),
               ),
             ),
@@ -1394,7 +1404,8 @@ class _FolderRowState extends ConsumerState<_FolderRow>
                     onTapCancel:
                         () => setStateAfterPointerEvent(() => _pressed = false),
                     child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 120),
+                      duration: _kLibraryHoverColorDuration,
+                      curve: _kLibraryHoverColorCurve,
                       padding: EdgeInsets.fromLTRB(10 + depth * 14, 7, 8, 7),
                       decoration: BoxDecoration(
                         color: bg,
@@ -1417,7 +1428,9 @@ class _FolderRowState extends ConsumerState<_FolderRow>
                             ),
                         child: Row(
                           children: [
-                            Container(
+                            AnimatedContainer(
+                              duration: _kLibraryHoverColorDuration,
+                              curve: _kLibraryHoverColorCurve,
                               width: 22,
                               height: 22,
                               alignment: Alignment.center,
@@ -1447,17 +1460,23 @@ class _FolderRowState extends ConsumerState<_FolderRow>
                                 expanded: widget.expanded!,
                               ),
                             Expanded(
-                              child: Text(
-                                widget.folder.name,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: fg,
-                                  fontSize: 13,
-                                  fontWeight:
-                                      widget.selected
-                                          ? FontWeight.w600
-                                          : FontWeight.w500,
-                                ),
+                              // Label colour eases with the row fill instead
+                              // of snapping beside it.
+                              child: _EasedColor(
+                                color: fg,
+                                builder:
+                                    (context, fg, _) => Text(
+                                      widget.folder.name,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: fg,
+                                        fontSize: 13,
+                                        fontWeight:
+                                            widget.selected
+                                                ? FontWeight.w600
+                                                : FontWeight.w500,
+                                      ),
+                                    ),
                               ),
                             ),
                             if (widget.folder.isSubscribed)
@@ -3663,7 +3682,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       builder: (context, candidates, _) {
         final isHovering = candidates.isNotEmpty;
         return AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
+          duration: _kLibraryHoverColorDuration,
+          curve: _kLibraryHoverColorCurve,
           color: kBlackColor,
           foregroundDecoration:
               isHovering
@@ -4873,8 +4893,11 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
                             widget.onContextMenu!(details.globalPosition),
                 child: MotionCard(
                   borderRadius: 10,
+                  // Same 140 ms easeOutCubic as MotionCard's contact shadow so
+                  // fill, border and shadow arrive together.
                   child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 120),
+                    duration: const Duration(milliseconds: 140),
+                    curve: Curves.easeOutCubic,
                     padding: const EdgeInsets.fromLTRB(10, 9, 10, 8),
                     decoration: BoxDecoration(
                       color:
@@ -5226,7 +5249,8 @@ class _DatabaseBoardRowState extends State<_DatabaseBoardRow> {
               alignment: Alignment.center,
               children: [
                 AnimatedOpacity(
-                  duration: const Duration(milliseconds: 90),
+                  duration: _kLibraryHoverColorDuration,
+                  curve: _kLibraryHoverColorCurve,
                   opacity: hovered && widget.reorderKey != null ? 0 : 1,
                   child: Container(
                     width: 27,
@@ -5244,30 +5268,46 @@ class _DatabaseBoardRowState extends State<_DatabaseBoardRow> {
                     ),
                   ),
                 ),
-                if (hovered && widget.reorderKey != null)
-                  Draggable<String>(
-                    data: widget.reorderKey!,
-                    feedback: const Material(
-                      color: Colors.transparent,
-                      child: Icon(
-                        Icons.drag_indicator_rounded,
-                        size: 18,
-                        color: kPrimaryColor,
-                      ),
-                    ),
-                    childWhenDragging: const SizedBox(width: 27, height: 27),
-                    child: DesktopTooltip(
-                      message: 'Drag to reorder',
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.grab,
-                        child: const SizedBox(
-                          key: ValueKey<String>('library-home-reorder-handle'),
-                          width: 27,
-                          height: 27,
+                // The handle cross-fades with the well on the same timeline
+                // (it used to pop in while the well faded out). It stays
+                // mounted and ignores the pointer while the row is idle.
+                if (widget.reorderKey != null)
+                  IgnorePointer(
+                    ignoring: !hovered,
+                    child: AnimatedOpacity(
+                      duration: _kLibraryHoverColorDuration,
+                      curve: _kLibraryHoverColorCurve,
+                      opacity: hovered ? 1 : 0,
+                      child: Draggable<String>(
+                        data: widget.reorderKey!,
+                        feedback: const Material(
+                          color: Colors.transparent,
                           child: Icon(
                             Icons.drag_indicator_rounded,
-                            size: 17,
-                            color: kWhiteColor70,
+                            size: 18,
+                            color: kPrimaryColor,
+                          ),
+                        ),
+                        childWhenDragging: const SizedBox(
+                          width: 27,
+                          height: 27,
+                        ),
+                        child: DesktopTooltip(
+                          message: 'Drag to reorder',
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.grab,
+                            child: const SizedBox(
+                              key: ValueKey<String>(
+                                'library-home-reorder-handle',
+                              ),
+                              width: 27,
+                              height: 27,
+                              child: Icon(
+                                Icons.drag_indicator_rounded,
+                                size: 17,
+                                color: kWhiteColor70,
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -6746,6 +6786,7 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow>
           onDoubleTap: widget.onDoubleTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 100),
+            curve: _kLibraryHoverColorCurve,
             decoration: librarySelectedRowDecoration(
               selected: widget.selected,
               hovered: _hovered,
@@ -7443,7 +7484,9 @@ class _OverflowMenuButtonState extends State<_OverflowMenuButton>
             key: _key,
             behavior: HitTestBehavior.opaque,
             onTap: _open,
-            child: Container(
+            child: AnimatedContainer(
+              duration: _kLibraryHoverColorDuration,
+              curve: _kLibraryHoverColorCurve,
               width: 32,
               height: 32,
               alignment: Alignment.center,
@@ -7454,10 +7497,11 @@ class _OverflowMenuButtonState extends State<_OverflowMenuButton>
                   color: _hovered ? kDividerColor : Colors.transparent,
                 ),
               ),
-              child: Icon(
-                Icons.more_horiz_rounded,
-                size: 18,
+              child: _EasedColor(
                 color: _hovered ? kWhiteColor : kWhiteColor70,
+                builder:
+                    (context, fg, _) =>
+                        Icon(Icons.more_horiz_rounded, size: 18, color: fg),
               ),
             ),
           ),
@@ -7623,7 +7667,8 @@ class _ViewModeButtonState extends State<_ViewModeButton>
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
+              duration: _kLibraryHoverColorDuration,
+              curve: _kLibraryHoverColorCurve,
               width: 30,
               height: 26,
               alignment: Alignment.center,
@@ -7631,7 +7676,11 @@ class _ViewModeButtonState extends State<_ViewModeButton>
                 color: bg,
                 borderRadius: BorderRadius.circular(5),
               ),
-              child: Icon(widget.icon, size: 13, color: fg),
+              child: _EasedColor(
+                color: fg,
+                builder:
+                    (context, fg, _) => Icon(widget.icon, size: 13, color: fg),
+              ),
             ),
           ),
         ),
@@ -8033,16 +8082,24 @@ class _SelectableLibraryGameCardState
             _suppressNextTap = false;
           }
         },
+        // The selection ring is a foreground decoration, not a border on
+        // the box: a Container border pads its child by the border width, so
+        // selecting a card used to inset (and, while the decoration
+        // animated, shimmy) the whole card by 0-1.5 px.
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 100),
-          decoration:
-              widget.selected
-                  ? BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: kPrimaryColor, width: 1.5),
-                    color: kPrimaryColor.withValues(alpha: 0.10),
-                  )
-                  : null,
+          duration: _kLibraryHoverColorDuration,
+          curve: _kLibraryHoverColorCurve,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            color: kPrimaryColor.withValues(alpha: widget.selected ? 0.10 : 0),
+          ),
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: widget.selected ? kPrimaryColor : const Color(0x00000000),
+              width: 1.5,
+            ),
+          ),
           child: widget.child,
         ),
       ),
@@ -8546,40 +8603,44 @@ class _HeaderCellState extends State<_HeaderCell>
           behavior: HitTestBehavior.opaque,
           onTap:
               () => widget.onSortChange(widget.sort._toggleOrSet(widget.key_)),
-          child: Row(
-            mainAxisAlignment:
-                widget.alignEnd
-                    ? MainAxisAlignment.end
-                    : MainAxisAlignment.start,
-            children: [
-              // Columns are user-resizable, so a label must give way inside its
-              // own cell instead of spilling past it: a header sliced by the
-              // column edge reads as broken, an ellipsis reads as narrowed.
-              Flexible(
-                child: Text(
-                  widget.label,
-                  maxLines: 1,
-                  softWrap: false,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
-                  ),
+          child: _EasedColor(
+            color: color,
+            builder:
+                (context, color, _) => Row(
+                  mainAxisAlignment:
+                      widget.alignEnd
+                          ? MainAxisAlignment.end
+                          : MainAxisAlignment.start,
+                  children: [
+                    // Columns are user-resizable, so a label must give way inside its
+                    // own cell instead of spilling past it: a header sliced by the
+                    // column edge reads as broken, an ellipsis reads as narrowed.
+                    Flexible(
+                      child: Text(
+                        widget.label,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                    if (active) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        widget.sort.dir == _SortDir.asc
+                            ? Icons.arrow_upward_rounded
+                            : Icons.arrow_downward_rounded,
+                        size: 11,
+                        color: color,
+                      ),
+                    ],
+                  ],
                 ),
-              ),
-              if (active) ...[
-                const SizedBox(width: 4),
-                Icon(
-                  widget.sort.dir == _SortDir.asc
-                      ? Icons.arrow_upward_rounded
-                      : Icons.arrow_downward_rounded,
-                  size: 11,
-                  color: color,
-                ),
-              ],
-            ],
           ),
         ),
       ),
@@ -8780,6 +8841,7 @@ class _GamesTableRowState extends State<_GamesTableRow>
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 100),
+                  curve: _kLibraryHoverColorCurve,
                   decoration: librarySelectedRowDecoration(
                     selected: _selected,
                     hovered: _hovered,
@@ -10918,42 +10980,47 @@ class _TwicChipState extends State<_TwicChip>
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
+            duration: _kLibraryHoverColorDuration,
+            curve: _kLibraryHoverColorCurve,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
               color: bg,
               borderRadius: BorderRadius.circular(999),
               border: Border.all(color: border),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 220),
-                  child: Text(
-                    widget.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: fg,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
+            child: _EasedColor(
+              color: fg,
+              builder:
+                  (context, fg, _) => Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 220),
+                        child: Text(
+                          widget.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: fg,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (widget.count != null && widget.count! > 0) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          formatCompactCount(widget.count!),
+                          style: TextStyle(
+                            color: fg.withValues(alpha: 0.65),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                ),
-                if (widget.count != null && widget.count! > 0) ...[
-                  const SizedBox(width: 6),
-                  Text(
-                    formatCompactCount(widget.count!),
-                    style: TextStyle(
-                      color: fg.withValues(alpha: 0.65),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ],
-              ],
             ),
           ),
         ),
@@ -11542,6 +11609,7 @@ class _TwicTableRowState extends State<_TwicTableRow>
             },
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
+              curve: _kLibraryHoverColorCurve,
               decoration: librarySelectedRowDecoration(
                 selected: widget.selected,
                 hovered: _hovered,
@@ -13610,6 +13678,7 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow>
             onDoubleTap: widget.onOpen,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
+              curve: _kLibraryHoverColorCurve,
               decoration: librarySelectedRowDecoration(
                 selected: widget.selected,
                 hovered: _hovered,
@@ -15299,4 +15368,32 @@ List<LibraryFolder> _hierarchical(List<LibraryFolder> folders) {
     }
   }
   return out;
+}
+
+/// Hover / selection colour timeline shared by Library chrome: the
+/// [AnimatedContainer] fills and the [_EasedColor] foregrounds beside them
+/// run on exactly this duration and curve so a row's fill, label and icon
+/// change as one instead of a fade next to a snap.
+const Duration _kLibraryHoverColorDuration = Duration(milliseconds: 120);
+const Curve _kLibraryHoverColorCurve = Curves.easeOutCubic;
+
+/// Eases a foreground [color] (label, icon) on the same timeline as the
+/// neighbouring [AnimatedContainer] fill. Paint-only: nothing re-lays out.
+class _EasedColor extends StatelessWidget {
+  const _EasedColor({required this.color, required this.builder});
+
+  final Color color;
+  final Widget Function(BuildContext context, Color color, Widget? child)
+  builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<Color?>(
+      tween: ColorTween(end: color),
+      duration: _kLibraryHoverColorDuration,
+      curve: _kLibraryHoverColorCurve,
+      builder:
+          (context, value, child) => builder(context, value ?? color, child),
+    );
+  }
 }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
+import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -145,6 +146,7 @@ class _DesktopContextMenuOverlayState<T>
   );
 
   bool _closing = false;
+  bool _landed = false;
   T? _result;
 
   // `autofocus` cannot take focus here: the shell's own autofocus node
@@ -252,16 +254,28 @@ class _DesktopContextMenuOverlayState<T>
                 builder: (context, child) {
                   final t = _controller.value.clamp(0.0, 1.0);
                   final scale = 0.965 + (0.035 * t);
+                  // One transform for the lift and the grow, rasterized only
+                  // while it is in flight: a filtered raster glides through
+                  // the sub-pixel steps, and once open the menu (usually at
+                  // a fractional pointer position) paints as crisp vectors
+                  // instead of a bilinear-sampled bitmap.
+                  // The open spring is slightly underdamped and the
+                  // controller clamps at 1, so after first reaching 1 the
+                  // value dips ~3% and returns. Latch "open" the first time
+                  // it lands so that dip neither dims the menu nor toggles
+                  // the raster layer back on (a soft/crisp flicker).
+                  if (!_closing && t >= 0.999) _landed = true;
+                  final settled = _landed && !_closing;
                   return Opacity(
-                    opacity: t,
-                    child: Transform.translate(
-                      offset: Offset(0, -4 * (1 - t)),
-                      child: Transform.scale(
-                        scale: scale,
-                        alignment: Alignment.topLeft,
-                        filterQuality: FilterQuality.medium,
-                        child: child,
-                      ),
+                    opacity: settled ? 1 : t,
+                    child: Transform(
+                      transform:
+                          settled
+                              ? Matrix4.identity()
+                              : (Matrix4.diagonal3Values(scale, scale, 1)
+                                ..setTranslationRaw(0, -4 * (1 - t), 0)),
+                      filterQuality: settled ? null : FilterQuality.medium,
+                      child: child,
                     ),
                   );
                 },
@@ -455,67 +469,76 @@ class _DesktopContextMenuRowState<T> extends State<_DesktopContextMenuRow<T>>
     final item = widget.item;
     final disabled = !item.enabled;
     final destructiveColor = const Color(0xFFEB5757);
-    final foreground =
+    final active = !disabled && _hovered;
+    final restColor =
         disabled
             ? kLightGreyColor.withValues(alpha: 0.52)
             : item.destructive
             ? destructiveColor
-            : (_hovered ? kWhiteColor : kWhiteColor70);
-    final iconColor =
+            : kWhiteColor70;
+    final restIcon =
         disabled
             ? kLightGreyColor.withValues(alpha: 0.42)
             : item.destructive
             ? destructiveColor
-            : (_hovered ? kWhiteColor : kWhiteColor70);
-    final background =
-        disabled || !_hovered
-            ? Colors.transparent
-            : item.destructive
+            : kWhiteColor70;
+    final hoverColor = item.destructive ? destructiveColor : kWhiteColor;
+    final hoverFill =
+        item.destructive
             ? destructiveColor.withValues(alpha: 0.13)
             : kWhiteColor.withValues(alpha: 0.075);
 
-    final row = AnimatedContainer(
-      duration: const Duration(milliseconds: 110),
-      curve: Curves.easeOutCubic,
-      constraints: const BoxConstraints(minHeight: 40),
-      margin: const EdgeInsets.symmetric(horizontal: 5),
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(7),
-      ),
-      child: Row(
-        children: [
-          Icon(item.icon, size: 15, color: iconColor),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              item.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: foreground,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+    // Fill, label and icon ride one eased value, so the row lights as a
+    // unit instead of the text snapping white beside a 110 ms fill fade.
+    final row = SingleMotionBuilder(
+      value: active ? 1.0 : 0.0,
+      motion: _rowHoverMotion,
+      builder: (context, h, _) {
+        final t = h.clamp(0.0, 1.0);
+        final foreground = Color.lerp(restColor, hoverColor, t)!;
+        final iconColor = Color.lerp(restIcon, hoverColor, t)!;
+        return Container(
+          constraints: const BoxConstraints(minHeight: 40),
+          margin: const EdgeInsets.symmetric(horizontal: 5),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+          decoration: BoxDecoration(
+            color: Color.lerp(hoverFill.withValues(alpha: 0), hoverFill, t),
+            borderRadius: BorderRadius.circular(7),
           ),
-          if (item.shortcut != null) ...[
-            const SizedBox(width: 12),
-            Text(
-              item.shortcut!,
-              style: TextStyle(
-                color:
-                    disabled
-                        ? kLightGreyColor.withValues(alpha: 0.42)
-                        : kLightGreyColor,
-                fontSize: 11,
-                fontFeatures: const [FontFeature.tabularFigures()],
+          child: Row(
+            children: [
+              Icon(item.icon, size: 15, color: iconColor),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  item.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-            ),
-          ],
-        ],
-      ),
+              if (item.shortcut != null) ...[
+                const SizedBox(width: 12),
+                Text(
+                  item.shortcut!,
+                  style: TextStyle(
+                    color:
+                        disabled
+                            ? kLightGreyColor.withValues(alpha: 0.42)
+                            : kLightGreyColor,
+                    fontSize: 11,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
 
     if (disabled) return row;
@@ -564,55 +587,64 @@ class _DesktopContextSubmenuRowState<T>
     final item = widget.item;
     final disabled = !item.enabled || item.entries.isEmpty;
     final destructiveColor = const Color(0xFFEB5757);
-    final foreground =
+    final active = !disabled && _hovered;
+    final restColor =
         disabled
             ? kLightGreyColor.withValues(alpha: 0.52)
             : item.destructive
             ? destructiveColor
-            : (_hovered ? kWhiteColor : kWhiteColor70);
-    final iconColor =
+            : kWhiteColor70;
+    final restIcon =
         disabled
             ? kLightGreyColor.withValues(alpha: 0.42)
             : item.destructive
             ? destructiveColor
-            : (_hovered ? kWhiteColor : kWhiteColor70);
-    final background =
-        disabled || !_hovered
-            ? Colors.transparent
-            : item.destructive
+            : kWhiteColor70;
+    final hoverColor = item.destructive ? destructiveColor : kWhiteColor;
+    final hoverFill =
+        item.destructive
             ? destructiveColor.withValues(alpha: 0.13)
             : kWhiteColor.withValues(alpha: 0.075);
 
-    final row = AnimatedContainer(
-      duration: const Duration(milliseconds: 110),
-      curve: Curves.easeOutCubic,
-      constraints: const BoxConstraints(minHeight: 40),
-      margin: const EdgeInsets.symmetric(horizontal: 5),
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(7),
-      ),
-      child: Row(
-        children: [
-          Icon(item.icon, size: 15, color: iconColor),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              item.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: foreground,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+    // Fill, label and icon ride one eased value, so the row lights as a
+    // unit instead of the text snapping white beside a 110 ms fill fade.
+    final row = SingleMotionBuilder(
+      value: active ? 1.0 : 0.0,
+      motion: _rowHoverMotion,
+      builder: (context, h, _) {
+        final t = h.clamp(0.0, 1.0);
+        final foreground = Color.lerp(restColor, hoverColor, t)!;
+        final iconColor = Color.lerp(restIcon, hoverColor, t)!;
+        return Container(
+          constraints: const BoxConstraints(minHeight: 40),
+          margin: const EdgeInsets.symmetric(horizontal: 5),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+          decoration: BoxDecoration(
+            color: Color.lerp(hoverFill.withValues(alpha: 0), hoverFill, t),
+            borderRadius: BorderRadius.circular(7),
           ),
-          const SizedBox(width: 12),
-          Icon(Icons.chevron_right_rounded, size: 16, color: iconColor),
-        ],
-      ),
+          child: Row(
+            children: [
+              Icon(item.icon, size: 15, color: iconColor),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  item.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Icon(Icons.chevron_right_rounded, size: 16, color: iconColor),
+            ],
+          ),
+        );
+      },
     );
 
     if (disabled) return row;
@@ -643,6 +675,13 @@ class _DesktopContextDivider extends StatelessWidget {
     );
   }
 }
+
+/// The menu rows' hover fade: quick enough to track a pointer sweeping down
+/// the list, eased so the light settles rather than stops.
+const Motion _rowHoverMotion = Motion.curved(
+  Duration(milliseconds: 110),
+  Curves.easeOutCubic,
+);
 
 double _estimatedMenuHeight<T>(List<DesktopContextMenuEntry<T>> entries) {
   var height = 12.0;

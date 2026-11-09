@@ -355,7 +355,10 @@ class _CompactCalendarNavButtonState extends State<_CompactCalendarNavButton> {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
-          child: Container(
+          // Eases like the day cells and agenda rows instead of snapping.
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOutCubic,
             width: 24,
             height: 24,
             decoration: BoxDecoration(
@@ -408,7 +411,8 @@ class _CompactDayCellState extends State<_CompactDayCell> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 90),
+          duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOutCubic,
           margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
           decoration: BoxDecoration(
             color: _hovered ? kBlack3Color : Colors.transparent,
@@ -756,7 +760,8 @@ class _DesktopLiveBroadcastRowState extends State<DesktopLiveBroadcastRow> {
                 onEnter: (_) => setState(() => _hovered = true),
                 onExit: (_) => setState(() => _hovered = false),
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 90),
+                  duration: const Duration(milliseconds: 140),
+                  curve: Curves.easeOutCubic,
                   constraints: const BoxConstraints(minHeight: 68),
                   decoration: BoxDecoration(
                     color:
@@ -878,7 +883,8 @@ class _OpenBroadcastButtonState extends State<_OpenBroadcastButton> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onPressed,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 90),
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
             decoration: BoxDecoration(
               color: kPrimaryColor.withValues(alpha: _hovered ? 0.16 : 0.10),
@@ -1070,7 +1076,8 @@ class _DesktopCalendarEventRowState extends State<DesktopCalendarEventRow> {
                     widget.onOpen();
                   },
                   child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 90),
+                    duration: const Duration(milliseconds: 140),
+                    curve: Curves.easeOutCubic,
                     constraints: const BoxConstraints(minHeight: 68),
                     decoration: BoxDecoration(
                       color:

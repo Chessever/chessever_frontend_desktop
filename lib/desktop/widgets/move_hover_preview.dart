@@ -546,16 +546,23 @@ class _AnimatedHoverCardState extends ConsumerState<_AnimatedHoverCard> {
         builder: (context, t, child) {
           // Slight upward translation + scale gives the popup a "lift" so
           // the eye registers it as appearing rather than just fading in.
-          final scale = 0.94 + 0.06 * t;
+          //
+          // One combined transform (lift + scale about the centre), and it
+          // rasterizes with bilinear filtering only while the card is still
+          // moving: the sub-pixel lift glides instead of stepping, and once
+          // settled the board paints as crisp vectors with no image-filter
+          // layer re-rasterizing every piece slide.
+          final settled = (1 - t).abs() < 0.001;
+          final scale = settled ? 1.0 : 0.94 + 0.06 * t;
+          final dy = settled ? 0.0 : (1 - t) * 6;
           return Opacity(
             opacity: t.clamp(0, 1),
-            child: Transform.translate(
-              offset: Offset(0, (1 - t) * 6),
-              child: Transform.scale(
-                scale: scale,
-                filterQuality: FilterQuality.medium,
-                child: child,
-              ),
+            child: Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.translationValues(0, dy, 0)
+                ..multiply(Matrix4.diagonal3Values(scale, scale, 1)),
+              filterQuality: settled ? null : FilterQuality.medium,
+              child: child,
             ),
           );
         },

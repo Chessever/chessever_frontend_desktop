@@ -8,6 +8,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -357,6 +358,11 @@ class _NotationSideChooserFrame extends StatelessWidget {
   }
 }
 
+/// True while a 0..1 selection spring is between its rest values. The row
+/// scale is rasterized with bilinear filtering only then, so sub-pixel scale
+/// steps glide while resting rows keep crisp vector text.
+bool _forkRowSettling(double t) => t > 0.001 && t < 0.999;
+
 class _ForkChooserMotion extends StatelessWidget {
   const _ForkChooserMotion({required this.animation, required this.child});
 
@@ -371,13 +377,15 @@ class _ForkChooserMotion extends StatelessWidget {
         final t = animation.value;
         // Identical curve shape to MoveHoverPreview._AnimatedHoverCard.
         final scale = 0.94 + 0.06 * t;
+        // Filtered only while the entry/exit runs: once settled the chooser
+        // paints as crisp vectors instead of a bilinear-sampled raster.
         return Opacity(
           opacity: t.clamp(0, 1),
-          child: Transform.translate(
+          child: MotionTranslate(
             offset: Offset(0, (1 - t) * 6),
             child: Transform.scale(
               scale: scale,
-              filterQuality: FilterQuality.medium,
+              filterQuality: scale == 1 ? null : FilterQuality.medium,
               child: child,
             ),
           ),
@@ -582,98 +590,106 @@ class _GameContinuationOptionRowState
     extends State<_GameContinuationOptionRow> {
   @override
   Widget build(BuildContext context) {
-    final rowFill =
-        widget.selected
-            ? kPrimaryColor.withValues(alpha: 0.16)
-            : kBlack3Color.withValues(alpha: 0.35);
-    final border =
-        widget.selected
-            ? Border.all(color: kPrimaryColor.withValues(alpha: 0.55))
-            : Border.all(color: kDividerColor);
-
-    return SingleMotionBuilder(
-      value: widget.selected ? 1.0 : 0.0,
-      motion: DesktopMotion.hover,
-      builder: (context, t, child) {
-        final scale = 0.985 + 0.015 * t;
-        return Transform.scale(
-          scale: scale,
-          filterQuality: FilterQuality.medium,
-          child: child,
-        );
-      },
-      child: ClickCursor(
-        child: MouseRegion(
-          onEnter: (_) => widget.onHover(),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onTap,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 90),
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
-              decoration: BoxDecoration(
-                color: rowFill,
-                borderRadius: BorderRadius.circular(7),
-                border: border,
-              ),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 22,
-                    child: Center(
-                      child:
-                          widget.selected
-                              ? const Icon(
-                                Icons.chevron_right_rounded,
-                                size: 18,
-                                color: kPrimaryColor,
-                              )
-                              : Text(
-                                '${widget.index + 1}',
-                                style: const TextStyle(
-                                  color: kLightGreyColor,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  fontFeatures: [FontFeature.tabularFigures()],
-                                ),
+    // Fill, border and scale all ride ONE hover spring, so selection reads
+    // as a single glide instead of a 90 ms linear fade beside a 240 ms
+    // spring. The pointer region sits outside the scale so its edge never
+    // moves under the cursor.
+    return ClickCursor(
+      child: MouseRegion(
+        onEnter: (_) => widget.onHover(),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: SingleMotionBuilder(
+            value: widget.selected ? 1.0 : 0.0,
+            motion: DesktopMotion.hover,
+            builder: (context, t, child) {
+              return Transform.scale(
+                scale: 0.985 + 0.015 * t,
+                filterQuality:
+                    _forkRowSettling(t) ? FilterQuality.medium : null,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Color.lerp(
+                      kBlack3Color.withValues(alpha: 0.35),
+                      kPrimaryColor.withValues(alpha: 0.16),
+                      t,
+                    ),
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border.all(
+                      color:
+                          Color.lerp(
+                            kDividerColor,
+                            kPrimaryColor.withValues(alpha: 0.55),
+                            t,
+                          )!,
+                    ),
+                  ),
+                  child: child,
+                ),
+              );
+            },
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 22,
+                  child: Center(
+                    child:
+                        widget.selected
+                            ? const Icon(
+                              Icons.chevron_right_rounded,
+                              size: 18,
+                              color: kPrimaryColor,
+                            )
+                            : Text(
+                              '${widget.index + 1}',
+                              style: const TextStyle(
+                                color: kLightGreyColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: [FontFeature.tabularFigures()],
                               ),
-                    ),
+                            ),
                   ),
-                  const SizedBox(width: 7),
-                  Icon(widget.option.icon, size: 16, color: kPrimaryColor),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          widget.option.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: kWhiteColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                          ),
+                ),
+                const SizedBox(width: 7),
+                Icon(widget.option.icon, size: 16, color: kPrimaryColor),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        widget.option.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          widget.option.detail,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: kWhiteColor70,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        widget.option.detail,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: [FontFeature.tabularFigures()],
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
@@ -939,17 +955,7 @@ class _ForkOptionRow extends StatefulWidget {
 class _ForkOptionRowState extends State<_ForkOptionRow> {
   @override
   Widget build(BuildContext context) {
-    final rowFill =
-        widget.selected
-            ? kPrimaryColor.withValues(alpha: 0.13)
-            : kBlack3Color.withValues(alpha: 0.28);
-    final border =
-        widget.selected
-            ? Border.all(color: kPrimaryColor.withValues(alpha: 0.55))
-            : Border.all(color: kDividerColor);
-    final badgeFill =
-        widget.selected ? kPrimaryColor : kBlack3Color.withValues(alpha: 0.9);
-    final badgeFg = widget.selected ? kBlack2Color : kLightGreyColor;
+    final selectedValue = widget.selected ? 1.0 : 0.0;
 
     const sanStyle = TextStyle(
       color: kWhiteColor,
@@ -959,78 +965,104 @@ class _ForkOptionRowState extends State<_ForkOptionRow> {
       height: 1.15,
     );
 
-    return SingleMotionBuilder(
-      value: widget.selected ? 1.0 : 0.0,
-      motion: DesktopMotion.hover,
-      builder: (context, t, child) {
-        final scale = 0.99 + 0.01 * t;
-        return Transform.scale(
-          scale: scale,
-          filterQuality: FilterQuality.medium,
-          child: child,
-        );
-      },
-      child: ClickCursor(
-        child: MouseRegion(
-          onEnter: (_) => widget.onHover(),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onTap,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 90),
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-              decoration: BoxDecoration(
-                color: rowFill,
-                borderRadius: BorderRadius.circular(8),
-                border: border,
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 18,
-                    height: 18,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: badgeFill,
-                      borderRadius: BorderRadius.circular(5),
+    // Fill, border, badge and scale all ride the same hover spring (the
+    // badge's builder is an identical spring started on the same frame), and
+    // the pointer region sits outside the scale so its edge never moves
+    // under the cursor.
+    return ClickCursor(
+      child: MouseRegion(
+        onEnter: (_) => widget.onHover(),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: SingleMotionBuilder(
+            value: selectedValue,
+            motion: DesktopMotion.hover,
+            builder: (context, t, child) {
+              return Transform.scale(
+                scale: 0.99 + 0.01 * t,
+                filterQuality:
+                    _forkRowSettling(t) ? FilterQuality.medium : null,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Color.lerp(
+                      kBlack3Color.withValues(alpha: 0.28),
+                      kPrimaryColor.withValues(alpha: 0.13),
+                      t,
                     ),
-                    child: Text(
-                      '${widget.index + 1}',
-                      style: TextStyle(
-                        color: badgeFg,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        height: 1.0,
-                        fontFeatures: const [FontFeature.tabularFigures()],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color:
+                          Color.lerp(
+                            kDividerColor,
+                            kPrimaryColor.withValues(alpha: 0.55),
+                            t,
+                          )!,
+                    ),
+                  ),
+                  child: child,
+                ),
+              );
+            },
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                SingleMotionBuilder(
+                  value: selectedValue,
+                  motion: DesktopMotion.hover,
+                  builder:
+                      (context, t, _) => Container(
+                        width: 18,
+                        height: 18,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: Color.lerp(
+                            kBlack3Color.withValues(alpha: 0.9),
+                            kPrimaryColor,
+                            t,
+                          ),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          '${widget.index + 1}',
+                          style: TextStyle(
+                            color: Color.lerp(kLightGreyColor, kBlack2Color, t),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            height: 1.0,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child:
-                        widget.useFigurine
-                            ? RichText(
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              text: TextSpan(
-                                children: buildFigurineSpans(
-                                  text: widget.option.previewLine,
-                                  pieceAssets: widget.pieceAssets,
-                                  style: sanStyle,
-                                  pieceSize: 14,
-                                ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child:
+                      widget.useFigurine
+                          ? RichText(
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            text: TextSpan(
+                              children: buildFigurineSpans(
+                                text: widget.option.previewLine,
+                                pieceAssets: widget.pieceAssets,
+                                style: sanStyle,
+                                pieceSize: 14,
                               ),
-                            )
-                            : Text(
-                              widget.option.previewLine,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: sanStyle,
                             ),
-                  ),
-                ],
-              ),
+                          )
+                          : Text(
+                            widget.option.previewLine,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: sanStyle,
+                          ),
+                ),
+              ],
             ),
           ),
         ),

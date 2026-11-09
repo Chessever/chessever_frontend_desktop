@@ -108,46 +108,51 @@ class _FolderDropTargetState extends State<FolderDropTarget> {
           _dropInFlight = false;
         }
       },
-      child: held ? widget.child : _wrap(widget.child),
+      child: _wrap(widget.child, showHighlight: !held && _hovering),
     );
   }
 
-  Widget _wrap(Widget child) {
-    if (!_hovering) return child;
+  // The child always sits in slot 0 of the same passthrough Stack, so the
+  // highlight comes and goes without remounting the row or folder body
+  // under it (swapping `child` for `Stack([child, ...])` rebuilt the whole
+  // subtree on every drag enter/exit, resetting its state and making the
+  // hover flicker) and without re-laying it out at forced full size.
+  Widget _wrap(Widget child, {required bool showHighlight}) {
     final accent = widget.enabled ? kPrimaryColor : kRedColor;
     final radius = widget.style == FolderDropStyle.row ? 6.0 : 10.0;
     return Stack(
-      fit: StackFit.expand,
+      fit: StackFit.passthrough,
       children: [
         child,
-        Positioned.fill(
-          child: IgnorePointer(
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 90),
-              margin:
-                  widget.style == FolderDropStyle.row
-                      ? const EdgeInsets.symmetric(horizontal: 8, vertical: 1)
-                      : const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(radius),
-                border: Border.all(
-                  color: accent.withValues(alpha: 0.70),
-                  width: 1.5,
+        if (showHighlight)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 90),
+                margin:
+                    widget.style == FolderDropStyle.row
+                        ? const EdgeInsets.symmetric(horizontal: 8, vertical: 1)
+                        : const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(radius),
+                  border: Border.all(
+                    color: accent.withValues(alpha: 0.70),
+                    width: 1.5,
+                  ),
                 ),
+                child:
+                    widget.style == FolderDropStyle.body
+                        ? Center(
+                          child: _BodyHint(
+                            folderName: widget.folderName,
+                            enabled: widget.enabled,
+                          ),
+                        )
+                        : const SizedBox.shrink(),
               ),
-              child:
-                  widget.style == FolderDropStyle.body
-                      ? Center(
-                        child: _BodyHint(
-                          folderName: widget.folderName,
-                          enabled: widget.enabled,
-                        ),
-                      )
-                      : const SizedBox.shrink(),
             ),
           ),
-        ),
       ],
     );
   }

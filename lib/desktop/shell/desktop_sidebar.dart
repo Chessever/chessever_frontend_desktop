@@ -624,29 +624,37 @@ class _SidebarHeaderButtonState extends State<_SidebarHeaderButton>
             value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              decoration: BoxDecoration(
-                color: _hovered ? kBlack3Color : Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color:
-                      _hovered
-                          ? kWhiteColor.withValues(alpha: 0.10)
-                          : Colors.transparent,
-                ),
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                widget.icon,
-                size: 19,
-                color: _hovered ? kWhiteColor : kWhiteColor70,
-              ),
+                (context, scale, child) =>
+                    MotionScale(scale: scale, child: child),
+            // Fill, edge and glyph colour ride one hover spring so they
+            // move with the scale instead of a 120 ms fill fade beside an
+            // instant icon swap.
+            child: SingleMotionBuilder(
+              value: _hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, h, _) {
+                final t = h.clamp(0.0, 1.0);
+                return Container(
+                  decoration: BoxDecoration(
+                    color: Color.lerp(Colors.transparent, kBlack3Color, t),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color:
+                          Color.lerp(
+                            Colors.transparent,
+                            kWhiteColor.withValues(alpha: 0.10),
+                            t,
+                          )!,
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    widget.icon,
+                    size: 19,
+                    color: Color.lerp(kWhiteColor70, kWhiteColor, t),
+                  ),
+                );
+              },
             ),
           ),
         ),
@@ -717,12 +725,6 @@ class _SidebarItemState extends State<_SidebarItem>
   Widget build(BuildContext context) {
     final selected = widget.selected;
     final shortcut = _shortcutLabelForEntry(widget.entry);
-    final fg =
-        selected ? kPrimaryColor : (_hovered ? kWhiteColor : kWhiteColor70);
-    final bg =
-        selected
-            ? kPrimaryColor.withValues(alpha: 0.10)
-            : (_hovered ? kBlack3Color : Colors.transparent);
 
     // Tiny spring-driven nudge: on hover the row content slides 3px to
     // the right; on press it dips back ~1.5px. The Container background
@@ -757,76 +759,108 @@ class _SidebarItemState extends State<_SidebarItem>
               onTapCancel:
                   () => setStateAfterPointerEvent(() => _pressed = false),
               onTap: () => widget.onTap(inNewTab: _modifierHeld()),
-              child: Container(
-                height: widget.density.rowHeight,
-                padding:
-                    widget.expanded
-                        ? const EdgeInsets.symmetric(horizontal: 12)
-                        : EdgeInsets.zero,
-                decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.circular(8),
-                  border:
+              // Fill and foreground ride one hover spring, matching the
+              // nudge below, instead of snapping while the row glides.
+              child: SingleMotionBuilder(
+                value: _hovered ? 1.0 : 0.0,
+                motion: DesktopMotion.hover,
+                builder: (context, h, _) {
+                  final t = h.clamp(0.0, 1.0);
+                  final fg =
                       selected
-                          ? Border.all(
-                            color: kPrimaryColor.withValues(alpha: 0.35),
-                          )
-                          : null,
-                ),
-                child: SingleMotionBuilder(
-                  value: nudgeX,
-                  motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-                  builder:
-                      (context, x, child) => MotionTranslate(
-                        offset: Offset(widget.expanded ? x : x * 0.35, 0),
-                        child: child,
+                          ? kPrimaryColor
+                          : Color.lerp(kWhiteColor70, kWhiteColor, t)!;
+                  final bg =
+                      selected
+                          ? kPrimaryColor.withValues(alpha: 0.10)
+                          : Color.lerp(Colors.transparent, kBlack3Color, t)!;
+                  return Container(
+                    height: widget.density.rowHeight,
+                    padding:
+                        widget.expanded
+                            ? const EdgeInsets.symmetric(horizontal: 12)
+                            : EdgeInsets.zero,
+                    decoration: BoxDecoration(
+                      color: bg,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    // The selected outline paints over the row instead of
+                    // insetting it, so selecting an item doesn't shove its
+                    // icon and label by the border width.
+                    // Always non-null so toggling selection never inserts a
+                    // DecoratedBox and remounts the row content.
+                    foregroundDecoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color:
+                            selected
+                                ? kPrimaryColor.withValues(alpha: 0.35)
+                                : Colors.transparent,
                       ),
-                  // Rebuilds only when the label fits or stops fitting, not on
-                  // every frame of the sidebar's width animation.
-                  child: BucketedLayoutBuilder<bool>(
-                    bucket: (constraints) => constraints.maxWidth >= 112,
-                    builder: (context, labelFits) {
-                      final showLabel = widget.expanded && labelFits;
-                      return Row(
-                        mainAxisAlignment:
-                            showLabel
-                                ? MainAxisAlignment.start
-                                : MainAxisAlignment.center,
-                        children: [
-                          widget.entry.pane == DesktopPane.board
-                              ? _ChessboardIcon(size: 18, color: fg)
-                              : Icon(widget.entry.icon, size: 18, color: fg),
-                          if (showLabel) ...[
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                widget.entry.label,
-                                style: TextStyle(
-                                  color: fg,
-                                  fontSize: 13,
-                                  fontWeight:
-                                      selected
-                                          ? FontWeight.w600
-                                          : FontWeight.w500,
+                    ),
+                    child: SingleMotionBuilder(
+                      value: nudgeX,
+                      motion:
+                          _pressed ? DesktopMotion.tap : DesktopMotion.hover,
+                      builder:
+                          (context, x, child) => MotionTranslate(
+                            offset: Offset(widget.expanded ? x : x * 0.35, 0),
+                            child: child,
+                          ),
+                      // Rebuilds only when the label fits or stops fitting, not on
+                      // every frame of the sidebar's width animation.
+                      child: BucketedLayoutBuilder<bool>(
+                        bucket: (constraints) => constraints.maxWidth >= 112,
+                        builder: (context, labelFits) {
+                          final showLabel = widget.expanded && labelFits;
+                          return Row(
+                            mainAxisAlignment:
+                                showLabel
+                                    ? MainAxisAlignment.start
+                                    : MainAxisAlignment.center,
+                            children: [
+                              widget.entry.pane == DesktopPane.board
+                                  ? _ChessboardIcon(size: 18, color: fg)
+                                  : Icon(
+                                    widget.entry.icon,
+                                    size: 18,
+                                    color: fg,
+                                  ),
+                              if (showLabel) ...[
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    widget.entry.label,
+                                    style: TextStyle(
+                                      color: fg,
+                                      fontSize: 13,
+                                      fontWeight:
+                                          selected
+                                              ? FontWeight.w600
+                                              : FontWeight.w500,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (shortcut != null)
-                              Text(
-                                shortcut,
-                                style: const TextStyle(
-                                  color: kLightGreyColor,
-                                  fontSize: 11,
-                                  fontFeatures: [FontFeature.tabularFigures()],
-                                ),
-                              ),
-                          ],
-                        ],
-                      );
-                    },
-                  ),
-                ),
+                                if (shortcut != null)
+                                  Text(
+                                    shortcut,
+                                    style: const TextStyle(
+                                      color: kLightGreyColor,
+                                      fontSize: 11,
+                                      fontFeatures: [
+                                        FontFeature.tabularFigures(),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           ),

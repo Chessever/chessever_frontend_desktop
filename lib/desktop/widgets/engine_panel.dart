@@ -1985,23 +1985,32 @@ class _PvLineState extends State<_PvLine> {
 
     final body = KeyedSubtree(
       key: _lineAnchorKey,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color:
-              widget.rank == 1
-                  ? (_hovered
-                      ? kBlack2Color.withValues(alpha: 0.6)
-                      : kBlack3Color)
-                  : (_hovered ? kBlack3Color : Colors.transparent),
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(
-            color:
-                _hovered
-                    ? kPrimaryColor.withValues(alpha: 0.4)
-                    : Colors.transparent,
-          ),
-        ),
+      // Fill and border fade on the same hover spring as the row scale
+      // below instead of snapping under a gliding scale.
+      child: SingleMotionBuilder(
+        value: _hovered ? 1.0 : 0.0,
+        motion: DesktopMotion.hover,
+        builder: (context, hv, child) {
+          final h = hv.clamp(0.0, 1.0);
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color:
+                  widget.rank == 1
+                      ? Color.lerp(
+                        kBlack3Color,
+                        kBlack2Color.withValues(alpha: 0.6),
+                        h,
+                      )
+                      : kBlack3Color.withValues(alpha: kBlack3Color.a * h),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: kPrimaryColor.withValues(alpha: 0.4 * h),
+              ),
+            ),
+            child: child,
+          );
+        },
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -2105,10 +2114,16 @@ class _PvLineState extends State<_PvLine> {
             child: SingleMotionBuilder(
               value: clickable && _hovered ? 1.005 : 1.0,
               motion: DesktopMotion.hover,
+              // Rasterize only while the scale is off rest: PV rows repaint
+              // many times a second during analysis, so an image-filter
+              // layer left on at rest would re-rasterize every update.
               builder:
                   (context, scale, child) => Transform.scale(
                     scale: scale,
-                    filterQuality: FilterQuality.medium,
+                    filterQuality:
+                        (scale - 1.0).abs() < 0.0001
+                            ? null
+                            : FilterQuality.medium,
                     child: child,
                   ),
               child: preview,

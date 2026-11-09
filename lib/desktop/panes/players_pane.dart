@@ -346,113 +346,136 @@ class _PlayerTileState extends State<_PlayerTile> {
             builder:
                 (context, scale, child) => Transform.scale(
                   scale: scale,
-                  filterQuality: FilterQuality.medium,
+                  // Rasterized only while off rest: the grid of tiles must
+                  // not each carry an image-filter layer while idle.
+                  filterQuality: _scaleFilter(scale),
                   child: child,
                 ),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 140),
-              curve: Curves.easeOut,
-              color: _hovered ? kBlack3Color : kBlack2Color,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              child: Row(
-                children: [
-                  _PlayerRank(label: desktopPlayerRankLabel(widget.rank)),
-                  const SizedBox(width: 12),
-                  _PlayerAvatar(
-                    fideId: fideId,
-                    playerName: name,
-                    memorialSourceIdentity: _stringField(widget.player, const [
-                      'memorialSourceIdentity',
-                    ]),
-                    initials: _initials(name),
-                    size: 44,
+            // The fill rides the same hover spring as the scale, so the
+            // tile brightens and grows together instead of a 140 ms fade
+            // finishing well before the spring settles.
+            child: SingleMotionBuilder(
+              value: _hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder:
+                  (context, h, child) => ColoredBox(
+                    color:
+                        Color.lerp(
+                          kBlack2Color,
+                          kBlack3Color,
+                          h.clamp(0.0, 1.0),
+                        )!,
+                    child: child,
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                          children: [
-                            if (title != null) ...[
-                              DesktopPlayerTitleChip(
-                                title: title,
-                                compact: true,
-                              ),
-                              const SizedBox(width: 6),
-                            ],
-                            Expanded(
-                              child: Text(
-                                name.isEmpty ? 'Unknown player' : name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: kWhiteColor,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 5),
-                        Row(
-                          children: [
-                            if (federation != null) ...[
-                              FederationFlag(
-                                federation: federation,
-                                width: 18,
-                                height: 13,
-                                borderRadius: BorderRadius.circular(2),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                federation.toUpperCase(),
-                                style: const TextStyle(
-                                  color: kWhiteColor70,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                            if (rating != null) ...[
-                              if (federation != null) const SizedBox(width: 12),
-                              const Icon(
-                                Icons.equalizer_rounded,
-                                size: 13,
-                                color: kLightGreyColor,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                rating.toString(),
-                                style: const TextStyle(
-                                  color: kWhiteColor70,
-                                  fontSize: 11,
-                                  fontFeatures: [FontFeature.tabularFigures()],
-                                ),
-                              ),
-                            ],
-                            if (fideId.isNotEmpty) ...[
-                              const SizedBox(width: 12),
-                              Text(
-                                'FIDE $fideId',
-                                style: const TextStyle(
-                                  color: kLightGreyColor,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+                child: Row(
+                  children: [
+                    _PlayerRank(label: desktopPlayerRankLabel(widget.rank)),
+                    const SizedBox(width: 12),
+                    _PlayerAvatar(
+                      fideId: fideId,
+                      playerName: name,
+                      memorialSourceIdentity: _stringField(
+                        widget.player,
+                        const ['memorialSourceIdentity'],
+                      ),
+                      initials: _initials(name),
+                      size: 44,
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  _FavoriteToggle(
-                    active: widget.isFavorite,
-                    onTap: () => unawaited(widget.onFavoriteTap()),
-                  ),
-                ],
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              if (title != null) ...[
+                                DesktopPlayerTitleChip(
+                                  title: title,
+                                  compact: true,
+                                ),
+                                const SizedBox(width: 6),
+                              ],
+                              Expanded(
+                                child: Text(
+                                  name.isEmpty ? 'Unknown player' : name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: kWhiteColor,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 5),
+                          Row(
+                            children: [
+                              if (federation != null) ...[
+                                FederationFlag(
+                                  federation: federation,
+                                  width: 18,
+                                  height: 13,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  federation.toUpperCase(),
+                                  style: const TextStyle(
+                                    color: kWhiteColor70,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                              if (rating != null) ...[
+                                if (federation != null)
+                                  const SizedBox(width: 12),
+                                const Icon(
+                                  Icons.equalizer_rounded,
+                                  size: 13,
+                                  color: kLightGreyColor,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  rating.toString(),
+                                  style: const TextStyle(
+                                    color: kWhiteColor70,
+                                    fontSize: 11,
+                                    fontFeatures: [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                              if (fideId.isNotEmpty) ...[
+                                const SizedBox(width: 12),
+                                Text(
+                                  'FIDE $fideId',
+                                  style: const TextStyle(
+                                    color: kLightGreyColor,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    _FavoriteToggle(
+                      active: widget.isFavorite,
+                      onTap: () => unawaited(widget.onFavoriteTap()),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -498,7 +521,7 @@ class _FavoriteToggleState extends State<_FavoriteToggle> {
             builder:
                 (context, scale, child) => Transform.scale(
                   scale: scale,
-                  filterQuality: FilterQuality.medium,
+                  filterQuality: _scaleFilter(scale),
                   child: child,
                 ),
             child: Container(
@@ -859,3 +882,9 @@ String _initials(String name) {
       .substring(0, trimmed.length >= 2 ? 2 : trimmed.length)
       .toUpperCase();
 }
+
+/// Hover/press scales move a filtered raster while in flight (no sub-pixel
+/// glyph snapping) and drop back to plain vectors, with no image-filter
+/// layer, once the spring is back at rest.
+FilterQuality? _scaleFilter(double scale) =>
+    (scale - 1).abs() < 0.0002 ? null : FilterQuality.medium;

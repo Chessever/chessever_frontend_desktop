@@ -54,7 +54,7 @@ class _RoundHeaderCardState extends State<RoundHeaderCard> {
           onTapCancel: () => setState(() => _pressed = false),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
-            curve: Curves.easeOut,
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
             decoration: BoxDecoration(
               color:
@@ -124,9 +124,18 @@ class _RoundHeaderCardState extends State<RoundHeaderCard> {
                 SingleMotionBuilder(
                   value: widget.expanded ? 1.0 : 0.0,
                   motion: DesktopMotion.layout,
+                  // Rasterized only mid-turn so the rotating chevron glides
+                  // instead of re-snapping its outline every frame, and
+                  // stays crisp vectors at rest (flutter#149652).
                   builder:
-                      (context, t, child) =>
-                          Transform.rotate(angle: t * 3.14159, child: child),
+                      (context, t, child) => Transform.rotate(
+                        angle: t * 3.14159,
+                        filterQuality:
+                            (t > 0.001 && t < 0.999)
+                                ? FilterQuality.medium
+                                : null,
+                        child: child,
+                      ),
                   child: const Icon(
                     Icons.keyboard_arrow_down_rounded,
                     size: 18,

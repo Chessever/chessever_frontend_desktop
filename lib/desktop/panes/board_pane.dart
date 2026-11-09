@@ -166,6 +166,7 @@ import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 import 'package:chessever/web/text_download.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 
 // The corner grip and its drag maths now live with the Play pane's board too.
 // Re-exported so existing board-pane callers and tests keep their entry point.
@@ -266,6 +267,27 @@ bool shouldUsePristineEventSourceForLibrarySave({
     !hasUserNags &&
     !hasCompletedReport;
 
+/// Reconciles a list row's status with the decided result of the game's own
+/// PGN.
+///
+/// List rows can carry a result that was computed separately from the moves
+/// and has gone stale. A Gamebase row, for example, can keep its `W` result
+/// code after a re-import corrected the PGN to `0-1`. When both sides are
+/// finished and disagree, the PGN is the game's record and wins. An ongoing
+/// row still wins over a decided PGN, because it protects a live tail until
+/// realtime delivers the authoritative row.
+@visibleForTesting
+GameStatus? resolveSourceStatusAgainstPgnResult({
+  required GameStatus? sourceGameStatus,
+  required Object? parsedResult,
+}) {
+  if (sourceGameStatus == null || !sourceGameStatus.isFinished) {
+    return sourceGameStatus;
+  }
+  final parsedStatus = GameStatus.fromString(parsedResult?.toString());
+  return parsedStatus.isFinished ? parsedStatus : sourceGameStatus;
+}
+
 @visibleForTesting
 String? resolveInitialBoardPgnLiveStatus({
   required String? acceptedLiveStatus,
@@ -283,10 +305,15 @@ String? resolveInitialBoardPgnLiveStatus({
   if (isDatabaseSnapshot || gameId == null || gameId.trim().isEmpty) {
     return null;
   }
-  if (sourceGameStatus != null && sourceGameStatus != GameStatus.unknown) {
-    return sourceGameStatus.displayText;
-  }
   final parsedStatus = GameStatus.fromString(parsedResult?.toString());
+  final resolvedSourceStatus = resolveSourceStatusAgainstPgnResult(
+    sourceGameStatus: sourceGameStatus,
+    parsedResult: parsedResult,
+  );
+  if (resolvedSourceStatus != null &&
+      resolvedSourceStatus != GameStatus.unknown) {
+    return resolvedSourceStatus.displayText;
+  }
   if (parsedStatus != GameStatus.unknown) return parsedStatus.displayText;
   // A bound non-database game is broadcast-owned even if its initial row failed
   // to hydrate. Protect its tail until realtime delivers an authoritative row.
@@ -1465,6 +1492,68 @@ class _BoardPaneContent extends HookConsumerWidget {
     // freshly-replayed tree back to the initial position right after the
     // PGN was applied — surfaced as "no moves played" when tapping a
     // finished or live game card.
+    // The tab title and the rail read the tab's source row status. When the
+    // loaded PGN proves a different final result (a stale list row), correct
+    // the row so the whole tab agrees with the notation. Deferred because
+    // `applyPgn` can run while providers are building.
+    void syncTabSourceStatusWithPgnResult({
+      required String? gameId,
+      required Object? pgnResult,
+    }) {
+      final tabId = activeTabId;
+      final id = gameId?.trim();
+      if (tabId == null || id == null || id.isEmpty) return;
+      final args = boardArgs;
+      if (args == null || args.gameId != id) return;
+      final current = args.sourceGame?.gameStatus;
+      final resolved = resolveSourceStatusAgainstPgnResult(
+        sourceGameStatus: current,
+        parsedResult: pgnResult,
+      );
+      if (resolved == null || resolved == current) return;
+      Future.microtask(() {
+        if (!context.mounted) return;
+        ref.read(boardTabGameArgsByTabIdProvider.notifier).update((tabs) {
+          final latest = tabs[tabId];
+          final source = latest?.sourceGame;
+          if (latest == null ||
+              source == null ||
+              latest.gameId != id ||
+              source.gameStatus != current) {
+            return tabs;
+          }
+          List<TournamentGameSummary>? withStatus(
+            List<TournamentGameSummary> summaries,
+          ) {
+            var changed = false;
+            final next = <TournamentGameSummary>[
+              for (final summary in summaries)
+                if (summary.id == id && summary.status == current)
+                  () {
+                    changed = true;
+                    return summary.copyWith(status: resolved);
+                  }()
+                else
+                  summary,
+            ];
+            return changed
+                ? List<TournamentGameSummary>.unmodifiable(next)
+                : null;
+          }
+
+          return <String, BoardTabGameArgs>{
+            ...tabs,
+            tabId: latest.copyWith(
+              retainedSeedIdentity: latest.retainedSeedIdentity ?? latest,
+              sourceGame: source.copyWith(gameStatus: resolved),
+              eventGames: withStatus(latest.eventGames),
+              routeGames: withStatus(latest.routeGames),
+            ),
+          };
+        });
+      });
+    }
+
     void applyPgn(
       String pgn, {
       required String origin,
@@ -1625,6 +1714,10 @@ class _BoardPaneContent extends HookConsumerWidget {
       );
       final isLive = finalizedMetadata[ChessGame.metadataIsLiveKey] == true;
       final isCanonicalBroadcastSource = canonicalBroadcastUpdate || isLive;
+      syncTabSourceStatusWithPgnResult(
+        gameId: gameId,
+        pgnResult: finalizedMetadata['Result'],
+      );
       final freshGame = parsed
           .copyWith(metadata: finalizedMetadata)
           .rememberGameEndingPlyIndex(parsed.mainline.length - 1);
@@ -11656,13 +11749,19 @@ class _PlayerClock extends StatelessWidget {
           kPrimaryColor.withValues(alpha: 0.18),
           t,
         );
+        // Fades in from the accent at zero alpha. The old `t <= 0.01 ?
+        // transparent : lerp(divider, primary)` stepped from nothing to a
+        // full divider-grey ring on the first frame of every side-to-move
+        // flip (and off again on the last), which read as a flicker.
         final borderColor =
             result != null
                 ? kDividerColor
-                : t <= 0.01
-                ? Colors.transparent
-                : (Color.lerp(kDividerColor, kPrimaryColor, t) ??
-                    kDividerColor);
+                : (Color.lerp(
+                      kPrimaryColor.withValues(alpha: 0),
+                      kPrimaryColor,
+                      t,
+                    ) ??
+                    Colors.transparent);
         final textColor =
             result != null
                 ? kWhiteColor.withValues(alpha: 0.92)
@@ -12150,12 +12249,7 @@ class _BoardBadge extends StatelessWidget {
           tween: Tween(begin: 0.6, end: 1.0),
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutBack,
-          builder:
-              (context, scale, c) => Transform.scale(
-                scale: scale,
-                filterQuality: FilterQuality.medium,
-                child: c,
-              ),
+          builder: (context, scale, c) => MotionScale(scale: scale, child: c),
           child: Container(
             width: badgeSize,
             height: badgeSize,
@@ -12314,10 +12408,9 @@ class _AnimatedPeaceIconState extends State<_AnimatedPeaceIcon> {
           motion: const CupertinoMotion.bouncy(),
           value: _animate ? 1.0 : 0.0,
           builder:
-              (context, scale, child) => Transform.scale(
+              (context, scale, child) => MotionScale(
                 scale: scale,
                 alignment: Alignment.topRight,
-                filterQuality: FilterQuality.medium,
                 child: child,
               ),
           child: Container(

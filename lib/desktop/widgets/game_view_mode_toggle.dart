@@ -38,9 +38,10 @@ class GameViewModeToggle extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final presentation = SignedOutEventsPresentationScope.maybeOf(context);
-    final mode = presentation != null
-        ? presentation.data?.viewMode ?? GamesListViewMode.chessBoardGrid
-        : ref.watch(gamesListViewModeProvider);
+    final mode =
+        presentation != null
+            ? presentation.data?.viewMode ?? GamesListViewMode.chessBoardGrid
+            : ref.watch(gamesListViewModeProvider);
     void select(GamesListViewMode next) {
       if (presentation != null) return;
       ref
@@ -119,7 +120,11 @@ class _ToggleButtonState extends State<_ToggleButton> {
           // assert never fires. See CLAUDE.md §3.
           child: DesktopTooltip(
             message: widget.tooltip,
-            child: Container(
+            // Fill and glyph colour ease together on hover / selection
+            // instead of swapping in a single frame.
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
               width: widget.size,
               height: widget.size,
               decoration: BoxDecoration(
@@ -133,10 +138,18 @@ class _ToggleButtonState extends State<_ToggleButton> {
                 ),
               ),
               alignment: Alignment.center,
-              child: Icon(
-                widget.icon,
-                size: widget.size >= 34 ? 18 : 14,
-                color: selected ? kPrimaryColor : kWhiteColor70,
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(
+                  end: selected ? kPrimaryColor : kWhiteColor70,
+                ),
+                duration: const Duration(milliseconds: 120),
+                curve: Curves.easeOutCubic,
+                builder:
+                    (context, color, _) => Icon(
+                      widget.icon,
+                      size: widget.size >= 34 ? 18 : 14,
+                      color: color,
+                    ),
               ),
             ),
           ),

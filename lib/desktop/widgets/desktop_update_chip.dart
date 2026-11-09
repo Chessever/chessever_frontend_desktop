@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/pressable_scale.dart';
+import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// Top-left "Update" chip rendered with forui primitives + the same primary
@@ -128,16 +130,10 @@ class _DesktopUpdateChipState extends ConsumerState<DesktopUpdateChip>
                 _scheduleDismiss();
               }),
           child: ClickCursor(
-            child: PressableScale(
-              hoveredScale: 1.014,
-              pressedScale: 0.96,
-              child: FButton(
-                style: _chipPrimaryStyle(),
-                onPress: () => _handleAction(state),
-                mainAxisSize: MainAxisSize.min,
-                prefix: const Icon(Icons.arrow_circle_up_rounded),
-                child: Text(_label(state)),
-              ),
+            child: _ChipPrimaryButton(
+              onPress: () => _handleAction(state),
+              prefix: const Icon(Icons.arrow_circle_up_rounded),
+              child: Text(_label(state)),
             ),
           ),
         ),
@@ -243,27 +239,21 @@ class _PopoverBody extends StatelessWidget {
               const SizedBox(height: 14),
               Align(
                 alignment: Alignment.centerRight,
-                child: PressableScale(
-                  hoveredScale: 1.014,
-                  pressedScale: 0.96,
-                  child: FButton(
-                    style: _chipPrimaryStyle(),
-                    onPress: onApply,
-                    mainAxisSize: MainAxisSize.min,
-                    prefix: Icon(
-                      state.requiresManualDownload
-                          ? Icons.open_in_browser_rounded
-                          : byReload
-                          ? Icons.refresh_rounded
-                          : Icons.restart_alt_rounded,
-                    ),
-                    child: Text(
-                      state.requiresManualDownload
-                          ? 'Open download page'
-                          : byReload
-                          ? 'Reload'
-                          : 'Restart & Update',
-                    ),
+                child: _ChipPrimaryButton(
+                  onPress: onApply,
+                  prefix: Icon(
+                    state.requiresManualDownload
+                        ? Icons.open_in_browser_rounded
+                        : byReload
+                        ? Icons.refresh_rounded
+                        : Icons.restart_alt_rounded,
+                  ),
+                  child: Text(
+                    state.requiresManualDownload
+                        ? 'Open download page'
+                        : byReload
+                        ? 'Reload'
+                        : 'Restart & Update',
                   ),
                 ),
               ),
@@ -275,11 +265,90 @@ class _PopoverBody extends StatelessWidget {
   }
 }
 
+/// The chip's cyan primary button: [PressableScale] press/hover scale plus a
+/// hover spring that eases the fill, edge and glow in step with that scale.
+/// forui would otherwise swap the hovered decoration in one frame beside the
+/// springing scale, and stack its own unfiltered 0.97 tap bounce on top.
+class _ChipPrimaryButton extends StatefulWidget {
+  const _ChipPrimaryButton({
+    required this.onPress,
+    required this.prefix,
+    required this.child,
+  });
+
+  final VoidCallback onPress;
+  final Widget prefix;
+  final Widget child;
+
+  @override
+  State<_ChipPrimaryButton> createState() => _ChipPrimaryButtonState();
+}
+
+class _ChipPrimaryButtonState extends State<_ChipPrimaryButton>
+    with DeferredPointerStateMixin<_ChipPrimaryButton> {
+  bool _hovered = false;
+
+  void _setHovered(bool hovered) {
+    if (_hovered == hovered) return;
+    setStateAfterPointerEvent(() => _hovered = hovered);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PressableScale(
+      hoveredScale: 1.014,
+      pressedScale: 0.96,
+      child: SingleMotionBuilder(
+        value: _hovered ? 1.0 : 0.0,
+        motion: DesktopMotion.hover,
+        builder:
+            (context, hover, _) => FButton(
+              style: _chipPrimaryStyle(hover: hover.clamp(0.0, 1.0)),
+              onPress: widget.onPress,
+              onHoverChange: _setHovered,
+              mainAxisSize: MainAxisSize.min,
+              prefix: widget.prefix,
+              child: widget.child,
+            ),
+      ),
+    );
+  }
+}
+
 /// Cyan primary button styling that mirrors the onboarding / editor primary
 /// tone: [kPrimaryColor] fill, dark text, hover-brighten + glow, 8-px radius.
 /// Lives here (rather than shared) because the chip's geometry is tighter
 /// than the form-field-sized onboarding buttons.
-FBaseButtonStyle Function(FButtonStyle style) _chipPrimaryStyle() {
+///
+/// [hover] (0..1, from the button's hover spring) blends the rest and
+/// hovered decorations, so the surface eases instead of switching.
+FBaseButtonStyle Function(FButtonStyle style) _chipPrimaryStyle({
+  required double hover,
+}) {
+  final hovered = BoxDecoration(
+    color: const Color(0xFF22C4F4),
+    borderRadius: BorderRadius.circular(8),
+    border: Border.all(color: kLightYellowColor.withValues(alpha: 0.58)),
+    boxShadow: [
+      BoxShadow(
+        color: kPrimaryColor.withValues(alpha: 0.22),
+        blurRadius: 18,
+        offset: const Offset(0, 5),
+      ),
+    ],
+  );
+  final rest = BoxDecoration(
+    color: kPrimaryColor,
+    borderRadius: BorderRadius.circular(8),
+    border: Border.all(color: kPrimaryColor.withValues(alpha: 0.65)),
+    boxShadow: [
+      BoxShadow(
+        color: kPrimaryColor.withValues(alpha: 0.12),
+        blurRadius: 12,
+        offset: const Offset(0, 3),
+      ),
+    ],
+  );
   return FButtonStyle.primary(
     (style) => style.copyWith(
       decoration: FWidgetStateMap({
@@ -288,31 +357,15 @@ FBaseButtonStyle Function(FButtonStyle style) _chipPrimaryStyle() {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: kPrimaryColor.withValues(alpha: 0.18)),
         ),
-        WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-          color: const Color(0xFF22C4F4),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: kLightYellowColor.withValues(alpha: 0.58)),
-          boxShadow: [
-            BoxShadow(
-              color: kPrimaryColor.withValues(alpha: 0.22),
-              blurRadius: 18,
-              offset: const Offset(0, 5),
-            ),
-          ],
-        ),
-        WidgetState.any: BoxDecoration(
-          color: kPrimaryColor,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: kPrimaryColor.withValues(alpha: 0.65)),
-          boxShadow: [
-            BoxShadow(
-              color: kPrimaryColor.withValues(alpha: 0.12),
-              blurRadius: 12,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
+        // Keyboard presses (no pointer hover) still show the full hover look.
+        WidgetState.pressed: hovered,
+        WidgetState.any: BoxDecoration.lerp(rest, hovered, hover)!,
       }),
+      // PressableScale's filtered spring is the only press motion: forui's
+      // own unfiltered 0.97 tap bounce would stack on it and re-shape the
+      // label glyphs every frame.
+      tappableStyle:
+          (tappable) => tappable.copyWith(motion: (_) => FTappableMotion.none),
       contentStyle:
           (content) => content.copyWith(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

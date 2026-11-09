@@ -179,16 +179,25 @@ class _DesktopBracketMatchCard extends StatelessWidget {
       semanticsLabel: semantics.toString(),
       borderRadius: BorderRadius.circular(10),
       hoverColor: kPrimaryColor.withValues(alpha: 0.055),
+      // The border is painted as a foreground decoration over a fixed
+      // 1 px inset, so blending its width 1 -> 1.4 on focus is paint-only:
+      // as a layout border it shrank the rows by a fraction of a pixel
+      // every frame and the names wobbled while focus moved.
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
-        decoration: BoxDecoration(
-          color: focused ? kBlack3Color : kBlack2Color,
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.all(1),
+        foregroundDecoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color:
                 focused ? kPrimaryColor.withValues(alpha: 0.78) : kDividerColor,
             width: focused ? 1.4 : 1,
           ),
+        ),
+        decoration: BoxDecoration(
+          color: focused ? kBlack3Color : kBlack2Color,
+          borderRadius: BorderRadius.circular(10),
           boxShadow:
               focused
                   ? [

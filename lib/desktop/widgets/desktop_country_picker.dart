@@ -4,6 +4,7 @@ import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/federation_flag.dart';
@@ -29,10 +30,14 @@ Future<Country?> showDesktopCountryPicker(
       final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
       return FadeTransition(
         opacity: eased,
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.97, end: 1).animate(eased),
-          filterQuality: FilterQuality.medium,
+        // MotionScale drops the image-filter layer once the dialog lands,
+        // so the open picker is not rasterized for its whole lifetime.
+        child: AnimatedBuilder(
+          animation: eased,
           child: child,
+          builder:
+              (context, child) =>
+                  MotionScale(scale: 0.97 + 0.03 * eased.value, child: child),
         ),
       );
     },
@@ -251,7 +256,8 @@ class _CountryRowState extends State<_CountryRow> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOutCubic,
             margin: const EdgeInsets.symmetric(vertical: 1),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
             decoration: BoxDecoration(

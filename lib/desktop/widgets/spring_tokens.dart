@@ -1,4 +1,4 @@
-import 'package:flutter/physics.dart';
+import 'package:flutter/animation.dart';
 import 'package:motor/motor.dart';
 
 /// Canonical motion profiles for the desktop shell.
@@ -79,6 +79,14 @@ class DesktopMotion {
   static const Motion track = CupertinoMotion.smooth(
     duration: Duration(milliseconds: 440),
   );
+
+  /// Implicit colour fades on hover (fill, border, label, icon tint) driven
+  /// by `AnimatedContainer` / `TweenAnimationBuilder` rather than a spring.
+  /// Every colour that changes together on one hover should share this
+  /// duration and curve, so nothing snaps beside something that fades.
+  /// The implicit-animation default, `Curves.linear`, reads as a step.
+  static const Duration hoverFadeDuration = Duration(milliseconds: 120);
+  static const Curve hoverFadeCurve = Curves.easeOutCubic;
 }
 
 /// [SpringDescription] equivalents of the same tokens, for APIs that

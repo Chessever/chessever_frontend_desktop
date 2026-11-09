@@ -82,7 +82,8 @@ class _ExplorerFiltersPopoverButtonState
                 behavior: HitTestBehavior.opaque,
                 onTap: _controller.toggle,
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 90),
+                  duration: const Duration(milliseconds: 120),
+                  curve: Curves.easeOutCubic,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
                     vertical: 6,

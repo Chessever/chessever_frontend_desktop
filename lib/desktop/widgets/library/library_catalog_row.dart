@@ -49,7 +49,12 @@ class LibraryCatalogHeaderStrip extends StatelessWidget {
 
 /// A quiet band naming the run of rows under it.
 class LibraryCatalogSectionLabel extends StatelessWidget {
-  const LibraryCatalogSectionLabel({super.key, required this.label, this.expanded, this.onToggle});
+  const LibraryCatalogSectionLabel({
+    super.key,
+    required this.label,
+    this.expanded,
+    this.onToggle,
+  });
 
   final String label;
   final bool? expanded;
@@ -57,40 +62,75 @@ class LibraryCatalogSectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Text(label, style: TextStyle(
-      color: kWhiteColor.withValues(alpha: 0.52),
-      fontSize: 10.5, fontWeight: FontWeight.w700, letterSpacing: 0.2,
-    ));
+    final text = Text(
+      label,
+      style: TextStyle(
+        color: kWhiteColor.withValues(alpha: 0.52),
+        fontSize: 10.5,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.2,
+      ),
+    );
     final toggle = onToggle;
     if (toggle == null) {
-      return Container(height: 25, alignment: Alignment.centerLeft,
+      return Container(
+        height: 25,
+        alignment: Alignment.centerLeft,
         padding: const EdgeInsets.symmetric(horizontal: 12),
-        color: kBlackColor.withValues(alpha: 0.34), child: text);
+        color: kBlackColor.withValues(alpha: 0.34),
+        child: text,
+      );
     }
     return ColoredBox(
       color: kBlackColor.withValues(alpha: 0.34),
-      child: FTheme(data: FThemes.zinc.dark, child: Semantics(
-        button: true, expanded: expanded, label: '$label section', onTap: toggle,
-        child: FButton.raw(
-          onPress: toggle,
-          style: FButtonStyle.ghost((style) => style.copyWith(
-            decoration: FWidgetStateMap({
-              WidgetState.focused: BoxDecoration(color: kBlack3Color,
-                border: Border(left: BorderSide(color: kPrimaryColor))),
-              WidgetState.hovered | WidgetState.pressed: BoxDecoration(color: kBlack3Color),
-              WidgetState.any: const BoxDecoration(color: Colors.transparent),
-            }),
-          )),
-          child: SizedBox(height: 25, width: double.infinity, child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(children: [
-              Icon(expanded == false ? Icons.chevron_right_rounded : Icons.expand_more_rounded,
-                size: 14, color: kWhiteColor70),
-              const SizedBox(width: 3), text,
-            ]),
-          )),
+      child: FTheme(
+        data: FThemes.zinc.dark,
+        child: Semantics(
+          button: true,
+          expanded: expanded,
+          label: '$label section',
+          onTap: toggle,
+          child: FButton.raw(
+            onPress: toggle,
+            style: FButtonStyle.ghost(
+              (style) => style.copyWith(
+                decoration: FWidgetStateMap({
+                  WidgetState.focused: BoxDecoration(
+                    color: kBlack3Color,
+                    border: Border(left: BorderSide(color: kPrimaryColor)),
+                  ),
+                  WidgetState.hovered | WidgetState.pressed: BoxDecoration(
+                    color: kBlack3Color,
+                  ),
+                  WidgetState.any: const BoxDecoration(
+                    color: Colors.transparent,
+                  ),
+                }),
+              ),
+            ),
+            child: SizedBox(
+              height: 25,
+              width: double.infinity,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    Icon(
+                      expanded == false
+                          ? Icons.chevron_right_rounded
+                          : Icons.expand_more_rounded,
+                      size: 14,
+                      color: kWhiteColor70,
+                    ),
+                    const SizedBox(width: 3),
+                    text,
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
-      )),
+      ),
     );
   }
 }
@@ -203,13 +243,17 @@ class _LibraryCatalogRowFrameState extends State<LibraryCatalogRowFrame>
             _open();
             return KeyEventResult.handled;
           }
-          if (widget.onToggleExpanded != null && event.logicalKey == LogicalKeyboardKey.space) {
+          if (widget.onToggleExpanded != null &&
+              event.logicalKey == LogicalKeyboardKey.space) {
             widget.onToggleExpanded!();
             return KeyEventResult.handled;
           }
           if (widget.onSetExpanded != null &&
-              (event.logicalKey == LogicalKeyboardKey.arrowRight || event.logicalKey == LogicalKeyboardKey.arrowLeft)) {
-            widget.onSetExpanded!(event.logicalKey == LogicalKeyboardKey.arrowRight);
+              (event.logicalKey == LogicalKeyboardKey.arrowRight ||
+                  event.logicalKey == LogicalKeyboardKey.arrowLeft)) {
+            widget.onSetExpanded!(
+              event.logicalKey == LogicalKeyboardKey.arrowRight,
+            );
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
@@ -234,6 +278,7 @@ class _LibraryCatalogRowFrameState extends State<LibraryCatalogRowFrame>
                       },
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 100),
+                curve: Curves.easeOutCubic,
                 height: widget.height,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
@@ -278,38 +280,72 @@ class _ChordPillState extends State<_ChordPill> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onRemove,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 90),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color:
-                    _hovered ? kRedColor.withValues(alpha: 0.18) : kBlack3Color,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color:
-                      _hovered
-                          ? kRedColor.withValues(alpha: 0.6)
-                          : kDividerColor,
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    widget.label,
-                    style: TextStyle(
-                      color: _hovered ? kRedColor : kWhiteColor,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+            // Fill, border, label colour and the close glyph's slot all ride
+            // ONE hover spring. The glyph used to pop in (widening the pill
+            // and shoving its neighbours 18 px in one frame) while the label
+            // colour snapped beside a 90 ms linear fill fade.
+            child: SingleMotionBuilder(
+              value: _hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, h, _) {
+                final t = h.clamp(0.0, 1.0);
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Color.lerp(
+                      kBlack3Color,
+                      kRedColor.withValues(alpha: 0.18),
+                      t,
+                    ),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color:
+                          Color.lerp(
+                            kDividerColor,
+                            kRedColor.withValues(alpha: 0.6),
+                            t,
+                          )!,
                     ),
                   ),
-                  if (_hovered) ...[
-                    const SizedBox(width: 6),
-                    const Icon(Icons.close_rounded, size: 12, color: kRedColor),
-                  ],
-                ],
-              ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        widget.label,
+                        style: TextStyle(
+                          color: Color.lerp(kWhiteColor, kRedColor, t),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                      if (t > 0)
+                        // The slot opens from the label's trailing edge, so
+                        // the label itself never moves.
+                        ClipRect(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: t,
+                            child: Opacity(
+                              opacity: t,
+                              child: const Padding(
+                                padding: EdgeInsets.only(left: 6),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 12,
+                                  color: kRedColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ),
@@ -341,7 +377,8 @@ class _AddChordButtonState extends State<_AddChordButton> {
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 90),
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
               decoration: BoxDecoration(
                 color:
@@ -428,7 +465,8 @@ class _ResetAllButtonState extends State<_ResetAllButton> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 90),
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             decoration: BoxDecoration(
               color: _hovered ? kBlack3Color : Colors.transparent,

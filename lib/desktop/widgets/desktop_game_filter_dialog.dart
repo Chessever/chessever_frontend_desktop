@@ -9,6 +9,7 @@ import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
@@ -50,19 +51,8 @@ Future<GameFilter?> showDesktopGameFilterDialog({
             sections: sections,
           ),
         ),
-    transitionBuilder: (ctx, anim, _, child) {
-      final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
-      return FadeTransition(
-        opacity: eased,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.018),
-            end: Offset.zero,
-          ).animate(eased),
-          child: child,
-        ),
-      );
-    },
+    transitionBuilder:
+        (ctx, anim, _, child) => _dialogEntrance(anim, child, rise: 0.018),
   );
 }
 
@@ -691,6 +681,8 @@ class _FilterChipButton extends StatefulWidget {
 }
 
 class _FilterChipButtonState extends State<_FilterChipButton> {
+  static const Duration _chipFade = Duration(milliseconds: 120);
+
   bool _hovered = false;
 
   @override
@@ -715,33 +707,70 @@ class _FilterChipButtonState extends State<_FilterChipButton> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 90),
+            duration: _chipFade,
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: bg,
               borderRadius: BorderRadius.circular(6),
               border: Border.all(color: border),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (widget.icon != null) ...[
-                  Icon(
-                    widget.icon,
-                    size: 12,
-                    color: widget.iconColor ?? accent,
+            // Icon and label colours fade on the same clock as the fill, so
+            // a toggle doesn't snap the text while the chip eases.
+            child: TweenAnimationBuilder<Color?>(
+              tween: ColorTween(end: selected ? kWhiteColor : kWhiteColor70),
+              duration: _chipFade,
+              curve: Curves.easeOutCubic,
+              builder:
+                  (context, labelColor, _) => Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.icon != null) ...[
+                        TweenAnimationBuilder<Color?>(
+                          tween: ColorTween(end: widget.iconColor ?? accent),
+                          duration: _chipFade,
+                          curve: Curves.easeOutCubic,
+                          builder:
+                              (context, iconColor, _) =>
+                                  Icon(widget.icon, size: 12, color: iconColor),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      // The chip reserves the bold label's width, so toggling
+                      // the weight never resizes it or shoves its neighbours.
+                      Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          // Width ghost: a RichText (not a Text) so finders
+                          // and semantics still see a single label.
+                          ExcludeSemantics(
+                            child: RichText(
+                              textScaler: MediaQuery.textScalerOf(context),
+                              text: TextSpan(
+                                text: widget.label,
+                                style: DefaultTextStyle.of(context).style.merge(
+                                  const TextStyle(
+                                    color: Colors.transparent,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Text(
+                            widget.label,
+                            style: TextStyle(
+                              color: labelColor,
+                              fontSize: 11,
+                              fontWeight:
+                                  selected ? FontWeight.w700 : FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 6),
-                ],
-                Text(
-                  widget.label,
-                  style: TextStyle(
-                    color: selected ? kWhiteColor : kWhiteColor70,
-                    fontSize: 11,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  ),
-                ),
-              ],
             ),
           ),
         ),
@@ -909,4 +938,35 @@ IconData _onlineIcon(GameOnlineFilter value) {
     case GameOnlineFilter.otb:
       return Icons.public_off_rounded;
   }
+}
+
+/// Dialog entrance: a fade plus a short rise of [rise] x the route height
+/// (the same distance the old `SlideTransition` covered). The rise goes
+/// through [MotionTranslate], so the slow sub-pixel tail of the ease glides
+/// instead of stepping the dialog's text a pixel at a time; once settled the
+/// dialog paints as crisp vectors with no filter layer.
+Widget _dialogEntrance(
+  Animation<double> anim,
+  Widget child, {
+  required double rise,
+}) {
+  final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+  return FadeTransition(
+    opacity: eased,
+    child: LayoutBuilder(
+      builder:
+          (context, constraints) => AnimatedBuilder(
+            animation: eased,
+            child: child,
+            builder:
+                (context, child) => MotionTranslate(
+                  offset: Offset(
+                    0,
+                    constraints.maxHeight * rise * (1 - eased.value),
+                  ),
+                  child: child,
+                ),
+          ),
+    ),
+  );
 }

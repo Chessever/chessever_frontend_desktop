@@ -1104,8 +1104,11 @@ class _ColumnResizeHandleState extends State<_ColumnResizeHandle> {
         },
         child: Align(
           alignment: Alignment.centerRight,
+          // Eased over a readable span: the old 80 ms linear step read as
+          // the rule blinking between widths rather than thickening.
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOutCubic,
             width: highlighted ? 2 : 1,
             color: highlighted ? kPrimaryColor : kDividerColor,
           ),

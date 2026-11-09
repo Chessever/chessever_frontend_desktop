@@ -7,6 +7,7 @@ import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 
 /// Desktop search field — square edges, dark chrome, ⌘+F-friendly. Used inside
 /// pane chrome (Tournaments, Library, Calendar, Favorites, Countrymen) so each
@@ -100,9 +101,12 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
             decoration: BoxDecoration(
               color: kBlack2Color,
               borderRadius: BorderRadius.circular(desktopToolbarControlRadius),
+              // Layout border stays 1 px so the icon, text and caret never
+              // shift while the focus spring runs; the extra 0.2 px of
+              // focused weight is painted over it below without insetting
+              // the content.
               border: Border.all(
                 color: Color.lerp(kDividerColor, kPrimaryColor, t)!,
-                width: 1 + 0.2 * t,
               ),
               boxShadow:
                   t > 0.02
@@ -113,6 +117,18 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
                         ),
                       ]
                       : null,
+            ),
+            // Always non-null: toggling it would insert a DecoratedBox above
+            // the child and remount the TextField mid-focus.
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(desktopToolbarControlRadius),
+              border: Border.all(
+                color:
+                    t > 0.02
+                        ? Color.lerp(kDividerColor, kPrimaryColor, t)!
+                        : Colors.transparent,
+                width: 1 + 0.2 * t,
+              ),
             ),
             child: child,
           );
@@ -220,24 +236,30 @@ class _ClearButtonState extends State<_ClearButton>
             value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: Container(
-              width: 18,
-              height: 18,
-              decoration: BoxDecoration(
-                color: _hovered ? kBlack3Color : Colors.transparent,
-                borderRadius: BorderRadius.circular(9),
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                Icons.close_rounded,
-                size: 12,
-                color: _hovered ? kWhiteColor : kLightGreyColor,
-              ),
+                (context, scale, child) =>
+                    MotionScale(scale: scale, child: child),
+            // Fill and glyph colour ride one hover spring so they ease with
+            // the scale instead of snapping beside it.
+            child: SingleMotionBuilder(
+              value: _hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, h, _) {
+                final t = h.clamp(0.0, 1.0);
+                return Container(
+                  width: 18,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: Color.lerp(Colors.transparent, kBlack3Color, t),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.close_rounded,
+                    size: 12,
+                    color: Color.lerp(kLightGreyColor, kWhiteColor, t),
+                  ),
+                );
+              },
             ),
           ),
         ),

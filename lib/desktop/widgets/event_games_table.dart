@@ -6338,12 +6338,22 @@ class _DatabaseGameRowState extends State<_DatabaseGameRow> {
                 (details) => widget.onSecondaryTap(details.globalPosition),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 90),
+              curve: Curves.easeOutCubic,
               height: _EventGamesTableState._databaseGameRowExtent,
               padding: const EdgeInsets.symmetric(horizontal: 10),
+              // The layout border is a constant transparent 1 px; the visible
+              // 1.2 px selection edge paints over it from
+              // foregroundDecoration. Animating the layout border's width
+              // would re-inset the player cells by a fraction of a pixel on
+              // every frame of the selection fade.
+              foregroundDecoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: border, width: 1.2),
+              ),
               decoration: BoxDecoration(
                 color: bg,
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: border, width: selected ? 1.2 : 1),
+                border: Border.all(color: Colors.transparent),
                 boxShadow:
                     selected
                         ? [
@@ -6703,6 +6713,7 @@ class _BoardEventRailTabState extends State<_BoardEventRailTab> {
   @override
   Widget build(BuildContext context) {
     final active = widget.selected || _hovered || _focused;
+    final weight = widget.selected ? FontWeight.w700 : FontWeight.w600;
     return Semantics(
       button: true,
       selected: widget.selected,
@@ -6731,6 +6742,7 @@ class _BoardEventRailTabState extends State<_BoardEventRailTab> {
                   Positioned.fill(
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 100),
+                      curve: Curves.easeOutCubic,
                       margin: const EdgeInsets.symmetric(horizontal: 3),
                       decoration: BoxDecoration(
                         color:
@@ -6743,16 +6755,25 @@ class _BoardEventRailTabState extends State<_BoardEventRailTab> {
                       ),
                     ),
                   ),
-                  Text(
-                    _label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: active ? kWhiteColor : kWhiteColor70,
-                      fontSize: 12,
-                      fontWeight:
-                          widget.selected ? FontWeight.w700 : FontWeight.w600,
+                  // Label colour fades on the fill's clock instead of
+                  // snapping while the fill eases.
+                  TweenAnimationBuilder<Color?>(
+                    tween: ColorTween(
+                      end: active ? kWhiteColor : kWhiteColor70,
                     ),
+                    duration: const Duration(milliseconds: 100),
+                    curve: Curves.easeOutCubic,
+                    builder:
+                        (context, color, _) => Text(
+                          _label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 12,
+                            fontWeight: weight,
+                          ),
+                        ),
                   ),
                 ],
               ),
@@ -7140,22 +7161,40 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
             builder:
                 (context, scale, child) => Transform.scale(
                   scale: scale,
-                  filterQuality: FilterQuality.medium,
+                  // Filtered only while off rest: the scale moves a bitmap
+                  // smoothly, and every idle header in the list stays a
+                  // plain vector paint with no filter layer.
+                  filterQuality:
+                      (scale - 1).abs() > 0.0005 ? FilterQuality.medium : null,
                   child: child,
                 ),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 100),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-              decoration: BoxDecoration(
-                color: _hovered ? kBlack3Color : kBackgroundColor,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color:
-                      _hovered
-                          ? kPrimaryColor.withValues(alpha: 0.28)
-                          : kDividerColor,
-                ),
-              ),
+            // Fill and edge ride one hover spring beside the scale instead of
+            // a 100 ms fade that finishes long before the scale settles.
+            child: SingleMotionBuilder(
+              value: _hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, h, child) {
+                final t = h.clamp(0.0, 1.0);
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Color.lerp(kBackgroundColor, kBlack3Color, t),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color:
+                          Color.lerp(
+                            kDividerColor,
+                            kPrimaryColor.withValues(alpha: 0.28),
+                            t,
+                          )!,
+                    ),
+                  ),
+                  child: child,
+                );
+              },
               child: Row(
                 children: [
                   Expanded(
@@ -7316,8 +7355,11 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
                     value: widget.expanded ? 1.0 : 0.0,
                     motion: DesktopMotion.layout,
                     builder:
-                        (context, t, child) =>
-                            Transform.rotate(angle: t * 3.14159, child: child),
+                        (context, t, child) => Transform.rotate(
+                          angle: t * 3.14159,
+                          filterQuality: _chevronTurnQuality(t),
+                          child: child,
+                        ),
                     child: const Icon(
                       Icons.keyboard_arrow_down_rounded,
                       size: 17,
@@ -7333,6 +7375,12 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
     );
   }
 }
+
+/// Filter quality for a turning disclosure chevron: rasterized (so the
+/// glyph turns as one smooth bitmap instead of re-snapping its outline each
+/// frame) only mid-turn, plain vector paint when resting open or closed.
+FilterQuality? _chevronTurnQuality(double t) =>
+    t > 0.001 && t < 0.999 ? FilterQuality.medium : null;
 
 /// Slim matchup label above a segment of rows: `Team A vs Team B  2½–1½`
 /// for team rounds, `Player 1 vs Player 2  1½–½` for knockout matches.
@@ -7386,6 +7434,7 @@ class _EventMatchupHeaderState extends State<_EventMatchupHeader> {
                 onTap: widget.onToggle,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 100),
+                  curve: Curves.easeOutCubic,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 4,
                     vertical: 3,
@@ -7405,6 +7454,7 @@ class _EventMatchupHeaderState extends State<_EventMatchupHeader> {
                         builder:
                             (context, t, child) => Transform.rotate(
                               angle: t * 3.14159,
+                              filterQuality: _chevronTurnQuality(t),
                               child: child,
                             ),
                         child: const Icon(
@@ -7739,6 +7789,7 @@ class _GameRailCloseButtonState extends State<_GameRailCloseButton> {
             onTap: widget.onClose,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
               width: 22,
               height: 22,
               alignment: Alignment.center,
@@ -7755,10 +7806,14 @@ class _GameRailCloseButtonState extends State<_GameRailCloseButton> {
                           : kDividerColor.withValues(alpha: 0.55),
                 ),
               ),
-              child: Icon(
-                Icons.close_rounded,
-                size: 13,
-                color: _hover ? kWhiteColor : kWhiteColor70,
+              // Glyph colour fades on the fill's clock instead of snapping.
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: _hover ? kWhiteColor : kWhiteColor70),
+                duration: const Duration(milliseconds: 120),
+                curve: Curves.easeOutCubic,
+                builder:
+                    (context, color, _) =>
+                        Icon(Icons.close_rounded, size: 13, color: color),
               ),
             ),
           ),

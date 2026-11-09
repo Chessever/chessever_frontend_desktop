@@ -151,12 +151,15 @@ class DesktopGameCard extends ConsumerWidget {
         (s) => s.valueOrNull?.showEvaluationBar ?? true,
       ),
     );
-    final showEngineGauge = !visualPreviewOnly && ref.watch(
-      engineSettingsProviderNew.select(
-        (s) => shouldShowGameCardEvalBarFromSettings(s),
-      ),
-    );
-    final showEvaluationBar = !visualPreviewOnly && showBoardEvalBar && showEngineGauge;
+    final showEngineGauge =
+        !visualPreviewOnly &&
+        ref.watch(
+          engineSettingsProviderNew.select(
+            (s) => shouldShowGameCardEvalBarFromSettings(s),
+          ),
+        );
+    final showEvaluationBar =
+        !visualPreviewOnly && showBoardEvalBar && showEngineGauge;
     assert(
       lockedReason == null || layout != DesktopCardLayout.list,
       'The list layout has no lock treatment; use a table row instead.',
@@ -402,14 +405,19 @@ class _ListLayoutState extends State<_ListLayout>
     // the game is in play. No status text, no ECO chip, no footer.
     // Ambient state tint on the tile surface carries finished/live so
     // the eye sorts a flow without reading a single chip.
-    final highlight = widget.selected || _hovered;
-    final baseFill = _tileBaseFill(data: widget.data, highlight: highlight);
-    final borderColor =
+    // [hover] is the eased 0..1 hover progress; selection is never eased.
+    final restFill = _tileBaseFill(data: widget.data, highlight: false);
+    final hotFill = _tileBaseFill(data: widget.data, highlight: true);
+    Color fillAt(double hover) =>
+        widget.selected ? hotFill : Color.lerp(restFill, hotFill, hover)!;
+    Color borderAt(double hover) =>
         widget.selected
             ? kPrimaryColor.withValues(alpha: 0.96)
-            : (_hovered
-                ? kPrimaryColor.withValues(alpha: 0.14)
-                : kDividerColor);
+            : Color.lerp(
+              kDividerColor,
+              kPrimaryColor.withValues(alpha: 0.14),
+              hover,
+            )!;
     final isLive = widget.data.hasStarted && !widget.data.status.isFinished;
 
     return MouseRegion(
@@ -417,27 +425,38 @@ class _ListLayoutState extends State<_ListLayout>
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         borderRadius: 12,
-        child: Container(
-          decoration: BoxDecoration(
-            color: baseFill,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: borderColor,
-              width: widget.selected ? 2 : 1,
-            ),
-            // Selection keeps a persistent shadow; the hover/press shadow is
-            // now owned by the [MotionCard] dock above.
-            boxShadow:
-                widget.selected
-                    ? [
-                      BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.16),
-                        blurRadius: 8,
-                        spreadRadius: 0.5,
-                      ),
-                    ]
-                    : null,
-          ),
+        // Hover eases fill and border on the same 140 ms easeOutCubic as
+        // the [MotionCard] shadow, so it reads as one motion instead of a
+        // snap beside a fade. Selection stays immediate.
+        child: TweenAnimationBuilder<double>(
+          duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOutCubic,
+          tween: Tween<double>(end: _hovered ? 1 : 0),
+          builder:
+              (context, hover, content) => Container(
+                decoration: BoxDecoration(
+                  color: fillAt(hover),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: borderAt(hover),
+                    width: widget.selected ? 2 : 1,
+                  ),
+                  // Selection keeps a persistent shadow; the hover/press shadow is
+                  // now owned by the [MotionCard] dock above.
+                  boxShadow:
+                      widget.selected
+                          ? [
+                            BoxShadow(
+                              color: kPrimaryColor.withValues(alpha: 0.16),
+                              blurRadius: 8,
+                              spreadRadius: 0.5,
+                            ),
+                          ]
+                          : null,
+                ),
+                // Only the shell fill eases per frame; the card body stays cached.
+                child: RepaintBoundary(child: content),
+              ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(11),
             child: Stack(
@@ -1030,14 +1049,19 @@ class _CompactLayoutState extends State<_CompactLayout>
     const cardHeight = 82.0;
     final locked = widget.lockedReason != null;
 
-    final highlight = widget.selected || _hovered;
-    final baseFill = _tileBaseFill(data: widget.data, highlight: highlight);
-    final borderColor =
+    // [hover] is the eased 0..1 hover progress; selection is never eased.
+    final restFill = _tileBaseFill(data: widget.data, highlight: false);
+    final hotFill = _tileBaseFill(data: widget.data, highlight: true);
+    Color fillAt(double hover) =>
+        widget.selected ? hotFill : Color.lerp(restFill, hotFill, hover)!;
+    Color borderAt(double hover) =>
         widget.selected
             ? kPrimaryColor.withValues(alpha: 0.96)
-            : (_hovered
-                ? kPrimaryColor.withValues(alpha: 0.14)
-                : kDividerColor);
+            : Color.lerp(
+              kDividerColor,
+              kPrimaryColor.withValues(alpha: 0.14),
+              hover,
+            )!;
     final isLive = widget.data.hasStarted && !widget.data.status.isFinished;
 
     return MouseRegion(
@@ -1045,28 +1069,39 @@ class _CompactLayoutState extends State<_CompactLayout>
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         borderRadius: 10,
-        child: Container(
-          height: cardHeight,
-          decoration: BoxDecoration(
-            color: baseFill,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: borderColor,
-              width: widget.selected ? 2 : 1,
-            ),
-            // Selection keeps a persistent shadow; hover/press shadow is
-            // now owned by the [MotionCard] dock above.
-            boxShadow:
-                widget.selected
-                    ? [
-                      BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.16),
-                        blurRadius: 8,
-                        spreadRadius: 0.5,
-                      ),
-                    ]
-                    : null,
-          ),
+        // Hover eases fill and border on the same 140 ms easeOutCubic as
+        // the [MotionCard] shadow, so it reads as one motion instead of a
+        // snap beside a fade. Selection stays immediate.
+        child: TweenAnimationBuilder<double>(
+          duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOutCubic,
+          tween: Tween<double>(end: _hovered ? 1 : 0),
+          builder:
+              (context, hover, content) => Container(
+                height: cardHeight,
+                decoration: BoxDecoration(
+                  color: fillAt(hover),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: borderAt(hover),
+                    width: widget.selected ? 2 : 1,
+                  ),
+                  // Selection keeps a persistent shadow; hover/press shadow is
+                  // now owned by the [MotionCard] dock above.
+                  boxShadow:
+                      widget.selected
+                          ? [
+                            BoxShadow(
+                              color: kPrimaryColor.withValues(alpha: 0.16),
+                              blurRadius: 8,
+                              spreadRadius: 0.5,
+                            ),
+                          ]
+                          : null,
+                ),
+                // Only the shell fill eases per frame; the card body stays cached.
+                child: RepaintBoundary(child: content),
+              ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(9),
             child: Stack(
@@ -1186,38 +1221,53 @@ class _GridLayoutState extends State<_GridLayout>
 
   @override
   Widget build(BuildContext context) {
-    final highlight = widget.selected || _hovered;
     return MouseRegion(
       onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         borderRadius: 12,
-        child: Container(
-          decoration: BoxDecoration(
-            color: highlight ? kBlack3Color : kBlack2Color,
-            borderRadius: BorderRadius.circular(12),
-            // Selection keeps a persistent shadow; hover/press shadow is
-            // now owned by the [MotionCard] dock above.
-            boxShadow:
-                widget.selected
-                    ? [
-                      BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.18),
-                        blurRadius: 8,
-                        spreadRadius: 0.5,
-                      ),
-                    ]
-                    : null,
-            border: Border.all(
-              color:
-                  widget.selected
-                      ? kPrimaryColor.withValues(alpha: 0.96)
-                      : (_hovered
-                          ? kPrimaryColor.withValues(alpha: 0.16)
-                          : kDividerColor),
-              width: widget.selected ? 2 : 1,
-            ),
-          ),
+        // Hover eases fill and border on the same 140 ms easeOutCubic as
+        // the [MotionCard] shadow, so it reads as one motion instead of a
+        // snap beside a fade. Selection stays immediate.
+        child: TweenAnimationBuilder<double>(
+          duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOutCubic,
+          tween: Tween<double>(end: _hovered ? 1 : 0),
+          builder:
+              (context, hover, content) => Container(
+                decoration: BoxDecoration(
+                  color:
+                      widget.selected
+                          ? kBlack3Color
+                          : Color.lerp(kBlack2Color, kBlack3Color, hover),
+                  borderRadius: BorderRadius.circular(12),
+                  // Selection keeps a persistent shadow; hover/press shadow is
+                  // now owned by the [MotionCard] dock above.
+                  boxShadow:
+                      widget.selected
+                          ? [
+                            BoxShadow(
+                              color: kPrimaryColor.withValues(alpha: 0.18),
+                              blurRadius: 8,
+                              spreadRadius: 0.5,
+                            ),
+                          ]
+                          : null,
+                  border: Border.all(
+                    color:
+                        widget.selected
+                            ? kPrimaryColor.withValues(alpha: 0.96)
+                            : Color.lerp(
+                              kDividerColor,
+                              kPrimaryColor.withValues(alpha: 0.16),
+                              hover,
+                            )!,
+                    width: widget.selected ? 2 : 1,
+                  ),
+                ),
+                // Only the shell fill eases per frame; the card body stays cached.
+                child: RepaintBoundary(child: content),
+              ),
           child: Padding(
             // Vertical only: the rows pad themselves, and the board area spans
             // the card's full inner width so a lock can sit centred in the

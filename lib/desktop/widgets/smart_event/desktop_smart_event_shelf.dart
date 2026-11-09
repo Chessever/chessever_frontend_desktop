@@ -307,10 +307,15 @@ class _IconActionState extends State<_IconAction> {
           child: SizedBox.square(
             dimension: 32,
             child: Center(
-              child: Icon(
-                widget.icon,
-                size: 16,
-                color: _hovered ? kWhiteColor : kWhiteColor70,
+              // Eases with the card's own 140 ms hover fade instead of
+              // snapping.
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: _hovered ? kWhiteColor : kWhiteColor70),
+                duration: const Duration(milliseconds: 140),
+                curve: Curves.easeOut,
+                builder:
+                    (context, color, _) =>
+                        Icon(widget.icon, size: 16, color: color),
               ),
             ),
           ),

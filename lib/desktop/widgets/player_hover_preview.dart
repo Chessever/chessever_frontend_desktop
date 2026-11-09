@@ -341,7 +341,8 @@ class _PlayerHoverPreviewState extends State<PlayerHoverPreview>
               }),
           child: AnimatedContainer(
             key: const ValueKey<String>('player-hover-preview-trigger'),
-            duration: const Duration(milliseconds: 100),
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
             decoration: BoxDecoration(
               color:
                   _active

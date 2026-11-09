@@ -774,10 +774,25 @@ class _SettingsLinkRowState extends State<_SettingsLinkRow> {
           onTapDown: (_) => setState(() => _pressed = true),
           onTapUp: (_) => setState(() => _pressed = false),
           onTapCancel: () => setState(() => _pressed = false),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 90),
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
-            color: _hovered ? kBlack3Color : Colors.transparent,
+          // The row fill rides the same hover spring as the nudge, so the
+          // tint and the slide arrive together instead of a 90 ms fade
+          // finishing long before the content settles.
+          child: SingleMotionBuilder(
+            value: _hovered ? 1.0 : 0.0,
+            motion: DesktopMotion.hover,
+            builder:
+                (context, h, child) => Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 14,
+                  ),
+                  color: Color.lerp(
+                    Colors.transparent,
+                    kBlack3Color,
+                    h.clamp(0.0, 1.0),
+                  ),
+                  child: child,
+                ),
             child: SingleMotionBuilder(
               value: nudgeX,
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
@@ -1220,22 +1235,32 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
                 disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color:
-                    disabled
-                        ? kPrimaryColor.withValues(alpha: 0.4)
-                        : (_hovered
-                            ? kPrimaryColor
-                            : kPrimaryColor.withValues(alpha: 0.92)),
-                borderRadius: BorderRadius.circular(8),
-              ),
+                (context, scale, child) =>
+                    MotionScale(scale: scale, child: child),
+            // Fill rides its own hover spring alongside the scale instead of
+            // snapping while the button grows.
+            child: SingleMotionBuilder(
+              value: _hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder:
+                  (context, h, child) => Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color:
+                          disabled
+                              ? kPrimaryColor.withValues(alpha: 0.4)
+                              : Color.lerp(
+                                kPrimaryColor.withValues(alpha: 0.92),
+                                kPrimaryColor,
+                                h.clamp(0.0, 1.0),
+                              ),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: child,
+                  ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1294,21 +1319,33 @@ class _SecondaryButtonState extends State<_SecondaryButton> {
                 disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color:
-                    disabled
-                        ? kBlack3Color.withValues(alpha: 0.45)
-                        : (_hovered ? kBlack3Color : Colors.transparent),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: kDividerColor),
-              ),
+                (context, scale, child) =>
+                    MotionScale(scale: scale, child: child),
+            // Fill rides its own hover spring alongside the scale instead of
+            // snapping while the button grows.
+            child: SingleMotionBuilder(
+              value: _hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder:
+                  (context, h, child) => Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color:
+                          disabled
+                              ? kBlack3Color.withValues(alpha: 0.45)
+                              : Color.lerp(
+                                Colors.transparent,
+                                kBlack3Color,
+                                h.clamp(0.0, 1.0),
+                              ),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: kDividerColor),
+                    ),
+                    child: child,
+                  ),
               child: Text(
                 widget.label,
                 style: TextStyle(

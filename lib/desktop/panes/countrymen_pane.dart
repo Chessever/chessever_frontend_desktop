@@ -497,8 +497,11 @@ class _CountryEventTileState extends ConsumerState<_CountryEventTile> {
             onTap: _open,
             child: MotionCard(
               borderRadius: 9,
+              // Same 140 ms ease as MotionCard's shadow so the fill, edge
+              // and shadow arrive together.
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
+                duration: const Duration(milliseconds: 140),
+                curve: Curves.easeOutCubic,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: _hovered ? kBlack3Color : kBlack2Color,
@@ -876,8 +879,11 @@ class _CountryPlayerTileState extends ConsumerState<_CountryPlayerTile> {
               (details) => unawaited(_showContextMenu(details.globalPosition)),
           child: MotionCard(
             borderRadius: 9,
+            // Same 140 ms ease as MotionCard's shadow so the fill, edge and
+            // shadow arrive together.
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOutCubic,
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: _hovered ? kBlack3Color : kBlack2Color,
@@ -1043,11 +1049,8 @@ class _FavoriteStarButtonState extends State<_FavoriteStarButton> {
             value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
+                (context, scale, child) =>
+                    MotionScale(scale: scale, child: child),
             child: Padding(
               padding: const EdgeInsets.all(6),
               child: Icon(
@@ -1429,63 +1432,68 @@ class _FlagBadgeState extends State<_FlagBadge> {
   Widget build(BuildContext context) {
     const w = 96.0;
     const h = 64.0;
-    final lift = _hovered ? -2.0 : 0.0;
+    // Lift, edge and shadow ride ONE hover spring, so the plate rises and
+    // lights up together instead of a 160 ms ease finishing before the lift.
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: SingleMotionBuilder(
-        value: lift,
+        value: _hovered ? 1.0 : 0.0,
         motion: DesktopMotion.hover,
-        builder:
-            (context, y, child) =>
-                MotionTranslate(offset: Offset(0, y), child: child),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-          width: w,
-          height: h,
-          decoration: BoxDecoration(
-            color: kBlack2Color,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color:
-                  _hovered
-                      ? kPrimaryColor.withValues(alpha: 0.5)
-                      : kDividerColor,
+        builder: (context, hover, child) {
+          final t = hover.clamp(0.0, 1.0);
+          return MotionTranslate(
+            offset: Offset(0, -2.0 * t),
+            child: Container(
+              width: w,
+              height: h,
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color:
+                      Color.lerp(
+                        kDividerColor,
+                        kPrimaryColor.withValues(alpha: 0.5),
+                        t,
+                      )!,
+                ),
+                boxShadow:
+                    t > 0
+                        ? [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.35 * t),
+                            blurRadius: 18 * t,
+                            offset: Offset(0, 6 * t),
+                          ),
+                        ]
+                        : const [],
+              ),
+              alignment: Alignment.center,
+              child: child,
             ),
-            boxShadow:
-                _hovered
-                    ? [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.35),
-                        blurRadius: 18,
-                        offset: const Offset(0, 6),
-                      ),
-                    ]
-                    : const [],
-          ),
-          alignment: Alignment.center,
-          child:
-              widget.hasCountry && widget.countryCode.isNotEmpty
-                  ? ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: SizedBox(
+          );
+        },
+        child:
+            widget.hasCountry && widget.countryCode.isNotEmpty
+                ? ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: SizedBox(
+                    width: w - 14,
+                    height: h - 14,
+                    child: FederationFlag(
+                      federation: widget.countryCode,
                       width: w - 14,
                       height: h - 14,
-                      child: FederationFlag(
-                        federation: widget.countryCode,
-                        width: w - 14,
-                        height: h - 14,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
+                      borderRadius: BorderRadius.circular(6),
                     ),
-                  )
-                  : const Icon(
-                    Icons.public_outlined,
-                    color: kLightGreyColor,
-                    size: 28,
                   ),
-        ),
+                )
+                : const Icon(
+                  Icons.public_outlined,
+                  color: kLightGreyColor,
+                  size: 28,
+                ),
       ),
     );
   }
@@ -1561,10 +1569,18 @@ class _StatChipState extends State<_StatChip> {
       duration: const Duration(milliseconds: 140),
       curve: Curves.easeOut,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      // The layout border is a constant transparent 1 px; the visible edge
+      // (1 px, or 1.6 px selected) paints over it from foregroundDecoration.
+      // Animating the layout border's width grew the pill and re-inset its
+      // label by fractions of a pixel every frame, shoving its neighbours.
+      foregroundDecoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(99),
+        border: Border.all(color: borderColor, width: borderWidth),
+      ),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: borderColor, width: borderWidth),
+        border: Border.all(color: Colors.transparent),
         boxShadow:
             selected
                 ? [

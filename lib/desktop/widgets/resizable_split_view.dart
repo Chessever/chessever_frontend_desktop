@@ -9,9 +9,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import '../../theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 
 const Duration _kSplitAnimationDuration = Duration(milliseconds: 220);
 const Curve _kSplitAnimationCurve = Curves.easeOutCubic;
+const Duration _kGutterHoverDuration = Duration(milliseconds: 120);
 
 /// Describes one section of a [ResizableSplitView].
 class SplitChild {
@@ -937,8 +939,11 @@ class _GutterState extends State<_Gutter>
             ? widget.color.withValues(alpha: 0.95)
             : widget.color.withValues(alpha: 0.55);
 
+    // Line and chevron overlay share one duration and curve so the hover
+    // reads as a single change (they were 90 ms linear vs 120 ms linear).
     final line = AnimatedContainer(
-      duration: const Duration(milliseconds: 90),
+      duration: _kGutterHoverDuration,
+      curve: Curves.easeOutCubic,
       width: isHorizontal ? (active ? 2 : 1) : null,
       height: isHorizontal ? null : (active ? 2 : 1),
       color: lineColor,
@@ -975,7 +980,8 @@ class _GutterState extends State<_Gutter>
     ];
 
     final overlay = AnimatedOpacity(
-      duration: const Duration(milliseconds: 120),
+      duration: _kGutterHoverDuration,
+      curve: Curves.easeOutCubic,
       opacity: showButtons ? 1 : 0,
       child: IgnorePointer(
         ignoring: !showButtons,
@@ -1072,7 +1078,9 @@ class _GutterChevronState extends State<_GutterChevron>
         message: widget.tooltip,
         child: GestureDetector(
           onTap: widget.onTap,
-          child: Container(
+          child: AnimatedContainer(
+            duration: _kGutterHoverDuration,
+            curve: Curves.easeOutCubic,
             width: 16,
             height: 16,
             decoration: BoxDecoration(
@@ -1137,11 +1145,7 @@ class _CollapsedRailState extends State<_CollapsedRail>
               final eased = value.clamp(0.0, 1.0);
               return Opacity(
                 opacity: eased,
-                child: Transform.scale(
-                  scale: 0.86 + (0.14 * eased),
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
+                child: MotionScale(scale: 0.86 + (0.14 * eased), child: child),
               );
             },
             child: _CollapsedPaneButton(

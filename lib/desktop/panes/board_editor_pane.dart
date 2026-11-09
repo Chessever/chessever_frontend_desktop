@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/board_editor_pgn_import.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
@@ -20,6 +21,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/opening_explorer_seed.dart';
 import 'package:chessever/desktop/widgets/board_editor_import_chooser_dialog.dart';
 import 'package:chessever/desktop/widgets/bucketed_layout_builder.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
@@ -30,6 +32,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/pressable_scale.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
+import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/screens/board_editor/board_editor_state.dart';
@@ -1342,6 +1345,7 @@ class _CastlingSymbolButton extends StatelessWidget {
             onTap: () => onChanged(!value),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
               height: 30,
               alignment: Alignment.center,
               decoration: BoxDecoration(
@@ -1360,14 +1364,23 @@ class _CastlingSymbolButton extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: value ? kPrimaryColor : kWhiteColor70,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w900,
-                      height: 1,
+                  // Label fades on the fill's clock instead of snapping.
+                  TweenAnimationBuilder<Color?>(
+                    tween: ColorTween(
+                      end: value ? kPrimaryColor : kWhiteColor70,
                     ),
+                    duration: const Duration(milliseconds: 120),
+                    curve: Curves.easeOutCubic,
+                    builder:
+                        (context, color, _) => Text(
+                          label,
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                            height: 1,
+                          ),
+                        ),
                   ),
                 ],
               ),
@@ -2071,32 +2084,50 @@ class _CastlingSwitch extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          side,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: value ? kWhiteColor : kWhiteColor70,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                            height: 1,
+                        // Both lines fade on the card's 120 ms clock
+                        // instead of snapping while the fill eases.
+                        TweenAnimationBuilder<Color?>(
+                          tween: ColorTween(
+                            end: value ? kWhiteColor : kWhiteColor70,
                           ),
+                          duration: const Duration(milliseconds: 120),
+                          curve: Curves.easeOutCubic,
+                          builder:
+                              (context, color, _) => Text(
+                                side,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: color,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1,
+                                ),
+                              ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          flank,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color:
+                        TweenAnimationBuilder<Color?>(
+                          tween: ColorTween(
+                            end:
                                 value
                                     ? kWhiteColor.withValues(alpha: 0.78)
                                     : kLightGreyColor,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            height: 1,
-                            letterSpacing: 0.2,
                           ),
+                          duration: const Duration(milliseconds: 120),
+                          curve: Curves.easeOutCubic,
+                          builder:
+                              (context, color, _) => Text(
+                                flank,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: color,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
                         ),
                       ],
                     ),
@@ -2335,19 +2366,25 @@ class _EditorActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final button = FButton(
-      style: _editorButtonStyle(tone: tone, selected: selected),
-      onPress: onPress,
-      mainAxisSize: fillWidth ? MainAxisSize.max : MainAxisSize.min,
-      prefix: Icon(icon),
-      child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-    );
-
     return PressableScale(
       enabled: onPress != null,
       pressedScale: 0.96,
       hoveredScale: tone == _EditorButtonTone.primary ? 1.014 : 1.01,
-      child: button,
+      child: _EditorHoverSpring(
+        builder:
+            (context, hover, onHoverChange) => FButton(
+              style: _editorButtonStyle(
+                tone: tone,
+                selected: selected,
+                hover: hover,
+              ),
+              onPress: onPress,
+              onHoverChange: onHoverChange,
+              mainAxisSize: fillWidth ? MainAxisSize.max : MainAxisSize.min,
+              prefix: Icon(icon),
+              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+      ),
     );
   }
 }
@@ -2375,14 +2412,19 @@ class _EditorIconButton extends StatelessWidget {
         enabled: onPress != null,
         pressedScale: 0.96,
         hoveredScale: 1.018,
-        child: FButton.icon(
-          style: _editorIconButtonStyle(
-            tone: tone,
-            selected: false,
-            dense: dense,
-          ),
-          onPress: onPress,
-          child: Icon(icon),
+        child: _EditorHoverSpring(
+          builder:
+              (context, hover, onHoverChange) => FButton.icon(
+                style: _editorIconButtonStyle(
+                  tone: tone,
+                  selected: false,
+                  dense: dense,
+                  hover: hover,
+                ),
+                onPress: onPress,
+                onHoverChange: onHoverChange,
+                child: Icon(icon),
+              ),
         ),
       ),
     );
@@ -2392,6 +2434,7 @@ class _EditorIconButton extends StatelessWidget {
 FBaseButtonStyle Function(FButtonStyle style) _editorButtonStyle({
   required _EditorButtonTone tone,
   required bool selected,
+  required double hover,
 }) {
   final base = switch (tone) {
     _EditorButtonTone.primary => FButtonStyle.primary,
@@ -2402,13 +2445,25 @@ FBaseButtonStyle Function(FButtonStyle style) _editorButtonStyle({
 
   return base(
     (style) => style.copyWith(
-      decoration: _editorButtonDecoration(tone: tone, selected: selected),
+      decoration: _hoverBlendDecoration(
+        _editorButtonDecoration(tone: tone, selected: selected),
+        hover,
+      ),
+      tappableStyle: _noTappableBounce,
       contentStyle:
           (content) => content.copyWith(
             padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
             spacing: 7,
-            textStyle: _editorButtonTextStyle(tone: tone, selected: selected),
-            iconStyle: _editorButtonIconStyle(tone: tone, selected: selected),
+            textStyle: _hoverBlend(
+              _editorButtonTextStyle(tone: tone, selected: selected),
+              hover,
+              (a, b, t) => TextStyle.lerp(a, b, t)!,
+            ),
+            iconStyle: _hoverBlend(
+              _editorButtonIconStyle(tone: tone, selected: selected),
+              hover,
+              IconThemeData.lerp,
+            ),
           ),
     ),
   );
@@ -2418,6 +2473,7 @@ FBaseButtonStyle Function(FButtonStyle style) _editorIconButtonStyle({
   required _EditorButtonTone tone,
   required bool selected,
   required bool dense,
+  required double hover,
 }) {
   final base = switch (tone) {
     _EditorButtonTone.primary => FButtonStyle.primary,
@@ -2428,11 +2484,19 @@ FBaseButtonStyle Function(FButtonStyle style) _editorIconButtonStyle({
 
   return base(
     (style) => style.copyWith(
-      decoration: _editorButtonDecoration(tone: tone, selected: selected),
+      decoration: _hoverBlendDecoration(
+        _editorButtonDecoration(tone: tone, selected: selected),
+        hover,
+      ),
+      tappableStyle: _noTappableBounce,
       iconContentStyle:
           (content) => content.copyWith(
             padding: EdgeInsets.all(dense ? 7 : 9),
-            iconStyle: _editorButtonIconStyle(tone: tone, selected: selected),
+            iconStyle: _hoverBlend(
+              _editorButtonIconStyle(tone: tone, selected: selected),
+              hover,
+              IconThemeData.lerp,
+            ),
           ),
     ),
   );
@@ -2554,10 +2618,12 @@ FWidgetStateMap<TextStyle> _editorButtonTextStyle({
       height: 1,
       letterSpacing: 0,
     ),
+    // Same weight as rest: a hover-only bolder label would widen the button
+    // and shove its neighbours by a pixel or two on every hover.
     WidgetState.hovered | WidgetState.pressed: TextStyle(
       color: primary ? kBackgroundColor : kWhiteColor,
       fontSize: 12,
-      fontWeight: FontWeight.w800,
+      fontWeight: selected || primary ? FontWeight.w800 : FontWeight.w700,
       height: 1,
       letterSpacing: 0,
     ),
@@ -2618,13 +2684,18 @@ FWidgetStateMap<IconThemeData> _editorButtonIconStyle({
 
 FBaseButtonStyle Function(FButtonStyle style) _pieceButtonStyle({
   required bool selected,
+  required double hover,
 }) {
   return FButtonStyle.ghost(
     (style) => style.copyWith(
-      decoration: _editorButtonDecoration(
-        tone: _EditorButtonTone.ghost,
-        selected: selected,
+      decoration: _hoverBlendDecoration(
+        _editorButtonDecoration(
+          tone: _EditorButtonTone.ghost,
+          selected: selected,
+        ),
+        hover,
       ),
+      tappableStyle: _noTappableBounce,
       contentStyle:
           (content) => content.copyWith(
             padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
@@ -2633,6 +2704,74 @@ FBaseButtonStyle Function(FButtonStyle style) _pieceButtonStyle({
     ),
   );
 }
+
+/// PressableScale's filtered spring is the editor buttons' only press motion:
+/// forui's own unfiltered 0.97 tap bounce would stack on it and re-shape the
+/// label glyphs every frame.
+FTappableStyle _noTappableBounce(FTappableStyle tappable) =>
+    tappable.copyWith(motion: (_) => FTappableMotion.none);
+
+/// Tracks pointer hover for a forui button (via its `onHoverChange`) and
+/// feeds a 0..1 [DesktopMotion.hover] spring to [builder], so the button's
+/// fill, edge, shadow and label colour ease in step with the surrounding
+/// [PressableScale] instead of forui swapping them in one frame.
+class _EditorHoverSpring extends StatefulWidget {
+  const _EditorHoverSpring({required this.builder});
+
+  final Widget Function(
+    BuildContext context,
+    double hover,
+    ValueChanged<bool> onHoverChange,
+  )
+  builder;
+
+  @override
+  State<_EditorHoverSpring> createState() => _EditorHoverSpringState();
+}
+
+class _EditorHoverSpringState extends State<_EditorHoverSpring>
+    with DeferredPointerStateMixin<_EditorHoverSpring> {
+  bool _hovered = false;
+
+  void _setHovered(bool hovered) {
+    if (_hovered == hovered) return;
+    setStateAfterPointerEvent(() => _hovered = hovered);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleMotionBuilder(
+      value: _hovered ? 1.0 : 0.0,
+      motion: DesktopMotion.hover,
+      builder:
+          (context, hover, _) =>
+              widget.builder(context, hover.clamp(0.0, 1.0), _setHovered),
+    );
+  }
+}
+
+/// Re-keys an editor state map so the resting/hovered pair is blended by
+/// [hover] (the [_EditorHoverSpring] value) instead of switched by forui.
+/// Disabled and pressed keep their own entries; a keyboard press with no
+/// pointer hover still shows the full hovered look.
+FWidgetStateMap<T> _hoverBlend<T>(
+  FWidgetStateMap<T> map,
+  double hover,
+  T? Function(T? a, T? b, double t) lerp,
+) {
+  final rest = map.resolve(const {});
+  final hovered = map.resolve(const {WidgetState.hovered});
+  return FWidgetStateMap<T>({
+    WidgetState.disabled: map.resolve(const {WidgetState.disabled}),
+    WidgetState.pressed: map.resolve(const {WidgetState.pressed}),
+    WidgetState.any: lerp(rest, hovered, hover) ?? rest,
+  });
+}
+
+FWidgetStateMap<BoxDecoration> _hoverBlendDecoration(
+  FWidgetStateMap<BoxDecoration> map,
+  double hover,
+) => _hoverBlend(map, hover, (a, b, t) => BoxDecoration.lerp(a, b, t));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Piece Palette
@@ -2806,22 +2945,26 @@ class _RailPalettePiece extends StatelessWidget {
       child: PressableScale(
         pressedScale: 0.94,
         hoveredScale: 1.03,
-        child: FButton(
-          style: _pieceButtonStyle(selected: isSelected),
-          onPress: onTap,
-          mainAxisSize: MainAxisSize.min,
-          // A light square behind every piece, as on the board: black
-          // pieces drawn straight on the dark tile were near invisible.
-          child: Container(
-            width: extent,
-            height: extent,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: kBoardLightGrey,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: pieceWidget,
-          ),
+        child: _EditorHoverSpring(
+          builder:
+              (context, hover, onHoverChange) => FButton(
+                style: _pieceButtonStyle(selected: isSelected, hover: hover),
+                onPress: onTap,
+                onHoverChange: onHoverChange,
+                mainAxisSize: MainAxisSize.min,
+                // A light square behind every piece, as on the board: black
+                // pieces drawn straight on the dark tile were near invisible.
+                child: Container(
+                  width: extent,
+                  height: extent,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: kBoardLightGrey,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: pieceWidget,
+                ),
+              ),
         ),
       ),
     );
@@ -2841,14 +2984,19 @@ class _PaletteDeleteButton extends StatelessWidget {
       child: PressableScale(
         pressedScale: 0.94,
         hoveredScale: 1.03,
-        child: FButton.icon(
-          style: _editorIconButtonStyle(
-            tone: _EditorButtonTone.danger,
-            selected: selected,
-            dense: true,
-          ),
-          onPress: onPress,
-          child: const Icon(Icons.close_rounded, size: 26),
+        child: _EditorHoverSpring(
+          builder:
+              (context, hover, onHoverChange) => FButton.icon(
+                style: _editorIconButtonStyle(
+                  tone: _EditorButtonTone.danger,
+                  selected: selected,
+                  dense: true,
+                  hover: hover,
+                ),
+                onPress: onPress,
+                onHoverChange: onHoverChange,
+                child: const Icon(Icons.close_rounded, size: 26),
+              ),
         ),
       ),
     );
@@ -2934,11 +3082,15 @@ class _PalettePiece extends StatelessWidget {
       child: PressableScale(
         pressedScale: 0.96,
         hoveredScale: 1.018,
-        child: FButton(
-          style: _pieceButtonStyle(selected: isSelected),
-          onPress: onTap,
-          mainAxisSize: MainAxisSize.max,
-          child: SizedBox(height: 38, child: Center(child: pieceWidget)),
+        child: _EditorHoverSpring(
+          builder:
+              (context, hover, onHoverChange) => FButton(
+                style: _pieceButtonStyle(selected: isSelected, hover: hover),
+                onPress: onTap,
+                onHoverChange: onHoverChange,
+                mainAxisSize: MainAxisSize.max,
+                child: SizedBox(height: 38, child: Center(child: pieceWidget)),
+              ),
         ),
       ),
     );

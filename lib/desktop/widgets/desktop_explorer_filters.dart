@@ -320,19 +320,41 @@ class _ChipState extends State<_Chip> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 90),
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: bg,
               borderRadius: BorderRadius.circular(6),
               border: Border.all(color: border),
             ),
-            child: Text(
-              widget.label,
-              style: TextStyle(
-                color: selected ? kWhiteColor : kWhiteColor70,
-                fontSize: 10.5,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            // The chip always reserves the bold (selected) label width, so
+            // toggling it never widens the chip and reflows the Wrap. The
+            // label colour eases with the fill instead of snapping.
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minWidth: _boldLabelWidth(context, widget.label),
+              ),
+              child: Center(
+                widthFactor: 1,
+                heightFactor: 1,
+                child: TweenAnimationBuilder<Color?>(
+                  duration: const Duration(milliseconds: 140),
+                  curve: Curves.easeOutCubic,
+                  tween: ColorTween(
+                    end: selected ? kWhiteColor : kWhiteColor70,
+                  ),
+                  builder:
+                      (context, color, _) => Text(
+                        widget.label,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 10.5,
+                          fontWeight:
+                              selected ? FontWeight.w700 : FontWeight.w500,
+                        ),
+                      ),
+                ),
               ),
             ),
           ),
@@ -921,7 +943,9 @@ class _PlayerSearchHitState extends State<_PlayerSearchHit> {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
-          child: Container(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOutCubic,
             color: _hovered ? kBlack2Color : Colors.transparent,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             child: Row(
@@ -961,4 +985,23 @@ class _PlayerSearchHitState extends State<_PlayerSearchHit> {
       ),
     );
   }
+}
+
+/// Width of [label] at the bold (selected) weight. Chips reserve it so that
+/// toggling selection never widens the chip and reflows its neighbours.
+double _boldLabelWidth(BuildContext context, String label) {
+  final painter = TextPainter(
+    text: TextSpan(
+      text: label,
+      style: DefaultTextStyle.of(context).style.merge(
+        const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700),
+      ),
+    ),
+    maxLines: 1,
+    textDirection: Directionality.of(context),
+    textScaler: MediaQuery.textScalerOf(context),
+  )..layout();
+  final width = painter.width.ceilToDouble();
+  painter.dispose();
+  return width;
 }

@@ -900,7 +900,10 @@ class _EventRowState extends State<_EventRow> {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onOpen,
-          child: Container(
+          // Eases like the event rail's standings rows instead of snapping.
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
             constraints: const BoxConstraints(minHeight: 44),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(

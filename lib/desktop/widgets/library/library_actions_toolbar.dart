@@ -315,32 +315,33 @@ class _IconActionState extends State<_IconAction>
                           ]
                           : null,
                 ),
-                child:
-                    widget.label == null
-                        ? Icon(
-                          widget.icon,
-                          size: widget.iconSize,
-                          color: iconColor,
-                        )
+                // Icon and label colour fade on the fill's exact clock
+                // (120 ms easeOutCubic) instead of snapping ahead of it.
+                child: TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(end: iconColor),
+                  duration: const Duration(milliseconds: 120),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, animatedColor, _) {
+                    final fg = animatedColor ?? iconColor;
+                    return widget.label == null
+                        ? Icon(widget.icon, size: widget.iconSize, color: fg)
                         : Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
-                              widget.icon,
-                              size: widget.iconSize,
-                              color: iconColor,
-                            ),
+                            Icon(widget.icon, size: widget.iconSize, color: fg),
                             const SizedBox(width: 6),
                             Text(
                               widget.label!,
                               style: TextStyle(
-                                color: iconColor,
+                                color: fg,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
-                        ),
+                        );
+                  },
+                ),
               ),
             ),
           ),

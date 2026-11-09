@@ -159,22 +159,35 @@ class _ImageDropZoneState extends State<ImageDropZone> {
                     ? HitTestBehavior.opaque
                     : HitTestBehavior.deferToChild,
             onTap: enabled && widget.tapToChoose ? widget.onChoose : null,
+            // The hover lift eases on the same duration and curve as the
+            // drag hold, instead of the dashes and fill snapping brighter.
             child: TweenAnimationBuilder<double>(
-              // 0 at rest, 1 while a file is held over the slot.
-              tween: Tween(end: phase == ImageDropPhase.dragging ? 1 : 0),
-              duration:
-                  still ? Duration.zero : const Duration(milliseconds: 140),
-              curve: const Cubic(0.23, 1, 0.32, 1),
+              // 0 at rest, 1 while the pointer is over a tap-to-choose slot.
+              tween: Tween(
+                end:
+                    widget.tapToChoose && phase == ImageDropPhase.hovered
+                        ? 1
+                        : 0,
+              ),
+              duration: still ? Duration.zero : _kSlotFade,
+              curve: _kSlotCurve,
               builder:
-                  (context, held, child) => CustomPaint(
-                    painter: _SlotPainter(
-                      held: held,
-                      hovered:
-                          widget.tapToChoose && phase == ImageDropPhase.hovered,
-                      enabled: enabled,
-                      resting: widget.restingEdge,
-                      outset: widget.edgeOutset,
-                    ),
+                  (context, lit, child) => TweenAnimationBuilder<double>(
+                    // 0 at rest, 1 while a file is held over the slot.
+                    tween: Tween(end: phase == ImageDropPhase.dragging ? 1 : 0),
+                    duration: still ? Duration.zero : _kSlotFade,
+                    curve: _kSlotCurve,
+                    builder:
+                        (context, held, child) => CustomPaint(
+                          painter: _SlotPainter(
+                            held: held,
+                            lit: lit,
+                            enabled: enabled,
+                            resting: widget.restingEdge,
+                            outset: widget.edgeOutset,
+                          ),
+                          child: child,
+                        ),
                     child: child,
                   ),
               child: Padding(
@@ -189,19 +202,24 @@ class _ImageDropZoneState extends State<ImageDropZone> {
   }
 }
 
+const Duration _kSlotFade = Duration(milliseconds: 140);
+const Curve _kSlotCurve = Cubic(0.23, 1, 0.32, 1);
+
 /// The slot's surface: a faint tonal fill inside a dashed edge with round
 /// caps, which becomes the solid accent edge as a file is held over it.
 class _SlotPainter extends CustomPainter {
   const _SlotPainter({
     required this.held,
-    required this.hovered,
+    required this.lit,
     required this.enabled,
     required this.resting,
     required this.outset,
   });
 
   final double held;
-  final bool hovered;
+
+  /// Hover lift, 0 at rest to 1 under the pointer.
+  final double lit;
   final bool enabled;
   final bool resting;
   final double outset;
@@ -222,7 +240,7 @@ class _SlotPainter extends CustomPainter {
     if (!resting && held == 0) return;
     final rest =
         resting
-            ? kWhiteColor.withValues(alpha: hovered ? 0.06 : 0.035)
+            ? kWhiteColor.withValues(alpha: 0.035 + 0.025 * lit)
             : kWhiteColor.withValues(alpha: 0);
     canvas.drawRRect(
       shape,
@@ -238,7 +256,7 @@ class _SlotPainter extends CustomPainter {
             ..strokeWidth = 1.5
             ..strokeCap = StrokeCap.round
             ..color = kWhiteColor.withValues(
-              alpha: (enabled ? (hovered ? 0.30 : 0.18) : 0.10) * (1 - held),
+              alpha: (enabled ? 0.18 + 0.12 * lit : 0.10) * (1 - held),
             );
       for (final PathMetric metric in edge.computeMetrics()) {
         // Whole dashes only, so the pattern closes on itself with no stub.
@@ -265,7 +283,7 @@ class _SlotPainter extends CustomPainter {
   @override
   bool shouldRepaint(_SlotPainter old) =>
       old.held != held ||
-      old.hovered != hovered ||
+      old.lit != lit ||
       old.enabled != enabled ||
       old.resting != resting ||
       old.outset != outset;

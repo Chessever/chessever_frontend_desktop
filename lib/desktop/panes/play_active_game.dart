@@ -45,6 +45,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 
 /// Board-size preference for the Play pane, stored separately from the Board
 /// pane's key: the size that feels right for analysing is not necessarily the
@@ -644,10 +645,7 @@ computePlayBoardMetrics({
       maxBoardSize <= 0
           ? 0.0
           : (boardSizePreference ?? defaultSize)
-              .clamp(
-                minBoardSize,
-                math.min(maxBoardSize, kDesktopBoardMaxSize),
-              )
+              .clamp(minBoardSize, math.min(maxBoardSize, kDesktopBoardMaxSize))
               .toDouble();
   return (
     boardSize: boardSize,
@@ -993,15 +991,13 @@ class _PostGameBadgeState extends State<_PostGameBadge> {
       value: _mounted,
       motion: DesktopMotion.arrival,
       builder: (context, t, child) {
-        final scale = 0.6 + (0.4 * t);
-        return Opacity(
-          opacity: t.clamp(0.0, 1.0),
-          child: Transform.scale(
-            scale: scale,
-            alignment: Alignment.center,
-            filterQuality: FilterQuality.medium,
-            child: child,
-          ),
+        // Scale-only landing: the chip is readable from the first frame
+        // even if the spring never ticks (backgrounded tab, throttled
+        // ticker), instead of sitting at opacity 0 until it settles.
+        return MotionScale(
+          scale: 0.6 + (0.4 * t),
+          alignment: Alignment.center,
+          child: child,
         );
       },
       child: Container(
@@ -1059,15 +1055,13 @@ class _EloDeltaPillState extends State<_EloDeltaPill> {
       value: _mounted,
       motion: DesktopMotion.arrival,
       builder: (context, t, child) {
-        final scale = 0.7 + (0.3 * t);
-        return Opacity(
-          opacity: t.clamp(0.0, 1.0),
-          child: Transform.scale(
-            scale: scale,
-            alignment: Alignment.centerLeft,
-            filterQuality: FilterQuality.medium,
-            child: child,
-          ),
+        // Scale-only landing: the chip is readable from the first frame
+        // even if the spring never ticks (backgrounded tab, throttled
+        // ticker), instead of sitting at opacity 0 until it settles.
+        return MotionScale(
+          scale: 0.7 + (0.3 * t),
+          alignment: Alignment.centerLeft,
+          child: child,
         );
       },
       child: Container(
@@ -1221,75 +1215,75 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
               size: size,
               orientation: orientation,
               positionKey: positionKey,
-            child: DesktopChessBoard(
-              size: size,
-              fen: boardFen,
-              orientation: orientation,
-              playerSide: playerSide,
-              sideToMove: review.position.turn,
-              validMoves: validMoves,
-              lastMove: review.lastMove,
-              premove: isLiveTip ? _lastQueuedPremove(state.premoves) : null,
-              onSetPremove:
-                  isLiveTip
-                      ? (move) {
-                        if (move == null) {
-                          notifier.clearPremoves();
-                          return;
+              child: DesktopChessBoard(
+                size: size,
+                fen: boardFen,
+                orientation: orientation,
+                playerSide: playerSide,
+                sideToMove: review.position.turn,
+                validMoves: validMoves,
+                lastMove: review.lastMove,
+                premove: isLiveTip ? _lastQueuedPremove(state.premoves) : null,
+                onSetPremove:
+                    isLiveTip
+                        ? (move) {
+                          if (move == null) {
+                            notifier.clearPremoves();
+                            return;
+                          }
+                          if (move is NormalMove) {
+                            notifier.queuePremove(move.uci);
+                          }
                         }
-                        if (move is NormalMove) {
-                          notifier.queuePremove(move.uci);
-                        }
-                      }
-                      : null,
-              promotionMove: isLiveTip ? _promotionPending : null,
-              onPromotionSelection: (role) {
-                final pending = _promotionPending;
-                if (pending == null) return;
-                if (role == null) {
-                  setState(() => _promotionPending = null);
-                  return;
-                }
-                final promoted = pending.withPromotion(role);
-                setState(() => _promotionPending = null);
-                notifier.playHumanMove(promoted.uci);
-              },
-              shapes: mergedShapes,
-              squareHighlights:
-                  isLiveTip
-                      ? _premoveHeatMap(state.premoves)
-                      : const IMapConst<Square, cg.SquareHighlight>({}),
-              isCheck: review.position.isCheck,
-              onMove: (move, {viaDragAndDrop}) {
-                if (!isLiveTip) {
-                  widget.onReviewPlyChanged(state.history.length);
-                  return;
-                }
-                if (move is! NormalMove) return;
-                final isHumansTurn = state.isHumanToMove;
-                // If it's the human's turn the engine reply path applies the move
-                // directly. Otherwise stack as a premove so chess.com-style
-                // pre-input keeps working.
-                if (isHumansTurn) {
-                  // Detect promotion: pawn reaching the last rank without a role.
-                  final piece = state.position.board.pieceAt(move.from);
-                  if (piece != null &&
-                      piece.role == Role.pawn &&
-                      move.promotion == null &&
-                      (move.to.rank == Rank.eighth ||
-                          move.to.rank == Rank.first)) {
-                    setState(() => _promotionPending = move);
+                        : null,
+                promotionMove: isLiveTip ? _promotionPending : null,
+                onPromotionSelection: (role) {
+                  final pending = _promotionPending;
+                  if (pending == null) return;
+                  if (role == null) {
+                    setState(() => _promotionPending = null);
                     return;
                   }
-                  notifier.playHumanMove(move.uci);
-                } else {
-                  notifier.queuePremove(move.uci);
-                }
-              },
+                  final promoted = pending.withPromotion(role);
+                  setState(() => _promotionPending = null);
+                  notifier.playHumanMove(promoted.uci);
+                },
+                shapes: mergedShapes,
+                squareHighlights:
+                    isLiveTip
+                        ? _premoveHeatMap(state.premoves)
+                        : const IMapConst<Square, cg.SquareHighlight>({}),
+                isCheck: review.position.isCheck,
+                onMove: (move, {viaDragAndDrop}) {
+                  if (!isLiveTip) {
+                    widget.onReviewPlyChanged(state.history.length);
+                    return;
+                  }
+                  if (move is! NormalMove) return;
+                  final isHumansTurn = state.isHumanToMove;
+                  // If it's the human's turn the engine reply path applies the move
+                  // directly. Otherwise stack as a premove so chess.com-style
+                  // pre-input keeps working.
+                  if (isHumansTurn) {
+                    // Detect promotion: pawn reaching the last rank without a role.
+                    final piece = state.position.board.pieceAt(move.from);
+                    if (piece != null &&
+                        piece.role == Role.pawn &&
+                        move.promotion == null &&
+                        (move.to.rank == Rank.eighth ||
+                            move.to.rank == Rank.first)) {
+                      setState(() => _promotionPending = move);
+                      return;
+                    }
+                    notifier.playHumanMove(move.uci);
+                  } else {
+                    notifier.queuePremove(move.uci);
+                  }
+                },
+              ),
             ),
           ),
-        ),
-      );
+        );
       },
     );
   }
@@ -1466,10 +1460,7 @@ class _GameHeader extends StatelessWidget {
               const SizedBox(
                 width: 10,
                 height: 10,
-                child: DesktopSpinner(
-                  strokeWidth: 1.5,
-                  color: kPrimaryColor,
-                ),
+                child: DesktopSpinner(strokeWidth: 1.5, color: kPrimaryColor),
               ),
             ],
           ],
@@ -1521,10 +1512,8 @@ final Expando<ChessGame> _playNotationGameCache = Expando<ChessGame>(
 final Expando<_PlayReviewSnapshotCacheEntry> _playReviewSnapshotCache =
     Expando<_PlayReviewSnapshotCacheEntry>('playReviewSnapshot');
 
-typedef _PlayReviewSnapshotCacheEntry = ({
-  int? reviewPly,
-  _PlayReviewSnapshot snapshot,
-});
+typedef _PlayReviewSnapshotCacheEntry =
+    ({int? reviewPly, _PlayReviewSnapshot snapshot});
 
 ChessGame _playNotationGame(PlaySessionState state) =>
     _playNotationGameCache[state] ??= _buildPlayNotationGame(state);
@@ -1554,9 +1543,7 @@ ChessGame _buildPlayNotationGame(PlaySessionState state) {
         uci: move.uci,
         turn: position.turn == Side.black ? ChessColor.black : ChessColor.white,
         clockTime:
-            clockMillis == null
-                ? null
-                : formatPgnClockFromMillis(clockMillis),
+            clockMillis == null ? null : formatPgnClockFromMillis(clockMillis),
       ),
     );
     position = next;

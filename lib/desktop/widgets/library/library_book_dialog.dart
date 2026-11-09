@@ -16,6 +16,7 @@ import 'package:chessever/desktop/services/library_book_publication.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart'
     show chessFileDropHolds;
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/library/image_drop_zone.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/library/cover_crop_dialog.dart';
@@ -57,10 +58,14 @@ Future<void> _showLibraryBookDialog(
     );
     final fade = FadeTransition(opacity: curved, child: child);
     if (MediaQuery.disableAnimationsOf(context)) return fade;
-    return ScaleTransition(
-      scale: Tween<double>(begin: 0.97, end: 1).animate(curved),
-      filterQuality: FilterQuality.medium,
+    // MotionScale drops the image-filter layer once the dialog lands, so
+    // the open dialog is not rasterized for its whole lifetime.
+    return AnimatedBuilder(
+      animation: curved,
       child: fade,
+      builder:
+          (context, child) =>
+              MotionScale(scale: 0.97 + 0.03 * curved.value, child: child),
     );
   },
   pageBuilder:
@@ -3064,22 +3069,35 @@ class _PhotoButtonState extends State<_PhotoButton> {
               filterQuality: FilterQuality.medium,
               duration: const Duration(milliseconds: 120),
               curve: _easeOut,
-              child: DecoratedBox(
-                // The ring is the photo's own edge, lit while it can be pressed.
-                decoration: ShapeDecoration(
-                  shape: CircleBorder(
-                    side: BorderSide(
-                      width: 1.5,
-                      strokeAlign: BorderSide.strokeAlignOutside,
-                      color:
-                          _focused
-                              ? kPrimaryColor
-                              : kWhiteColor.withValues(
-                                alpha: _hovered && enabled ? 0.45 : 0.14,
-                              ),
-                    ),
-                  ),
+              // The ring is the photo's own edge, lit while it can be
+              // pressed. It eases on the press scale's own duration and curve
+              // so the light and the dip land together rather than the ring
+              // snapping beside a moving photo.
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(
+                  end:
+                      _focused
+                          ? kPrimaryColor
+                          : kWhiteColor.withValues(
+                            alpha: _hovered && enabled ? 0.45 : 0.14,
+                          ),
                 ),
+                duration:
+                    still ? Duration.zero : const Duration(milliseconds: 120),
+                curve: _easeOut,
+                builder:
+                    (context, ring, child) => DecoratedBox(
+                      decoration: ShapeDecoration(
+                        shape: CircleBorder(
+                          side: BorderSide(
+                            width: 1.5,
+                            strokeAlign: BorderSide.strokeAlignOutside,
+                            color: ring!,
+                          ),
+                        ),
+                      ),
+                      child: child,
+                    ),
                 child: ClipOval(
                   child: SizedBox.square(
                     dimension: _coAuthorPhoto,

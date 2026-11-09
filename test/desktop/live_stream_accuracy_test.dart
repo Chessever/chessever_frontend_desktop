@@ -174,6 +174,61 @@ void main() {
         '*',
       );
     });
+
+    // Gamebase kept `result: W` for Robson-So (US Ch 2026 R7) after a
+    // re-import corrected its PGN to 0-1, and the Board showed 1-0.
+    test('a decided PGN result beats a stale finished source status', () {
+      expect(
+        resolveInitialBoardPgnLiveStatus(
+          acceptedLiveStatus: null,
+          isDatabaseSnapshot: false,
+          gameId: 'gamebase-game',
+          sourceGameStatus: GameStatus.whiteWins,
+          parsedResult: '0-1',
+        ),
+        '0-1',
+      );
+      expect(
+        resolveSourceStatusAgainstPgnResult(
+          sourceGameStatus: GameStatus.whiteWins,
+          parsedResult: '0-1',
+        ),
+        GameStatus.blackWins,
+      );
+    });
+
+    test('a finished source status still fills an undecided PGN', () {
+      expect(
+        resolveInitialBoardPgnLiveStatus(
+          acceptedLiveStatus: null,
+          isDatabaseSnapshot: false,
+          gameId: 'finished-game',
+          sourceGameStatus: GameStatus.blackWins,
+          parsedResult: '*',
+        ),
+        '0-1',
+      );
+    });
+
+    test('an ongoing source status keeps protecting a decided PGN', () {
+      expect(
+        resolveSourceStatusAgainstPgnResult(
+          sourceGameStatus: GameStatus.ongoing,
+          parsedResult: '1-0',
+        ),
+        GameStatus.ongoing,
+      );
+      expect(
+        resolveInitialBoardPgnLiveStatus(
+          acceptedLiveStatus: '0-1',
+          isDatabaseSnapshot: false,
+          gameId: 'live-game',
+          sourceGameStatus: GameStatus.whiteWins,
+          parsedResult: '1-0',
+        ),
+        '0-1',
+      );
+    });
   });
 
   test('missing clocks cannot fabricate a terminal live-game result', () {

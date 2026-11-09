@@ -129,7 +129,7 @@ void main() {
       expect(tab, contains('LogicalKeyboardKey.enter'));
       expect(tab, contains('LogicalKeyboardKey.space'));
       expect(tab, contains('return KeyEventResult.ignored'));
-      expect(tab, contains('color: active ? kWhiteColor : kWhiteColor70'));
+      expect(tab, contains('end: active ? kWhiteColor : kWhiteColor70'));
       expect(tab, isNot(contains('bottom: 0')));
       expect(tab, isNot(contains('height: 2')));
       expect(tab, isNot(contains('TextDecoration.underline')));

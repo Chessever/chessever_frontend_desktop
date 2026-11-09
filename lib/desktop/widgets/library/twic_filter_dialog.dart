@@ -5,6 +5,7 @@ import 'package:forui/forui.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/screens/library/widgets/library_gamebase_filter_dialog.dart'
     show GamebaseFilter;
 import 'package:chessever/theme/app_theme.dart';
@@ -61,19 +62,8 @@ Future<GamebaseFilter?> showTwicFilterDialog({
     barrierColor: Colors.black.withValues(alpha: 0.55),
     transitionDuration: const Duration(milliseconds: 160),
     pageBuilder: (_, _, _) => _TwicFilterDialog(initial: currentFilter),
-    transitionBuilder: (_, anim, _, child) {
-      final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
-      return FadeTransition(
-        opacity: eased,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.02),
-            end: Offset.zero,
-          ).animate(eased),
-          child: child,
-        ),
-      );
-    },
+    transitionBuilder:
+        (_, anim, _, child) => _dialogEntrance(anim, child, rise: 0.02),
   );
 }
 
@@ -414,20 +404,29 @@ class _SegmentChipState extends State<_SegmentChip>
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           decoration: BoxDecoration(
             color: bg,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(color: border),
           ),
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              color: fg,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.1,
-            ),
+          // The label fades on the same clock as the fill and edge instead
+          // of snapping while they ease.
+          child: TweenAnimationBuilder<Color?>(
+            tween: ColorTween(end: fg),
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
+            builder:
+                (context, color, _) => Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.1,
+                  ),
+                ),
           ),
         ),
       ),
@@ -525,4 +524,35 @@ class _SectionLabel extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Dialog entrance: a fade plus a short rise of [rise] x the route height
+/// (the same distance the old `SlideTransition` covered). The rise goes
+/// through [MotionTranslate], so the slow sub-pixel tail of the ease glides
+/// instead of stepping the dialog's text a pixel at a time; once settled the
+/// dialog paints as crisp vectors with no filter layer.
+Widget _dialogEntrance(
+  Animation<double> anim,
+  Widget child, {
+  required double rise,
+}) {
+  final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+  return FadeTransition(
+    opacity: eased,
+    child: LayoutBuilder(
+      builder:
+          (context, constraints) => AnimatedBuilder(
+            animation: eased,
+            child: child,
+            builder:
+                (context, child) => MotionTranslate(
+                  offset: Offset(
+                    0,
+                    constraints.maxHeight * rise * (1 - eased.value),
+                  ),
+                  child: child,
+                ),
+          ),
+    ),
+  );
 }

@@ -15,6 +15,7 @@ import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/global_search_query.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
@@ -75,12 +76,23 @@ class CommandPalette extends HookConsumerWidget {
         );
         return FadeTransition(
           opacity: curve,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, -0.04),
-              end: Offset.zero,
-            ).animate(curve),
-            child: child,
+          // Rise through MotionTranslate rather than SlideTransition: the
+          // slow ease-out tail passes through sub-pixel offsets, and an
+          // unfiltered translate steps the glyphs there (flutter#149652).
+          child: LayoutBuilder(
+            builder:
+                (context, constraints) => AnimatedBuilder(
+                  animation: curve,
+                  child: child,
+                  builder:
+                      (context, child) => MotionTranslate(
+                        offset: Offset(
+                          0,
+                          -0.04 * constraints.maxHeight * (1 - curve.value),
+                        ),
+                        child: child,
+                      ),
+                ),
           ),
         );
       },
@@ -726,90 +738,91 @@ class _PlayerRow extends StatelessWidget {
         // One click opens, as in any command palette; arrow keys still
         // move the highlight first.
         onTap: onOpen,
-        child: SingleMotionBuilder(
-          value: selected ? 1.01 : 1.0,
-          motion: DesktopMotion.hover,
+        child: _SelectionMotion(
+          selected: selected,
           builder:
-              (context, scale, child) => Transform.scale(
-                scale: scale,
-                filterQuality: FilterQuality.medium,
-                child: child,
-              ),
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              children: [
-                _AvatarBadge(text: p.title ?? _initial(p.name)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
+              (context, t) => Container(
+                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: _selectionFill(t),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    _AvatarBadge(text: p.title ?? _initial(p.name)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (p.fed != null && p.fed!.isNotEmpty) ...[
-                            FederationFlag(
-                              federation: p.fed,
-                              width: 16,
-                              height: 11,
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
-                          Flexible(
-                            child: Text(
-                              p.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: selected ? kWhiteColor : kWhiteColor70,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (p.fed != null && p.fed!.isNotEmpty) ...[
+                                FederationFlag(
+                                  federation: p.fed,
+                                  width: 16,
+                                  height: 11,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                              Flexible(
+                                child: Text(
+                                  p.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Color.lerp(
+                                      kWhiteColor70,
+                                      kWhiteColor,
+                                      t,
+                                    ),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                               ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _playerSubtitle(p),
+                            style: const TextStyle(
+                              color: kLightGreyColor,
+                              fontSize: 11,
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _playerSubtitle(p),
-                        style: const TextStyle(
-                          color: kLightGreyColor,
-                          fontSize: 11,
+                    ),
+                    if (p.rating != null && p.rating! > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: kBlack3Color,
+                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(color: kDividerColor),
+                        ),
+                        child: Text(
+                          p.rating.toString(),
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 10,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
                         ),
                       ),
-                    ],
-                  ),
+                  ],
                 ),
-                if (p.rating != null && p.rating! > 0)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: kBlack3Color,
-                      borderRadius: BorderRadius.circular(3),
-                      border: Border.all(color: kDividerColor),
-                    ),
-                    child: Text(
-                      p.rating.toString(),
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 10,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+              ),
         ),
       ),
     );
@@ -855,76 +868,77 @@ class _TournamentRow extends StatelessWidget {
         // One click opens, as in any command palette; arrow keys still
         // move the highlight first.
         onTap: onOpen,
-        child: SingleMotionBuilder(
-          value: selected ? 1.01 : 1.0,
-          motion: DesktopMotion.hover,
+        child: _SelectionMotion(
+          selected: selected,
           builder:
-              (context, scale, child) => Transform.scale(
-                scale: scale,
-                filterQuality: FilterQuality.medium,
-                child: child,
-              ),
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              children: [
-                _StatusDot(category: t.tourEventCategory),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        t.title,
-                        style: TextStyle(
-                          color: selected ? kWhiteColor : kWhiteColor70,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _subtitle(t),
-                        style: const TextStyle(
-                          color: kLightGreyColor,
-                          fontSize: 11,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
+              (context, sel) => Container(
+                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
                 ),
-                if (t.maxAvgElo > 0)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: kBlack3Color,
-                      borderRadius: BorderRadius.circular(3),
-                      border: Border.all(color: kDividerColor),
-                    ),
-                    child: Text(
-                      'avg ${t.maxAvgElo}',
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 10,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                decoration: BoxDecoration(
+                  color: _selectionFill(sel),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    _StatusDot(category: t.tourEventCategory),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            t.title,
+                            style: TextStyle(
+                              color: Color.lerp(
+                                kWhiteColor70,
+                                kWhiteColor,
+                                sel,
+                              ),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _subtitle(t),
+                            style: const TextStyle(
+                              color: kLightGreyColor,
+                              fontSize: 11,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-              ],
-            ),
-          ),
+                    if (t.maxAvgElo > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: kBlack3Color,
+                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(color: kDividerColor),
+                        ),
+                        child: Text(
+                          'avg ${t.maxAvgElo}',
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 10,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
         ),
       ),
     );
@@ -1116,64 +1130,61 @@ class _OpeningRow extends StatelessWidget {
         // One click opens, as in any command palette; arrow keys still
         // move the highlight first.
         onTap: onOpen,
-        child: SingleMotionBuilder(
-          value: selected ? 1.01 : 1.0,
-          motion: DesktopMotion.hover,
+        child: _SelectionMotion(
+          selected: selected,
           builder:
-              (context, scale, child) => Transform.scale(
-                scale: scale,
-                filterQuality: FilterQuality.medium,
-                child: child,
+              (context, t) => Container(
+                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: _selectionFill(t),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      opening.codeLabel,
+                      style: TextStyle(
+                        color: Color.lerp(kWhiteColor70, kPrimaryColor, t),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            opening.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Color.lerp(kWhiteColor70, kWhiteColor, t),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            opening.subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: kLightGreyColor,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  opening.codeLabel,
-                  style: TextStyle(
-                    color: selected ? kPrimaryColor : kWhiteColor70,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        opening.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: selected ? kWhiteColor : kWhiteColor70,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      Text(
-                        opening.subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kLightGreyColor,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );
@@ -1201,81 +1212,112 @@ class _PaletteRow extends StatelessWidget {
         // One click opens, as in any command palette; arrow keys still
         // move the highlight first.
         onTap: onOpen,
-        child: SingleMotionBuilder(
-          value: selected ? 1.01 : 1.0,
-          motion: DesktopMotion.hover,
+        child: _SelectionMotion(
+          selected: selected,
           builder:
-              (context, scale, child) => Transform.scale(
-                scale: scale,
-                filterQuality: FilterQuality.medium,
-                child: child,
-              ),
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  entry.icon,
-                  size: 18,
-                  color: selected ? kPrimaryColor : kWhiteColor70,
+              (context, t) => Container(
+                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        entry.title,
-                        style: TextStyle(
-                          color: selected ? kWhiteColor : kWhiteColor70,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
+                decoration: BoxDecoration(
+                  color: _selectionFill(t),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      entry.icon,
+                      size: 18,
+                      color: Color.lerp(kWhiteColor70, kPrimaryColor, t),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            entry.title,
+                            style: TextStyle(
+                              color: Color.lerp(kWhiteColor70, kWhiteColor, t),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (entry.subtitle != null)
+                            Text(
+                              entry.subtitle!,
+                              style: const TextStyle(
+                                color: kLightGreyColor,
+                                fontSize: 11,
+                              ),
+                            ),
+                        ],
                       ),
-                      if (entry.subtitle != null)
-                        Text(
-                          entry.subtitle!,
+                    ),
+                    if (entry.shortcut != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: kBlack3Color,
+                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(color: kDividerColor),
+                        ),
+                        child: Text(
+                          entry.shortcut!,
                           style: const TextStyle(
-                            color: kLightGreyColor,
-                            fontSize: 11,
+                            color: kWhiteColor70,
+                            fontSize: 10,
+                            fontFeatures: [FontFeature.tabularFigures()],
                           ),
                         ),
-                    ],
-                  ),
-                ),
-                if (entry.shortcut != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: kBlack3Color,
-                      borderRadius: BorderRadius.circular(3),
-                      border: Border.all(color: kDividerColor),
-                    ),
-                    child: Text(
-                      entry.shortcut!,
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 10,
-                        fontFeatures: [FontFeature.tabularFigures()],
                       ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+                  ],
+                ),
+              ),
         ),
       ),
     );
   }
 }
+
+/// Highlight motion shared by every palette row: the 1% scale, the tinted
+/// fill and the label colours all follow ONE hover spring, so a row never
+/// snaps its colours while its scale is still easing. The scale is only
+/// rasterized (filterQuality) while it is off 1.0, so idle rows in a long
+/// result list carry no image-filter layer and the motion stays sub-pixel
+/// smooth (flutter#149652).
+class _SelectionMotion extends StatelessWidget {
+  const _SelectionMotion({required this.selected, required this.builder});
+
+  final bool selected;
+  final Widget Function(BuildContext context, double t) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleMotionBuilder(
+      value: selected ? 1.0 : 0.0,
+      motion: DesktopMotion.hover,
+      builder: (context, value, _) {
+        final t = value.clamp(0.0, 1.0);
+        final scale = 1 + 0.01 * value;
+        return Transform.scale(
+          scale: scale,
+          filterQuality:
+              (scale - 1).abs() < 0.0001 ? null : FilterQuality.medium,
+          child: builder(context, t),
+        );
+      },
+    );
+  }
+}
+
+Color _selectionFill(double t) =>
+    kPrimaryColor.withValues(alpha: 0.18 * t.clamp(0.0, 1.0));
 
 class _PaletteFooter extends StatelessWidget {
   const _PaletteFooter();

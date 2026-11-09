@@ -143,16 +143,21 @@ class TournamentsPane extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedTournamentId = useState<String?>(null);
     final loadingId = useState<String?>(null);
-    final selectedCategory = readOnlyPresentation
-        ? presentationData?.selectedCategory ?? ge.GroupEventCategory.forYou
-        : ref.watch(ge.selectedGroupCategoryProvider);
+    final selectedCategory =
+        readOnlyPresentation
+            ? presentationData?.selectedCategory ?? ge.GroupEventCategory.forYou
+            : ref.watch(ge.selectedGroupCategoryProvider);
     final access = ref.watch(
       desktopEventDiscoveryAccessProvider(selectedCategory),
     );
-    final forYouFilterState = readOnlyPresentation
-        ? defaultFilterPopupState : ref.watch(forYouAppliedFilterProvider);
-    final currentPastFilterState = readOnlyPresentation
-        ? defaultFilterPopupState : ref.watch(currentPastAppliedFilterProvider);
+    final forYouFilterState =
+        readOnlyPresentation
+            ? defaultFilterPopupState
+            : ref.watch(forYouAppliedFilterProvider);
+    final currentPastFilterState =
+        readOnlyPresentation
+            ? defaultFilterPopupState
+            : ref.watch(currentPastAppliedFilterProvider);
     final selectedFilterState =
         selectedCategory == ge.GroupEventCategory.forYou
             ? forYouFilterState
@@ -164,8 +169,10 @@ class TournamentsPane extends HookConsumerWidget {
     if (!readOnlyPresentation && access.isAllowed) {
       ref.watch(tournamentLiveEventPrefetchProvider);
     }
-    final globalSearchQuery = readOnlyPresentation
-        ? null : ref.watch(desktopGlobalSearchQueryProvider);
+    final globalSearchQuery =
+        readOnlyPresentation
+            ? null
+            : ref.watch(desktopGlobalSearchQueryProvider);
     // Stable per-tournament-id GlobalKeys so we can `Scrollable.ensureVisible`
     // the highlighted row when the user navigates with the arrow keys.
     final tileKeys = useRef(<String, GlobalKey>{});
@@ -406,9 +413,10 @@ class TournamentsPane extends HookConsumerWidget {
           // AtomicCountdownText uses the captured clock, not its periodic
           // app-wide provider. No live-game clock timer behind sign-in.
           dateTimeProvider.overrideWith(
-            (ref) => presentationData == null
-                ? const Stream<DateTime>.empty()
-                : Stream.value(presentationData!.capturedAt),
+            (ref) =>
+                presentationData == null
+                    ? const Stream<DateTime>.empty()
+                    : Stream.value(presentationData!.capturedAt),
           ),
         ],
         child: MediaQuery(
@@ -699,6 +707,10 @@ class _SectionHeading extends StatelessWidget {
   }
 }
 
+/// Hover/selection fade for tournament cards; matches [MotionCard]'s
+/// shadow so every part of a card's hover lands on the same frame.
+const Duration _kCardHoverFade = Duration(milliseconds: 140);
+
 class _PlayerSearchCard extends StatefulWidget {
   const _PlayerSearchCard({required this.player, required this.onTap});
   final SearchPlayer player;
@@ -727,7 +739,11 @@ class _PlayerSearchCardState extends State<_PlayerSearchCard> {
           onTap: widget.onTap,
           child: MotionCard(
             borderRadius: 8,
-            child: Container(
+            // Same duration/curve as MotionCard's shadow so fill, border
+            // and shadow arrive together instead of snapping beside a fade.
+            child: AnimatedContainer(
+              duration: _kCardHoverFade,
+              curve: Curves.easeOutCubic,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: _hovered ? kBlack3Color : kBlack2Color,
@@ -889,8 +905,8 @@ class _DesktopEventCardShellState extends State<_DesktopEventCardShell> {
                 Positioned.fill(
                   child: IgnorePointer(
                     child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      curve: Curves.easeOut,
+                      duration: _kCardHoverFade,
+                      curve: Curves.easeOutCubic,
                       decoration: BoxDecoration(
                         borderRadius: radius,
                         border: Border.all(
@@ -1128,10 +1144,13 @@ class _DesktopEventVisual extends ConsumerWidget {
         color: kBlack3Color,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final presentation = SignedOutEventsPresentationScope.maybeOf(context);
-            final fallbackCountry = presentation != null
-                ? presentation.data?.artwork[event.id]?.fallbackCountryCode
-                : _countryCodeFromLocation(ref, event.location);
+            final presentation = SignedOutEventsPresentationScope.maybeOf(
+              context,
+            );
+            final fallbackCountry =
+                presentation != null
+                    ? presentation.data?.artwork[event.id]?.fallbackCountryCode
+                    : _countryCodeFromLocation(ref, event.location);
             if (event.eventSource == EventSource.communityEvent) {
               return _EventFallbackVisual(
                 event: event,
@@ -1152,9 +1171,13 @@ class _DesktopEventVisual extends ConsumerWidget {
             // axis keeps the source aspect intact through decode.
             final cacheWidth =
                 (logicalWidth * dpr).round().clamp(96, 900).toInt();
-            final image = presentation != null
-                ? AsyncValue<EventImageData>.data(presentation.data?.artwork[event.id] ?? const EventImageData())
-                : ref.watch(eventArtworkProvider(event.id));
+            final image =
+                presentation != null
+                    ? AsyncValue<EventImageData>.data(
+                      presentation.data?.artwork[event.id] ??
+                          const EventImageData(),
+                    )
+                    : ref.watch(eventArtworkProvider(event.id));
 
             return image.when(
               data: (data) {
@@ -1166,10 +1189,14 @@ class _DesktopEventVisual extends ConsumerWidget {
                     memCacheWidth: cacheWidth,
                     // Frozen presentation must paint the decoded image fully;
                     // a muted fade ticker can strand it at zero opacity.
-                    fadeInDuration: presentation != null
-                        ? Duration.zero : const Duration(milliseconds: 180),
-                    fadeOutDuration: presentation != null
-                        ? Duration.zero : const Duration(milliseconds: 120),
+                    fadeInDuration:
+                        presentation != null
+                            ? Duration.zero
+                            : const Duration(milliseconds: 180),
+                    fadeOutDuration:
+                        presentation != null
+                            ? Duration.zero
+                            : const Duration(milliseconds: 120),
                     placeholder: (_, __) => const _EventImageSkeleton(),
                     errorWidget:
                         (_, __, ___) => _EventFallbackVisual(
@@ -1848,7 +1875,9 @@ class _TournamentEventGridKeyboardHostState
   @override
   void dispose() {
     _tickerMode?.removeListener(_handleTickerModeChanged);
-    if (widget.enabled) HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboard);
+    if (widget.enabled) {
+      HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboard);
+    }
     super.dispose();
   }
 
@@ -2125,19 +2154,17 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
               // (especially corners). Outer shell paints chrome; inner
               // ClipRRect keeps media/content rounded — same layering as
               // For You / desktop_game_card.dart.
-              child: Container(
+              // Fill, ring and glow ease with MotionCard's shadow. The ring
+              // is a foreground decoration over a constant 1 px inset, so
+              // the 2 px selected ring never shrinks the content box: no
+              // 1 px jump or re-layout of the media/title on selection.
+              child: AnimatedContainer(
+                duration: _kCardHoverFade,
+                curve: Curves.easeOutCubic,
+                padding: const EdgeInsets.all(1),
                 decoration: BoxDecoration(
                   color: highlight ? kBlack3Color : kBlack2Color,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color:
-                        widget.selected
-                            ? kPrimaryColor.withValues(alpha: 0.96)
-                            : (_hovered
-                                ? kWhiteColor.withValues(alpha: 0.12)
-                                : kDividerColor),
-                    width: widget.selected ? 2 : 1,
-                  ),
                   boxShadow:
                       widget.selected
                           ? [
@@ -2148,6 +2175,18 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                             ),
                           ]
                           : null,
+                ),
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color:
+                        widget.selected
+                            ? kPrimaryColor.withValues(alpha: 0.96)
+                            : (_hovered
+                                ? kWhiteColor.withValues(alpha: 0.12)
+                                : kDividerColor),
+                    width: widget.selected ? 2 : 1,
+                  ),
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(9),
@@ -2668,7 +2707,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     }
     _scrollIdleTimer?.cancel();
     _scroll.removeListener(_onScroll);
-    if (!widget.readOnlyPresentation) HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboardScroll);
+    if (!widget.readOnlyPresentation) {
+      HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboardScroll);
+    }
     _focusNode.dispose();
     _scroll.dispose();
     super.dispose();
@@ -2912,7 +2953,8 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   bool _handleGlobalKeyboardScroll(KeyEvent event) {
-    if (widget.readOnlyPresentation || !mounted ||
+    if (widget.readOnlyPresentation ||
+        !mounted ||
         !_focusNode.canRequestFocus ||
         !_keyboardScrollingActive ||
         _hasNavigationModifier()) {
@@ -3279,15 +3321,21 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
         _syncSelectionWithEvents(next.events);
       });
     }
-    final state = widget.readOnlyPresentation
-        ? widget.presentationData?.forYouState ?? const ForYouState(isLoading: true, hasMore: false)
-        : ref.watch(_desktopForYouEventsProvider);
-    final viewMode = widget.readOnlyPresentation
-        ? widget.presentationData?.viewMode ?? GamesListViewMode.chessBoardGrid
-        : ref.watch(gamesListViewModeProvider);
-    final streamingEnabled = !widget.readOnlyPresentation && ref.watch(
-      desktopTabsProvider.select((state) => state.activeId == widget.tabId),
-    );
+    final state =
+        widget.readOnlyPresentation
+            ? widget.presentationData?.forYouState ??
+                const ForYouState(isLoading: true, hasMore: false)
+            : ref.watch(_desktopForYouEventsProvider);
+    final viewMode =
+        widget.readOnlyPresentation
+            ? widget.presentationData?.viewMode ??
+                GamesListViewMode.chessBoardGrid
+            : ref.watch(gamesListViewModeProvider);
+    final streamingEnabled =
+        !widget.readOnlyPresentation &&
+        ref.watch(
+          desktopTabsProvider.select((state) => state.activeId == widget.tabId),
+        );
     _keyboardScrollingActive = streamingEnabled;
 
     if (state.isLoading && state.events.isEmpty) {
@@ -3297,7 +3345,11 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     if (state.error != null && state.events.isEmpty) {
       return _ErrorState(
         message: state.error!,
-        onRetry: () { if (!widget.readOnlyPresentation) ref.read(forYouEventsProvider.notifier).refresh(); },
+        onRetry: () {
+          if (!widget.readOnlyPresentation) {
+            ref.read(forYouEventsProvider.notifier).refresh();
+          }
+        },
       );
     }
 
@@ -3306,7 +3358,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     // state changes, so we still need to seed the selection on mount.
     // _syncSelectionWithEvents is idempotent — calling it again when the
     // selection is already valid is a no-op.
-    if (!widget.readOnlyPresentation && _selection == null && events.isNotEmpty) {
+    if (!widget.readOnlyPresentation &&
+        _selection == null &&
+        events.isNotEmpty) {
       _syncSelectionWithEvents(events);
     }
     final showTrailingSpinner = state.hasMore && !state.isLoading;
@@ -3330,7 +3384,10 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       focusNode: _focusNode,
       autofocus: !widget.readOnlyPresentation,
       canRequestFocus: !widget.readOnlyPresentation,
-      onKeyEvent: widget.readOnlyPresentation ? null : (_, event) => _handleKeyboard(event, events),
+      onKeyEvent:
+          widget.readOnlyPresentation
+              ? null
+              : (_, event) => _handleKeyboard(event, events),
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTapDown: (_) {
@@ -3348,8 +3405,11 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
             onPointerUp: _stopMiddleDrag,
             onPointerCancel: _stopMiddleDrag,
             child: RefreshIndicator(
-              onRefresh:
-                  () async { if (!widget.readOnlyPresentation) await ref.read(forYouEventsProvider.notifier).refresh(); },
+              onRefresh: () async {
+                if (!widget.readOnlyPresentation) {
+                  await ref.read(forYouEventsProvider.notifier).refresh();
+                }
+              },
               color: kPrimaryColor,
               backgroundColor: kBlack2Color,
               child: ListView.builder(
@@ -3406,10 +3466,13 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                           },
                           onLikesTap: () {
                             if (widget.readOnlyPresentation) return;
-                            ref.read(desktopTabsProvider.notifier).open(TabKind.likes);
+                            ref
+                                .read(desktopTabsProvider.notifier)
+                                .open(TabKind.likes);
                           },
                         ),
-                        if (!widget.readOnlyPresentation) const DesktopSmartEventShelf(),
+                        if (!widget.readOnlyPresentation)
+                          const DesktopSmartEventShelf(),
                       ],
                     );
                   }
@@ -3469,10 +3532,16 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
         streamingEnabled: streamingEnabled,
         onOpen: () => _openEvent(event),
         onSelectGame: (gameId) => _selectGame(event, gameId),
-        onVisibilityChanged:
-            (visible) { if (!widget.readOnlyPresentation) _setEventVisibility(event.id, visible); },
-        onVisibleGameIdsChanged:
-            (gameIds) { if (!widget.readOnlyPresentation) _setVisibleGameIds(event.id, gameIds); },
+        onVisibilityChanged: (visible) {
+          if (!widget.readOnlyPresentation) {
+            _setEventVisibility(event.id, visible);
+          }
+        },
+        onVisibleGameIdsChanged: (gameIds) {
+          if (!widget.readOnlyPresentation) {
+            _setVisibleGameIds(event.id, gameIds);
+          }
+        },
       ),
     );
   }
@@ -3522,16 +3591,23 @@ class _ForYouEventSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cachedSnapshot = readOnlyPresentation ? null : ref.watch(
-      forYouTopGamesSnapshotCacheProvider.select((cache) => cache[event.id]),
-    );
-    final watchedSnapshotAsync = readOnlyPresentation
-        ? presentationData?.snapshotFor(event.id) ?? const AsyncValue<ForYouEventGamesSnapshot>.loading()
-        : ref.watch(
-      streamingEnabled
-          ? forYouEventGamesWithAutoRefreshProvider(event.id)
-          : forYouEventSnapshotProvider(event.id),
-    );
+    final cachedSnapshot =
+        readOnlyPresentation
+            ? null
+            : ref.watch(
+              forYouTopGamesSnapshotCacheProvider.select(
+                (cache) => cache[event.id],
+              ),
+            );
+    final watchedSnapshotAsync =
+        readOnlyPresentation
+            ? presentationData?.snapshotFor(event.id) ??
+                const AsyncValue<ForYouEventGamesSnapshot>.loading()
+            : ref.watch(
+              streamingEnabled
+                  ? forYouEventGamesWithAutoRefreshProvider(event.id)
+                  : forYouEventSnapshotProvider(event.id),
+            );
     // RPC-selected membership is authoritative. Realtime only updates the
     // bounded rendered rows and requests a targeted RPC refresh on finish.
     final AsyncValue<ForYouEventGamesSnapshot> snapshotAsync =
@@ -3548,9 +3624,11 @@ class _ForYouEventSection extends ConsumerWidget {
                       ? AsyncValue.data(cachedSnapshot)
                       : AsyncValue.error(error, stack),
         );
-    final layout = (readOnlyPresentation
-        ? presentationData?.viewMode ?? GamesListViewMode.chessBoardGrid
-        : ref.watch(gamesListViewModeProvider)).desktopLayout;
+    final layout =
+        (readOnlyPresentation
+                ? presentationData?.viewMode ?? GamesListViewMode.chessBoardGrid
+                : ref.watch(gamesListViewModeProvider))
+            .desktopLayout;
 
     final shouldHide = snapshotAsync.maybeWhen(
       data: (s) => !s.hasGames,
@@ -3579,7 +3657,8 @@ class _ForYouEventSection extends ConsumerWidget {
     AsyncValue<ForYouEventGamesSnapshot> snapshotAsync,
     DesktopCardLayout layout,
   ) {
-    final shouldAnimate = !readOnlyPresentation && !animatedEventIds.contains(event.id);
+    final shouldAnimate =
+        !readOnlyPresentation && !animatedEventIds.contains(event.id);
     if (shouldAnimate) {
       animatedEventIds.add(event.id);
     }
@@ -3673,19 +3752,17 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
               // (especially corners). Outer shell paints chrome; inner
               // ClipRRect keeps media/content rounded — same layering as
               // desktop_game_card.dart.
-              child: Container(
+              // Fill, ring and glow ease with MotionCard's shadow. The ring
+              // is a foreground decoration over a constant 1 px inset, so
+              // the 2 px selected ring never shrinks the content box: no
+              // 1 px jump or re-layout of the media/title on selection.
+              child: AnimatedContainer(
+                duration: _kCardHoverFade,
+                curve: Curves.easeOutCubic,
+                padding: const EdgeInsets.all(1),
                 decoration: BoxDecoration(
                   color: highlighted ? kBlack3Color : kBlack2Color,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color:
-                        widget.selected
-                            ? kPrimaryColor.withValues(alpha: 0.96)
-                            : _hovered
-                            ? kWhiteColor.withValues(alpha: 0.12)
-                            : kDividerColor,
-                    width: widget.selected ? 2 : 1,
-                  ),
                   boxShadow:
                       widget.selected
                           ? [
@@ -3696,6 +3773,18 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
                             ),
                           ]
                           : null,
+                ),
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color:
+                        widget.selected
+                            ? kPrimaryColor.withValues(alpha: 0.96)
+                            : _hovered
+                            ? kWhiteColor.withValues(alpha: 0.12)
+                            : kDividerColor,
+                    width: widget.selected ? 2 : 1,
+                  ),
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(9),
@@ -3916,7 +4005,8 @@ class _GamesStrip extends ConsumerWidget {
               (context, i) => _selectionTarget(
                 games[i].gameId,
                 LiveDesktopGameCard(
-                  readOnlyPresentation: SignedOutEventsPresentationScope.maybeOf(context) != null,
+                  readOnlyPresentation:
+                      SignedOutEventsPresentationScope.maybeOf(context) != null,
                   game: games[i],
                   eventGames: gameContext.boardGames,
                   tournamentTitle: tournamentTitle,
@@ -4338,7 +4428,8 @@ class _ForYouGroupedPanelFrame extends StatelessWidget {
                   key: gameItemKeyFor(games[i].gameId),
                   child: LiveDesktopGameCard(
                     readOnlyPresentation:
-                        SignedOutEventsPresentationScope.maybeOf(context) != null,
+                        SignedOutEventsPresentationScope.maybeOf(context) !=
+                        null,
                     game: games[i],
                     eventGames: eventGames,
                     tournamentTitle: tournamentTitle,

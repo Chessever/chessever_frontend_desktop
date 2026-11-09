@@ -1136,7 +1136,9 @@ class _MyLikesRowState extends State<_MyLikesRow> {
           widget.onSelect();
           widget.onContextMenu(details.globalPosition);
         },
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 100),
+          curve: Curves.easeOutCubic,
           constraints: const BoxConstraints(minHeight: 40),
           padding: const EdgeInsets.only(right: 12),
           decoration: librarySelectedRowDecoration(

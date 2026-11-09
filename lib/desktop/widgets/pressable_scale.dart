@@ -42,6 +42,9 @@ class PressableScale extends StatefulWidget {
 
 class _PressableScaleState extends State<PressableScale>
     with DeferredPointerStateMixin<PressableScale> {
+  /// Scale deltas below this read as rest (0.12 px on a 240 px surface).
+  static const double _restEpsilon = 0.0005;
+
   bool _hovered = false;
   bool _pressed = false;
 
@@ -78,7 +81,15 @@ class _PressableScaleState extends State<PressableScale>
                 // Rasterize the child and scale the BITMAP so Impeller doesn't
                 // re-shape glyphs every frame (the press/hover "titreme",
                 // flutter#149652). Keeps text/colours steady through the scale.
-                filterQuality: FilterQuality.medium,
+                // Only while off rest, like MotionTranslate: an idle surface
+                // paints as crisp vectors with no image-filter layer, so the
+                // dozens of resting PressableScales on a pane cost nothing.
+                // The Transform itself always stays, so crossing rest swaps
+                // only the layer type and the child keeps its state.
+                filterQuality:
+                    (scale - 1.0).abs() > _restEpsilon
+                        ? FilterQuality.medium
+                        : null,
                 child: child,
               ),
           child: widget.child,

@@ -784,12 +784,14 @@ class _HoverRowState extends State<_HoverRow> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
-        child: ColoredBox(
+        // Fades like the rest of the desktop row vocabulary instead of
+        // snapping; the row content is the cached widget.child.
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
           color: _hovered ? kBlack3Color : Colors.transparent,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
-            child: widget.child,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
+          child: widget.child,
         ),
       ),
     );

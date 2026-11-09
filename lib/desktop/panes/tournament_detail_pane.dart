@@ -28,6 +28,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tour
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 
 class TournamentDetailContextOwner extends HookConsumerWidget {
   const TournamentDetailContextOwner({super.key, required this.tabId});
@@ -720,14 +721,6 @@ class _SegmentTabState extends State<_SegmentTab> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    final fg =
-        selected ? kWhiteColor : (_hovered ? kWhiteColor : kWhiteColor70);
-    final indicatorColor =
-        selected
-            ? kPrimaryColor
-            : (_hovered
-                ? kPrimaryColor.withValues(alpha: 0.35)
-                : Colors.transparent);
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
@@ -746,49 +739,65 @@ class _SegmentTabState extends State<_SegmentTab> {
             value: _pressed ? 0.96 : (_hovered ? 1.01 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: Stack(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 14,
-                  ),
-                  child: Text(
-                    widget.label,
-                    style: TextStyle(
-                      color: fg,
-                      fontSize: 14,
-                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                      letterSpacing: 0.1,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 12,
-                  right: 12,
-                  bottom: 0,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 140),
-                    curve: Curves.easeOut,
-                    height: 2.5,
-                    decoration: BoxDecoration(
-                      color: indicatorColor,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(2),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+                (context, scale, child) =>
+                    MotionScale(scale: scale, child: child),
+            // Label colour and indicator ride the same hover spring as the
+            // scale (dx = hover, dy = selected) instead of an instant label
+            // swap beside a 140 ms indicator fade beside a spring.
+            child: MotionBuilder<Offset>(
+              value: Offset(_hovered ? 1.0 : 0.0, selected ? 1.0 : 0.0),
+              motion: DesktopMotion.hover,
+              converter: MotionConverter.offset,
+              builder: (context, v, _) {
+                final h = v.dx.clamp(0.0, 1.0);
+                final s = v.dy.clamp(0.0, 1.0);
+                final fg =
+                    Color.lerp(kWhiteColor70, kWhiteColor, h > s ? h : s)!;
+                final indicatorColor =
+                    Color.lerp(
+                      kPrimaryColor.withValues(alpha: 0.35 * h),
+                      kPrimaryColor,
+                      s,
+                    )!;
+                return _tabBody(selected, fg, indicatorColor);
+              },
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _tabBody(bool selected, Color fg, Color indicatorColor) {
+    return Stack(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              color: fg,
+              fontSize: 14,
+              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              letterSpacing: 0.1,
+            ),
+          ),
+        ),
+        Positioned(
+          left: 12,
+          right: 12,
+          bottom: 0,
+          child: Container(
+            height: 2.5,
+            decoration: BoxDecoration(
+              color: indicatorColor,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(2),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -63,7 +63,10 @@ class DesktopCollectionCards extends StatelessWidget {
               child: _CollectionCard(
                 title: 'Countrymen',
                 hint: 'Players from your federation',
-                background: FlagFullBackground(readOnlyPresentation: SignedOutEventsPresentationScope.maybeOf(context) != null),
+                background: FlagFullBackground(
+                  readOnlyPresentation:
+                      SignedOutEventsPresentationScope.maybeOf(context) != null,
+                ),
                 onTap: onCountrymenTap,
               ),
             ),
@@ -178,7 +181,9 @@ class _SmartCollectionCardState extends State<_SmartCollectionCard> {
                 child: MotionCard(
                   borderRadius: 14,
                   child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 160),
+                    // 140 ms easeOutCubic, the same as MotionCard's shadow, so
+                    // rim, icon tile and shadow arrive on the same frame.
+                    duration: const Duration(milliseconds: 140),
                     curve: Curves.easeOutCubic,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(14),
@@ -258,7 +263,7 @@ class _SmartCollectionCardState extends State<_SmartCollectionCard> {
                               mainAxisAlignment: MainAxisAlignment.end,
                               children: [
                                 AnimatedContainer(
-                                  duration: const Duration(milliseconds: 160),
+                                  duration: const Duration(milliseconds: 140),
                                   curve: Curves.easeOutCubic,
                                   width: 34,
                                   height: 34,
@@ -319,8 +324,10 @@ class _FavoritesCollectionCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final hasFavorites = SignedOutEventsPresentationScope.maybeOf(context) == null &&
-        (ref.watch(favoritePlayersProviderNew).valueOrNull?.isNotEmpty ?? false);
+    final hasFavorites =
+        SignedOutEventsPresentationScope.maybeOf(context) == null &&
+        (ref.watch(favoritePlayersProviderNew).valueOrNull?.isNotEmpty ??
+            false);
 
     return _CollectionCard(
       title: 'Favorites',
@@ -391,7 +398,7 @@ class _CollectionCardState extends State<_CollectionCard> {
             borderRadius: 12,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
-              curve: Curves.easeOut,
+              curve: Curves.easeOutCubic,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
@@ -515,13 +522,10 @@ class _CollectionShelfState extends State<_CollectionShelf> {
     );
     // Hand the wheel to the page once the shelf is at its end.
     if (target == position.pixels) return;
-    GestureBinding.instance.pointerSignalResolver.register(
-      event,
-      (_) {
-        event.respond(allowPlatformDefault: false);
-        position.pointerScroll(delta.dy);
-      },
-    );
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+      event.respond(allowPlatformDefault: false);
+      position.pointerScroll(delta.dy);
+    });
   }
 
   @override

@@ -5,6 +5,7 @@ import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 
 /// Compact move-navigation cluster shown directly under the chessboard.
 ///
@@ -45,6 +46,7 @@ class MoveNavigationBar extends StatelessWidget {
 
   final bool canGoBack;
   final bool canGoForward;
+
   /// Manual-next capability only. Last move and autoplay retain [canGoForward].
   final bool? canStepForward;
   final VoidCallback onFirst;
@@ -287,24 +289,30 @@ class _LastMoveButtonState extends State<_LastMoveButton>
             Positioned(
               top: -2,
               right: -2,
-              child: IgnorePointer(
-                child: FadeTransition(
-                  opacity: Tween<double>(begin: 0.35, end: 1.0).animate(
-                    CurvedAnimation(parent: _blink, curve: Curves.easeInOut),
-                  ),
-                  child: Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE5484D),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: kBackgroundColor, width: 1.5),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFFE5484D).withValues(alpha: 0.6),
-                          blurRadius: 6,
-                        ),
-                      ],
+              // Own layer: the endless blink repaints only this dot, not
+              // the whole navigation bar around it, every frame.
+              child: RepaintBoundary(
+                child: IgnorePointer(
+                  child: FadeTransition(
+                    opacity: Tween<double>(begin: 0.35, end: 1.0).animate(
+                      CurvedAnimation(parent: _blink, curve: Curves.easeInOut),
+                    ),
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE5484D),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: kBackgroundColor, width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(
+                              0xFFE5484D,
+                            ).withValues(alpha: 0.6),
+                            blurRadius: 6,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -339,28 +347,15 @@ class _NavButtonState extends State<_NavButton> {
   bool _hovered = false;
   bool _pressed = false;
 
+  // Fills fade from the same hue at zero alpha so the blend never passes
+  // through a darker grey.
+  static final Color _fillRest = kBlack2Color.withValues(alpha: 0);
+  static final Color _borderHover = kPrimaryColor.withValues(alpha: 0.4);
+
   @override
   Widget build(BuildContext context) {
     final disabled = !widget.enabled;
     final iconSize = widget.size * 0.50;
-
-    final Color bg;
-    final Color iconColor;
-    final Color border;
-
-    // One quiet button language for every control, including Play/Pause.
-    iconColor =
-        disabled ? kLightGreyColor : (_hovered ? kWhiteColor : kWhiteColor70);
-    bg =
-        disabled
-            ? Colors.transparent
-            : (_pressed
-                ? kBlack3Color
-                : (_hovered ? kBlack2Color : Colors.transparent));
-    border =
-        disabled
-            ? Colors.transparent
-            : (_hovered ? kPrimaryColor.withValues(alpha: 0.4) : kDividerColor);
 
     return DesktopTooltip(
       message: widget.tooltip,
@@ -380,29 +375,64 @@ class _NavButtonState extends State<_NavButton> {
             onTapCancel:
                 disabled ? null : () => setState(() => _pressed = false),
             onTap: disabled ? null : widget.onTap,
+            // One quiet button language for every control, including
+            // Play/Pause. Fill, border, icon colour and the scale nudge all
+            // derive from two springs (hover h, press p) instead of a 90 ms
+            // linear fill fade beside an instant icon swap and a separate
+            // 240 ms scale spring, which read as flicker.
             child: SingleMotionBuilder(
-              value:
-                  disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
-              motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-              builder:
-                  (context, scale, child) => Transform.scale(
-                    scale: scale,
-                    alignment: Alignment.center,
-                    filterQuality: FilterQuality.medium,
-                    child: child,
-                  ),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 90),
-                width: widget.size,
-                height: widget.size,
-                decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: border),
-                ),
-                alignment: Alignment.center,
-                child: Icon(widget.icon, size: iconSize, color: iconColor),
-              ),
+              value: (!disabled && _hovered) ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, hv, _) {
+                return SingleMotionBuilder(
+                  value: (!disabled && _pressed) ? 1.0 : 0.0,
+                  motion: DesktopMotion.tap,
+                  builder: (context, pv, _) {
+                    final h = hv.clamp(0.0, 1.0);
+                    final p = pv.clamp(0.0, 1.0);
+                    final Color bg;
+                    final Color border;
+                    final Color iconColor;
+                    final double scale;
+                    if (disabled) {
+                      bg = Colors.transparent;
+                      border = Colors.transparent;
+                      iconColor = kLightGreyColor;
+                      scale = 1.0;
+                    } else {
+                      bg =
+                          Color.lerp(
+                            Color.lerp(_fillRest, kBlack2Color, h),
+                            kBlack3Color,
+                            p,
+                          )!;
+                      border = Color.lerp(kDividerColor, _borderHover, h)!;
+                      iconColor = Color.lerp(kWhiteColor70, kWhiteColor, h)!;
+                      // Rest 1.0, hover 1.012, pressed 0.97.
+                      scale = 1 + 0.012 * hv - 0.042 * pv;
+                    }
+                    return MotionScale(
+                      scale: scale,
+                      alignment: Alignment.center,
+                      child: Container(
+                        width: widget.size,
+                        height: widget.size,
+                        decoration: BoxDecoration(
+                          color: bg,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: border),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          widget.icon,
+                          size: iconSize,
+                          color: iconColor,
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
             ),
           ),
         ),

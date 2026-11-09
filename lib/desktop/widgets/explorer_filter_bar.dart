@@ -275,31 +275,42 @@ class _FilterChipState extends State<_FilterChip> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 90),
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
           decoration: BoxDecoration(
             color: bg,
             borderRadius: BorderRadius.circular(5),
             border: Border.all(color: border),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.icon != null) ...[
-                Icon(widget.icon, size: 13, color: fg),
-                if (widget.label != null) const SizedBox(width: 4),
-              ],
-              if (widget.label != null)
-                Text(
-                  widget.label!,
-                  style: TextStyle(
-                    color: fg,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
-                  ),
-                ),
-            ],
+          // Glyph and label colour share the fill's clock instead of
+          // snapping ahead of it.
+          child: TweenAnimationBuilder<Color?>(
+            tween: ColorTween(end: fg),
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
+            builder: (context, animatedFg, _) {
+              final color = animatedFg ?? fg;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.icon != null) ...[
+                    Icon(widget.icon, size: 13, color: color),
+                    if (widget.label != null) const SizedBox(width: 4),
+                  ],
+                  if (widget.label != null)
+                    Text(
+                      widget.label!,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ),
       ),

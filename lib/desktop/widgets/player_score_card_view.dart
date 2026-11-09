@@ -64,6 +64,7 @@ import 'package:chessever/utils/png_asset.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 
 /// Desktop-native score card view.
 ///
@@ -1840,63 +1841,74 @@ class _RatingTileState extends State<_RatingTile> {
           onTapDown: (_) => setState(() => _pressed = true),
           onTapUp: (_) => setState(() => _pressed = false),
           onTapCancel: () => setState(() => _pressed = false),
+          // Fill and border ride one hover spring so they ease in step with
+          // the scale spring instead of a 120 ms linear fade beside it.
           child: SingleMotionBuilder(
-            value: _pressed ? 0.97 : (_hover ? 1.015 : 1.0),
-            motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-            builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-              height: 92,
-              decoration: BoxDecoration(
-                color: _hover ? kBlack3Color : kBlack2Color,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color:
-                      _hover
-                          ? kPrimaryColor.withValues(alpha: 0.4)
-                          : kDividerColor,
-                ),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Image.asset(
-                    widget.asset,
-                    width: 18,
-                    height: 18,
-                    cacheWidth:
-                        (18 * MediaQuery.devicePixelRatioOf(context)).round(),
-                    cacheHeight:
-                        (18 * MediaQuery.devicePixelRatioOf(context)).round(),
+            value: _hover ? 1.0 : 0.0,
+            motion: DesktopMotion.hover,
+            builder: (context, h, content) {
+              final t = h.clamp(0.0, 1.0);
+              return SingleMotionBuilder(
+                value: _pressed ? 0.97 : (_hover ? 1.015 : 1.0),
+                motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
+                builder:
+                    (context, scale, child) =>
+                        MotionScale(scale: scale, child: child),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 10,
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    widget.label,
-                    style: const TextStyle(
-                      color: kLightGreyColor,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.4,
+                  height: 92,
+                  decoration: BoxDecoration(
+                    color: Color.lerp(kBlack2Color, kBlack3Color, t),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color:
+                          Color.lerp(
+                            kDividerColor,
+                            kPrimaryColor.withValues(alpha: 0.4),
+                            t,
+                          )!,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    widget.loading ? '–' : (widget.value?.toString() ?? '–'),
-                    style: const TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
+                  child: content,
+                ),
+              );
+            },
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Image.asset(
+                  widget.asset,
+                  width: 18,
+                  height: 18,
+                  cacheWidth:
+                      (18 * MediaQuery.devicePixelRatioOf(context)).round(),
+                  cacheHeight:
+                      (18 * MediaQuery.devicePixelRatioOf(context)).round(),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  widget.label,
+                  style: const TextStyle(
+                    color: kLightGreyColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.4,
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  widget.loading ? '–' : (widget.value?.toString() ?? '–'),
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -2351,8 +2363,10 @@ class _GameRowState extends State<_GameRow> {
           },
           child: MotionCard(
             borderRadius: 0,
+            // Same 140 ms easeOutCubic as the MotionCard shadow around it.
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 80),
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOutCubic,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               decoration: BoxDecoration(
                 color: bg,

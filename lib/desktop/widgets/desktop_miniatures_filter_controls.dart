@@ -950,6 +950,9 @@ class _OptionGrid extends StatelessWidget {
   }
 }
 
+/// Hover / selection fade shared by the filter chips and the trigger.
+const Duration _kChipFade = Duration(milliseconds: 120);
+
 class _FilterChipButton extends StatefulWidget {
   const _FilterChipButton({
     required this.label,
@@ -973,7 +976,6 @@ class _FilterChipButtonState extends State<_FilterChipButton> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    final accent = selected ? kPrimaryColor : kWhiteColor70;
     final border =
         selected
             ? kPrimaryColor.withValues(alpha: 0.55)
@@ -992,29 +994,67 @@ class _FilterChipButtonState extends State<_FilterChipButton> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onPress,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 90),
+            duration: _kChipFade,
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: bg,
               borderRadius: BorderRadius.circular(6),
               border: Border.all(color: border),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (widget.icon != null) ...[
-                  Icon(widget.icon, size: 12, color: accent),
-                  const SizedBox(width: 6),
-                ],
-                Text(
-                  widget.label,
-                  style: TextStyle(
-                    color: selected ? kWhiteColor : kWhiteColor70,
-                    fontSize: 11,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            // Icon and label colours ride the same duration/curve as the
+            // fill, so selecting a chip cross-fades as one piece.
+            child: TweenAnimationBuilder<double>(
+              tween: Tween<double>(end: selected ? 1 : 0),
+              duration: _kChipFade,
+              curve: Curves.easeOutCubic,
+              builder:
+                  (context, t, _) => Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.icon != null) ...[
+                        Icon(
+                          widget.icon,
+                          size: 12,
+                          color: Color.lerp(kWhiteColor70, kPrimaryColor, t),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      // The chips sit in a Wrap: a bolder selected label
+                      // would widen this chip and shove its neighbours.
+                      // An invisible w700 copy reserves the bold width so
+                      // the chip keeps one size in both states; centred so
+                      // the spare width splits evenly and the weight swap
+                      // grows from the middle.
+                      Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Visibility(
+                            visible: false,
+                            maintainSize: true,
+                            maintainAnimation: true,
+                            maintainState: true,
+                            child: Text(
+                              widget.label,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            widget.label,
+                            style: TextStyle(
+                              color: Color.lerp(kWhiteColor70, kWhiteColor, t),
+                              fontSize: 11,
+                              fontWeight:
+                                  selected ? FontWeight.w700 : FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                ),
-              ],
             ),
           ),
         ),
@@ -1078,7 +1118,8 @@ class _FilterTriggerButtonState extends State<_FilterTriggerButton> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 90),
+            duration: _kChipFade,
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color:

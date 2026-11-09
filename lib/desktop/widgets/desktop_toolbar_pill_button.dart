@@ -99,68 +99,93 @@ class _DesktopToolbarPillButtonState extends State<DesktopToolbarPillButton>
     final muted = !enabled && !widget.busy;
     final isPrimary = widget.tone == DesktopToolbarPillTone.primary;
 
-    // Foreground / background mirror the sidebar item state machine.
-    final Color fg;
-    final Color bg;
-    final Border border;
-    if (muted) {
-      fg = kLightGreyColor;
-      bg = Colors.transparent;
-      border = Border.all(color: kDividerColor);
-    } else if (isPrimary) {
-      fg = kPrimaryColor;
-      bg = kPrimaryColor.withValues(alpha: _hovered ? 0.16 : 0.10);
-      border = Border.all(color: kPrimaryColor.withValues(alpha: 0.35));
-    } else {
-      fg = _hovered ? kWhiteColor : kWhiteColor70;
-      bg = _hovered ? kBlack3Color : Colors.transparent;
-      border = Border.all(
-        color: _hovered ? kWhiteColor.withValues(alpha: 0.10) : kDividerColor,
+    // Foreground / background mirror the sidebar item state machine. Fill,
+    // foreground and border ride ONE hover spring with the nudge below, so
+    // the pill brightens and the content glides together instead of the
+    // colours snapping while the label is still springing.
+    Widget pillFor(double h) {
+      final t = h.clamp(0.0, 1.0);
+      final Color fg;
+      final Color bg;
+      final Border border;
+      if (muted) {
+        fg = kLightGreyColor;
+        bg = Colors.transparent;
+        border = Border.all(color: kDividerColor);
+      } else if (isPrimary) {
+        fg = kPrimaryColor;
+        bg = kPrimaryColor.withValues(alpha: 0.10 + 0.06 * t);
+        border = Border.all(color: kPrimaryColor.withValues(alpha: 0.35));
+      } else {
+        fg = Color.lerp(kWhiteColor70, kWhiteColor, t)!;
+        // Exactly transparent at rest (same as before the hover spring).
+        bg =
+            t <= 0
+                ? Colors.transparent
+                : Color.lerp(
+                  kBlack3Color.withValues(alpha: 0),
+                  kBlack3Color,
+                  t,
+                )!;
+        border = Border.all(
+          color:
+              Color.lerp(
+                kDividerColor,
+                kWhiteColor.withValues(alpha: 0.10),
+                t,
+              )!,
+        );
+      }
+
+      // Same spring nudge as the sidebar: content reaches toward the cursor
+      // on hover, dips back on press; the pill itself stays put.
+      final nudgeX = _pressed ? -1.0 : (_hovered ? 2.0 : 0.0);
+
+      return Container(
+        height: widget.height,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(8),
+          border: border,
+        ),
+        child: SingleMotionBuilder(
+          value: nudgeX,
+          motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
+          builder:
+              (context, x, child) =>
+                  MotionTranslate(offset: Offset(x, 0), child: child),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              widget.leading ?? Icon(widget.icon, size: 16, color: fg),
+              const SizedBox(width: 8),
+              Text(
+                widget.label,
+                style: TextStyle(
+                  color: fg,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures:
+                      widget.tabularFigures
+                          ? const [FontFeature.tabularFigures()]
+                          : null,
+                ),
+              ),
+              if (widget.trailing != null) ...[
+                const SizedBox(width: 8),
+                widget.trailing!,
+              ],
+            ],
+          ),
+        ),
       );
     }
 
-    // Same spring nudge as the sidebar: content reaches toward the cursor on
-    // hover, dips back on press; the pill itself stays put.
-    final nudgeX = _pressed ? -1.0 : (_hovered ? 2.0 : 0.0);
-
-    final pill = Container(
-      height: widget.height,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(8),
-        border: border,
-      ),
-      child: SingleMotionBuilder(
-        value: nudgeX,
-        motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-        builder:
-            (context, x, child) =>
-                MotionTranslate(offset: Offset(x, 0), child: child),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            widget.leading ?? Icon(widget.icon, size: 16, color: fg),
-            const SizedBox(width: 8),
-            Text(
-              widget.label,
-              style: TextStyle(
-                color: fg,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                fontFeatures:
-                    widget.tabularFigures
-                        ? const [FontFeature.tabularFigures()]
-                        : null,
-              ),
-            ),
-            if (widget.trailing != null) ...[
-              const SizedBox(width: 8),
-              widget.trailing!,
-            ],
-          ],
-        ),
-      ),
+    final pill = SingleMotionBuilder(
+      value: _hovered && !muted ? 1.0 : 0.0,
+      motion: DesktopMotion.hover,
+      builder: (context, h, _) => pillFor(h),
     );
 
     return DesktopTooltip(

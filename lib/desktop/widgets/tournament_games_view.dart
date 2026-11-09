@@ -44,6 +44,7 @@ import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_team_match_grouping.dart';
+import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
@@ -1709,7 +1710,8 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onToggle,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 100),
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
               color: _hovered ? kBlack3Color : kBlack2Color,
@@ -1735,14 +1737,22 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
                           duration: const Duration(milliseconds: 180),
                           switchInCurve: Curves.easeOutCubic,
                           switchOutCurve: Curves.easeInCubic,
+                          // A ~6 px rise on small score glyphs: MotionTranslate
+                          // rasterizes only while moving, so the digits glide
+                          // instead of stepping whole pixels (flutter#149652).
                           transitionBuilder:
                               (child, animation) => FadeTransition(
                                 opacity: animation,
-                                child: SlideTransition(
-                                  position: Tween<Offset>(
-                                    begin: const Offset(0, 0.35),
-                                    end: Offset.zero,
-                                  ).animate(animation),
+                                child: AnimatedBuilder(
+                                  animation: animation,
+                                  builder:
+                                      (context, child) => MotionTranslate(
+                                        offset: Offset(
+                                          0,
+                                          (1 - animation.value) * 6,
+                                        ),
+                                        child: child,
+                                      ),
                                   child: child,
                                 ),
                               ),

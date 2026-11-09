@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/repository/liked_games/liked_games_provider.dart';
 import 'package:chessever/screens/chessboard/models/like_tag.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -112,14 +114,8 @@ class _LikeTagToggleState extends State<LikeTagToggle> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    final background =
-        selected
-            ? kPrimaryColor.withValues(alpha: _hovered ? 0.16 : 0.10)
-            : (_hovered ? kBlack3Color : Colors.transparent);
     final border =
         selected ? kPrimaryColor.withValues(alpha: 0.35) : kDividerColor;
-    final foreground =
-        selected ? kPrimaryColor : (_hovered ? kWhiteColor : kWhiteColor70);
     return Semantics(
       button: true,
       selected: selected,
@@ -134,48 +130,65 @@ class _LikeTagToggleState extends State<LikeTagToggle> {
           // 32px chip inside a 40px hit area.
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 32),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: BoxDecoration(
-                color: background,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: border),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox.square(
-                    dimension: 7,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: widget.tag.color,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
+            // Fill and label colour ease on the shared hover spring instead
+            // of snapping, matching the sidebar's chip vocabulary.
+            child: SingleMotionBuilder(
+              value: _hovered ? 1.0 : 0.0,
+              motion: DesktopMotion.hover,
+              builder: (context, h, _) {
+                final t = h.clamp(0.0, 1.0);
+                final background =
+                    selected
+                        ? kPrimaryColor.withValues(alpha: 0.10 + 0.06 * t)
+                        : Color.lerp(Colors.transparent, kBlack3Color, t)!;
+                final foreground =
+                    selected
+                        ? kPrimaryColor
+                        : Color.lerp(kWhiteColor70, kWhiteColor, t)!;
+                return Container(
+                  constraints: const BoxConstraints(minHeight: 32),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: background,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: border),
                   ),
-                  const SizedBox(width: 7),
-                  Text(
-                    widget.tag.label,
-                    style: TextStyle(
-                      color: foreground,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (widget.count != null) ...[
-                    const SizedBox(width: 6),
-                    Text(
-                      '${widget.count}',
-                      style: const TextStyle(
-                        color: kLightGreyColor,
-                        fontSize: 11.5,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox.square(
+                        dimension: 7,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: widget.tag.color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
-                ],
-              ),
+                      const SizedBox(width: 7),
+                      Text(
+                        widget.tag.label,
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (widget.count != null) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          '${widget.count}',
+                          style: const TextStyle(
+                            color: kLightGreyColor,
+                            fontSize: 11.5,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ),

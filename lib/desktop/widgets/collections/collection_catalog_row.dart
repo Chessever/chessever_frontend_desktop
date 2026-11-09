@@ -402,7 +402,21 @@ class _GlyphButtonState extends State<_GlyphButton>
                 child: SizedBox.square(
                   dimension: CollectionCatalogColumns.starWidth,
                   child: Center(
-                    child: ScaleTransition(scale: _scale, child: glyph),
+                    // A 3% dip on a ~16 px glyph is sub-pixel motion:
+                    // filtered while it runs so it glides instead of
+                    // stepping (flutter#149652, as in PressableScale). At
+                    // rest no image-filter layer stays on every list row.
+                    child: AnimatedBuilder(
+                      animation: _scale,
+                      builder:
+                          (context, child) => Transform.scale(
+                            scale: _scale.value,
+                            filterQuality:
+                                _scale.value == 1 ? null : FilterQuality.medium,
+                            child: child,
+                          ),
+                      child: glyph,
+                    ),
                   ),
                 ),
               ),

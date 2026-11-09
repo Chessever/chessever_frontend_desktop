@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
+import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
+import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/screens/group_event/smart_event/smart_aggregate_event_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
@@ -451,47 +453,56 @@ class _ClauseState extends State<_Clause> with SingleTickerProviderStateMixin {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _controller.toggle,
-              child: Container(
-                constraints: const BoxConstraints(minHeight: 32),
-                padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
-                decoration: BoxDecoration(
-                  color: _hovered ? kBlack3Color : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color:
-                        _hovered
-                            ? kWhiteColor.withValues(alpha: 0.18)
-                            : kDividerColor,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 260),
-                      child: Text(
-                        widget.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: _hovered ? kWhiteColor : kWhiteColor70,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          fontFeatures:
-                              widget.tabularFigures
-                                  ? const [FontFeature.tabularFigures()]
-                                  : null,
-                        ),
+              // Fill, border and label colour ride one hover spring so the
+              // clause eases in like the rest of the shell's chrome instead
+              // of snapping between two states.
+              child: SingleMotionBuilder(
+                value: _hovered ? 1.0 : 0.0,
+                motion: DesktopMotion.hover,
+                builder: (context, h, _) {
+                  final t = h.clamp(0.0, 1.0);
+                  final fg = Color.lerp(kWhiteColor70, kWhiteColor, t)!;
+                  return Container(
+                    constraints: const BoxConstraints(minHeight: 32),
+                    padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+                    decoration: BoxDecoration(
+                      color: kBlack3Color.withValues(alpha: t),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color:
+                            Color.lerp(
+                              kDividerColor,
+                              kWhiteColor.withValues(alpha: 0.18),
+                              t,
+                            )!,
                       ),
                     ),
-                    const SizedBox(width: 2),
-                    Icon(
-                      Icons.expand_more_rounded,
-                      size: 16,
-                      color: _hovered ? kWhiteColor : kWhiteColor70,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 260),
+                          child: Text(
+                            widget.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: fg,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              fontFeatures:
+                                  widget.tabularFigures
+                                      ? const [FontFeature.tabularFigures()]
+                                      : null,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(Icons.expand_more_rounded, size: 16, color: fg),
+                      ],
                     ),
-                  ],
-                ),
+                  );
+                },
               ),
             ),
           ),
@@ -651,13 +662,19 @@ class _ResetLinkState extends State<_ResetLink> {
           onTap: widget.onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              'Reset to saved',
-              style: TextStyle(
-                color: _hovered ? kWhiteColor : kWhiteColor70,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
+            child: AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
+              style: DefaultTextStyle.of(context).style.merge(
+                // Merged over the ambient style so the label keeps the app
+                // typeface (Inter on web); only the colour animates.
+                TextStyle(
+                  color: _hovered ? kWhiteColor : kWhiteColor70,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
+              child: const Text('Reset to saved'),
             ),
           ),
         ),

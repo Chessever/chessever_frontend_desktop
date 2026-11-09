@@ -97,7 +97,8 @@ class _BoardResizeHandleState extends State<BoardResizeHandle> {
         onDoubleTap: widget.onReset,
         child: AnimatedContainer(
           key: const ValueKey<String>('desktop-board-resize-handle'),
-          duration: const Duration(milliseconds: 120),
+          duration: _kGrabFade,
+          curve: Curves.easeOutCubic,
           width: kDesktopBoardResizeHandleSize,
           height: kDesktopBoardResizeHandleSize,
           decoration: BoxDecoration(
@@ -120,10 +121,16 @@ class _BoardResizeHandleState extends State<BoardResizeHandle> {
                     ]
                     : null,
           ),
-          child: CustomPaint(
-            painter: _ResizeGripPainter(
-              color: _active ? kBackgroundColor : kWhiteColor70,
-            ),
+          // The grip ink fades with the fill (same duration and curve)
+          // instead of snapping dark on the first frame of a 120 ms fade.
+          child: TweenAnimationBuilder<Color?>(
+            tween: ColorTween(end: _active ? kBackgroundColor : kWhiteColor70),
+            duration: _kGrabFade,
+            curve: Curves.easeOutCubic,
+            builder:
+                (context, color, _) => CustomPaint(
+                  painter: _ResizeGripPainter(color: color ?? kWhiteColor70),
+                ),
           ),
         ),
       ),
@@ -134,6 +141,8 @@ class _BoardResizeHandleState extends State<BoardResizeHandle> {
     );
   }
 }
+
+const Duration _kGrabFade = Duration(milliseconds: 120);
 
 class _ResizeGripPainter extends CustomPainter {
   const _ResizeGripPainter({required this.color});
