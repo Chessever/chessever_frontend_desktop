@@ -148,6 +148,7 @@ import 'package:chessever/utils/number_format_utils.dart';
 import 'package:chessever/utils/pgn_multi_parser.dart';
 import 'package:chessever/utils/time_utils.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Desktop library: complete cloud navigation in the rail plus a mixed local
 /// and selected-cloud working catalog on Library Home.
@@ -1169,7 +1170,7 @@ class _RailLoading extends StatelessWidget {
       child: SizedBox(
         width: 16,
         height: 16,
-        child: CircularProgressIndicator(
+        child: DesktopSpinner(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
         ),
@@ -3888,7 +3889,7 @@ class _LibraryBlockingProgressOverlay extends StatelessWidget {
                     SizedBox(
                       width: 22,
                       height: 22,
-                      child: CircularProgressIndicator(
+                      child: DesktopSpinner(
                         strokeWidth: 2.4,
                         value:
                             progress.fraction <= 0 || progress.fraction >= 1
@@ -5684,7 +5685,7 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
                     child: SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(
+                      child: DesktopSpinner(
                         strokeWidth: 2,
                         valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                       ),
@@ -5787,6 +5788,40 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
     }, const <Object?>[]);
     final state = ref.watch(gamebaseDatabaseGamesPaginatedProvider);
     final games = state.games;
+    // The table ends in a loading row while more pages exist. Without this
+    // listener nothing ever loaded them, so that row spun forever (and kept
+    // the whole window redrawing at the display's refresh rate).
+    useEffect(() {
+      void onScroll() {
+        final pos = scrollController.position;
+        if (pos.pixels < pos.maxScrollExtent - 240) return;
+        final s = ref.read(gamebaseDatabaseGamesPaginatedProvider);
+        if (!s.isLoading && s.hasMore) {
+          ref
+              .read(gamebaseDatabaseGamesPaginatedProvider.notifier)
+              .loadNextPage();
+        }
+      }
+
+      scrollController.addListener(onScroll);
+      return () => scrollController.removeListener(onScroll);
+    }, [scrollController]);
+    // A page that fits without scrolling never moves the position, so the
+    // listener above would not fire; top it up once it has laid out.
+    useEffect(() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!scrollController.hasClients) return;
+        final pos = scrollController.position;
+        if (pos.pixels < pos.maxScrollExtent - 240) return;
+        final s = ref.read(gamebaseDatabaseGamesPaginatedProvider);
+        if (!s.isLoading && s.hasMore) {
+          ref
+              .read(gamebaseDatabaseGamesPaginatedProvider.notifier)
+              .loadNextPage();
+        }
+      });
+      return null;
+    }, [games.length]);
     useEffect(() {
       if (games.isEmpty) {
         selectedId.value = null;
@@ -5965,7 +6000,7 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
                     child: SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(
+                      child: DesktopSpinner(
                         strokeWidth: 2,
                         valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                       ),
@@ -6449,7 +6484,7 @@ class _LocalDatabaseMiniPreview extends ConsumerWidget {
                           child: SizedBox(
                             width: 18,
                             height: 18,
-                            child: CircularProgressIndicator(
+                            child: DesktopSpinner(
                               strokeWidth: 2,
                               valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                             ),
@@ -6616,7 +6651,7 @@ class _LocalMiniPreviewLoadingRow extends StatelessWidget {
                     ? const SizedBox(
                       width: 14,
                       height: 14,
-                      child: CircularProgressIndicator(
+                      child: DesktopSpinner(
                         strokeWidth: 2,
                         valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                       ),
@@ -7648,7 +7683,7 @@ class _GamesBody extends ConsumerWidget {
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -10791,7 +10826,7 @@ class _TwicEventChips extends StatelessWidget {
                 child: SizedBox(
                   width: 14,
                   height: 14,
-                  child: CircularProgressIndicator(
+                  child: DesktopSpinner(
                     strokeWidth: 1.5,
                     valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                   ),
@@ -11088,7 +11123,7 @@ class _TwicGamesBody extends StatelessWidget {
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -11660,7 +11695,7 @@ class _TwicLoadingMoreRow extends StatelessWidget {
         child: SizedBox(
           width: 16,
           height: 16,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -12248,7 +12283,7 @@ class _LocalDatabaseWorkspace extends HookConsumerWidget {
                 SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: DesktopSpinner(strokeWidth: 2),
                 ),
                 SizedBox(height: 12),
                 Text(
@@ -12681,7 +12716,7 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
                         child: SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(
+                          child: DesktopSpinner(
                             strokeWidth: 2,
                             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                           ),
@@ -14583,7 +14618,7 @@ class _LibraryNotationPreviewState extends State<_LibraryNotationPreview> {
                         SizedBox(
                           width: 14,
                           height: 14,
-                          child: CircularProgressIndicator(
+                          child: DesktopSpinner(
                             strokeWidth: 1.7,
                             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                           ),

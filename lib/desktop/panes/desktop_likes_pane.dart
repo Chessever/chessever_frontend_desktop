@@ -25,6 +25,7 @@ import 'package:chessever/desktop/widgets/tournament_games_view.dart'
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 typedef _LikesSection = CommunityLikesSection;
 
@@ -1138,7 +1139,7 @@ class _Spinner extends StatelessWidget {
       child: Center(
         child: SizedBox.square(
           dimension: 20,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),

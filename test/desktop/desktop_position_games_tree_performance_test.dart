@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'support/desktop_premium_test_overrides.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 void main() {
   testWidgets('imported tree bounds notation and reveals unmounted games', (
@@ -142,7 +143,7 @@ void main() {
     );
     await _waitForRows(tester, controller);
     expect(controller.rowCount, 120);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(DesktopSpinner), findsNothing);
     expect(tester.binding.hasScheduledFrame, isFalse);
     expect(tester.takeException(), isNull);
   });

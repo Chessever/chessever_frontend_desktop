@@ -36,6 +36,7 @@ import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:forui/forui.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 void main() {
   test('finds an existing player workspace by exact FIDE identity', () {
@@ -694,7 +695,7 @@ void main() {
                     matching: find.byType(DecoratedBox),
                   )
                   .first,
-          matching: find.byType(CircularProgressIndicator),
+          matching: find.byType(DesktopSpinner),
         ),
         findsWidgets,
       );

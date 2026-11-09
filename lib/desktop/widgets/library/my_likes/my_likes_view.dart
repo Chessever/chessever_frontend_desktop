@@ -39,6 +39,7 @@ import 'package:chessever/screens/chessboard/utils/pgn_external_compat.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/save_to_library_guard.dart';
 import 'package:chessever/widgets/paywall/premium_paywall_sheet.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Selection id the Library rail uses for the My Likes destination.
 const String kMyLikesDestinationId = '__library_my_likes__';
@@ -309,7 +310,7 @@ class MyLikesView extends HookConsumerWidget {
                     () => const Center(
                       child: SizedBox.square(
                         dimension: 22,
-                        child: CircularProgressIndicator(
+                        child: DesktopSpinner(
                           strokeWidth: 2,
                           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                         ),

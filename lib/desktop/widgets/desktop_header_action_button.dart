@@ -3,6 +3,7 @@ import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 class DesktopHeaderActionButton extends StatelessWidget {
   const DesktopHeaderActionButton({
@@ -34,7 +35,7 @@ class DesktopHeaderActionButton extends StatelessWidget {
           loading
               ? const SizedBox.square(
                 dimension: 14,
-                child: CircularProgressIndicator(
+                child: DesktopSpinner(
                   strokeWidth: 2,
                   color: kPrimaryColor,
                 ),

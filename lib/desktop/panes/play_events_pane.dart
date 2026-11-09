@@ -7,6 +7,7 @@ import 'package:chessever/desktop/services/play/play_tournament_history_reposito
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 class PlayEventsPane extends ConsumerWidget {
   const PlayEventsPane({super.key});
@@ -19,7 +20,7 @@ class PlayEventsPane extends ConsumerWidget {
       child: eventsAsync.when(
         loading:
             () => const Center(
-              child: CircularProgressIndicator(color: kPrimaryColor),
+              child: DesktopSpinner(color: kPrimaryColor),
             ),
         error:
             (error, _) => _EventsError(

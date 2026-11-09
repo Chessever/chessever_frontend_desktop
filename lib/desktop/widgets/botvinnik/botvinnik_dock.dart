@@ -35,6 +35,7 @@ import 'package:chessever/desktop/widgets/tournament_category_switcher.dart'
     show tournamentCategoryLabel;
 import 'package:chessever/providers/auth_state_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 const _tabular = [FontFeature.tabularFigures()];
 
@@ -568,7 +569,7 @@ class _ConversationBody extends StatelessWidget {
       return const Center(
         child: SizedBox.square(
           dimension: 18,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -1874,7 +1875,7 @@ class _SendButtonState extends State<_SendButton>
                     widget.sending
                         ? const SizedBox.square(
                           dimension: 16,
-                          child: CircularProgressIndicator(
+                          child: DesktopSpinner(
                             strokeWidth: 2,
                             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                           ),

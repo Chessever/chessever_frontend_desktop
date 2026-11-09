@@ -13,6 +13,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// The open cloud database tab (`Library > Cloud > folder > database`) must not
 /// empty its game list while a background refresh runs.
@@ -99,7 +100,7 @@ void main() {
         reason: 'a background refresh must not empty the loaded game list',
       );
       expect(find.byKey(libraryDatabaseSavedRowKey('game-2')), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(DesktopSpinner), findsNothing);
 
       // A genuinely new row still appears when the refresh lands.
       repository.completeNext(<SavedAnalysis>[

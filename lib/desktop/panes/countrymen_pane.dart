@@ -54,6 +54,7 @@ import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 import 'package:chessever/widgets/federation_flag.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Desktop Countrymen pane.
 ///
@@ -1177,7 +1178,7 @@ class _InlineLoader extends StatelessWidget {
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -2070,7 +2071,7 @@ class _Loading extends StatelessWidget {
         child: const SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),

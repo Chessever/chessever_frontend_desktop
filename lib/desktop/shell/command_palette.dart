@@ -25,6 +25,7 @@ import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/search/enhanced_group_broadcast_local_storage.dart';
 import 'package:chessever/widgets/search/opening_search_suggestion.dart';
 import 'package:chessever/widgets/search/search_result_model.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// reference-style global command palette. Opens with Cmd/Ctrl+K from
 /// anywhere in the desktop shell.
@@ -627,7 +628,7 @@ class _SearchField extends StatelessWidget {
             const SizedBox(
               width: 18,
               height: 18,
-              child: CircularProgressIndicator(
+              child: DesktopSpinner(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation(kPrimaryColor),
               ),
@@ -1007,7 +1008,7 @@ class _LoadingState extends StatelessWidget {
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -1027,7 +1028,7 @@ class _InlineLoading extends StatelessWidget {
         SizedBox(
           width: 14,
           height: 14,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),

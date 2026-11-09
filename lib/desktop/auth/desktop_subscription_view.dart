@@ -18,6 +18,7 @@ import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// The desktop subscription body, reused by both the onboarding "Subscribe"
 /// step and the standalone paywall surfaces.
@@ -628,7 +629,7 @@ class _CheckoutStatus extends StatelessWidget {
           SizedBox(
             width: 16,
             height: 16,
-            child: CircularProgressIndicator(
+            child: DesktopSpinner(
               strokeWidth: 2,
               color: kPrimaryColor,
             ),
@@ -798,7 +799,7 @@ class _PriceLinePlaceholder extends StatelessWidget {
         const SizedBox(
           width: 16,
           height: 16,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             color: kPrimaryColor,
           ),

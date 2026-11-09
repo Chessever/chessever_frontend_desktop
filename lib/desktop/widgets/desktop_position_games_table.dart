@@ -44,6 +44,7 @@ import 'package:chessever/screens/player_profile/utils/twic_event_identity.dart'
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/figurine_notation.dart';
 import 'package:chessever/widgets/federation_flag.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 typedef PreviewUciLineCallback =
     void Function(List<String> ucis, {bool autoplay, int? step});
@@ -2059,7 +2060,7 @@ class _DesktopPositionGamesTableState
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -2209,7 +2210,7 @@ class _DesktopPositionGamesTableState
                     child: SizedBox(
                       width: 14,
                       height: 14,
-                      child: CircularProgressIndicator(
+                      child: DesktopSpinner(
                         strokeWidth: 1.6,
                         valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                       ),

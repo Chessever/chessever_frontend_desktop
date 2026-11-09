@@ -27,6 +27,7 @@ import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/host_platform.dart';
 import 'package:chessever/web/text_download.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 const _defaultBoardShareShowEvalBar = false;
 
@@ -777,7 +778,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                         const SizedBox(
                           width: 22,
                           height: 22,
-                          child: CircularProgressIndicator(
+                          child: DesktopSpinner(
                             strokeWidth: 2.5,
                             color: kPrimaryColor,
                           ),

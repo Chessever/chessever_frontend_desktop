@@ -150,8 +150,14 @@ class _PremiumCollectionCard extends ConsumerWidget {
 
 /// Auto-scrolling irregular player photo grid background for Favorites card.
 /// Creates a visually interesting mosaic of player photos that scrolls indefinitely.
+///
+/// [animate] lets a host pause the drift. Every animation frame redraws the
+/// whole scene on renderers without a raster cache (Flutter web, Impeller), so
+/// the desktop shell only drifts the mosaic while its card is hovered.
 class FavoritePlayersGridBackground extends HookConsumerWidget {
-  const FavoritePlayersGridBackground({super.key});
+  const FavoritePlayersGridBackground({super.key, this.animate = true});
+
+  final bool animate;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -170,11 +176,14 @@ class FavoritePlayersGridBackground extends HookConsumerWidget {
       if (disableAnimations) {
         animationController.stop();
         animationController.value = 0;
-      } else {
+      } else if (animate) {
+        // Resumes from where a paused drift stopped.
         animationController.repeat();
+      } else {
+        animationController.stop();
       }
       return null;
-    }, [animationController, disableAnimations]);
+    }, [animationController, disableAnimations, animate]);
 
     if (favorites.isEmpty) {
       return const _EmptyFavoritesPlaceholder();
@@ -229,9 +238,9 @@ class FavoritePlayersGridBackground extends HookConsumerWidget {
         final stripCellsPerRow =
             ((cardWidth + scrollDistance) / cellWithSpacing).ceil() + 2;
 
-        // Build the cell grid ONCE and pass as `child` to AnimatedBuilder.
-        // The inner RepaintBoundary caches the grid to a layer, so per-frame
-        // work collapses to a cheap GPU transform of a pre-rasterized image.
+        // Build the cell grid ONCE and pass as `child` to AnimatedBuilder,
+        // so a frame re-records no cells. The scene is still rasterized again
+        // each frame where there is no raster cache (web, Impeller).
         // No ClipRect here: the parent _PremiumCollectionCard already wraps
         // everything in a ClipRRect, so off-card cells are already clipped.
         final grid = RepaintBoundary(

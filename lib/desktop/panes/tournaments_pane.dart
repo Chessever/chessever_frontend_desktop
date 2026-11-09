@@ -72,6 +72,7 @@ import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/logo_pattern_fallback.dart';
 import 'package:chessever/widgets/search/enhanced_group_broadcast_local_storage.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 LiveGamesBatchKey _desktopForYouLiveBatchKey({
   required String eventId,
@@ -516,7 +517,7 @@ class _SearchResultsBody extends StatelessWidget {
                   SizedBox(
                     width: 12,
                     height: 12,
-                    child: CircularProgressIndicator(
+                    child: DesktopSpinner(
                       strokeWidth: 2,
                       valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                     ),
@@ -2236,7 +2237,7 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                                     const SizedBox(
                                       width: 14,
                                       height: 14,
-                                      child: CircularProgressIndicator(
+                                      child: DesktopSpinner(
                                         strokeWidth: 1.6,
                                         valueColor: AlwaysStoppedAnimation(
                                           kPrimaryColor,
@@ -2437,7 +2438,7 @@ class _LoadingState extends StatelessWidget {
       child: SizedBox(
         width: 24,
         height: 24,
-        child: CircularProgressIndicator(
+        child: DesktopSpinner(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
         ),
@@ -3420,7 +3421,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                         child: SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(
+                          child: DesktopSpinner(
                             strokeWidth: 2,
                             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                           ),

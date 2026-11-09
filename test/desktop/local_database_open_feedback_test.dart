@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 void main() {
   test('pending open title never borrows a different preview source label', () {
@@ -301,7 +302,7 @@ void main() {
     );
     expect(container.read(desktopTabsProvider).activeId, id);
     expect(find.text('Opening database…'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(DesktopSpinner), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     pending.completeError(StateError('detached'));
     await tester.pump(const Duration(seconds: 1));

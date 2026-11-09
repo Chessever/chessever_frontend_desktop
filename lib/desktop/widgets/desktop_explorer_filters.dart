@@ -17,6 +17,7 @@ import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/game_filter/wheel_range_filter.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Desktop-native filter rail for the Opening Explorer pane.
 ///
@@ -703,7 +704,7 @@ class _PlayerFilterField extends HookConsumerWidget {
                   ? const SizedBox(
                     width: 12,
                     height: 12,
-                    child: CircularProgressIndicator(
+                    child: DesktopSpinner(
                       strokeWidth: 1.5,
                       valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                     ),
@@ -825,7 +826,7 @@ class _PlayerSearchStatus extends StatelessWidget {
             const SizedBox(
               width: 14,
               height: 14,
-              child: CircularProgressIndicator(
+              child: DesktopSpinner(
                 strokeWidth: 1.6,
                 valueColor: AlwaysStoppedAnimation(kPrimaryColor),
               ),

@@ -19,6 +19,7 @@ import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider
     show selectedBroadcastModelProvider;
 import 'package:chessever/screens/tour_detail/team_tour/team_tour_screen_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 const _tabular = [FontFeature.tabularFigures()];
 
@@ -193,7 +194,7 @@ class DesktopTeamStandingsTable extends ConsumerWidget {
           () => const Center(
             child: SizedBox.square(
               dimension: 18,
-              child: CircularProgressIndicator(
+              child: DesktopSpinner(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation(kPrimaryColor),
               ),
@@ -406,7 +407,7 @@ class DesktopCompactTeamStandingsView extends ConsumerWidget {
           () => const Center(
             child: SizedBox.square(
               dimension: 18,
-              child: CircularProgressIndicator(
+              child: DesktopSpinner(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation(kPrimaryColor),
               ),

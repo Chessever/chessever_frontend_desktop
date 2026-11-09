@@ -20,6 +20,7 @@ import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
 import 'package:chessever/repository/authentication/auth_repository.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// What the root of the main desktop window shows.
 enum DesktopAuthGateView { loading, welcome, shell }
@@ -291,7 +292,7 @@ class _GateLoading extends StatelessWidget {
       child: const SizedBox(
         width: 22,
         height: 22,
-        child: CircularProgressIndicator(
+        child: DesktopSpinner(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
         ),

@@ -42,6 +42,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
     show GameStatus;
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// The profile's two halves: the user's own prep profile (primary) and the
 /// stats of the games they played against the bots.
@@ -1566,7 +1567,7 @@ class _GamesBodyState extends State<_GamesBody> {
             builder: (context) {
               if (widget.loading) {
                 return const Center(
-                  child: CircularProgressIndicator(color: kPrimaryColor),
+                  child: DesktopSpinner(color: kPrimaryColor),
                 );
               }
               if (widget.error != null) {
@@ -1960,7 +1961,7 @@ class _Loading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(child: CircularProgressIndicator(color: kPrimaryColor));
+    return const Center(child: DesktopSpinner(color: kPrimaryColor));
   }
 }
 

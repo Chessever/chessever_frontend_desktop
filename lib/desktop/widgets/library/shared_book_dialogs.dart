@@ -17,6 +17,7 @@ import 'package:chessever/repository/library/models/shared_book_preview.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 const _bodyStyle = TextStyle(color: kWhiteColor70, fontSize: 13, height: 1.5);
 
@@ -276,7 +277,7 @@ class _SharedBookPreviewBodyState
                   children: [
                     SizedBox.square(
                       dimension: 14,
-                      child: CircularProgressIndicator(
+                      child: DesktopSpinner(
                         strokeWidth: 2,
                         color: kPrimaryColor,
                       ),

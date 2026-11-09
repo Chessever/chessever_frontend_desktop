@@ -31,6 +31,7 @@ import 'package:chessever/desktop/widgets/library/local_chess_files_view.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 void main() {
   testWidgets('setup-only actual record keeps full-source Board identity', (tester) async {
@@ -2138,7 +2139,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('Tree 0%'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(DesktopSpinner), findsOneWidget);
 
       await tester.tap(find.text('Tree 0%'));
       await tester.pump();
@@ -2195,7 +2196,7 @@ void main() {
     );
 
     expect(find.text('Tree'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(DesktopSpinner), findsOneWidget);
     await tester.tap(find.byType(LocalTreeActionButton));
     await tester.pump(const Duration(seconds: 1));
     expect(built, isFalse);
@@ -2217,7 +2218,7 @@ void main() {
     );
 
     expect(find.text('Tree 0%'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(DesktopSpinner), findsOneWidget);
     await tester.tap(find.byType(LocalTreeActionButton));
     await tester.pump(const Duration(seconds: 1));
     expect(stopped, isTrue);

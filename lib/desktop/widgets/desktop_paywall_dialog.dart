@@ -28,6 +28,7 @@ import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// One open paywall per window container. N simultaneous gate hits join it.
 final Map<ProviderContainer, Future<bool>> _pendingDesktopPaywalls = {};
@@ -888,7 +889,7 @@ class _Progress extends StatelessWidget {
         const SizedBox(
           width: 14,
           height: 14,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
             backgroundColor: kDividerColor,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Compact "open / build local opening tree" control that sits in the local
 /// database toolbar, just above the board.
@@ -77,7 +78,7 @@ class LocalTreeActionButton extends StatelessWidget {
               ? SizedBox(
                 width: 14,
                 height: 14,
-                child: CircularProgressIndicator(
+                child: DesktopSpinner(
                   strokeWidth: 2,
                   value:
                       isBuilding &&

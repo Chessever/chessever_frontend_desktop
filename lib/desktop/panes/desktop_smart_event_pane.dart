@@ -31,6 +31,7 @@ import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/group_event/smart_event/smart_aggregate_event_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// `TabKind.smartGames` router: a tab carrying a criteria-driven smart event
 /// renders [DesktopSmartEventPane]; every other smart-games tab keeps the
@@ -422,7 +423,7 @@ class _DesktopSmartEventPaneState extends ConsumerState<DesktopSmartEventPane> {
       child: SizedBox(
         width: 20,
         height: 20,
-        child: CircularProgressIndicator(
+        child: DesktopSpinner(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
         ),
@@ -542,7 +543,7 @@ class _DesktopSmartEventPaneState extends ConsumerState<DesktopSmartEventPane> {
                       child: SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(
+                        child: DesktopSpinner(
                           strokeWidth: 2,
                           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                         ),

@@ -1,6 +1,8 @@
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:chessground/chessground.dart' show PieceAssets;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, listEquals, mapEquals, setEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
@@ -81,7 +83,7 @@ class _NotationPositionMarkers extends InheritedWidget {
   @override
   bool updateShouldNotify(covariant _NotationPositionMarkers oldWidget) {
     return timings != oldWidget.timings ||
-        positionArrowKeys != oldWidget.positionArrowKeys ||
+        !setEquals(positionArrowKeys, oldWidget.positionArrowKeys) ||
         transpositions != oldWidget.transpositions ||
         onJump != oldWidget.onJump;
   }
@@ -373,6 +375,42 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   String? _timingControl;
   NotationMoveTimingIndex? _cachedTimings;
 
+  /// Inline move widgets from the previous build, by pointer. A ply step
+  /// changes two moves; reusing the other instances lets Flutter skip their
+  /// subtrees and keeps the paragraph's spans identical, so it neither
+  /// rebuilds every move nor lays the paragraph out again.
+  final Map<String, (_InlineMoveSignature, Widget)> _inlineMoveCache = {};
+
+  /// Ladder pair rows from the previous build, as [_inlineMoveCache].
+  final Map<String, (_RowSignature, Widget)> _rowCache = {};
+
+  /// The highlighted move, for [_InlineMoveSlot]s: a ply step re-renders the
+  /// two slots whose highlight changed instead of the paragraph holding them.
+  final ValueNotifier<_ActiveInlineMove> _activeInlineMove = ValueNotifier(
+    const _ActiveInlineMove('', null),
+  );
+
+  // Stable stand-ins for the widget's callbacks. Hosts pass fresh closures on
+  // every build; cached moves call through these to reach the latest ones.
+  void _forwardJump(ChessMovePointer pointer) => widget.onJump(pointer);
+  void _forwardSetUserQualityNag(int ply, int? nag) =>
+      widget.onSetUserQualityNag?.call(ply, nag);
+  void _forwardToggleUserNag(int ply, int nag) =>
+      widget.onToggleUserNag?.call(ply, nag);
+  void _forwardToggleMoveNag(ChessMovePointer pointer, int nag) =>
+      widget.onToggleMoveNag?.call(pointer, nag);
+  void _forwardClearUserNags(int ply) => widget.onClearUserNags?.call(ply);
+  void _forwardClearMoveNags(ChessMovePointer pointer) =>
+      widget.onClearMoveNags?.call(pointer);
+  void _forwardSetMoveComment(ChessMovePointer pointer, String? comment) =>
+      widget.onSetMoveComment?.call(pointer, comment);
+  void _forwardPromoteVariation(ChessMovePointer pointer) =>
+      widget.onPromoteVariation?.call(pointer);
+  void _forwardDeleteVariation(ChessMovePointer pointer) =>
+      widget.onDeleteVariation?.call(pointer);
+  void _forwardTrimContinuation(ChessMovePointer pointer) =>
+      widget.onTrimContinuation?.call(pointer);
+
   @override
   void initState() {
     super.initState();
@@ -414,10 +452,15 @@ class _NotationLadderViewState extends State<NotationLadderView> {
       _activeKey = GlobalKey();
       _scrollActiveIntoView();
     }
+    if (!identical(old.game, widget.game)) {
+      _inlineMoveCache.clear();
+      _rowCache.clear();
+    }
   }
 
   @override
   void dispose() {
+    _activeInlineMove.dispose();
     widget.layoutModeController?.removeListener(_onLayoutControllerChanged);
     widget.variationCollapseController?._detach(this);
     _ownedScroll?.dispose();
@@ -674,13 +717,19 @@ class _NotationLadderViewState extends State<NotationLadderView> {
     }
     final displayActivePointer =
         widget.showActiveHighlight ? widget.activePointer : const <int>[];
+    // Descendant slots listen; marking them during this build is allowed.
+    _activeInlineMove.value = _ActiveInlineMove(
+      NotationPointer.encode(displayActivePointer),
+      displayActivePointer.isEmpty ? null : _activeKey,
+    );
     final transpositions = _cachedTranspositions;
 
     return _NotationPositionMarkers(
       positionArrowKeys: widget.positionArrowKeys,
       timings: _cachedTimings!,
       transpositions: transpositions,
-      onJump: widget.onJump,
+      // Stable, so a host's fresh closure does not notify every move chip.
+      onJump: _forwardJump,
       child: CallbackShortcuts(
         bindings: {
           const SingleActivator(LogicalKeyboardKey.bracketLeft, control: true):
@@ -1521,8 +1570,122 @@ class _LineBlock extends StatelessWidget {
       final blackIsActive =
           blackPointer != null && _pointersEqual(blackPointer, activePointer);
 
-      pairChildren.add(
-        _PairRow(
+      final whiteNags =
+          (depth == 0 && isMainlineRoot && whitePointer != null)
+              ? _mergedMainlineNagsFor(
+                ply: whitePointer.last,
+                baseNags: whiteMove?.nags ?? const [],
+                lichessAnnotations: lichessAnnotations,
+                userNags: userNags,
+              )
+              : (whiteMove?.nags ?? const <int>[]);
+      final whiteAnnotation =
+          (depth == 0 && isMainlineRoot && whitePointer != null)
+              ? lichessAnnotations[whitePointer.last]
+              : null;
+      final whiteUserHasQuality =
+          depth == 0 &&
+          isMainlineRoot &&
+          whitePointer != null &&
+          _hasUserQualityOverride(
+            baseNags: whiteMove?.nags ?? const <int>[],
+            userNags: userNags[whitePointer.last] ?? const <int>[],
+          );
+      final blackNags =
+          (depth == 0 && isMainlineRoot && blackPointer != null)
+              ? _mergedMainlineNagsFor(
+                ply: blackPointer.last,
+                baseNags: blackMove?.nags ?? const [],
+                lichessAnnotations: lichessAnnotations,
+                userNags: userNags,
+              )
+              : (blackMove?.nags ?? const <int>[]);
+      final blackAnnotation =
+          (depth == 0 && isMainlineRoot && blackPointer != null)
+              ? lichessAnnotations[blackPointer.last]
+              : null;
+      final blackUserHasQuality =
+          depth == 0 &&
+          isMainlineRoot &&
+          blackPointer != null &&
+          _hasUserQualityOverride(
+            baseNags: blackMove?.nags ?? const <int>[],
+            userNags: userNags[blackPointer.last] ?? const <int>[],
+          );
+      final mainlineRoot = depth == 0 && isMainlineRoot;
+      final result = showResultInBlackSlot ? gameResult : null;
+      final variationHeadPointer =
+          depth > 0 ? <int>[...pointerPrefix, 0] : null;
+
+      // Same reuse as the inline paragraph: stable callbacks, a value
+      // signature, and a slot that follows the highlight on its own.
+      var cacheable = owner != null;
+      F? stable<F extends Function>(F? given, F? ownerValue, F forwarder) {
+        if (given == null) return null;
+        if (owner != null && identical(given, ownerValue)) return forwarder;
+        cacheable = false;
+        return given;
+      }
+
+      final ownerWidget = owner?.widget;
+      final jump =
+          stable(onJump, ownerWidget?.onJump, owner?._forwardJump ?? onJump)!;
+      final setUserQualityNag = stable(
+        mainlineRoot ? onSetUserQualityNag : null,
+        ownerWidget?.onSetUserQualityNag,
+        owner?._forwardSetUserQualityNag ?? _noUserQualityNag,
+      );
+      final toggleUserNag = stable(
+        mainlineRoot ? onToggleUserNag : null,
+        ownerWidget?.onToggleUserNag,
+        owner?._forwardToggleUserNag ?? _noToggleUserNag,
+      );
+      final toggleMoveNag = stable(
+        (depth > 0 || !isMainlineRoot) ? onToggleMoveNag : null,
+        ownerWidget?.onToggleMoveNag,
+        owner?._forwardToggleMoveNag ?? _noToggleMoveNag,
+      );
+      final clearUserNags = stable(
+        mainlineRoot ? onClearUserNags : null,
+        ownerWidget?.onClearUserNags,
+        owner?._forwardClearUserNags ?? _noClearUserNags,
+      );
+      final clearMoveNags = stable(
+        onClearMoveNags,
+        ownerWidget?.onClearMoveNags,
+        owner?._forwardClearMoveNags ?? _noPointerAction,
+      );
+      final setMoveComment = stable(
+        onSetMoveComment,
+        ownerWidget?.onSetMoveComment,
+        owner?._forwardSetMoveComment ?? _noSetMoveComment,
+      );
+      final promoteVariation = stable(
+        depth > 0 ? onPromoteVariation : null,
+        ownerWidget?.onPromoteVariation,
+        owner?._forwardPromoteVariation ?? _noPointerAction,
+      );
+      final deleteVariation = stable(
+        depth > 0 ? onDeleteVariation : null,
+        ownerWidget?.onDeleteVariation,
+        owner?._forwardDeleteVariation ?? _noPointerAction,
+      );
+      final trimContinuation = stable(
+        onTrimContinuation,
+        ownerWidget?.onTrimContinuation,
+        owner?._forwardTrimContinuation ?? _noPointerAction,
+      );
+
+      final whiteKey =
+          whitePointer == null ? null : NotationPointer.encode(whitePointer);
+      final blackKey =
+          blackPointer == null ? null : NotationPointer.encode(blackPointer);
+      Widget buildRow(String? selectedKey, GlobalKey? key) {
+        final white = whiteKey != null && selectedKey == whiteKey;
+        final black = blackKey != null && selectedKey == blackKey;
+        final wp = whitePointer;
+        final bp = blackPointer;
+        return _PairRow(
           moveNumber: moveNumber,
           showLeadingEllipsis: showLeadingEllipsis,
           depth: depth,
@@ -1530,81 +1693,88 @@ class _LineBlock extends StatelessWidget {
           whitePointer: whitePointer,
           blackMove: blackMove,
           blackPointer: blackPointer,
-          whiteIsActive: whiteIsActive,
-          blackIsActive: blackIsActive,
-          activeKey: (whiteIsActive || blackIsActive) ? activeKey : null,
-          onJump: onJump,
-          whiteNags:
-              (depth == 0 && isMainlineRoot && whitePointer != null)
-                  ? _mergedMainlineNagsFor(
-                    ply: whitePointer.last,
-                    baseNags: whiteMove?.nags ?? const [],
-                    lichessAnnotations: lichessAnnotations,
-                    userNags: userNags,
-                  )
-                  : (whiteMove?.nags ?? const <int>[]),
-          whiteAnnotation:
-              (depth == 0 && isMainlineRoot && whitePointer != null)
-                  ? lichessAnnotations[whitePointer.last]
-                  : null,
-          whiteUserHasQuality:
-              depth == 0 &&
-              isMainlineRoot &&
-              whitePointer != null &&
-              _hasUserQualityOverride(
-                baseNags: whiteMove?.nags ?? const <int>[],
-                userNags: userNags[whitePointer.last] ?? const <int>[],
-              ),
-          blackNags:
-              (depth == 0 && isMainlineRoot && blackPointer != null)
-                  ? _mergedMainlineNagsFor(
-                    ply: blackPointer.last,
-                    baseNags: blackMove?.nags ?? const [],
-                    lichessAnnotations: lichessAnnotations,
-                    userNags: userNags,
-                  )
-                  : (blackMove?.nags ?? const <int>[]),
-          blackAnnotation:
-              (depth == 0 && isMainlineRoot && blackPointer != null)
-                  ? lichessAnnotations[blackPointer.last]
-                  : null,
-          blackUserHasQuality:
-              depth == 0 &&
-              isMainlineRoot &&
-              blackPointer != null &&
-              _hasUserQualityOverride(
-                baseNags: blackMove?.nags ?? const <int>[],
-                userNags: userNags[blackPointer.last] ?? const <int>[],
-              ),
-          onSetUserQualityNag:
-              (depth == 0 && isMainlineRoot) ? onSetUserQualityNag : null,
-          onToggleUserNag:
-              (depth == 0 && isMainlineRoot) ? onToggleUserNag : null,
-          onToggleMoveNag:
-              (depth > 0 || !isMainlineRoot) ? onToggleMoveNag : null,
-          onClearUserNags:
-              (depth == 0 && isMainlineRoot) ? onClearUserNags : null,
-          onClearMoveNags: onClearMoveNags,
+          whiteIsActive: white,
+          blackIsActive: black,
+          activeKey: (white || black) ? key : null,
+          onJump: jump,
+          whiteNags: whiteNags,
+          whiteAnnotation: whiteAnnotation,
+          whiteUserHasQuality: whiteUserHasQuality,
+          blackNags: blackNags,
+          blackAnnotation: blackAnnotation,
+          blackUserHasQuality: blackUserHasQuality,
+          onSetUserQualityNag: setUserQualityNag,
+          onToggleUserNag: toggleUserNag,
+          onToggleMoveNag: toggleMoveNag,
+          onClearUserNags: clearUserNags,
+          onClearMoveNags: clearMoveNags,
           onSetWhiteComment:
-              (whitePointer != null && onSetMoveComment != null)
-                  ? (comment) => onSetMoveComment!(whitePointer!, comment)
+              (wp != null && setMoveComment != null)
+                  ? (comment) => setMoveComment(wp, comment)
                   : null,
           onSetBlackComment:
-              (blackPointer != null && onSetMoveComment != null)
-                  ? (comment) => onSetMoveComment!(blackPointer!, comment)
+              (bp != null && setMoveComment != null)
+                  ? (comment) => setMoveComment(bp, comment)
                   : null,
-          onPromoteVariation: depth > 0 ? onPromoteVariation : null,
-          onDeleteVariation: depth > 0 ? onDeleteVariation : null,
-          onTrimContinuation: onTrimContinuation,
-          // Variation pointer for promote/delete: the head of the
-          // *containing* variation. `pointerPrefix` for a variation block
-          // is `[…, varIdx]`; appending `0` reaches the head move.
-          variationHeadPointer: depth > 0 ? <int>[...pointerPrefix, 0] : null,
+          onPromoteVariation: promoteVariation,
+          onDeleteVariation: deleteVariation,
+          onTrimContinuation: trimContinuation,
+          variationHeadPointer: variationHeadPointer,
           useFigurine: useFigurine,
           pieceAssets: pieceAssets,
-          result: showResultInBlackSlot ? gameResult : null,
-        ),
-      );
+          result: result,
+        );
+      }
+
+      final rowKeys = <String>[
+        if (whiteKey != null) whiteKey,
+        if (blackKey != null) blackKey,
+      ];
+      final rowCacheKey = 'pair:${rowKeys.join('|')}';
+      final rowSignature = _RowSignature(<Object?>[
+        moveNumber,
+        showLeadingEllipsis,
+        depth,
+        whiteMove,
+        blackMove,
+        whiteNags,
+        blackNags,
+        whiteAnnotation,
+        blackAnnotation,
+        whiteUserHasQuality,
+        blackUserHasQuality,
+        setUserQualityNag != null,
+        toggleUserNag != null,
+        toggleMoveNag != null,
+        clearUserNags != null,
+        clearMoveNags != null,
+        setMoveComment != null,
+        promoteVariation != null,
+        deleteVariation != null,
+        trimContinuation != null,
+        variationHeadPointer,
+        useFigurine,
+        pieceAssets,
+        result,
+        owner?._annotationsHidden ?? false,
+      ]);
+      final cachedRow = cacheable ? owner!._rowCache[rowCacheKey] : null;
+      final Widget row;
+      if (cachedRow != null && cachedRow.$1 == rowSignature) {
+        row = cachedRow.$2;
+      } else if (cacheable) {
+        row = _InlineMoveSlot(
+          pointerKeys: rowKeys,
+          active: owner!._activeInlineMove,
+          builder: buildRow,
+        );
+        owner._rowCache[rowCacheKey] = (rowSignature, row);
+      } else {
+        final activeNow =
+            whiteIsActive ? whiteKey : (blackIsActive ? blackKey : null);
+        row = buildRow(activeNow, activeKey);
+      }
+      pairChildren.add(row);
       if (showResultInBlackSlot) resultShown = true;
 
       void appendMoveComments(ChessMove? move) {
@@ -2195,11 +2365,8 @@ class _InlineNotationBlock extends StatelessWidget {
     // the analyst's authored group without any forced extra line break
     // between mainline runs.
     final spans = <InlineSpan>[];
-    final annotationsHidden =
-        context
-            .findAncestorStateOfType<_NotationLadderViewState>()
-            ?._annotationsHidden ??
-        false;
+    final owner = context.findAncestorStateOfType<_NotationLadderViewState>();
+    final annotationsHidden = owner?._annotationsHidden ?? false;
 
     final commentColor = depth == 0 ? kCommentaryGreen : kCommentaryGreenDim;
     final commentStyle = TextStyle(
@@ -2230,61 +2397,171 @@ class _InlineNotationBlock extends StatelessWidget {
 
       final separatesPreviousWhiteMove =
           i > 0 && ply.isOdd && (line[i - 1].variations?.isNotEmpty ?? false);
-      final moveWidget = _InlineMove(
-        prefix: _inlineMovePrefix(
-          ply,
-          isLineStart: i == 0,
-          forceBlackMoveNumber: separatesPreviousWhiteMove,
-        ),
+      final prefix = _inlineMovePrefix(
+        ply,
+        isLineStart: i == 0,
+        forceBlackMoveNumber: separatesPreviousWhiteMove,
+      );
+      final nags =
+          isMainlineMove
+              ? _mergedMainlineNagsFor(
+                ply: pointer.last,
+                baseNags: move.nags ?? const <int>[],
+                lichessAnnotations: lichessAnnotations,
+                userNags: userNags,
+              )
+              : (move.nags ?? const <int>[]);
+      final annotation =
+          isMainlineMove ? lichessAnnotations[pointer.last] : null;
+      final userHasQualityNag =
+          isMainlineMove &&
+          _hasUserQualityOverride(
+            baseNags: move.nags ?? const <int>[],
+            userNags: userNags[pointer.last] ?? const <int>[],
+          );
+
+      // Route each callback through the owner's stable forwarder when it is
+      // the owner's own callback (it always is inside the notation view), so
+      // an unchanged move can keep its widget instance across builds.
+      var cacheable = owner != null;
+      F? stable<F extends Function>(F? given, F? ownerValue, F forwarder) {
+        if (given == null) return null;
+        if (owner != null && identical(given, ownerValue)) return forwarder;
+        cacheable = false;
+        return given;
+      }
+
+      final ownerWidget = owner?.widget;
+      final jump =
+          stable(onJump, ownerWidget?.onJump, owner?._forwardJump ?? onJump)!;
+      final setUserQualityNag = stable(
+        isMainlineMove ? onSetUserQualityNag : null,
+        ownerWidget?.onSetUserQualityNag,
+        owner?._forwardSetUserQualityNag ?? _noUserQualityNag,
+      );
+      final toggleUserNag = stable(
+        isMainlineMove ? onToggleUserNag : null,
+        ownerWidget?.onToggleUserNag,
+        owner?._forwardToggleUserNag ?? _noToggleUserNag,
+      );
+      final toggleMoveNag = stable(
+        isMainlineMove ? null : onToggleMoveNag,
+        ownerWidget?.onToggleMoveNag,
+        owner?._forwardToggleMoveNag ?? _noToggleMoveNag,
+      );
+      final clearUserNags = stable(
+        isMainlineMove ? onClearUserNags : null,
+        ownerWidget?.onClearUserNags,
+        owner?._forwardClearUserNags ?? _noClearUserNags,
+      );
+      final clearMoveNags = stable(
+        onClearMoveNags,
+        ownerWidget?.onClearMoveNags,
+        owner?._forwardClearMoveNags ?? _noPointerAction,
+      );
+      final setMoveComment = stable(
+        onSetMoveComment,
+        ownerWidget?.onSetMoveComment,
+        owner?._forwardSetMoveComment ?? _noSetMoveComment,
+      );
+      final promoteVariation = stable(
+        depth > 0 ? onPromoteVariation : null,
+        ownerWidget?.onPromoteVariation,
+        owner?._forwardPromoteVariation ?? _noPointerAction,
+      );
+      final deleteVariation = stable(
+        depth > 0 ? onDeleteVariation : null,
+        ownerWidget?.onDeleteVariation,
+        owner?._forwardDeleteVariation ?? _noPointerAction,
+      );
+      final trimContinuation = stable(
+        onTrimContinuation,
+        ownerWidget?.onTrimContinuation,
+        owner?._forwardTrimContinuation ?? _noPointerAction,
+      );
+
+      final signature = _InlineMoveSignature(
+        prefix: prefix,
         move: move,
-        pointer: pointer,
-        selected: selected,
+        // A slot follows the highlight itself (see [_InlineMoveSlot]).
+        selected: cacheable ? false : selected,
+        activeKey: cacheable ? null : (selected ? activeKey : null),
         depth: depth,
         isVariationHead: isVariationHead,
-        onJump: onJump,
-        nags:
-            isMainlineMove
-                ? _mergedMainlineNagsFor(
-                  ply: pointer.last,
-                  baseNags: move.nags ?? const <int>[],
-                  lichessAnnotations: lichessAnnotations,
-                  userNags: userNags,
-                )
-                : (move.nags ?? const <int>[]),
-        annotation: isMainlineMove ? lichessAnnotations[pointer.last] : null,
-        userHasQualityNag:
-            isMainlineMove &&
-            _hasUserQualityOverride(
-              baseNags: move.nags ?? const <int>[],
-              userNags: userNags[pointer.last] ?? const <int>[],
-            ),
-        onSetUserQualityNag: isMainlineMove ? onSetUserQualityNag : null,
-        onToggleUserNag: isMainlineMove ? onToggleUserNag : null,
-        onToggleMoveNag: isMainlineMove ? null : onToggleMoveNag,
-        onClearUserNags: isMainlineMove ? onClearUserNags : null,
-        onClearMoveNags: onClearMoveNags,
-        onSetComment:
-            onSetMoveComment == null
-                ? null
-                : (comment) => onSetMoveComment!(pointer, comment),
-        onPromoteVariation: depth > 0 ? onPromoteVariation : null,
-        onDeleteVariation: depth > 0 ? onDeleteVariation : null,
-        onTrimContinuation: onTrimContinuation,
-        variationHeadPointer: variationHeadPointer,
+        nags: nags,
+        annotation: annotation,
+        userHasQualityNag: userHasQualityNag,
+        callbacks: [
+          setUserQualityNag,
+          toggleUserNag,
+          toggleMoveNag,
+          clearUserNags,
+          clearMoveNags,
+          setMoveComment,
+          promoteVariation,
+          deleteVariation,
+          trimContinuation,
+        ].map((c) => c != null).toList(growable: false),
         useFigurine: useFigurine,
         pieceAssets: pieceAssets,
+        // Chips read this from the view's state, not from an inherited widget.
+        annotationsHidden: annotationsHidden,
       );
+      final cacheKey = NotationPointer.encode(pointer);
+      final cached = cacheable ? owner!._inlineMoveCache[cacheKey] : null;
+      final Widget spanChild;
+      if (cached != null && cached.$1 == signature) {
+        spanChild = cached.$2;
+      } else {
+        Widget buildMove(bool isSelected, GlobalKey? key) => Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: KeyedSubtree(
+            key: isSelected ? key : null,
+            child: _InlineMove(
+              prefix: prefix,
+              move: move,
+              pointer: pointer,
+              selected: isSelected,
+              depth: depth,
+              isVariationHead: isVariationHead,
+              onJump: jump,
+              nags: nags,
+              annotation: annotation,
+              userHasQualityNag: userHasQualityNag,
+              onSetUserQualityNag: setUserQualityNag,
+              onToggleUserNag: toggleUserNag,
+              onToggleMoveNag: toggleMoveNag,
+              onClearUserNags: clearUserNags,
+              onClearMoveNags: clearMoveNags,
+              onSetComment:
+                  setMoveComment == null
+                      ? null
+                      : (comment) => setMoveComment(pointer, comment),
+              onPromoteVariation: promoteVariation,
+              onDeleteVariation: deleteVariation,
+              onTrimContinuation: trimContinuation,
+              variationHeadPointer: variationHeadPointer,
+              useFigurine: useFigurine,
+              pieceAssets: pieceAssets,
+            ),
+          ),
+        );
+        if (cacheable) {
+          spanChild = _InlineMoveSlot(
+            pointerKeys: [cacheKey],
+            active: owner!._activeInlineMove,
+            builder: (selectedKey, key) => buildMove(selectedKey != null, key),
+          );
+          owner._inlineMoveCache[cacheKey] = (signature, spanChild);
+        } else {
+          spanChild = buildMove(selected, activeKey);
+        }
+      }
       spans.add(
         WidgetSpan(
           alignment: PlaceholderAlignment.middle,
           baseline: TextBaseline.alphabetic,
-          child: Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: KeyedSubtree(
-              key: selected ? activeKey : null,
-              child: moveWidget,
-            ),
-          ),
+          child: spanChild,
         ),
       );
 
@@ -4963,4 +5240,209 @@ Color _resultChipTint(String? chip) {
     default:
       return kWhiteColor70;
   }
+}
+
+// Placeholders for [_InlineNotationBlock.stable] outside a notation view; a
+// null owner never returns them, they only satisfy the parameter type.
+void _noUserQualityNag(int ply, int? nag) {}
+void _noToggleUserNag(int ply, int nag) {}
+void _noToggleMoveNag(ChessMovePointer pointer, int nag) {}
+void _noClearUserNags(int ply) {}
+void _noPointerAction(ChessMovePointer pointer) {}
+void _noSetMoveComment(ChessMovePointer pointer, String? comment) {}
+
+/// Everything an [_InlineMove] draws, compared by value, so an unchanged move
+/// keeps its widget instance from the previous build.
+@immutable
+class _InlineMoveSignature {
+  const _InlineMoveSignature({
+    required this.prefix,
+    required this.move,
+    required this.selected,
+    required this.activeKey,
+    required this.depth,
+    required this.isVariationHead,
+    required this.nags,
+    required this.annotation,
+    required this.userHasQualityNag,
+    required this.callbacks,
+    required this.useFigurine,
+    required this.pieceAssets,
+    required this.annotationsHidden,
+  });
+
+  final String prefix;
+  final ChessMove move;
+  final bool selected;
+  final GlobalKey? activeKey;
+  final int depth;
+  final bool isVariationHead;
+  final List<int> nags;
+  final LichessMoveAnnotation? annotation;
+  final bool userHasQualityNag;
+
+  /// Which optional callbacks exist; their menu entries depend on it.
+  final List<bool> callbacks;
+  final bool useFigurine;
+  final PieceAssets? pieceAssets;
+  final bool annotationsHidden;
+
+  static bool _sameAnnotation(
+    LichessMoveAnnotation? a,
+    LichessMoveAnnotation? b,
+  ) =>
+      identical(a, b) ||
+      (a != null &&
+          b != null &&
+          a.type == b.type &&
+          a.comment == b.comment &&
+          a.useClassificationIcon == b.useClassificationIcon &&
+          a.reportOwnsMoveQuality == b.reportOwnsMoveQuality);
+
+  @override
+  bool operator ==(Object other) =>
+      other is _InlineMoveSignature &&
+      identical(move, other.move) &&
+      prefix == other.prefix &&
+      selected == other.selected &&
+      identical(activeKey, other.activeKey) &&
+      depth == other.depth &&
+      isVariationHead == other.isVariationHead &&
+      userHasQualityNag == other.userHasQualityNag &&
+      useFigurine == other.useFigurine &&
+      annotationsHidden == other.annotationsHidden &&
+      listEquals(nags, other.nags) &&
+      listEquals(callbacks, other.callbacks) &&
+      _sameAnnotation(annotation, other.annotation) &&
+      (identical(pieceAssets, other.pieceAssets) ||
+          mapEquals(pieceAssets, other.pieceAssets));
+
+  @override
+  int get hashCode => Object.hash(move, prefix, selected, depth);
+}
+
+@immutable
+class _ActiveInlineMove {
+  const _ActiveInlineMove(this.pointerKey, this.key);
+
+  final String pointerKey;
+  final GlobalKey? key;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _ActiveInlineMove &&
+      other.pointerKey == pointerKey &&
+      identical(other.key, key);
+
+  @override
+  int get hashCode => Object.hash(pointerKey, key);
+}
+
+/// One move inside the inline paragraph. Its widget instance survives ply
+/// steps, so the paragraph's spans stay identical and it is not laid out
+/// again; the slot rebuilds only when its own highlight changes.
+class _InlineMoveSlot extends StatefulWidget {
+  const _InlineMoveSlot({
+    required this.pointerKeys,
+    required this.active,
+    required this.builder,
+  });
+
+  /// The moves this slot draws (one inline move, or a ladder pair).
+  final List<String> pointerKeys;
+  final ValueListenable<_ActiveInlineMove> active;
+
+  /// Builds the slot with the highlighted move among [pointerKeys], if any.
+  final Widget Function(String? selectedKey, GlobalKey? activeKey) builder;
+
+  @override
+  State<_InlineMoveSlot> createState() => _InlineMoveSlotState();
+}
+
+class _InlineMoveSlotState extends State<_InlineMoveSlot> {
+  String? _selected;
+  GlobalKey? _key;
+
+  @override
+  void initState() {
+    super.initState();
+    _read();
+    widget.active.addListener(_onActiveChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _InlineMoveSlot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.active, widget.active)) {
+      oldWidget.active.removeListener(_onActiveChanged);
+      widget.active.addListener(_onActiveChanged);
+    }
+    _read();
+  }
+
+  @override
+  void dispose() {
+    widget.active.removeListener(_onActiveChanged);
+    super.dispose();
+  }
+
+  String? _selectedIn(_ActiveInlineMove active) =>
+      widget.pointerKeys.contains(active.pointerKey) ? active.pointerKey : null;
+
+  void _read() {
+    final active = widget.active.value;
+    _selected = _selectedIn(active);
+    _key = _selected == null ? null : active.key;
+  }
+
+  void _onActiveChanged() {
+    final active = widget.active.value;
+    final selected = _selectedIn(active);
+    final key = selected == null ? null : active.key;
+    if (selected == _selected && identical(key, _key)) return;
+    setState(() {
+      _selected = selected;
+      _key = key;
+    });
+  }
+
+  // Its own layer: a highlight change re-records this move, not every move
+  // and comment in the paragraph around it.
+  @override
+  Widget build(BuildContext context) =>
+      RepaintBoundary(child: widget.builder(_selected, _key));
+}
+
+/// Value equality over a ladder row's inputs: moves by identity, lists and
+/// maps by content, engine annotations by their fields.
+@immutable
+class _RowSignature {
+  const _RowSignature(this.parts);
+
+  final List<Object?> parts;
+
+  static bool _same(Object? a, Object? b) {
+    if (identical(a, b)) return true;
+    if (a is List && b is List) return listEquals(a, b);
+    if (a is Map && b is Map) return mapEquals(a, b);
+    if (a is LichessMoveAnnotation && b is LichessMoveAnnotation) {
+      return _InlineMoveSignature._sameAnnotation(a, b);
+    }
+    if (a is ChessMove || b is ChessMove) return false;
+    return a == b;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! _RowSignature || other.parts.length != parts.length) {
+      return false;
+    }
+    for (var i = 0; i < parts.length; i++) {
+      if (!_same(parts[i], other.parts[i])) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => parts.length;
 }

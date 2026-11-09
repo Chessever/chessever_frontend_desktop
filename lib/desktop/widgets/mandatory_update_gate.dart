@@ -4,6 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Wraps the entire desktop shell. When the update archive advertises a *major*
 /// version bump, this widget overlays a non-dismissible card that funnels
@@ -248,7 +249,7 @@ class _UpdateProgress extends StatelessWidget {
       children: [
         SizedBox.square(
           dimension: 16,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             color: kPrimaryColor,
             backgroundColor: kWhiteColor.withValues(alpha: 0.12),

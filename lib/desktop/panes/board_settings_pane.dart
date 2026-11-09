@@ -14,6 +14,7 @@ import 'package:chessever/repository/local_storage/auto_pin_preferences/auto_pin
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/board_customization_utils.dart';
 import 'package:chessever/utils/sound_preferences.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Desktop board preferences. Driven by the same providers as the mobile
 /// page (`engineSettingsProviderNew`, `boardSettingsProviderNew`,
@@ -1245,7 +1246,7 @@ class _Loading extends StatelessWidget {
         child: SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             color: kWhiteColor70,
           ),

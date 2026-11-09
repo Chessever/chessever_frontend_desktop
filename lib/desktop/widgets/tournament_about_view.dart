@@ -19,6 +19,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/location_service_provider.dart';
 import 'package:chessever/utils/url_launcher_provider.dart';
 import 'package:chessever/widgets/logo_pattern_fallback.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 final desktopTournamentAboutModelProvider =
     Provider<AsyncValue<AboutTourModel?>>((ref) {
@@ -686,7 +687,7 @@ class _LoadingAbout extends StatelessWidget {
       child: SizedBox(
         width: 18,
         height: 18,
-        child: CircularProgressIndicator(
+        child: DesktopSpinner(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
         ),

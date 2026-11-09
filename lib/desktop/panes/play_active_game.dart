@@ -44,6 +44,7 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Board-size preference for the Play pane, stored separately from the Board
 /// pane's key: the size that feels right for analysing is not necessarily the
@@ -1465,7 +1466,7 @@ class _GameHeader extends StatelessWidget {
               const SizedBox(
                 width: 10,
                 height: 10,
-                child: CircularProgressIndicator(
+                child: DesktopSpinner(
                   strokeWidth: 1.5,
                   color: kPrimaryColor,
                 ),

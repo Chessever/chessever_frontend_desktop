@@ -5,6 +5,7 @@ import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/repository/gamebase/memorial_player_about.dart';
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 class MemorialPlayerAboutView extends ConsumerWidget {
   const MemorialPlayerAboutView({
@@ -205,7 +206,7 @@ class _PerformanceSummary extends StatelessWidget {
         child: const SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(strokeWidth: 1.5),
+          child: DesktopSpinner(strokeWidth: 1.5),
         ),
       );
     }
@@ -363,7 +364,7 @@ class _MemorialAboutStatus extends StatelessWidget {
             const SizedBox(
               width: 16,
               height: 16,
-              child: CircularProgressIndicator(strokeWidth: 1.5),
+              child: DesktopSpinner(strokeWidth: 1.5),
             ),
             const SizedBox(width: 10),
           ],

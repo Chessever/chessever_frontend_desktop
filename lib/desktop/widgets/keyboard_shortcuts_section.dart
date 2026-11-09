@@ -8,6 +8,7 @@ import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Card embedded in the desktop SettingsPane that lets the user remap
 /// every [BoardActionKey]. State lives in [keyboardShortcutsProvider]
@@ -123,7 +124,7 @@ class _KeyboardShortcutsSectionState
                       child: SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(
+                        child: DesktopSpinner(
                           strokeWidth: 2,
                           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                         ),

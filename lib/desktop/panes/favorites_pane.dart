@@ -43,6 +43,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_pr
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Favorites pane built on the same Supabase-backed providers the mobile
 /// Favorites entry uses.
@@ -1497,7 +1498,7 @@ class _InlineLoader extends StatelessWidget {
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -1516,7 +1517,7 @@ class _PaneLoading extends StatelessWidget {
       child: SizedBox(
         width: 22,
         height: 22,
-        child: CircularProgressIndicator(
+        child: DesktopSpinner(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
         ),

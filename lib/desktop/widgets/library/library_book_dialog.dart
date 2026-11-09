@@ -21,6 +21,7 @@ import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/library/cover_crop_dialog.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 Future<void> showLibraryBookDialog(
   BuildContext context, {
@@ -3345,7 +3346,7 @@ class _Uploading extends StatelessWidget {
     child: const Center(
       child: SizedBox.square(
         dimension: 18,
-        child: CircularProgressIndicator(strokeWidth: 2, color: kWhiteColor),
+        child: DesktopSpinner(strokeWidth: 2, color: kWhiteColor),
       ),
     ),
   );

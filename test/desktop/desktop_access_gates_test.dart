@@ -31,6 +31,7 @@ import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// A subscription the test can flip.
 class _TestSubscription extends SubscriptionNotifier {
@@ -652,7 +653,7 @@ void main() {
       );
       expect(find.text('Checking your membership'), findsOneWidget);
       expect(find.text('This usually takes a moment.'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(DesktopSpinner), findsOneWidget);
       expect(find.text('See Premium'), findsNothing);
       expect(find.text('Retry'), findsNothing);
     });

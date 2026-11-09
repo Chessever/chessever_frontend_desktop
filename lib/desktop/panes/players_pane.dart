@@ -27,6 +27,7 @@ import 'package:chessever/theme/app_theme.dart';
 
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Desktop rankings route.
 ///
@@ -591,7 +592,7 @@ class _LoadMoreRow extends StatelessWidget {
         child: SizedBox(
           width: 16,
           height: 16,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -610,7 +611,7 @@ class _CenteredSpinner extends StatelessWidget {
       child: SizedBox(
         width: 18,
         height: 18,
-        child: CircularProgressIndicator(
+        child: DesktopSpinner(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
         ),

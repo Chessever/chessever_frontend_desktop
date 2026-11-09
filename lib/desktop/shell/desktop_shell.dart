@@ -84,6 +84,7 @@ import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 const _sidebarExpandedPreferenceKey = 'desktop_sidebar_expanded_v1';
 const _sidebarAutoCollapseBreakpoint = 1500.0;
@@ -904,7 +905,7 @@ class _DesktopPgnLoadingOverlay extends StatelessWidget {
                     SizedBox(
                       width: 24,
                       height: 24,
-                      child: CircularProgressIndicator(
+                      child: DesktopSpinner(
                         value: fraction,
                         strokeWidth: 2.5,
                         valueColor: const AlwaysStoppedAnimation(kPrimaryColor),

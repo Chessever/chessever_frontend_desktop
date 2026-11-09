@@ -19,6 +19,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Desktop-native Calendar directory.
 ///
@@ -363,7 +364,7 @@ class _CalendarLoading extends StatelessWidget {
       child: SizedBox(
         width: 24,
         height: 24,
-        child: CircularProgressIndicator(
+        child: DesktopSpinner(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
         ),

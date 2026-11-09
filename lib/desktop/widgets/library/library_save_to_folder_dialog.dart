@@ -42,6 +42,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Outcome reported back to the caller of [showLibrarySaveToFolderDialog].
 class LibrarySaveOutcome {
@@ -1575,7 +1576,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                               child: SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(
+                                child: DesktopSpinner(
                                   strokeWidth: 2,
                                   valueColor: AlwaysStoppedAnimation(
                                     kPrimaryColor,
@@ -1694,7 +1695,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                       ? const SizedBox(
                                         width: 14,
                                         height: 14,
-                                        child: CircularProgressIndicator(
+                                        child: DesktopSpinner(
                                           strokeWidth: 2,
                                           valueColor: AlwaysStoppedAnimation(
                                             kWhiteColor,
@@ -2133,7 +2134,7 @@ class _UpdateOriginalTile extends StatelessWidget {
                 const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(
+                  child: DesktopSpinner(
                     strokeWidth: 2,
                     valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                   ),

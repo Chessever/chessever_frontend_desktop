@@ -63,6 +63,7 @@ import 'package:chessever/utils/png_asset.dart';
 
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Desktop-native score card view.
 ///
@@ -2070,7 +2071,7 @@ class _GamesPanel extends ConsumerWidget {
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -2260,7 +2261,7 @@ class _GamesHeader extends StatelessWidget {
             const SizedBox(
               width: 12,
               height: 12,
-              child: CircularProgressIndicator(
+              child: DesktopSpinner(
                 strokeWidth: 1.4,
                 valueColor: AlwaysStoppedAnimation(kPrimaryColor),
               ),

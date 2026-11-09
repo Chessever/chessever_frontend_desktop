@@ -15,6 +15,7 @@ import 'package:chessever/desktop/widgets/editorial/inbox_reader.dart';
 import 'package:chessever/desktop/widgets/editorial/inbox_image.dart';
 import 'package:chessever/desktop/widgets/editorial/inbox_unread_anchor.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 String inboxDate(BuildContext context, DateTime date) => DateFormat.yMMMd(
   Localizations.localeOf(context).toString(),
@@ -218,7 +219,7 @@ class _InboxPaneState extends ConsumerState<InboxPane> {
             ? const Center(
               child: SizedBox.square(
                 dimension: 18,
-                child: CircularProgressIndicator(
+                child: DesktopSpinner(
                   strokeWidth: 2,
                   color: kPrimaryColor,
                 ),

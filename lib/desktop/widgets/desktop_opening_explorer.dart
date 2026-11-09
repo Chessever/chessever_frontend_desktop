@@ -24,6 +24,7 @@ import 'package:chessever/screens/gamebase/providers/explorer_games_prefetch.dar
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/figurine_notation.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Desktop-native opening explorer.
 ///
@@ -654,7 +655,7 @@ class _ExplorerBodyState extends ConsumerState<_ExplorerBody> {
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -1189,7 +1190,7 @@ class _ExplorerHeader extends StatelessWidget {
             const SizedBox(
               width: 12,
               height: 12,
-              child: CircularProgressIndicator(
+              child: DesktopSpinner(
                 strokeWidth: 1.4,
                 valueColor: AlwaysStoppedAnimation(kPrimaryColor),
               ),

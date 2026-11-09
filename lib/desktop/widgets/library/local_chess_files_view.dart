@@ -57,6 +57,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/local_pgn_metadata.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Commands an embedded [LocalChessFilesView] without moving its filter and
 /// pagination state into the parent toolbar.
@@ -3426,7 +3427,7 @@ class _LocalLoading extends StatelessWidget {
           SizedBox(
             width: 20,
             height: 20,
-            child: CircularProgressIndicator(
+            child: DesktopSpinner(
               strokeWidth: 2,
               valueColor: AlwaysStoppedAnimation(kPrimaryColor),
             ),

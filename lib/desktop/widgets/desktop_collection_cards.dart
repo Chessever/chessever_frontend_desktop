@@ -325,9 +325,16 @@ class _FavoritesCollectionCard extends ConsumerWidget {
     return _CollectionCard(
       title: 'Favorites',
       hint: 'Track your starred players',
+      // The mosaic drifts only under the pointer. A drift that never stops
+      // made every frame redraw the whole pane on web and Impeller, idle or
+      // not (120 full rasters a second while For You was open).
+      hoverBackground:
+          hasFavorites
+              ? (hovered) => FavoritePlayersGridBackground(animate: hovered)
+              : null,
       background:
           hasFavorites
-              ? const FavoritePlayersGridBackground()
+              ? const FavoritePlayersGridBackground(animate: false)
               : ExcludeSemantics(
                 child: Image.asset(
                   'assets/pngs/hub_most_liked_icon.webp',
@@ -351,11 +358,16 @@ class _CollectionCard extends StatefulWidget {
     required this.background,
     required this.onTap,
     this.backgroundDim = 0.65,
+    this.hoverBackground,
   });
 
   final String title;
   final String hint;
   final Widget background;
+
+  /// Builds the background from the hover state; [background] is used when
+  /// this is null.
+  final Widget Function(bool hovered)? hoverBackground;
   final double backgroundDim;
   final VoidCallback onTap;
 
@@ -394,7 +406,11 @@ class _CollectionCardState extends State<_CollectionCard> {
                 borderRadius: BorderRadius.circular(12),
                 child: Stack(
                   children: [
-                    Positioned.fill(child: widget.background),
+                    Positioned.fill(
+                      child:
+                          widget.hoverBackground?.call(_hovered) ??
+                          widget.background,
+                    ),
                     Positioned.fill(
                       child: DecoratedBox(
                         decoration: BoxDecoration(

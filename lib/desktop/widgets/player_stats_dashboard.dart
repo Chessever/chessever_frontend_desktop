@@ -17,6 +17,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/play_rating_chart.dart';
 import 'package:chessever/desktop/widgets/tempo_icon.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 // Result palette — wins use brand primary (not green), draw slate, loss red.
 const Color _kWin = kPrimaryColor;
@@ -311,7 +312,7 @@ class _PrepToolbar extends StatelessWidget {
                   const SizedBox(
                     width: 11,
                     height: 11,
-                    child: CircularProgressIndicator(
+                    child: DesktopSpinner(
                       strokeWidth: 1.6,
                       color: kPrimaryColor,
                     ),
@@ -2687,7 +2688,7 @@ class _StatsMessage extends StatelessWidget {
         child: SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             color: kPrimaryColor,
           ),

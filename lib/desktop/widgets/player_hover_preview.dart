@@ -16,6 +16,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 const playerHoverIntentDelay = Duration(milliseconds: 260);
 const playerHoverGraceDelay = Duration(milliseconds: 450);
@@ -502,7 +503,7 @@ class _PlayerPreviewCard extends StatelessWidget {
                 child: Center(
                   child: SizedBox.square(
                     dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: DesktopSpinner(strokeWidth: 2),
                   ),
                 ),
               )

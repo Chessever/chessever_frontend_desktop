@@ -70,6 +70,7 @@ import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
     show pgnHasMoves;
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// Per-round expansion for the desktop Games tab.
 ///
@@ -3314,7 +3315,7 @@ class _LoadingState extends StatelessWidget {
       child: SizedBox(
         width: 18,
         height: 18,
-        child: CircularProgressIndicator(
+        child: DesktopSpinner(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
         ),

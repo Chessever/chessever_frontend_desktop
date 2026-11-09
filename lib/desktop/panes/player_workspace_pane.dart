@@ -64,6 +64,7 @@ import 'package:chessever/utils/png_asset.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 const _startingFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -420,7 +421,7 @@ class PlayerWorkspacePane extends HookConsumerWidget {
             child:
                 isLoading || (selected == null && pinnedPlayerId != null)
                     ? const Center(
-                      child: CircularProgressIndicator(color: kPrimaryColor),
+                      child: DesktopSpinner(color: kPrimaryColor),
                     )
                     : selected == null
                     ? _PlayerLibraryHome(
@@ -2771,7 +2772,7 @@ class _EmbeddedLocalGames extends ConsumerWidget {
             child: SizedBox(
               width: 22,
               height: 22,
-              child: CircularProgressIndicator(
+              child: DesktopSpinner(
                 strokeWidth: 2,
                 color: kPrimaryColor,
               ),
@@ -3586,7 +3587,7 @@ class _PreparingCombinedTreeTargetCard extends StatelessWidget {
                         SizedBox(
                           width: 12,
                           height: 12,
-                          child: CircularProgressIndicator(
+                          child: DesktopSpinner(
                             strokeWidth: 1.8,
                             value: progressValue,
                             valueColor: const AlwaysStoppedAnimation(
@@ -3629,7 +3630,7 @@ class _PreparingCombinedTreeTargetCard extends StatelessWidget {
                       ? const SizedBox(
                         width: 14,
                         height: 14,
-                        child: CircularProgressIndicator(
+                        child: DesktopSpinner(
                           strokeWidth: 2,
                           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                         ),
@@ -6093,7 +6094,7 @@ class _StageStatusDot extends StatelessWidget {
         return const SizedBox(
           width: 16,
           height: 16,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             color: kPrimaryColor,
           ),
@@ -6629,7 +6630,7 @@ class _AddPlayerDialogState extends ConsumerState<_AddPlayerDialog> {
                             if (snapshot.connectionState !=
                                 ConnectionState.done) {
                               return const Center(
-                                child: CircularProgressIndicator(
+                                child: DesktopSpinner(
                                   color: kPrimaryColor,
                                 ),
                               );

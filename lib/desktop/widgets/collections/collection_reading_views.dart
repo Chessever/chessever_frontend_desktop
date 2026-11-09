@@ -24,6 +24,7 @@ import 'package:chessever/desktop/widgets/library/library_catalog_row.dart';
 import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 /// The Library's small centred spinner.
 class CollectionLoading extends StatelessWidget {
@@ -35,7 +36,7 @@ class CollectionLoading extends StatelessWidget {
       child: SizedBox(
         width: 18,
         height: 18,
-        child: CircularProgressIndicator(
+        child: DesktopSpinner(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
         ),
@@ -105,7 +106,7 @@ class CollectionUnlockButton extends ConsumerWidget {
           SizedBox(
             width: 14,
             height: 14,
-            child: CircularProgressIndicator(
+            child: DesktopSpinner(
               strokeWidth: 2,
               valueColor: AlwaysStoppedAnimation(kPrimaryColor),
             ),

@@ -72,6 +72,7 @@ import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapp
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/atomic_countdown_text.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 const Duration _kSidebarLiveActivityWindow = Duration(minutes: 120);
 
@@ -6856,7 +6857,7 @@ class _GamesPaginationSection extends StatelessWidget {
                         const SizedBox(
                           width: 13,
                           height: 13,
-                          child: CircularProgressIndicator(
+                          child: DesktopSpinner(
                             strokeWidth: 1.6,
                             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                           ),

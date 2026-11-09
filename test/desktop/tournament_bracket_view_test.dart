@@ -3,6 +3,7 @@ import 'package:chessever/screens/tour_detail/bracket/models/knockout_bracket.da
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 void main() {
   testWidgets(
@@ -69,7 +70,7 @@ void main() {
     );
 
     await pump(const AsyncValue.loading());
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(DesktopSpinner), findsOneWidget);
 
     await pump(
       AsyncValue.error(StateError('network unavailable'), StackTrace.current),

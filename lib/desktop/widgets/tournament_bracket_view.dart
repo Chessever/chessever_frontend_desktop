@@ -13,6 +13,7 @@ import 'package:chessever/screens/tour_detail/bracket/models/knockout_bracket.da
 import 'package:chessever/screens/tour_detail/bracket/utils/bracket_game_result.dart';
 import 'package:chessever/screens/tour_detail/bracket/widgets/bracket_graph_layout.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 final _bracketCameraProvider = StateProvider.family<Matrix4?, String>(
   (ref, key) => null,
@@ -44,7 +45,7 @@ class DesktopTournamentBracketContent extends StatelessWidget {
           () => const Center(
             child: SizedBox.square(
               dimension: 24,
-              child: CircularProgressIndicator(
+              child: DesktopSpinner(
                 strokeWidth: 2.2,
                 color: kPrimaryColor,
               ),

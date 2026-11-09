@@ -8,6 +8,7 @@ import 'package:chessever/desktop/services/auth/desktop_account_deletion.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 bool desktopAccountUsesApple(User? user) {
   final providers = user?.appMetadata['providers'];
@@ -346,7 +347,7 @@ class _DesktopDeleteAccountDialogBodyState
                         _deleting
                             ? const SizedBox.square(
                               dimension: 12,
-                              child: CircularProgressIndicator(
+                              child: DesktopSpinner(
                                 strokeWidth: 1.6,
                                 color: kRedColor,
                               ),

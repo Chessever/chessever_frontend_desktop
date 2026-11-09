@@ -87,6 +87,7 @@ import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
 @visibleForTesting
 List<PlayerProfileSection> playerProfileSectionsFor({
@@ -741,7 +742,7 @@ class _Header extends StatelessWidget {
                       const SizedBox(
                         width: 11,
                         height: 11,
-                        child: CircularProgressIndicator(
+                        child: DesktopSpinner(
                           strokeWidth: 1.4,
                           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                         ),
@@ -1119,7 +1120,7 @@ class _OverviewRatingCardState extends State<_OverviewRatingCard> {
                                 ? Center(
                                   child: SizedBox.square(
                                     dimension: 16,
-                                    child: CircularProgressIndicator(
+                                    child: DesktopSpinner(
                                       strokeWidth: 1.8,
                                       color: widget.accent,
                                     ),
@@ -1542,7 +1543,7 @@ class _RatingHistoryPanelState extends State<_RatingHistoryPanel> {
                         ? Center(
                           child: SizedBox.square(
                             dimension: 18,
-                            child: CircularProgressIndicator(
+                            child: DesktopSpinner(
                               strokeWidth: 1.8,
                               color: accent,
                             ),
@@ -2370,7 +2371,7 @@ class _OverviewStatusPanel extends StatelessWidget {
             const SizedBox(
               width: 14,
               height: 14,
-              child: CircularProgressIndicator(
+              child: DesktopSpinner(
                 strokeWidth: 1.6,
                 valueColor: AlwaysStoppedAnimation(kPrimaryColor),
               ),
@@ -2744,7 +2745,7 @@ class _CompactLoadingRow extends StatelessWidget {
           const SizedBox(
             width: 12,
             height: 12,
-            child: CircularProgressIndicator(
+            child: DesktopSpinner(
               strokeWidth: 1.5,
               valueColor: AlwaysStoppedAnimation(kPrimaryColor),
             ),
@@ -4262,7 +4263,7 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(
+          child: DesktopSpinner(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation(kPrimaryColor),
           ),
@@ -4424,7 +4425,7 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
           child: SizedBox(
             width: 16,
             height: 16,
-            child: CircularProgressIndicator(
+            child: DesktopSpinner(
               strokeWidth: 1.6,
               valueColor: AlwaysStoppedAnimation(kPrimaryColor),
             ),
@@ -4548,7 +4549,7 @@ class _SelectionToolbar extends StatelessWidget {
                       ? const SizedBox(
                         width: 12,
                         height: 12,
-                        child: CircularProgressIndicator(
+                        child: DesktopSpinner(
                           strokeWidth: 1.6,
                           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                         ),
@@ -6426,7 +6427,7 @@ class _EventsBodyState extends ConsumerState<_EventsBody> {
             child: SizedBox(
               width: 18,
               height: 18,
-              child: CircularProgressIndicator(
+              child: DesktopSpinner(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation(kPrimaryColor),
               ),
