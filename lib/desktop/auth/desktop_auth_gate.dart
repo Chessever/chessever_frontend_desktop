@@ -9,6 +9,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chessever/desktop/auth/desktop_guest_gate.dart';
 import 'package:chessever/desktop/auth/desktop_guest_interaction_gate.dart';
 import 'package:chessever/desktop/auth/desktop_welcome_screen.dart';
+import 'package:chessever/desktop/auth/web_sign_in_preview_gate.dart';
+import 'package:chessever/web/auth_return_location.dart';
+import 'package:chessever/web/web_url_sync_lifecycle.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
@@ -43,6 +46,11 @@ class DesktopAuthGate extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (!DesktopSupabaseInit.isInitialized) {
+      if (kIsWeb) {
+        return const DesktopStandaloneWindowChrome(
+          child: WebSignInPreviewGate(),
+        );
+      }
       // No backend available: surface the shell so panes can still be
       // developed locally.
       return const DesktopGuestInteractionGate(child: DesktopShell());
@@ -89,6 +97,11 @@ class DesktopAuthGate extends HookConsumerWidget {
       final sub = auth.onAuthStateChange.listen(
         (event) {
           syncAnalyticsIdentity(event.session);
+          if (kIsWeb &&
+              event.session != null &&
+              !event.session!.user.isAnonymous) {
+            restoreWebAuthReturnLocation();
+          }
           if (!restoring.value && event.event == AuthChangeEvent.signedOut) {
             signedOutThisRun.value = true;
           }
@@ -113,6 +126,11 @@ class DesktopAuthGate extends HookConsumerWidget {
         Future<void>(() async {
           final restoredSession = await _restoreDesktopSession();
           if (disposed) return;
+          if (kIsWeb &&
+              restoredSession != null &&
+              !restoredSession.user.isAnonymous) {
+            restoreWebAuthReturnLocation();
+          }
           session.value = restoredSession;
           restoring.value = false;
           if (shouldBootstrapDesktopGuest(
@@ -133,14 +151,45 @@ class DesktopAuthGate extends HookConsumerWidget {
       };
     }, const []);
 
+    // Opening an incoming game URL hydrates event/game providers. Admit that
+    // work only after real browser authentication; stop history subscriptions
+    // again on sign-out. OAuth return hints are restored above, before start.
+    final browserAdmitted =
+        kIsWeb &&
+        !restoring.value &&
+        session.value != null &&
+        !session.value!.user.isAnonymous;
+    useEffect(() {
+      if (!kIsWeb) return null;
+      if (!browserAdmitted) {
+        stopWebUrlSync();
+        return null;
+      }
+      var disposed = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!disposed && context.mounted) unawaited(startWebUrlSync(container));
+      });
+      return () {
+        disposed = true;
+        stopWebUrlSync();
+      };
+    }, [browserAdmitted, session.value?.user.id, container]);
+
     switch (resolveDesktopAuthGateView(
       restoring: restoring.value,
-      hasSession: session.value != null,
+      hasSession:
+          session.value != null &&
+          (!kIsWeb || !session.value!.user.isAnonymous),
       bootstrap: bootstrap.value,
     )) {
       case DesktopAuthGateView.loading:
         return const DesktopStandaloneWindowChrome(child: _GateLoading());
       case DesktopAuthGateView.welcome:
+        if (kIsWeb) {
+          return const DesktopStandaloneWindowChrome(
+            child: WebSignInPreviewGate(),
+          );
+        }
         return DesktopStandaloneWindowChrome(
           child: DesktopWelcomeScreen(
             onContinueAsGuest: kIsWeb ? null : startGuestSession,

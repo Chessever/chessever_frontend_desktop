@@ -162,6 +162,7 @@ class DesktopSidebar extends StatelessWidget {
     this.expanded = true,
     this.autoCollapsed = false,
     this.loadEntitlement = _loadCurrentEntitlement,
+    this.readOnlyPreview = false,
   });
 
   final DesktopPane? current;
@@ -179,6 +180,9 @@ class DesktopSidebar extends StatelessWidget {
 
   /// Resolves whether the Get Premium button shows. Tests inject a stub.
   final Future<EntitlementSnapshot?> Function() loadEntitlement;
+
+  /// Prevent account, inbox and chat work in the inert sign-in backdrop.
+  final bool readOnlyPreview;
 
   static const double collapsedWidth = 72;
   static const double expandedWidth = 240;
@@ -230,6 +234,7 @@ class DesktopSidebar extends StatelessWidget {
               onHowToUse: onHowToUse,
               feedbackScreenshotKey: feedbackScreenshotKey,
               loadEntitlement: loadEntitlement,
+              readOnlyPreview: readOnlyPreview,
             ),
           ),
         ],
@@ -249,6 +254,7 @@ class _SidebarBody extends ConsumerStatefulWidget {
     required this.onHowToUse,
     required this.feedbackScreenshotKey,
     required this.loadEntitlement,
+    required this.readOnlyPreview,
   });
 
   final DesktopPane? current;
@@ -258,6 +264,7 @@ class _SidebarBody extends ConsumerStatefulWidget {
   final VoidCallback onHowToUse;
   final GlobalKey feedbackScreenshotKey;
   final Future<EntitlementSnapshot?> Function() loadEntitlement;
+  final bool readOnlyPreview;
 
   @override
   ConsumerState<_SidebarBody> createState() => _SidebarBodyState();
@@ -265,13 +272,13 @@ class _SidebarBody extends ConsumerStatefulWidget {
 
 class _SidebarBodyState extends ConsumerState<_SidebarBody> {
   late final Future<EntitlementSnapshot?> _entitlementFuture =
-      widget.loadEntitlement();
+      widget.readOnlyPreview ? Future.value(null) : widget.loadEntitlement();
 
   @override
   Widget build(BuildContext context) {
     final botvinnikVisible =
         ChatApi.buildEnabled &&
-        (ref.watch(botvinnikEnabledProvider).valueOrNull ?? true);
+        (widget.readOnlyPreview || (ref.watch(botvinnikEnabledProvider).valueOrNull ?? true));
     final entries = _navEntriesInOrder(botvinnikVisible: botvinnikVisible);
     return FutureBuilder<EntitlementSnapshot?>(
       future: _entitlementFuture,
@@ -343,7 +350,7 @@ class _SidebarBodyState extends ConsumerState<_SidebarBody> {
     _NavEntry entry,
     DesktopSidebarDensity density,
   ) {
-    if (identical(entry, _botvinnikEntry)) {
+    if (identical(entry, _botvinnikEntry) && !widget.readOnlyPreview) {
       return _BotvinnikSidebarItem(expanded: widget.expanded, density: density);
     }
     // Search, How to use and Feedback are actions, never a selected pane.
@@ -363,6 +370,7 @@ class _SidebarBodyState extends ConsumerState<_SidebarBody> {
       density: density,
       selected: action == null && entry.pane == widget.current,
       onTap: ({required bool inNewTab}) {
+        if (widget.readOnlyPreview) return;
         if (action != null) {
           action();
           return;
@@ -370,7 +378,7 @@ class _SidebarBodyState extends ConsumerState<_SidebarBody> {
         widget.onSelect(entry.pane!, inNewTab: inNewTab);
       },
     );
-    return identical(entry, _inboxEntry)
+    return identical(entry, _inboxEntry) && !widget.readOnlyPreview
         ? DesktopInboxUnreadAnchor(child: item)
         : item;
   }

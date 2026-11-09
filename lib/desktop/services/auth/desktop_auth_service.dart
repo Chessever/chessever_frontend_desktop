@@ -14,6 +14,7 @@ import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/web/page_restore.dart';
+import 'package:chessever/web/auth_return_location.dart';
 
 /// Desktop-friendly auth surface used by the shell and panes.
 ///
@@ -153,6 +154,7 @@ class DesktopAuthService {
     Future<bool> Function(Duration timeout) awaitRestore = awaitPageRestore,
   }) async {
     final bool launched;
+    if (kIsWeb) rememberWebAuthReturnLocation();
     try {
       launched = await Supabase.instance.client.auth.signInWithOAuth(
         provider,
@@ -161,16 +163,20 @@ class DesktopAuthService {
       );
     } catch (e, st) {
       ErrorReporter.report(e, stackTrace: st, tag: 'auth.web_${provider.name}');
+      if (kIsWeb) clearWebAuthReturnLocation();
       rethrow;
     }
     if (!launched) {
+      if (kIsWeb) clearWebAuthReturnLocation();
       final error = StateError('Could not open the ${provider.name} sign-in.');
       ErrorReporter.report(error, tag: 'auth.web_${provider.name}');
       throw error;
     }
     if (await awaitRestore(webRedirectTimeout)) {
+      if (kIsWeb) clearWebAuthReturnLocation();
       throw const DesktopSignInCancelled();
     }
+    if (kIsWeb) clearWebAuthReturnLocation();
     final error = TimeoutException(
       'The ${provider.name} sign-in page did not open.',
       webRedirectTimeout,

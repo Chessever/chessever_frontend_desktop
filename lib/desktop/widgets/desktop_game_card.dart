@@ -98,6 +98,7 @@ class DesktopGameCard extends ConsumerWidget {
     this.onContextMenu,
     this.allowStockfishFallback = true,
     this.lockedReason,
+    this.visualPreviewOnly = false,
   });
 
   final GameCardData data;
@@ -123,6 +124,10 @@ class DesktopGameCard extends ConsumerWidget {
   /// thread isn't competing with engine evaluations they can't see settle.
   final bool allowStockfishFallback;
 
+  /// Public sign-in backdrop: real card paint, no gesture/drag dispatch or
+  /// evaluation work. This never grants feature access.
+  final bool visualPreviewOnly;
+
   /// When supplied, the card becomes draggable: press-and-hold + drag
   /// onto the tab strip spawns a Board tab focused on this game (see
   /// `DesktopTabBar`'s drop target). We use a *long-press* draggable
@@ -146,12 +151,12 @@ class DesktopGameCard extends ConsumerWidget {
         (s) => s.valueOrNull?.showEvaluationBar ?? true,
       ),
     );
-    final showEngineGauge = ref.watch(
+    final showEngineGauge = !visualPreviewOnly && ref.watch(
       engineSettingsProviderNew.select(
         (s) => shouldShowGameCardEvalBarFromSettings(s),
       ),
     );
-    final showEvaluationBar = showBoardEvalBar && showEngineGauge;
+    final showEvaluationBar = !visualPreviewOnly && showBoardEvalBar && showEngineGauge;
     assert(
       lockedReason == null || layout != DesktopCardLayout.list,
       'The list layout has no lock treatment; use a table row instead.',
@@ -183,6 +188,7 @@ class DesktopGameCard extends ConsumerWidget {
         );
     }
 
+    if (visualPreviewOnly) return card;
     final payload = dragPayload;
     void openInBackgroundTab() {
       final p = payload;
