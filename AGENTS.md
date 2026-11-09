@@ -303,7 +303,9 @@ native builds take the same branch as before.
 ### Web port parity and synchronized updates
 
 **app.chessever.com is the web port of this desktop app, with full feature
-parity as the goal.** This repository owns its Flutter source and deployment:
+parity as the goal.** The same deploy is also served at `chessever.com/webapp/`
+(see "Second address" in `docs/web_build_feature_parity.md`); never write a
+root-absolute same-origin path in web code, go through `lib/web/web_mount.dart`. This repository owns its Flutter source and deployment:
 `lib/web/web_main.dart` boots the shared `lib/desktop/` shell. The sibling
 `../chessever_web_frontend` repository owns the separate Next.js site at
 chessever.com, not the app.chessever.com deployment. Keep this policy in both

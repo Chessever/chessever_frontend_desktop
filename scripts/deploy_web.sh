@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Deploys build/web (from scripts/build_web.sh) to app.chessever.com as the
 # Cloudflare Worker described in wrangler.web.jsonc. The custom domain route
-# creates its DNS record and certificate on first deploy.
+# creates its DNS record and certificate on first deploy. The same deploy
+# serves chessever.com/webapp/, which the chessever.com Worker forwards here.
 #
 # Needs a wrangler login (or CLOUDFLARE_API_TOKEN) that can deploy Workers on
 # the account owning the chessever.com zone, named by CLOUDFLARE_ACCOUNT_ID.

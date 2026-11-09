@@ -2,8 +2,10 @@
 <html lang="en">
 <head>
   <!--
-    The browser build is served from the root of app.chessever.com; the
-    placeholder below is replaced by `flutter build --base-href`.
+    The browser build is served from the root of app.chessever.com and under
+    /webapp/ on chessever.com. The build sets this to "/"; web_worker/index.js
+    rewrites it to "/webapp/" for chessever.com, so every relative URL below
+    (and the app's own, through lib/web/web_mount.dart) follows the mount.
   -->
   <base href="$FLUTTER_BASE_HREF">
 
@@ -27,8 +29,11 @@
     // AnalyticsService: its account/chess metadata must not enter this stream.
     (function () {
       var id = 'G-06TRX0SNEF';
+      // app.chessever.com, or the same build under chessever.com/webapp/.
+      var mounted = location.origin === 'https://chessever.com' &&
+        (location.pathname === '/webapp' || location.pathname.indexOf('/webapp/') === 0);
       if (window.__chesseverWebAnalyticsStarted ||
-          location.origin !== 'https://app.chessever.com' ||
+          (location.origin !== 'https://app.chessever.com' && !mounted) ||
           // Do not load third-party analytics on OAuth callbacks or any URL
           // carrying query/fragment data. Leave the URL intact for auth.
           location.search || location.hash ||
@@ -45,7 +50,8 @@
         ad_personalization: 'denied'
       });
       var page = {
-        page_location: 'https://app.chessever.com/',
+        page_location: mounted ? 'https://chessever.com/webapp/'
+          : 'https://app.chessever.com/',
         page_referrer: '',
         page_title: 'ChessEver Web App'
       };
@@ -63,8 +69,10 @@
         send_page_view: false,
         allow_google_signals: false,
         allow_ad_personalization_signals: false,
-        // Host-only cookie: do not mix website and browser-app visitors.
-        cookie_domain: 'app.chessever.com',
+        // Host-only cookie: do not mix website and browser-app visitors. On
+        // chessever.com it is host-only and scoped to the /webapp/ mount.
+        cookie_domain: mounted ? 'none' : 'app.chessever.com',
+        cookie_path: mounted ? '/webapp/' : '/',
         cookie_prefix: 'ce_web',
         cookie_flags: 'SameSite=Lax;Secure'
       }));
@@ -138,13 +146,18 @@
       function relayed(raw) {
         try {
           var url = new URL(raw, location.href);
+          // Same-origin requests (the app's own files on chessever.com/webapp,
+          // or chessever.com images there) need no relay.
+          if (url.origin === location.origin) return null;
           var allowed = relayHosts[url.hostname] ||
             relayPrefixes.some(function (p) {
               return url.hostname === p.host && url.pathname.indexOf(p.path) === 0;
             });
           if (allowed) {
             if (hostAliases[url.hostname]) url.hostname = hostAliases[url.hostname];
-            return "/_img?u=" + encodeURIComponent(url.href);
+            // Under the page's mount: chessever.com/webapp/_img there.
+            return new URL("_img", document.baseURI).pathname +
+              "?u=" + encodeURIComponent(url.href);
           }
         } catch (e) {}
         return null;

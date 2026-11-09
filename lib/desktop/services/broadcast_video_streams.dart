@@ -15,6 +15,7 @@
 library;
 
 import 'package:chessever/utils/analysis_video_order.dart';
+import 'package:chessever/web/web_mount.dart';
 
 import 'dart:convert';
 
@@ -24,22 +25,26 @@ import 'package:http/http.dart' as http;
 /// Public broadcast API host. Same origin the web spectator bridge proxies to.
 const String broadcastApiOrigin = 'https://api.broadcast.chessever.com';
 
-/// Same-origin path on app.chessever.com that relays the read-only
-/// `video-streams` endpoint (web_worker/index.js). The broadcast API only
-/// sends CORS headers to chessever.com, so the web build cannot read it
-/// directly.
+/// Same-origin app path that relays the read-only `video-streams` endpoint
+/// (web_worker/index.js), under the page's mount (chessever.com/webapp/_broadcast
+/// there). The broadcast API only sends CORS headers to chessever.com, so the
+/// web build cannot read it directly from app.chessever.com.
 const String broadcastApiWebRelayPath = '/_broadcast';
 
 /// Base URL the stream list is read from. The browser build reads through
 /// its own origin's relay; the native builds call the API directly.
-Uri broadcastApiDefaultBase({required bool inBrowser, Uri? pageUri}) {
+Uri broadcastApiDefaultBase({
+  required bool inBrowser,
+  Uri? pageUri,
+  String? mount,
+}) {
   if (!inBrowser) return Uri.parse(broadcastApiOrigin);
   final page = pageUri ?? Uri.base;
   return Uri(
     scheme: page.scheme,
     host: page.host,
     port: page.hasPort ? page.port : null,
-    path: broadcastApiWebRelayPath,
+    path: webBrowserPath(broadcastApiWebRelayPath, mount ?? webMountPath),
   );
 }
 
@@ -334,9 +339,15 @@ class BroadcastVideoStream {
       platforms: platforms,
       provider: provider,
       sourceId: sourceId,
-      authorId: value['kind']=='analysis' && value['authorId'] is String ? value['authorId'] as String : null,
+      authorId:
+          value['kind'] == 'analysis' && value['authorId'] is String
+              ? value['authorId'] as String
+              : null,
       followed: value['followed'] == true,
-      publishedAt: value['kind']=='analysis' && value['publishedAt'] is String ? value['publishedAt'] as String : null,
+      publishedAt:
+          value['kind'] == 'analysis' && value['publishedAt'] is String
+              ? value['publishedAt'] as String
+              : null,
       authorName:
           value['kind'] == 'analysis' && value['authorName'] is String
               ? value['authorName'] as String
@@ -729,14 +740,13 @@ bool _containsWord(String haystack, String needle) {
 }
 
 BroadcastStreamLanguage broadcastStreamLanguage(BroadcastVideoStream stream) {
-  if (stream.isAnalysis)
-    {
+  if (stream.isAnalysis) {
     return BroadcastStreamLanguage(
       code: 'analysis-${stream.id}',
       label: stream.authorName!,
       countryCode: null,
     );
-    }
+  }
   const unknown = BroadcastStreamLanguage(
     code: 'und',
     label: 'Language unknown',

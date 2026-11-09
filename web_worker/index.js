@@ -1,8 +1,15 @@
 import { handleSignInPreview } from './signin_preview.js';
 
 // app.chessever.com: the Flutter web build is served straight from static
-// assets; this script only runs for /_img and /_broadcast/ (run_worker_first
-// in wrangler.web.jsonc).
+// assets; this script only runs for /_img, /_broadcast/, the sign-in preview
+// API and /webapp (run_worker_first in wrangler.web.jsonc).
+//
+// The same build is also served at chessever.com/webapp/. The chessever.com
+// Worker (chessever_web_frontend cloudflare-worker.ts) forwards /webapp and
+// /webapp/* here through its WEB_APP service binding with the original URL.
+// serveMounted strips the prefix, answers exactly as app.chessever.com would,
+// and rewrites index.html's <base href> to /webapp/ so the page and the app
+// (lib/web/web_mount.dart) load and address everything under the mount.
 //
 // Flutter's web renderer decodes images from fetched bytes, so an image host
 // that sends no CORS headers cannot be drawn. index.html rewrites requests for
@@ -34,19 +41,73 @@ const HOST_ALIASES = { 'image.lichess1.org': 'image.lichess.org' };
 // place (Lichess signs each one), so the edge and the browser keep them a week.
 const CACHE_SECONDS = 7 * 86400;
 
+export const MOUNT_HOST = 'chessever.com';
+export const MOUNT = '/webapp';
+
+// web/_headers is not applied to responses this script returns, including
+// assets it fetches through env.ASSETS, so the same policy is set here.
+// See web/_headers for why the page needs it.
+const ASSET_HEADERS = {
+  'Document-Isolation-Policy': 'isolate-and-credentialless',
+};
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith('/api/signin-preview/')) {
-      return handleSignInPreview(request, env, ctx);
+    if (url.hostname === MOUNT_HOST) {
+      return serveMounted(request, url, env, ctx);
     }
-    if (url.pathname === '/_img') return relayImage(request, url, ctx);
-    if (url.pathname.startsWith(BROADCAST_RELAY_PREFIX)) {
-      return relayBroadcastStreams(request, url);
-    }
-    return env.ASSETS.fetch(request);
+    return route(request, url, env, ctx);
   },
 };
+
+function route(request, url, env, ctx) {
+  if (url.pathname.startsWith('/api/signin-preview/')) {
+    return handleSignInPreview(request, env, ctx);
+  }
+  if (url.pathname === '/_img') return relayImage(request, url, ctx);
+  if (url.pathname.startsWith(BROADCAST_RELAY_PREFIX)) {
+    return relayBroadcastStreams(request, url);
+  }
+  return serveAsset(request, env);
+}
+
+async function serveAsset(request, env) {
+  const asset = await env.ASSETS.fetch(request);
+  const response = new Response(asset.body, asset);
+  for (const [name, value] of Object.entries(ASSET_HEADERS)) {
+    response.headers.set(name, value);
+  }
+  return response;
+}
+
+// chessever.com/webapp/<path> answers what app.chessever.com/<path> answers.
+async function serveMounted(request, url, env, ctx) {
+  if (url.pathname !== MOUNT && !url.pathname.startsWith(`${MOUNT}/`)) {
+    return new Response('Not found', { status: 404 });
+  }
+  const inner = new URL(url);
+  inner.pathname = url.pathname.slice(MOUNT.length) || '/';
+  const response = await route(new Request(inner, request), inner, env, ctx);
+
+  // Asset handling may redirect (e.g. /index.html to /); keep it mounted.
+  const location = response.headers.get('Location');
+  if (location?.startsWith('/') && !location.startsWith('//')) {
+    const mounted = new Response(response.body, response);
+    mounted.headers.set('Location', `${MOUNT}${location}`);
+    return mounted;
+  }
+  if (!response.headers.get('Content-Type')?.startsWith('text/html')) {
+    return response;
+  }
+  return new HTMLRewriter()
+    .on('base', {
+      element(base) {
+        base.setAttribute('href', `${MOUNT}/`);
+      },
+    })
+    .transform(response);
+}
 
 const MAX_REDIRECTS = 3;
 

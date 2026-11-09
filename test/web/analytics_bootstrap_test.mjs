@@ -132,3 +132,22 @@ test('stream prerequisites are documented, not simulated as a client setting', (
     assert.ok(doc.includes('`' + flag + ': false`'));
   }
 });
+
+test('the chessever.com/webapp mount reports as itself, scoped to its path', () => {
+  const b = boot('https://chessever.com/webapp/broadcast/private-event');
+  assert.equal(b.scripts.length, 1);
+  const c = b.commands();
+  assert.equal(c[3][2].page_location, 'https://chessever.com/webapp/');
+  assert.equal(c[3][2].cookie_domain, 'none');
+  assert.equal(c[3][2].cookie_path, '/webapp/');
+  assert.equal(JSON.stringify(c).includes('private-event'), false);
+});
+
+for (const url of ['https://chessever.com/', 'https://chessever.com/app/',
+  'https://chessever.com/webapps', 'https://www.chessever.com/webapp/']) {
+  test('website pages outside the mount stay disabled: ' + url, () => {
+    const b = boot(url);
+    assert.equal(b.scripts.length, 0);
+    assert.deepEqual(b.commands(), []);
+  });
+}

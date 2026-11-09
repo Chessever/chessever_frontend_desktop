@@ -15,6 +15,7 @@ import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/web/page_restore.dart';
 import 'package:chessever/web/auth_return_location.dart';
+import 'package:chessever/web/web_mount.dart';
 
 /// Desktop-friendly auth surface used by the shell and panes.
 ///
@@ -158,7 +159,10 @@ class DesktopAuthService {
     try {
       launched = await Supabase.instance.client.auth.signInWithOAuth(
         provider,
-        redirectTo: redirectTo ?? '${Uri.base.origin}/',
+        redirectTo:
+            redirectTo ??
+            // https://chessever.com/webapp/ when served under that mount.
+            webOwnUrl(Uri.base, '/', webMountPath).toString(),
         scopes: scopes,
       );
     } catch (e, st) {

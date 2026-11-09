@@ -13,6 +13,7 @@ import 'package:chessever/desktop/panes/library_pane.dart'
     show DatabaseWorkspaceArgs, openDatabaseWorkspaceTabForContainer;
 import 'package:chessever/desktop/services/collections_reader.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
+import 'package:chessever/web/web_mount.dart';
 import 'package:chessever/desktop/services/likes/community_likes_link.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_team.dart';
@@ -98,6 +99,8 @@ String? _nonEmptyQueryValue(Uri uri, String key) {
 
 @visibleForTesting
 DesktopGameDeepLink? parseDesktopGameDeepLink(Uri uri) {
+  // chessever.com/webapp/<path> is the web app at app.chessever.com/<path>.
+  uri = normalizeChesseverComWebAppUri(uri);
   final isChesseverWeb = _isChesseverWebUri(uri);
   final isChesseverScheme = _isChesseverSchemeUri(uri);
 
@@ -124,6 +127,8 @@ DesktopGameDeepLink? parseDesktopGameDeepLink(Uri uri) {
 
 @visibleForTesting
 DesktopBroadcastDeepLink? parseDesktopBroadcastDeepLink(Uri uri) {
+  // chessever.com/webapp/<path> is the web app at app.chessever.com/<path>.
+  uri = normalizeChesseverComWebAppUri(uri);
   final isChesseverWeb = _isChesseverWebUri(uri);
   final isChesseverScheme = _isChesseverSchemeUri(uri);
 
@@ -226,6 +231,8 @@ String? _trimmedOrNull(String? value) {
 /// parser and dispatch priority exactly.
 @visibleForTesting
 DesktopIncomingLink? parseDesktopIncomingLink(Uri uri) {
+  // chessever.com/webapp/<path> is the web app at app.chessever.com/<path>.
+  uri = normalizeChesseverComWebAppUri(uri);
   final isWeb = _isChesseverWebUri(uri);
   final isScheme = _isChesseverSchemeUri(uri);
   if (!isWeb && !isScheme) return null;

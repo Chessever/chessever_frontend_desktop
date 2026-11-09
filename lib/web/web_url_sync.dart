@@ -6,6 +6,7 @@ import 'package:web/web.dart' as web;
 
 import 'package:chessever/desktop/services/desktop_web_location.dart';
 import 'package:chessever/desktop/services/desktop_web_navigation.dart';
+import 'package:chessever/web/web_mount.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
@@ -19,6 +20,10 @@ class _HistoryPage {
 
 /// Owns browser navigation for the shared desktop shell. Flutter's Navigator
 /// URL reporting stays disabled, so it cannot overwrite these addresses.
+///
+/// Paths held here are app paths. The address bar carries them under the
+/// page's mount ('/' on app.chessever.com, '/webapp/' on chessever.com), so the
+/// conversion happens only where this reads or writes `location`/`history`.
 class WebUrlSync {
   WebUrlSync._();
 
@@ -34,9 +39,15 @@ class WebUrlSync {
   static String? _pinnedTab;
   static String? _pinnedPath;
   static String? _pinnedGeneratedPath;
+  static String _mount = '/';
 
-  static String _browserPath() =>
-      '${web.window.location.pathname}${web.window.location.search}';
+  static String _browserPath() => webAppPath(
+    '${web.window.location.pathname}${web.window.location.search}',
+    _mount,
+  );
+
+  static Uri _currentUri() =>
+      webAppUri(Uri.parse(web.window.location.href), _mount);
 
   static void _pin(ProviderContainer container, String path) {
     _pinnedTab = container.read(desktopTabsProvider).activeId;
@@ -64,10 +75,11 @@ class WebUrlSync {
 
   static void _stamp(String path, {required bool replace}) {
     final state = {'chessever': true, 'index': _index}.jsify();
+    final url = webBrowserPath(path, _mount);
     if (replace) {
-      web.window.history.replaceState(state, '', path);
+      web.window.history.replaceState(state, '', url);
     } else {
-      web.window.history.pushState(state, '', path);
+      web.window.history.pushState(state, '', url);
     }
   }
 
@@ -77,7 +89,8 @@ class WebUrlSync {
     _index = 0;
     _pages.clear();
     _restoring = true;
-    final arrival = Uri.parse(web.window.location.href);
+    _mount = webMountPath;
+    final arrival = _currentUri();
     try {
       if (await openDesktopWebLocation(arrival, container) &&
           arrival.path != '/') {
@@ -140,7 +153,7 @@ class WebUrlSync {
     );
     _onPopState =
         ((web.PopStateEvent event) {
-          final uri = Uri.parse(web.window.location.href);
+          final uri = _currentUri();
           final state = event.state;
           _restores = _restores.catchError((Object _) {}).then((_) async {
             if (generation == _generation) {

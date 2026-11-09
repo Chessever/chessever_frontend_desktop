@@ -1,7 +1,14 @@
 // app.chessever.com: the desktop shell compiled to the web (lib/web/web_main.dart).
 // Static assets from build/web; the script in web_worker/ runs only for the
-// /_img image relay and the /_broadcast/ live-stream list relay. Build with scripts/build_web.sh, deploy with
+// /_img image relay, the /_broadcast/ live-stream list relay, the sign-in
+// preview API and /webapp. Build with scripts/build_web.sh, deploy with
 // scripts/deploy_web.sh.
+//
+// The same deploy also serves chessever.com/webapp/: the chessever.com Worker
+// (chessever-web) reaches this one through a service binding, so it needs no
+// route here. "/webapp" and "/webapp/*" run the script first so a forwarded
+// request is never answered from assets before the mount is stripped
+// (web_worker/index.js serveMounted).
 {
   "$schema": "https://unpkg.com/wrangler/config-schema.json",
   "name": "chessever-app",
@@ -11,7 +18,7 @@
     "directory": "./build/web",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/_img", "/_broadcast/*", "/api/signin-preview/*"]
+    "run_worker_first": ["/_img", "/_broadcast/*", "/api/signin-preview/*", "/webapp", "/webapp/*"]
   },
   "routes": [{ "pattern": "app.chessever.com", "custom_domain": true }],
   "ratelimits": [{"name": "SIGNIN_PREVIEW_RATE_LIMIT", "namespace_id": "1364546360", "simple": {"limit": 30, "period": 60}}],

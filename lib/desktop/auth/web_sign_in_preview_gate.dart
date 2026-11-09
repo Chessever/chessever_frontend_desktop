@@ -21,6 +21,7 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/federation_flag.dart';
+import 'package:chessever/web/web_mount.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -105,7 +106,7 @@ class _WebSignInPreviewGateState extends State<WebSignInPreviewGate> {
   @override
   Widget build(BuildContext context) {
     final location = WebSignInPreviewLocation.fromUri(
-      widget.location ?? Uri.base,
+      widget.location ?? webAppUri(Uri.base, webMountPath),
     );
     return PopScope(
       canPop: false,

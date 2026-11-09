@@ -13,6 +13,37 @@ This Flutter repository owns app.chessever.com (Worker `chessever-app`). The
 sibling `chessever_web_frontend` repository owns the separate Next.js site at
 chessever.com. Both `AGENTS.md` files carry the synchronized-update policy.
 
+## Second address: chessever.com/webapp
+
+The same deploy is served at `https://chessever.com/webapp/` as well as
+`https://app.chessever.com/`. Every app address works at both: put `app.` in
+front of `chessever.com`, or `/webapp` after it.
+`app.chessever.com/<path>` and `chessever.com/webapp/<path>` show the same page.
+
+- Not `/app`: `chessever.com/app/...` is the phone app's link format
+  (`chessever-frontend` `docs/mobile-app-routes.md`, used by notifications and
+  share sheets) and `chessever.com/app` is the download page. Neither may
+  change, so the web app never claims that prefix.
+- The chessever.com Worker (`chessever-web`, `cloudflare-worker.ts`) forwards
+  `/webapp` and `/webapp/*` to `chessever-app` through its `WEB_APP` service
+  binding (`src/lib/web-app-mount.ts` there, `chesseverComWebAppMount` here).
+- `web_worker/index.js` (`serveMounted`) strips `/webapp`, answers as
+  app.chessever.com would, and rewrites index.html's `<base href>` to
+  `/webapp/`. It also sets `Document-Isolation-Policy`, because `web/_headers`
+  does not apply to responses from the Worker script.
+- The app reads its mount from `document.baseURI` (`lib/web/web_mount.dart`)
+  and converts between app paths and address-bar paths in `WebUrlSync`, the
+  OAuth return, the release check and the `/_img`, `/_broadcast` and
+  `/api/signin-preview` relays. Code that touches its own origin's paths goes
+  through those helpers, never a root-absolute `/...`.
+- The two addresses are separate browser origins. Sign-in, settings, the
+  IndexedDB file system and local databases are not shared between them; the
+  account itself (Supabase) is the same.
+- Supabase Auth must list `https://chessever.com/webapp/` (and `/webapp/**`)
+  as an allowed redirect URL, or OAuth on the mount falls back to the site URL.
+- Deploying `chessever-app` updates both addresses. The chessever.com Worker
+  only needs redeploying when the forwarding rule changes.
+
 ## Web sign-in policy (22.30.1)
 
 The browser app requires Google or Apple sign-in for new sessions. Automatic

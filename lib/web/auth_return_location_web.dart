@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:web/web.dart' as web;
 import 'package:chessever/desktop/auth/web_auth_return_destination.dart';
+import 'package:chessever/web/web_mount.dart';
 
 const _key = 'chessever.auth.return.v1';
 
@@ -41,7 +42,9 @@ void restoreWebAuthReturnLocation() {
     final age = DateTime.now().millisecondsSinceEpoch - created;
     if (age < 0 || age > const Duration(hours: 1).inMilliseconds) return;
     // Do not hijack a different deliberate destination after authentication.
-    if (current.path != '/' && current.path != '/auth/callback') return;
+    // The saved path is a full browser path, already under this page's mount.
+    final arrival = webAppPath(current.path, webMountPath);
+    if (arrival != '/' && arrival != '/auth/callback') return;
     final target = Uri.tryParse(saved['path']?.toString() ?? '');
     if (target == null) return;
     final path = safeWebAuthReturnDestination(target);

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'package:chessever/desktop/services/desktop_updater_state.dart';
+import 'package:chessever/web/web_mount.dart';
 
 /// Notices when app.chessever.com has a newer deploy than the open tab.
 ///
@@ -106,8 +107,12 @@ class WebReleaseWatcher {
   static Future<String?> _fetchLiveVersionJson() async {
     // The query string keeps the browser and any cache in between from
     // answering with an old copy; static assets ignore it.
+    // Under this page's mount: chessever.com/webapp/version.json there.
     final uri = Uri.base.resolve(
-      '/version.json?t=${DateTime.now().millisecondsSinceEpoch}',
+      webBrowserPath(
+        '/version.json?t=${DateTime.now().millisecondsSinceEpoch}',
+        webMountPath,
+      ),
     );
     final response = await http
         .get(uri, headers: const {'Cache-Control': 'no-cache'})

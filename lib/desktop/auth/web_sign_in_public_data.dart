@@ -5,6 +5,7 @@ import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/web/sign_in_preview_time_zone.dart';
+import 'package:chessever/web/web_mount.dart';
 import 'package:http/http.dart' as http;
 
 /// A bounded read from our own public, server-side projection. This client
@@ -12,13 +13,17 @@ import 'package:http/http.dart' as http;
 class WebSignInPublicDataClient {
   WebSignInPublicDataClient({
     Uri? origin,
+    String? mount,
     http.Client? client,
     String Function()? timeZone,
   }) : _origin = origin ?? Uri.base,
+       _mount = mount ?? webMountPath,
        _client = client ?? http.Client(),
        _timeZone = timeZone ?? signInPreviewTimeZone;
 
   final Uri _origin;
+  // '/' on app.chessever.com, '/webapp/' on chessever.com (web_mount.dart).
+  final String _mount;
   final http.Client _client;
   final String Function() _timeZone;
 
@@ -56,7 +61,7 @@ class WebSignInPublicDataClient {
       throw StateError('Public preview requires an application origin');
     }
     final uri = _origin.replace(
-      path: '/api/signin-preview/$resource',
+      path: webBrowserPath('/api/signin-preview/$resource', _mount),
       queryParameters: parameters.isEmpty ? null : parameters,
       fragment: '',
     );
