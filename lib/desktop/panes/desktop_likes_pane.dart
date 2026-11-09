@@ -65,8 +65,23 @@ class DesktopLikesPane extends ConsumerStatefulWidget {
   ConsumerState<DesktopLikesPane> createState() => _DesktopLikesPaneState();
 }
 
+// One automatic choice per pane lifetime. Manual input closes it immediately,
+// including while a fallback request is still awaiting its response.
+class _InitialRankingSelection {
+  bool _automatic = true;
+  bool get automatic => _automatic;
+  void complete() => _automatic = false;
+}
+
 class _DesktopLikesPaneState extends ConsumerState<DesktopLikesPane> {
+  final _initialSelection = _InitialRankingSelection();
   CommunityLikesPlayer? _player;
+
+  @override
+  void dispose() {
+    _initialSelection.complete();
+    super.dispose();
+  }
 
   void _showSection(CommunityLikesSection section) {
     ref.read(communityLikesSectionProvider.notifier).state = section;
@@ -78,6 +93,13 @@ class _DesktopLikesPaneState extends ConsumerState<DesktopLikesPane> {
   }
 
   void _setPeriod(CommunityLikesPeriod period) {
+    _initialSelection.complete();
+    if (ref.read(communityLikesPeriodProvider) == period) {
+      // A tap on the active segment still cancels an initial fallback, but
+      // must not reset an explicitly browsed date or player selection.
+      setState(() {});
+      return;
+    }
     ref.read(communityLikesPeriodProvider.notifier).state = period;
     ref.read(communityLikesDayProvider.notifier).state = null;
     setState(() => _player = null);
@@ -85,6 +107,8 @@ class _DesktopLikesPaneState extends ConsumerState<DesktopLikesPane> {
 
   void _step(CommunityLikesQuery? target) {
     if (target == null) return;
+    _initialSelection.complete();
+    ref.read(communityLikesPeriodProvider.notifier).state = target.period;
     final now = DateTime.now();
     // Landing on the current period follows the clock again.
     ref.read(communityLikesDayProvider.notifier).state =
@@ -174,12 +198,14 @@ class _DesktopLikesPaneState extends ConsumerState<DesktopLikesPane> {
                 tabId: widget.tabId,
                 query: query,
                 player: _player,
+                initialSelection: _initialSelection,
                 readOnlyPresentation: widget.readOnlyPresentation,
                 onClearPlayer: () => setState(() => _player = null),
               ),
               _LikesSection.players => _RankedPlayersView(
                 query: query,
                 selected: _player,
+                initialSelection: _initialSelection,
                 onPick: _pickPlayer,
               ),
             },
@@ -216,9 +242,7 @@ class _PeriodControl extends StatelessWidget {
       children: [
         DesktopSegmentedTabs<CommunityLikesPeriod>(
           selected: query.period,
-          onChanged: (period) {
-            if (period != query.period) onPeriod(period);
-          },
+          onChanged: onPeriod,
           tabs: [
             for (final period in CommunityLikesPeriod.values)
               DesktopSegmentedTab(value: period, label: period.label),
@@ -296,6 +320,7 @@ _Ranking _watchRanking(
   WidgetRef ref,
   CommunityLikesQuery query, {
   required String emptyTitle,
+  required _InitialRankingSelection initialSelection,
 }) {
   final first = ref.watch(communityLikesProvider(query));
   final paging = ref.watch(communityLikesPagesProvider(query));
@@ -332,12 +357,17 @@ _Ranking _watchRanking(
         case CommunityLikesStatus.ranked:
           final all = [...result.entries, ...paging.entries];
           if (all.isEmpty) {
-            placeholder = _EmptyRankingFallback(
-              key: ValueKey(query),
-              query: query,
-              emptyTitle: emptyTitle,
-            );
+            placeholder =
+                initialSelection.automatic
+                    ? _EmptyRankingFallback(
+                      key: ValueKey(query),
+                      query: query,
+                      emptyTitle: emptyTitle,
+                      initialSelection: initialSelection,
+                    )
+                    : _emptyRankingMessage(emptyTitle);
           } else {
+            initialSelection.complete();
             entries = all;
           }
       }
@@ -364,6 +394,7 @@ class _RankedGamesView extends ConsumerStatefulWidget {
     required this.tabId,
     required this.query,
     required this.player,
+    required this.initialSelection,
     required this.onClearPlayer,
     this.readOnlyPresentation = false,
   });
@@ -371,6 +402,7 @@ class _RankedGamesView extends ConsumerStatefulWidget {
   final String tabId;
   final CommunityLikesQuery query;
   final CommunityLikesPlayer? player;
+  final _InitialRankingSelection initialSelection;
   final VoidCallback onClearPlayer;
   final bool readOnlyPresentation;
 
@@ -400,6 +432,7 @@ class _RankedGamesViewState extends ConsumerState<_RankedGamesView> {
       ref,
       query,
       emptyTitle: _emptyTitle(query, now),
+      initialSelection: widget.initialSelection,
     );
     final placeholder = ranking.placeholder;
     if (placeholder != null) return placeholder;
@@ -693,11 +726,13 @@ class _RankedPlayersView extends ConsumerWidget {
   const _RankedPlayersView({
     required this.query,
     required this.selected,
+    required this.initialSelection,
     required this.onPick,
   });
 
   final CommunityLikesQuery query;
   final CommunityLikesPlayer? selected;
+  final _InitialRankingSelection initialSelection;
   final ValueChanged<CommunityLikesPlayer> onPick;
 
   @override
@@ -707,6 +742,7 @@ class _RankedPlayersView extends ConsumerWidget {
       ref,
       query,
       emptyTitle: _emptyTitle(query, now),
+      initialSelection: initialSelection,
     );
     final placeholder = ranking.placeholder;
     if (placeholder != null) return placeholder;
@@ -1073,19 +1109,26 @@ class _LikesAboutView extends ConsumerWidget {
   }
 }
 
-/// Stands in for an empty ranking: moves the tab to the nearest ranking with
-/// a game (a wider period holding this one, then earlier ones), so a new week,
-/// month or day never opens on "No games liked". The empty message shows only
-/// when no ranking has a game yet.
+Widget _emptyRankingMessage(String title) => _Message(
+  title: title,
+  body:
+      'A game enters the ranking once two people like it. '
+      'Open a game and press its heart to add yours.',
+);
+
+/// Chooses a populated initial ranking only. An explicit period/date selection
+/// remains authoritative even when it is empty or an older lookup completes.
 class _EmptyRankingFallback extends ConsumerStatefulWidget {
   const _EmptyRankingFallback({
     super.key,
     required this.query,
     required this.emptyTitle,
+    required this.initialSelection,
   });
 
   final CommunityLikesQuery query;
   final String emptyTitle;
+  final _InitialRankingSelection initialSelection;
 
   @override
   ConsumerState<_EmptyRankingFallback> createState() =>
@@ -1102,14 +1145,28 @@ class _EmptyRankingFallbackState extends ConsumerState<_EmptyRankingFallback> {
   }
 
   Future<void> _fallBack() async {
+    final origin = widget.query;
+    final initialSelection = widget.initialSelection;
+    bool isCurrent() {
+      if (!mounted || !initialSelection.automatic) return false;
+      return CommunityLikesQuery(
+            ref.read(communityLikesPeriodProvider),
+            ref.read(communityLikesDayProvider) ?? DateTime.now(),
+          ) ==
+          origin;
+    }
+
     final pick = await firstRankedCommunityLikesQuery(
-      communityLikesFallbackQueries(widget.query),
+      communityLikesFallbackQueries(origin),
       (query) => ref.read(communityLikesProvider(query).future),
+      canContinue: isCurrent,
     );
-    if (!mounted) return;
-    // Only if the tab still shows the empty ranking this search began from.
-    if (pick != null &&
-        communityLikesActiveQuery(ref, now: DateTime.now()) == widget.query) {
+    if (!isCurrent()) {
+      if (mounted) setState(() => _searching = false);
+      return;
+    }
+    initialSelection.complete();
+    if (pick != null) {
       final now = DateTime.now();
       ref.read(communityLikesPeriodProvider.notifier).state = pick.period;
       ref.read(communityLikesDayProvider.notifier).state =
@@ -1122,12 +1179,7 @@ class _EmptyRankingFallbackState extends ConsumerState<_EmptyRankingFallback> {
   @override
   Widget build(BuildContext context) {
     if (_searching) return const _Spinner();
-    return _Message(
-      title: widget.emptyTitle,
-      body:
-          'A game enters the ranking once two people like it. '
-          'Open a game and press its heart to add yours.',
-    );
+    return _emptyRankingMessage(widget.emptyTitle);
   }
 }
 
