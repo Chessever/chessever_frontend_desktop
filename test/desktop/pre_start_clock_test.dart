@@ -86,10 +86,33 @@ void main() {
     expect(model.lastMoveTime, isNull);
   });
 
+  test('a pre-start 3+2 row keeps its 3:02 control when think_time is set', () {
+    // The Total Chess board that read 3:00:02 before the first move: the relay
+    // published `think_time` 10802 (3h 0m 2s of elapsed thinking budget) next
+    // to the real 3+2 control in `players[].clock` (18200 centiseconds) and no
+    // `last_clock_*` reading. Only the control may reach the badge.
+    final row = _preStartRow(thinkTime: 10802, whiteClock: 18200);
+    row.remove('last_clock_white');
+    row.remove('last_clock_black');
+    final model = GamesTourModel.fromGame(Games.fromJson(row));
+
+    expect(model.hasStarted, isFalse);
+    expect(model.whiteTimeDisplay, '03:02');
+    expect(model.blackTimeDisplay, '03:02');
+    expect(model.whiteClockSeconds, 182);
+    expect(model.blackClockSeconds, 182);
+    expect(model.lastMoveTime, isNull);
+  });
+
   testWidgets('the board header does not tick a clock before the first move', (
     tester,
   ) async {
-    final model = GamesTourModel.fromGame(Games.fromJson(_preStartRow()));
+    // Same Total Chess 3+2 row as the report: `think_time` 10802 must not win
+    // over the 3:02 control, and the badge must stay at 03:02 until move one.
+    final row = _preStartRow(thinkTime: 10802);
+    row.remove('last_clock_white');
+    row.remove('last_clock_black');
+    final model = GamesTourModel.fromGame(Games.fromJson(row));
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
