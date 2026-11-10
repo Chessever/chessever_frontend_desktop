@@ -70,11 +70,14 @@ void main() {
       toolbar,
       matches(
         RegExp(
-          r'icon:\s*visible\s*\? Icons\.videocam_off_rounded\s*: Icons\.videocam_rounded',
+          r'icon:\s*widget\.visible\s*\? Icons\.videocam_off_rounded\s*: Icons\.videocam_rounded',
         ),
       ),
     );
-    expect(toolbar, contains("tooltip: visible ? 'Hide video' : 'Show video'"));
+    expect(
+      toolbar,
+      contains("tooltip: widget.visible ? 'Hide video' : 'Show video'"),
+    );
     expect(toolbar, contains('_LanguageGroupButton('));
     expect(toolbar, contains('_PinMenuButton('));
   });

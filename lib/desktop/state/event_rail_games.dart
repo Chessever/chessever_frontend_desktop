@@ -9,6 +9,7 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
+import 'package:chessever/repository/supabase/round/round_repository.dart';
 
 /// The event rail deliberately stays below the live-stream batch size's third
 /// chunk while still covering substantially more rows than fit on screen.
@@ -505,17 +506,42 @@ class EventRailGamesNotifier
   }
 
   /// Headings are presentation-only, so a catalog failure degrades the rail to
-  /// row-derived headings instead of failing the whole load.
+  /// row-derived headings instead of failing the whole load. The lightweight
+  /// game-repository projection is tried first because it is one small select;
+  /// the canonical round repository is the fallback when that projection is
+  /// empty or rejected. Without the second read a failed lightweight query
+  /// left the rail showing only the rounds present in the seed page (the
+  /// Total Chess report where Round 1 never appeared).
   Future<List<EventRailRoundMetadata>> _loadRoundCatalogOrEmpty(
     GameRepository repository,
     String tourId, {
     List<EventRailRoundMetadata> fallback = const <EventRailRoundMetadata>[],
   }) async {
     try {
-      return await repository.getEventRailRoundsByTourId(tourId);
+      final rounds = await repository.getEventRailRoundsByTourId(tourId);
+      if (rounds.isNotEmpty) return rounds;
     } catch (_) {
-      return fallback;
+      // Fall through to the canonical repository.
     }
+    try {
+      final rounds = await ref
+          .read(roundRepositoryProvider)
+          .getRoundsByTourId(tourId);
+      if (rounds.isNotEmpty) {
+        return <EventRailRoundMetadata>[
+          for (final round in rounds)
+            EventRailRoundMetadata(
+              id: round.id,
+              name: round.name,
+              startsAt: round.startsAt,
+              createdAt: round.createdAt,
+            ),
+        ];
+      }
+    } catch (_) {
+      // Keep the caller's retained catalog / row-derived headings.
+    }
+    return fallback;
   }
 
   Future<List<Games>> _loadNewestStartedRoundPage(

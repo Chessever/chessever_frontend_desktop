@@ -19,7 +19,7 @@ import 'package:country_flags/country_flags.dart';
 /// `VideoStreamToolbar`: circular 34px flags in 38px slots, overlapping
 /// count badges, FIDE commentary / numbered cameras as their own controls,
 /// and a trailing pin + camera toggle.
-class BroadcastVideoToolbar extends StatelessWidget {
+class BroadcastVideoToolbar extends StatefulWidget {
   const BroadcastVideoToolbar({
     super.key,
     required this.streams,
@@ -29,6 +29,7 @@ class BroadcastVideoToolbar extends StatelessWidget {
     required this.onSelect,
     required this.onToggle,
     required this.onPin,
+    this.onMenuVisibilityChanged,
   });
 
   final List<BroadcastVideoStream> streams;
@@ -39,9 +40,43 @@ class BroadcastVideoToolbar extends StatelessWidget {
   final VoidCallback onToggle;
   final ValueChanged<String> onPin;
 
+  /// Reports when the first stream menu opens and when the last one closes.
+  /// The web player is a DOM iframe, which owns its rectangle even where a
+  /// Flutter menu is painted above it; the panel uses this to let the menu
+  /// receive clicks instead of the player underneath.
+  final ValueChanged<bool>? onMenuVisibilityChanged;
+
   static const double slot = 38;
   static const double gap = 8;
   static const double button = 34;
+
+  @override
+  State<BroadcastVideoToolbar> createState() => _BroadcastVideoToolbarState();
+}
+
+class _BroadcastVideoToolbarState extends State<BroadcastVideoToolbar> {
+  /// Every child reports each open exactly once and each close exactly once,
+  /// so a simple balanced count cannot get stuck on a reordered group list.
+  int _openMenus = 0;
+  bool _reportedOpen = false;
+
+  void _reportMenuVisibility(bool open) {
+    _openMenus += open ? 1 : -1;
+    if (_openMenus < 0) _openMenus = 0;
+    final anyOpen = _openMenus > 0;
+    if (anyOpen == _reportedOpen) return;
+    _reportedOpen = anyOpen;
+    widget.onMenuVisibilityChanged?.call(anyOpen);
+  }
+
+  @override
+  void dispose() {
+    if (_reportedOpen) {
+      _reportedOpen = false;
+      widget.onMenuVisibilityChanged?.call(false);
+    }
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +85,7 @@ class BroadcastVideoToolbar extends StatelessWidget {
         border: Border(bottom: BorderSide(color: kDividerColor)),
       ),
       child: SizedBox(
-        height: slot + 12,
+        height: BroadcastVideoToolbar.slot + 12,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
@@ -65,20 +100,25 @@ class BroadcastVideoToolbar extends StatelessWidget {
                       final capacity =
                           constraints.maxWidth <= 0
                               ? 0
-                              : ((constraints.maxWidth + gap) / (slot + gap))
+                              : ((constraints.maxWidth +
+                                          BroadcastVideoToolbar.gap) /
+                                      (BroadcastVideoToolbar.slot +
+                                          BroadcastVideoToolbar.gap))
                                   .floor();
                       final grouped = toolbarBroadcastVideoGroups(
-                        streams,
-                        pins,
+                        widget.streams,
+                        widget.pins,
                         capacity,
-                        selectedId: selectedId,
+                        selectedId: widget.selectedId,
                       );
                       final groups = [...grouped]..sort((a, b) {
                         if (a.streams.first.isAnalysis ||
                             b.streams.first.isAnalysis) {
-                          return streams
+                          return widget.streams
                               .indexOf(a.streams.first)
-                              .compareTo(streams.indexOf(b.streams.first));
+                              .compareTo(
+                                widget.streams.indexOf(b.streams.first),
+                              );
                         }
                         return grouped.indexOf(a).compareTo(grouped.indexOf(b));
                       });
@@ -94,16 +134,21 @@ class BroadcastVideoToolbar extends StatelessWidget {
                                 index < groups.length;
                                 index++
                               ) ...[
-                                if (index > 0) const SizedBox(width: gap),
+                                if (index > 0)
+                                  const SizedBox(
+                                    width: BroadcastVideoToolbar.gap,
+                                  ),
                                 _LanguageGroupButton(
                                   group: groups[index],
-                                  selectedId: selectedId,
-                                  pinned: pins.contains(
+                                  selectedId: widget.selectedId,
+                                  pinned: widget.pins.contains(
                                     groups[index].streams.first.id,
                                   ),
-                                  onSelect: onSelect,
-                                  onToggle: onToggle,
-                                  onPin: onPin,
+                                  onSelect: widget.onSelect,
+                                  onToggle: widget.onToggle,
+                                  onPin: widget.onPin,
+                                  onMenuVisibilityChanged:
+                                      _reportMenuVisibility,
                                 ),
                               ],
                             ],
@@ -126,13 +171,14 @@ class BroadcastVideoToolbar extends StatelessWidget {
                     _PinMenuButton(
                       groupsBuilder:
                           (capacity) => toolbarBroadcastVideoGroups(
-                            streams,
-                            pins,
+                            widget.streams,
+                            widget.pins,
                             capacity,
-                            selectedId: selectedId,
+                            selectedId: widget.selectedId,
                           ),
-                      pins: pins,
-                      onPin: onPin,
+                      pins: widget.pins,
+                      onPin: widget.onPin,
+                      onMenuVisibilityChanged: _reportMenuVisibility,
                     ),
                     const SizedBox(width: 6),
                     _IconAction(
@@ -140,12 +186,12 @@ class BroadcastVideoToolbar extends StatelessWidget {
                         'desktop-broadcast-video-toggle',
                       ),
                       icon:
-                          visible
+                          widget.visible
                               ? Icons.videocam_off_rounded
                               : Icons.videocam_rounded,
-                      tooltip: visible ? 'Hide video' : 'Show video',
-                      selected: visible,
-                      onPress: onToggle,
+                      tooltip: widget.visible ? 'Hide video' : 'Show video',
+                      selected: widget.visible,
+                      onPress: widget.onToggle,
                     ),
                   ],
                 ),
@@ -166,6 +212,7 @@ class _LanguageGroupButton extends StatefulWidget {
     required this.onSelect,
     required this.onToggle,
     required this.onPin,
+    this.onMenuVisibilityChanged,
   });
 
   final BroadcastToolbarVideoGroup group;
@@ -177,6 +224,7 @@ class _LanguageGroupButton extends StatefulWidget {
   /// so the highlighted circle closes the video it opened.
   final VoidCallback onToggle;
   final ValueChanged<String> onPin;
+  final ValueChanged<bool>? onMenuVisibilityChanged;
 
   @override
   State<_LanguageGroupButton> createState() => _LanguageGroupButtonState();
@@ -190,6 +238,7 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
     vsync: this,
   );
   Timer? _closeTimer;
+  bool _menuReportedOpen = false;
 
   bool get _isCameraGroup =>
       widget.group.kind == BroadcastToolbarVideoKind.cameras;
@@ -197,10 +246,33 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
   bool get _multiple => _isCameraGroup || widget.group.streams.length > 1;
 
   @override
+  void initState() {
+    super.initState();
+    _menuController.addListener(_syncMenuVisibility);
+  }
+
+  @override
   void dispose() {
     _closeTimer?.cancel();
+    _menuController.removeListener(_syncMenuVisibility);
+    _reportMenuOpen(false);
     _menuController.dispose();
     super.dispose();
+  }
+
+  /// The popover can also close itself (tap outside, another menu opening):
+  /// the listener keeps the toolbar's report in step with the real state.
+  void _syncMenuVisibility() {
+    final status = _menuController.status;
+    _reportMenuOpen(
+      status == AnimationStatus.forward || status == AnimationStatus.completed,
+    );
+  }
+
+  void _reportMenuOpen(bool open) {
+    if (_menuReportedOpen == open) return;
+    _menuReportedOpen = open;
+    widget.onMenuVisibilityChanged?.call(open);
   }
 
   void _cancelClose() {
@@ -216,6 +288,10 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
         status == AnimationStatus.forward) {
       return;
     }
+    // The overlay is on screen from the first frame of the entrance; report
+    // it before the animation ends so clicks over the player already reach
+    // the menu.
+    _reportMenuOpen(true);
     unawaited(_menuController.show());
   }
 
@@ -225,6 +301,16 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
     // attached to an overlay and `hide()` would assert.
     if (!_multiple) return;
     unawaited(_menuController.hide());
+  }
+
+  void _toggleMenu() {
+    _cancelClose();
+    final status = _menuController.status;
+    if (status == AnimationStatus.dismissed ||
+        status == AnimationStatus.reverse) {
+      _reportMenuOpen(true);
+    }
+    unawaited(_menuController.toggle());
   }
 
   void _closeMenuSoon() {
@@ -295,10 +381,7 @@ class _LanguageGroupButtonState extends State<_LanguageGroupButton>
                     _isCameraGroup
                         ? 'Choose among ${group.streams.length} cameras'
                         : 'Choose among ${group.streams.length} ${group.label} streams',
-                onPress: () {
-                  _cancelClose();
-                  unawaited(_menuController.toggle());
-                },
+                onPress: _toggleMenu,
               ),
             ),
         ],
@@ -630,11 +713,13 @@ class _PinMenuButton extends StatefulWidget {
     required this.groupsBuilder,
     required this.pins,
     required this.onPin,
+    this.onMenuVisibilityChanged,
   });
 
   final List<BroadcastToolbarVideoGroup> Function(int capacity) groupsBuilder;
   final List<String> pins;
   final ValueChanged<String> onPin;
+  final ValueChanged<bool>? onMenuVisibilityChanged;
 
   @override
   State<_PinMenuButton> createState() => _PinMenuButtonState();
@@ -643,11 +728,44 @@ class _PinMenuButton extends StatefulWidget {
 class _PinMenuButtonState extends State<_PinMenuButton>
     with SingleTickerProviderStateMixin {
   late final FPopoverController _controller = FPopoverController(vsync: this);
+  bool _menuReportedOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_syncMenuVisibility);
+  }
 
   @override
   void dispose() {
+    _controller.removeListener(_syncMenuVisibility);
+    _reportMenuOpen(false);
     _controller.dispose();
     super.dispose();
+  }
+
+  void _syncMenuVisibility() {
+    final status = _controller.status;
+    _reportMenuOpen(
+      status == AnimationStatus.forward || status == AnimationStatus.completed,
+    );
+  }
+
+  void _reportMenuOpen(bool open) {
+    if (_menuReportedOpen == open) return;
+    _menuReportedOpen = open;
+    widget.onMenuVisibilityChanged?.call(open);
+  }
+
+  void _toggleMenu() {
+    final status = _controller.status;
+    if (status == AnimationStatus.completed ||
+        status == AnimationStatus.forward) {
+      unawaited(_controller.hide());
+      return;
+    }
+    _reportMenuOpen(true);
+    unawaited(_controller.show());
   }
 
   @override
@@ -673,7 +791,7 @@ class _PinMenuButtonState extends State<_PinMenuButton>
                       '${stream.isAnalysis ? (stream.followed ? 'Unfollow author' : 'Follow author') : (widget.pins.contains(stream.id) ? 'Unpin' : 'Pin')} · ${broadcastToolbarStreamName(stream)}',
                   selected: widget.pins.contains(stream.id),
                   onTap: () {
-                    _controller.hide();
+                    unawaited(_controller.hide());
                     widget.onPin(stream.id);
                   },
                 ),
@@ -683,7 +801,7 @@ class _PinMenuButtonState extends State<_PinMenuButton>
         child: _IconAction(
           label: '⋯',
           tooltip: 'Manage stream pins (or right-click a flag)',
-          onPress: _controller.toggle,
+          onPress: _toggleMenu,
         ),
       ),
     );

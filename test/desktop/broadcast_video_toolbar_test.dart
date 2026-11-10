@@ -80,6 +80,67 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
   });
 
+  testWidgets('opening and closing a stream menu is reported to the panel', (
+    tester,
+  ) async {
+    final menuStates = <bool>[];
+    final selections = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 220,
+              child: BroadcastVideoToolbar(
+                streams: <BroadcastVideoStream>[
+                  stream(
+                    id: 'en1',
+                    label: 'Board · English',
+                    countryCode: 'GB',
+                  ),
+                  stream(
+                    id: 'en2',
+                    label: 'Studio · English',
+                    countryCode: 'GB',
+                  ),
+                  stream(
+                    id: 'es1',
+                    label: 'Canal · Spanish',
+                    countryCode: 'ES',
+                  ),
+                ],
+                selectedId: 'en1',
+                visible: true,
+                pins: const <String>[],
+                onSelect: (picked) => selections.add(picked.id),
+                onToggle: () {},
+                onPin: (_) {},
+                onMenuVisibilityChanged: menuStates.add,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // The badge opens the English menu. The report must arrive before the
+    // entrance animation ends: the web player stops taking clicks at once.
+    await tester.tap(find.text('2'));
+    await tester.pump();
+    expect(menuStates, <bool>[true]);
+
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Studio'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(selections, <String>['en2']);
+    expect(menuStates.last, isFalse);
+
+    // Let the hover tooltip's delay timer run out before teardown.
+    await tester.pump(const Duration(seconds: 5));
+  });
+
   testWidgets('language marks are circular cover-cropped flags', (
     tester,
   ) async {
