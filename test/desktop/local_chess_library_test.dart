@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:chessever/utils/host_platform.dart';
 import 'package:path/path.dart' as p;
 import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 
@@ -1480,7 +1481,7 @@ Future<localsql.Database> _unusedDatabase() async {
 
 String _testDatabaseId(String path) {
   final normalized = p.normalize(path.trim());
-  return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  return hostIsWindows ? normalized.toLowerCase() : normalized;
 }
 
 Future<int> _count(localsql.Database db, String table) async {

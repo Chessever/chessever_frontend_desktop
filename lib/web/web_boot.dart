@@ -22,6 +22,7 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
 import 'package:chessever/web/web_file_system.dart';
+import 'package:chessever/web/web_storage_notice.dart';
 import 'package:chessever/web/web_frame_stats.dart';
 import 'package:chessever/web/web_path_provider.dart';
 
@@ -130,6 +131,7 @@ Future<void> _boot() async {
   WebFrameStats.startIfEnabled();
   // Board sounds are a few small files; fetch them once the shell has drawn.
   WidgetsBinding.instance.addPostFrameCallback((_) {
+    watchWebFileStorage();
     unawaited(AudioPlayerService.instance.initializeAndLoadAllAssets());
     // URL routing starts at the authenticated gate, not while a visitor is
     // viewing the inert destination backdrop.

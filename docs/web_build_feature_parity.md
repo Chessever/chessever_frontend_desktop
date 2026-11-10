@@ -97,7 +97,7 @@ Remove the storage key and reload to disable sampling.
 | Maia bot | Same | onnxruntime-web through `lib/web/onnx_runtime_web.dart` |
 | Leela (lc0) bot | Not available | No browser build of lc0; marked Unavailable and left out of tournament setup |
 | Engine tournaments | Same | Conductor runs in the page; no loopback server |
-| Local databases, opening trees, Prepare | Same | sqlite3 Wasm (`lib/web/shims/local_sqlite_web.dart`, the browser half of the local SQLite driver) over an IndexedDB-backed filesystem (`lib/web/web_file_system.dart`) |
+| Local databases, opening trees, Prepare | Same | sqlite3 Wasm (`lib/web/shims/local_sqlite_web.dart`, the browser half of the local SQLite driver) over an IndexedDB-backed filesystem (`lib/web/web_file_system.dart`). One tab saves: a second tab of the app loads the stored files but keeps its own changes in memory, and says so (`lib/web/web_storage_notice.dart`), because two tabs writing chunks into one store corrupt database files. The same notice reports a private window and a full browser quota. Checked in Chrome by `test/web_browser/` (`flutter test --platform chrome --wasm`, with `test/web_browser/serve_wasm.py` running); Firefox and Safari run the same Wasm build but have no automated run yet |
 | Import PGN, Paste, drag-and-drop files and folders, folder pickers | Same | Picked or dropped files are copied into browser storage (`web_file_intake.dart`); folders through `webkitdirectory` |
 | Save / export PGN, save board image | Downloads | `lib/web/text_download.dart` |
 | Copy board image | Clipboard | `ClipboardItem` (image/png) |

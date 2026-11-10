@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:chessever/utils/host_platform.dart';
 import 'package:path/path.dart' as p;
 import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
 import 'package:sqflite/sqflite.dart' as sqflite;
@@ -22,6 +24,8 @@ void main() {
   late String databaseId;
 
   setUpAll(() {
+    // Also run in a browser by test/web_browser, which has no sqflite FFI.
+    if (kIsWeb) return;
     sqfliteFfiInit();
     sqflite.databaseFactory = databaseFactoryFfiNoIsolate;
   });
@@ -36,7 +40,7 @@ void main() {
     databasePath = p.join(temp.path, 'combined.pgn');
     final normalizedDatabasePath = p.normalize(databasePath);
     databaseId =
-        Platform.isWindows
+        hostIsWindows
             ? normalizedDatabasePath.toLowerCase()
             : normalizedDatabasePath;
   });
