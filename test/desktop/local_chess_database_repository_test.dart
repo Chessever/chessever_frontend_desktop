@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dartchess/dartchess.dart' show Chess, NormalMove;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:chessever/web/shims/local_sqlite.dart' as localsql;
@@ -33,6 +34,9 @@ void main() {
   late Directory temp;
 
   setUpAll(() {
+    // Also run in a browser by test/web_browser, where the legacy sqflite
+    // migration sources do not exist.
+    if (kIsWeb) return;
     sqfliteFfiInit();
     sqflite.databaseFactory = databaseFactoryFfiNoIsolate;
   });

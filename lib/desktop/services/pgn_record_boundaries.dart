@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:chessever/web/page_yield.dart';
+
 const _kUtf8Bom = <int>[0xEF, 0xBB, 0xBF];
 
 class PgnByteLine {
@@ -66,6 +68,7 @@ class PgnByteLineScanner {
         if (shouldStop?.call() ?? false) break scanLoop;
       }
       emitProgress();
+      if (pageYieldDue) await yieldToPage();
     }
     if (!(shouldStop?.call() ?? false)) {
       if (_pendingCr) {

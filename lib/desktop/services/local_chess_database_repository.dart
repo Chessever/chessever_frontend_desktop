@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:chessever/web/page_yield.dart';
 import 'package:chessever/web/shims/isolate.dart';
 
 import 'package:crypto/crypto.dart';
@@ -1248,6 +1249,9 @@ Future<void> _migrateLegacyLocalChessSqfliteCacheUnlocked(
     );
   }
 
+  // The browser build never wrote a sqflite cache and cannot open one;
+  // looking for it reported a "busy" cache on every visit.
+  if (kIsWeb) return;
   try {
     if (await _hasMigrationMarker(target, _legacySqfliteMigrationName)) {
       return;
@@ -8308,6 +8312,7 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
           onProgress: emit,
         )) {
           compactBuilder.addGame(input);
+          if (pageYieldDue) await yieldToPage();
         }
         processed += gameRowBatch.length;
         await Future<void>.delayed(Duration.zero);
@@ -8353,7 +8358,7 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
     }
 
     emit(LocalChessScanProgress(fraction: 0.91, message: 'Finalizing tree...'));
-    final buildResult = compactBuilder.finish();
+    final buildResult = await compactBuilder.finishCooperatively();
     buildStopwatch.stop();
 
     final metadata = buildResult.metadata;

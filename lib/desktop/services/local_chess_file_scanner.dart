@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'pgn_record_boundaries.dart';
 import 'local_pgn_position.dart';
+import 'package:chessever/web/page_yield.dart';
 import 'package:chessever/web/shims/isolate.dart';
 
 import 'package:archive/archive.dart';
@@ -2388,7 +2389,7 @@ Future<void> _buildCompactPgnTreeWorker(
       temporaryPath: temporaryGameIndexPath,
       targetPath: gameIndexPath,
     );
-    final result = compactBuilder.finish();
+    final result = await compactBuilder.finishCooperatively();
     if (result.metadata.positionCount <= 0) {
       deleteCompactLocalTreeIndexBestEffort(request.path);
       throw StateError('Opening tree build did not produce an index.');
@@ -4084,6 +4085,7 @@ Future<void> _forEachParsedPgnRange(
       if (ranges.length <= 1 || i % 256 == 0 || i == ranges.length - 1) {
         onReadProgress?.call((i + 1) / ranges.length);
       }
+      if (pageYieldDue) await yieldToPage();
     }
   } else {
     final raf = await File(scan.snapshotPath ?? path).open();
@@ -4103,6 +4105,7 @@ Future<void> _forEachParsedPgnRange(
         if (ranges.length <= 1 || i % 256 == 0 || i == ranges.length - 1) {
           onReadProgress?.call((i + 1) / ranges.length);
         }
+        if (pageYieldDue) await yieldToPage();
       }
     } finally {
       await raf.close();

@@ -16,17 +16,28 @@ export 'package:chessever/desktop/services/local_sqlite/local_sqlite_types.dart'
 /// It runs SQLite compiled to WebAssembly (`web/sqlite/`) on this thread.
 /// Database files are ordinary files in the browser filesystem
 /// (web_file_system.dart), so the code that renames, deletes or checks them
-/// sees the same files SQLite writes. Writes are serialized per handle; calls
-/// made inside a transaction body run directly instead of waiting for the
-/// lock they already hold.
+/// sees the same files SQLite writes.
 ///
-/// The browser has one thread and one connection per handle, so unlike the
-/// native driver a `select` made outside a running transaction on the same
-/// handle can see that transaction's uncommitted rows.
+/// Every handle opened on the same file shares one SQLite connection. On
+/// desktop a second handle is a second connection, kept apart from the first
+/// by file locks and able to wait on them from its own thread. A page has one
+/// thread and no file locks, so a second connection would start with a cold
+/// page cache, could not wait for the first, and would take the first one's
+/// rollback journal for a crashed writer's and roll it back. Sharing gives
+/// the "workers" that open the cache by path (tree builds, purges, imports)
+/// the warm cache and makes their writes queue behind each other.
+///
+/// Writes are serialized per file; calls made inside a transaction body run
+/// directly instead of waiting for the lock they already hold. Unlike the
+/// native driver, a `select` made outside a running transaction on the same
+/// file can see that transaction's uncommitted rows.
 
 /// Must match the `sqlite3` version locked in pubspec.lock: the module's
 /// imports are generated with the Dart bindings of that exact release.
 const String _wasmAsset = 'sqlite/sqlite3-3.8.0.wasm';
+
+/// Tests that run in a browser load the module from their own server.
+String? debugLocalSqliteWasmUrl;
 
 Future<sqlite.WasmSqlite3>? _engine;
 
@@ -34,7 +45,7 @@ Future<sqlite.WasmSqlite3> _loadEngine() {
   final pending =
       _engine ??= () async {
         final engine = await sqlite.WasmSqlite3.loadFromUrl(
-          Uri.parse(_wasmAsset),
+          Uri.parse(debugLocalSqliteWasmUrl ?? _wasmAsset),
         );
         engine.registerVirtualFileSystem(_WebFsVfs(), makeDefault: true);
         return engine;
@@ -84,15 +95,43 @@ LocalSqliteRows _rows(sqlite.ResultSet result) =>
 
 final Object _transactionKey = Object();
 
-final class Database {
-  Database._(this._db, this.path, this.readOnly);
+/// The one SQLite connection behind every [Database] handle on a file.
+final class _Connection {
+  _Connection(this.db, this.key, this.identity);
 
-  final sqlite.CommonDatabase _db;
+  final sqlite.CommonDatabase db;
+  final String key;
+
+  /// The file the connection was opened on. A path that is deleted and
+  /// created again is a different file and gets its own connection.
+  final Object? identity;
+  int handles = 0;
+  Future<void> writeTail = Future<void>.value();
+  int savepoints = 0;
+
+  static final Map<String, _Connection> _byPath = {};
+
+  bool get insideTransaction =>
+      identical(Zone.current[_transactionKey], this);
+
+  void release() {
+    if (--handles > 0) return;
+    if (identical(_byPath[key], this)) _byPath.remove(key);
+    db.close();
+  }
+}
+
+final class Database {
+  Database._(this._connection, this.path, this.readOnly) {
+    _connection.handles++;
+  }
+
+  final _Connection _connection;
   final String path;
   final bool readOnly;
   bool _closed = false;
-  Future<void> _writeTail = Future<void>.value();
-  int _savepoints = 0;
+
+  sqlite.CommonDatabase get _db => _connection.db;
 
   /// [onCurrentIsolate] is accepted for parity with the native driver; the
   /// browser always runs on the calling thread.
@@ -110,23 +149,48 @@ final class Database {
         'could not load SQLite ($e)',
       );
     }
-    try {
-      final db = engine.open(
+    final fs = WebFileSystem.instance;
+    final key = WebFileSystem.normalize(path);
+    final shared = _Connection._byPath[key];
+    if (shared != null && identical(shared.identity, fs.fileIdentity(key))) {
+      return Database._(shared, path, readOnly);
+    }
+    if (readOnly && !fs.fileExists(key)) {
+      throw LocalSqliteConnectionException.openFailed(
         path,
-        mode:
-            readOnly
-                ? sqlite.OpenMode.readOnly
-                : sqlite.OpenMode.readWriteCreate,
+        'unable to open database file',
+        sqliteCode: sqlite.SqlError.SQLITE_CANTOPEN,
+        extendedCode: sqlite.SqlError.SQLITE_CANTOPEN,
       );
+    }
+    try {
+      // Always writable, so later handles on the file can share it; a
+      // read-only handle refuses writes itself.
+      final db = engine.open(key, mode: sqlite.OpenMode.readWriteCreate);
       try {
         // Proves the file is a readable database now, not at first query.
         db.select('PRAGMA schema_version');
-        if (!readOnly) db.execute('PRAGMA foreign_keys = ON');
+        db.execute('PRAGMA foreign_keys = ON');
+        // The file is already in memory; a rollback journal kept there too
+        // would only be copied to IndexedDB and deleted again each write.
+        // web_file_system.dart saves no file while a transaction is open,
+        // so a reload never finds a half-written database without it.
+        db.execute('PRAGMA journal_mode = MEMORY');
+        // This connection is the file's only one, and the filesystem has no
+        // locks to share it with. Left in the default mode SQLite gives the
+        // lock up after each transaction and, taking it again, threw away
+        // its page cache: every BEGIN cost 150 to 300 ms on a database of a
+        // few thousand games, most of an import's time.
+        db.execute('PRAGMA locking_mode = EXCLUSIVE');
+        db.execute('PRAGMA temp_store = MEMORY');
+        db.execute('PRAGMA cache_size = -16384');
       } catch (_) {
         db.close();
         rethrow;
       }
-      return Database._(db, path, readOnly);
+      final connection = _Connection(db, key, fs.fileIdentity(key));
+      _Connection._byPath[key] = connection;
+      return Database._(connection, path, readOnly);
     } on sqlite.SqliteException catch (e) {
       throw LocalSqliteConnectionException.openFailed(
         path,
@@ -145,22 +209,34 @@ final class Database {
     if (_closed) throw LocalSqliteConnectionException.databaseClosed();
   }
 
-  bool get _insideTransaction => identical(Zone.current[_transactionKey], this);
+  void _ensureWritable(String sql) {
+    if (!readOnly) return;
+    throw LocalSqliteQueryException(
+      'attempt to write a readonly database',
+      sql: sql,
+      sqliteCode: sqlite.SqlError.SQLITE_READONLY,
+      extendedCode: sqlite.SqlError.SQLITE_READONLY,
+    );
+  }
 
-  /// Runs [write] after earlier writes, unless already inside one of this
-  /// database's transactions.
+  bool get _insideTransaction => _connection.insideTransaction;
+
+  /// Runs [write] after earlier writes to this file, unless already inside
+  /// one of its transactions.
   Future<T> _serialized<T>(FutureOr<T> Function() write) {
     if (_insideTransaction) return Future.sync(write);
-    final result = _writeTail.then((_) => write());
-    _writeTail = result.then((_) {}, onError: (_) {});
+    final result = _connection.writeTail.then((_) => write());
+    _connection.writeTail = result.then((_) {}, onError: (_) {});
     return result;
   }
 
   Future<void> close() async {
     if (_closed) return;
-    await _writeTail;
+    // Closing from inside a transaction on this file must not wait for it.
+    if (!_insideTransaction) await _connection.writeTail;
+    if (_closed) return;
     _closed = true;
-    _db.close();
+    _connection.release();
   }
 
   Future<List<Map<String, Object?>>> select(
@@ -181,6 +257,8 @@ final class Database {
           'Multiple statements cannot take parameters',
         );
       }
+      if (readOnly && !_isReadOnlyStatement(sql)) _ensureWritable(sql);
+      if (_keepsJournalMode(sql)) return WriteResult(0, _db.lastInsertRowId);
       _db.execute(sql, parameters);
       return WriteResult(_db.updatedRows, _db.lastInsertRowId);
     }, sql: sql);
@@ -190,6 +268,7 @@ final class Database {
     _ensureOpen();
     checkUniformLocalSqliteParamSets(sql, paramSets);
     if (paramSets.isEmpty) return;
+    _ensureWritable(sql);
     _guard(() {
       final statement = _db.prepare(sql);
       try {
@@ -223,18 +302,26 @@ final class Database {
 
   Future<T> _inTransaction<T>(Future<T> Function(Transaction tx) body) async {
     _ensureOpen();
+    _ensureWritable('BEGIN');
+    final connection = _connection;
     final nested = _insideTransaction;
-    final savepoint = 's${++_savepoints}';
-    _control(
-      _db,
-      nested ? 'SAVEPOINT $savepoint' : 'BEGIN IMMEDIATE',
-      nested ? 'savepoint' : 'begin',
-    );
+    final savepoint = 's${++connection.savepoints}';
+    try {
+      _control(
+        _db,
+        nested ? 'SAVEPOINT $savepoint' : 'BEGIN IMMEDIATE',
+        nested ? 'savepoint' : 'begin',
+      );
+    } catch (_) {
+      connection.savepoints--;
+      rethrow;
+    }
+    if (!nested) WebFileSystem.instance.holdSaves();
     final tx = Transaction._(this);
     try {
       final result = await runZoned(
         () => body(tx),
-        zoneValues: {_transactionKey: this},
+        zoneValues: {_transactionKey: connection},
       );
       tx._active = false;
       _control(
@@ -257,10 +344,29 @@ final class Database {
       } catch (_) {}
       rethrow;
     } finally {
-      _savepoints--;
+      connection.savepoints--;
+      if (!nested) WebFileSystem.instance.releaseSaves();
     }
   }
 }
+
+final RegExp _readOnlyStatement = RegExp(
+  r'^\s*(select|pragma|explain|with)\b',
+  caseSensitive: false,
+);
+
+bool _isReadOnlyStatement(String sql) => _readOnlyStatement.hasMatch(sql);
+
+final RegExp _journalModeChange = RegExp(
+  r'^\s*pragma\s+(\w+\.)?journal_mode\s*=',
+  caseSensitive: false,
+);
+
+/// The desktop code switches databases between WAL and rollback journals,
+/// which exist for other processes and crashes. Neither applies to a file
+/// that lives in this page's memory, and WAL needs shared memory the browser
+/// filesystem does not have, so the mode chosen at open stays.
+bool _keepsJournalMode(String sql) => _journalModeChange.hasMatch(sql);
 
 final class Transaction {
   Transaction._(this._database);
@@ -302,7 +408,7 @@ final class Transaction {
     _ensureActive();
     return runZoned(
       () => _database._inTransaction(body),
-      zoneValues: {_transactionKey: _database},
+      zoneValues: {_transactionKey: _database._connection},
     );
   }
 }
@@ -342,27 +448,26 @@ final class _WebFsVfs extends sqlite.BaseVirtualFileSystem {
 }
 
 final class _WebFsVfsFile extends sqlite.BaseVfsFile {
-  _WebFsVfsFile(this.path, this.deleteOnClose);
+  _WebFsVfsFile(this.path, this.deleteOnClose)
+    : _file = WebFileSystem.instance.openFile(path);
 
   final String path;
   final bool deleteOnClose;
+  final WebFileHandle _file;
   int _lockMode = sqlite.SqlFileLockingLevels.SQLITE_LOCK_NONE;
 
-  WebFileSystem get _fs => WebFileSystem.instance;
-
   @override
-  int readInto(Uint8List buffer, int offset) =>
-      _fs.readFileInto(path, buffer, offset);
+  int readInto(Uint8List buffer, int offset) => _file.readInto(buffer, offset);
 
   @override
   void xWrite(Uint8List buffer, int fileOffset) =>
-      _fs.writeFileAt(path, buffer, fileOffset);
+      _file.writeAt(buffer, fileOffset);
 
   @override
-  int xFileSize() => _fs.fileSize(path);
+  int xFileSize() => _file.length;
 
   @override
-  void xTruncate(int size) => _fs.truncateFile(path, size);
+  void xTruncate(int size) => _file.truncate(size);
 
   @override
   void xSync(int flags) {}
@@ -379,6 +484,6 @@ final class _WebFsVfsFile extends sqlite.BaseVfsFile {
 
   @override
   void xClose() {
-    if (deleteOnClose) _fs.deleteFile(path);
+    if (deleteOnClose) WebFileSystem.instance.deleteFile(path);
   }
 }

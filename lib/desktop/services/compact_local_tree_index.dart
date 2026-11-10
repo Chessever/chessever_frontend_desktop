@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+import 'package:chessever/web/page_yield.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/utils/host_platform.dart';
@@ -208,6 +209,25 @@ class CompactLocalTreeIndexBuilder {
   }
 
   CompactLocalTreeBuildResult finish() {
+    final steps = _finishSteps().iterator;
+    while (steps.moveNext()) {}
+    return _finished!;
+  }
+
+  /// [finish] for a worker that shares its thread with the page (the browser
+  /// build): sorting and writing every bucket in one go would freeze it.
+  Future<CompactLocalTreeBuildResult> finishCooperatively() async {
+    final steps = _finishSteps().iterator;
+    while (steps.moveNext()) {
+      if (pageYieldDue) await yieldToPage();
+    }
+    return _finished!;
+  }
+
+  CompactLocalTreeBuildResult? _finished;
+
+  /// Pauses after each bucket; [_finished] is set once it has run through.
+  Iterable<void> _finishSteps() sync* {
     if (_closed) throw StateError('Compact tree builder is already closed.');
     _closed = true;
     for (var bucket = 0; bucket < _bucketCount; bucket++) {
@@ -247,6 +267,7 @@ class CompactLocalTreeIndexBuilder {
             output.writeFromSync(outputBuffer.takeBytes());
           }
         }
+        yield null;
       }
       if (outputBuffer.isNotEmpty) {
         output.writeFromSync(outputBuffer.takeBytes());
@@ -287,7 +308,7 @@ class CompactLocalTreeIndexBuilder {
       }
     }
 
-    return CompactLocalTreeBuildResult(
+    _finished = CompactLocalTreeBuildResult(
       metadata: CompactLocalTreeIndexMetadata(
         version: compactLocalTreeIndexVersion,
         gameCount: _indexedGames,

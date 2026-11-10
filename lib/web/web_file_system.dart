@@ -26,6 +26,22 @@ class WebFileSystem {
   static const String _dbName = 'chessever-files';
   static const String _store = 'entries';
   static const Duration _flushDelay = Duration(milliseconds: 400);
+  static const Duration _longestFlushDelay = Duration(seconds: 5);
+
+  /// How long the last save held the page's thread. A database being
+  /// imported into is rewritten all over, so each save copies most of it;
+  /// the wait before the next one grows with that cost, to keep saving a
+  /// small share of the work instead of a pause every 400 ms.
+  Duration _lastFlushCost = Duration.zero;
+
+  /// Scratch files: the system temp folder and the `.build-<time>` files and
+  /// folders the opening-tree builders write beside a database and delete or
+  /// rename when done. They are never saved; one renamed to a lasting name
+  /// is saved under that name.
+  static final RegExp _buildScratch = RegExp(r'\.build-\d+');
+
+  static bool _isScratch(String key) =>
+      key.startsWith('/tmp/') || _buildScratch.hasMatch(key);
 
   final Map<String, _Node> _nodes = {'/': _Node.directory()};
   final Set<String> _dirty = {};
@@ -56,6 +72,12 @@ class WebFileSystem {
       fs._mkdirs(dir);
     }
     IOOverrides.global = _WebIOOverrides();
+    web.document.addEventListener(
+      'visibilitychange',
+      ((web.Event _) {
+        if (web.document.visibilityState == 'hidden') fs._flushNow();
+      }).toJS,
+    );
   }
 
   static String normalize(String path) {
@@ -77,25 +99,20 @@ class WebFileSystem {
     if (fileExists(path)) delete(path);
   }
 
-  int fileSize(String path) => _nodeAt(path)?.length ?? 0;
+  /// An open file, resolved once. SQLite reads and writes a page at a time,
+  /// so going back through the path for each call would cost more than the
+  /// copy itself. Like a POSIX descriptor it keeps addressing the same file
+  /// after the path is renamed or deleted.
+  WebFileHandle openFile(String path) {
+    final key = normalize(path);
+    return WebFileHandle._(this, key, _createFile(key, recursive: true));
+  }
 
-  int readFileInto(String path, Uint8List buffer, int offset) {
+  /// Identifies the file now at [path], or null when there is none. A path
+  /// that was deleted and created again gives a different identity.
+  Object? fileIdentity(String path) {
     final n = _nodeAt(path);
-    if (n == null || n.length <= offset) return 0;
-    final available =
-        buffer.length < n.length - offset ? buffer.length : n.length - offset;
-    buffer.setRange(0, available, n.bytes, offset);
-    return available;
-  }
-
-  void writeFileAt(String path, Uint8List data, int offset) {
-    _createFile(path, recursive: true).writeAt(offset, data);
-    _markDirty(normalize(path));
-  }
-
-  void truncateFile(String path, int size) {
-    _createFile(path, recursive: true).truncate(size);
-    _markDirty(normalize(path));
+    return n == null || n.isDirectory ? null : n;
   }
 
   FileSystemEntityType typeOf(String path) {
@@ -167,7 +184,10 @@ class WebFileSystem {
     if (n == null) {
       throw FileSystemException('Deletion failed', path, const OSError('No such file or directory', 2));
     }
-    final children = _childrenOf(key, recursive: true).toList();
+    final children =
+        n.isDirectory
+            ? _childrenOf(key, recursive: true).toList()
+            : const <String>[];
     if (n.isDirectory && children.isNotEmpty && !recursive) {
       throw FileSystemException('Directory not empty', path);
     }
@@ -228,8 +248,10 @@ class WebFileSystem {
   void Function(String path)? onFileChanged;
 
   void _markDirty(String key) {
-    _dirty.add(key);
-    _scheduleFlush();
+    if (!_isScratch(key)) {
+      _dirty.add(key);
+      _scheduleFlush();
+    }
     onFileChanged?.call(key);
   }
 
@@ -238,22 +260,54 @@ class WebFileSystem {
   void _markDeleted(String key, _Node? removed) {
     _dirty.remove(key);
     final stored = removed?.storedChunks ?? 0;
+    if (stored == 0 && _isScratch(key)) return;
     _deleted[key] = (_deleted[key] ?? 0) > stored ? _deleted[key]! : stored;
     removed?.storedChunks = 0;
     _scheduleFlush();
   }
 
+  /// SQLite transactions in progress (shims/local_sqlite_web.dart). Nothing
+  /// is saved while one is open, so IndexedDB never holds a database caught
+  /// between two of a transaction's page writes.
+  int _saveHolds = 0;
+
+  void holdSaves() => _saveHolds++;
+
+  void releaseSaves() {
+    if (_saveHolds > 0) _saveHolds--;
+    if (_saveHolds == 0 && (_dirty.isNotEmpty || _deleted.isNotEmpty)) {
+      _scheduleFlush();
+    }
+  }
+
   void _scheduleFlush() {
     if (_db == null) return;
-    _flushTimer ??= Timer(_flushDelay, () {
-      _flushTimer = null;
-      unawaited(_flush());
-    });
+    final wait = _lastFlushCost * 15;
+    _flushTimer ??= Timer(
+      wait < _flushDelay
+          ? _flushDelay
+          : (wait > _longestFlushDelay ? _longestFlushDelay : wait),
+      () {
+        _flushTimer = null;
+        unawaited(_flush());
+      },
+    );
+  }
+
+  /// Saves what is pending without waiting for the timer: the page is being
+  /// hidden, which is the last moment a tab is sure to get before it closes.
+  void _flushNow() {
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    unawaited(_flush());
   }
 
   Future<void> _flush() async {
     final db = _db;
     if (db == null || (_dirty.isEmpty && _deleted.isEmpty)) return;
+    // releaseSaves() schedules the next attempt.
+    if (_saveHolds > 0) return;
+    final cost = Stopwatch()..start();
     final writes = _dirty.toList();
     final deletes = Map.of(_deleted);
     _dirty.clear();
@@ -283,7 +337,9 @@ class WebFileSystem {
         final start = i * _chunkSize;
         final end = start + _chunkSize > n.length ? n.length : start + _chunkSize;
         store.put(
-          Uint8List.fromList(n.bytes.sublist(start, end)).toJS,
+          Uint8List.fromList(
+            Uint8List.sublistView(n._buffer, start, end),
+          ).toJS,
           _chunkKey(key, i).toJS,
         );
       }
@@ -295,8 +351,29 @@ class WebFileSystem {
         ..allDirty = false
         ..dirtyChunks.clear();
     }
-    await _complete(tx);
+    _lastFlushCost = cost.elapsed;
+    if (await _complete(tx)) return;
+    // Nothing of a failed transaction is stored (the browser's quota for the
+    // site is the usual cause). Keep the files marked so that a later save
+    // writes them whole, rather than believing they are stored.
+    for (final key in writes) {
+      final n = _nodes[key];
+      if (n == null) continue;
+      n.markAllDirty();
+      _dirty.add(key);
+    }
+    deletes.forEach((key, chunks) {
+      if ((_deleted[key] ?? 0) < chunks) _deleted[key] = chunks;
+    });
+    if (!_reportedSaveFailure) {
+      _reportedSaveFailure = true;
+      // ignore: avoid_print
+      print('[web] could not save files to browser storage; '
+          'changes last until the page is closed');
+    }
   }
+
+  bool _reportedSaveFailure = false;
 
   Future<void> _loadAll() async {
     final db = _db!;
@@ -326,6 +403,12 @@ class WebFileSystem {
       if (node == null || node.isDirectory) continue;
       node.loadChunks(entry.value, _chunkSize);
     }
+    // Scratch files an earlier version saved, or a build the last visit
+    // left unfinished.
+    for (final key in _nodes.keys.where(_isScratch).toList()) {
+      _deleted[key] = _nodes.remove(key)?.storedChunks ?? 0;
+    }
+    if (_deleted.isNotEmpty) _scheduleFlush();
   }
 
   static Future<web.IDBDatabase> _openDatabase() {
@@ -359,12 +442,52 @@ class WebFileSystem {
     return completer.future;
   }
 
-  static Future<void> _complete(web.IDBTransaction tx) {
-    final completer = Completer<void>();
-    tx.oncomplete = ((web.Event _) => completer.complete()).toJS;
-    tx.onerror = ((web.Event _) => completer.complete()).toJS;
-    tx.onabort = ((web.Event _) => completer.complete()).toJS;
+  /// Whether the transaction committed.
+  static Future<bool> _complete(web.IDBTransaction tx) {
+    final completer = Completer<bool>();
+    void finish(bool committed) {
+      if (!completer.isCompleted) completer.complete(committed);
+    }
+
+    tx.oncomplete = ((web.Event _) => finish(true)).toJS;
+    tx.onerror = ((web.Event _) => finish(false)).toJS;
+    tx.onabort = ((web.Event _) => finish(false)).toJS;
     return completer.future;
+  }
+}
+
+/// See [WebFileSystem.openFile].
+final class WebFileHandle {
+  WebFileHandle._(this._fs, this._key, this._node);
+
+  final WebFileSystem _fs;
+  final String _key;
+  final _Node _node;
+
+  int get length => _node.length;
+
+  int readInto(Uint8List buffer, int offset) {
+    final available = _node.length - offset;
+    if (available <= 0) return 0;
+    final count = buffer.length < available ? buffer.length : available;
+    buffer.setRange(0, count, _node._buffer, offset);
+    return count;
+  }
+
+  void writeAt(Uint8List data, int offset) {
+    _node.writeAt(offset, data);
+    _changed();
+  }
+
+  void truncate(int size) {
+    _node.truncate(size);
+    _changed();
+  }
+
+  /// A file that was renamed or deleted while open is saved under its new
+  /// path by the rename, or not at all.
+  void _changed() {
+    if (identical(_fs._nodes[_key], _node)) _fs._markDirty(_key);
   }
 }
 
@@ -708,7 +831,7 @@ class _WebFile extends _WebEntity implements File {
     const chunk = 1 << 16;
     for (var i = from; i < to; i += chunk) {
       yield Uint8List.fromList(
-        bytes.sublist(i, i + chunk > to ? to : i + chunk),
+        Uint8List.sublistView(bytes, i, i + chunk > to ? to : i + chunk),
       );
     }
   }
@@ -911,7 +1034,8 @@ class _WebRandomAccessFile implements RandomAccessFile {
   Uint8List readSync(int count) {
     final end = (_position + count).clamp(0, _node.length);
     final start = _position.clamp(0, _node.length);
-    final out = Uint8List.fromList(_node.bytes.sublist(start, end));
+    final out = Uint8List(end - start)
+      ..setRange(0, end - start, _node._buffer, start);
     _position = end;
     return out;
   }
@@ -922,7 +1046,7 @@ class _WebRandomAccessFile implements RandomAccessFile {
   @override
   int readByteSync() {
     if (_position >= _node.length) return -1;
-    return _node.bytes[_position++];
+    return _node._buffer[_position++];
   }
 
   @override
