@@ -221,53 +221,64 @@ class _GroupEventScreenController
   void _listenToFavorites() {
     ref.listen(favoriteEventsProvider, (previous, next) {
       // When favorites change, re-sort the current list
-      next.whenData((favorites) {
-        final currentModels = state.valueOrNull;
-        if (currentModels == null || currentModels.isEmpty) return;
-
-        // Get cached favorite player data for proper sorting
-        final eventFavoritePlayersMap = ref.read(
-          eventFavoritePlayersCacheProvider,
-        );
-
-        // Re-sort with updated favorites and heart data
-        final sortingService = ref.read(tournamentSortingServiceProvider);
-        final sortedTours =
-            tourEventCategory == GroupEventCategory.forYou
-                ? sortingService.sortUpcomingTours(
-                  currentModels,
-                  eventFavoritePlayersMap: eventFavoritePlayersMap,
-                )
-                : tourEventCategory == GroupEventCategory.past
-                ? sortingService.sortPastTours(
-                  currentModels,
-                  eventFavoritePlayersMap: eventFavoritePlayersMap,
-                  prioritizeFavorites: false,
-                )
-                : sortingService.sortAllTours(
-                  currentModels,
-                  eventFavoritePlayersMap: eventFavoritePlayersMap,
-                );
-
-        if (!liveFirst) {
-          state = AsyncValue.data(sortedTours);
-          return;
-        }
-
-        // Live first outranks the favorite sort, so the re-sort has to be
-        // re-ranked by the same query before it is published. Publishing the
-        // favorite order first and correcting it afterwards would show the
-        // list jumping.
-        unawaited(() async {
-          final ordered = await _orderByLiveFirstQuery(
-            sortedTours,
-            ref.read(liveBroadcastIdsProvider),
-          );
-          if (!mounted) return;
-          state = AsyncValue.data(ordered);
-        }());
-      });
+      next.whenData((_) => _resortForFavorites());
     });
+
+    // The mobile screen sorts at paint time against this cache, so heart data
+    // that lands after the list was fetched still ranks its event. Mirror that
+    // here: hydrate the counts and re-rank the visible list.
+    ref.listen<Map<String, EventFavoritePlayers>>(
+      eventFavoritePlayersCacheProvider,
+      (previous, next) {
+        if (identical(previous, next)) return;
+        _resortForFavorites();
+      },
+    );
+  }
+
+  void _resortForFavorites() {
+    final currentModels = state.valueOrNull;
+    if (currentModels == null || currentModels.isEmpty) return;
+
+    // Get cached favorite player data for proper sorting
+    final eventFavoritePlayersMap = ref.read(eventFavoritePlayersCacheProvider);
+
+    // Re-sort with updated favorites and heart data
+    final sortingService = ref.read(tournamentSortingServiceProvider);
+    final sortedTours =
+        tourEventCategory == GroupEventCategory.forYou
+            ? sortingService.sortUpcomingTours(
+              currentModels,
+              eventFavoritePlayersMap: eventFavoritePlayersMap,
+            )
+            : tourEventCategory == GroupEventCategory.past
+            ? sortingService.sortPastTours(
+              currentModels,
+              eventFavoritePlayersMap: eventFavoritePlayersMap,
+              prioritizeFavorites: false,
+            )
+            : sortingService.sortAllTours(
+              currentModels,
+              eventFavoritePlayersMap: eventFavoritePlayersMap,
+            );
+
+    if (!liveFirst) {
+      state = AsyncValue.data(sortedTours);
+      return;
+    }
+
+    // Live first outranks the favorite sort, so the re-sort has to be
+    // re-ranked by the same query before it is published. Publishing the
+    // favorite order first and correcting it afterwards would show the
+    // list jumping.
+    unawaited(() async {
+      final ordered = await _orderByLiveFirstQuery(
+        sortedTours,
+        ref.read(liveBroadcastIdsProvider),
+      );
+      if (!mounted) return;
+      state = AsyncValue.data(ordered);
+    }());
   }
 
   Future<List<String>> _getLiveIdsSnapshot() async {

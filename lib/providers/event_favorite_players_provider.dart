@@ -34,10 +34,15 @@ final eventFavoritePlayersProvider = FutureProvider.autoDispose.family<
   String
 >((ref, eventId) async {
   try {
-    // Read from the new provider (in-memory, no Supabase call).
-    // Data is already synced by the auth flow — avoids a redundant round-trip.
+    // Wait for the in-memory favorites list (no Supabase call here; the auth
+    // flow already syncs it). Reading `valueOrNull` alone returned empty while
+    // a refresh was loading, and callers cache that empty result — which is
+    // how a heart badge vanished after the app went to the background and
+    // came back.
     final favoritePlayers =
-        ref.read(favoritePlayersProviderNew).valueOrNull ?? [];
+        ref.watch(favoritePlayersProviderNew).valueOrNull ??
+        await ref.watch(favoritePlayersProviderNew.future) ??
+        const [];
 
     // If no favorites, return empty
     if (favoritePlayers.isEmpty) {

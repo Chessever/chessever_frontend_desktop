@@ -142,6 +142,7 @@ class _GamesAppBarNotifier
   List<GamesAppBarModel> _knownRoundModels = const <GamesAppBarModel>[];
   final Map<String, int> _roundMissingSnapshotCounts = <String, int>{};
   String? _lastRoundCountSignature;
+  String _lastUnknownLiveRoundSignature = '';
   bool _selectionRefreshScheduled = false;
   ProviderSubscription? _shouldStreamListener;
   Timer? _roundRefreshTimer;
@@ -157,7 +158,10 @@ class _GamesAppBarNotifier
 
   void _startRoundRefresh() {
     _stopRoundRefresh();
-    _roundRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    // Back-to-back broadcast rounds are the case this cadence exists for: a
+    // new round has to show up in the round list while it is starting, not at
+    // the next half-minute tick. This query is a handful of rows.
+    _roundRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted) return;
       final id = tourId;
       if (id != null &&
@@ -1515,6 +1519,32 @@ class _GamesAppBarNotifier
     _liveRounds = List.unmodifiable(newLive);
 
     final current = state.valueOrNull;
+
+    // A live round the catalog has not seen yet is a round that has just
+    // started. Re-read the catalog immediately instead of waiting for the
+    // periodic tick, so back-to-back rounds appear as they begin. Live ids are
+    // global, so throttle to one reload per distinct unknown-id set.
+    final knownRoundIds = <String>{
+      if (current != null)
+        for (final model in current.gamesAppBarModels)
+          ..._representedRoundIds(model),
+    };
+    final unknownLiveIds =
+        <String>{
+            for (final id in newLive)
+              if (id.trim().isNotEmpty && !knownRoundIds.contains(id.trim()))
+                id.trim(),
+          }.toList()
+          ..sort();
+    final unknownSignature = unknownLiveIds.join(',');
+    if (unknownLiveIds.isNotEmpty &&
+        unknownSignature != _lastUnknownLiveRoundSignature) {
+      _lastUnknownLiveRoundSignature = unknownSignature;
+      unawaited(_load(showLoading: false, scrollSelection: false));
+    } else if (unknownLiveIds.isEmpty) {
+      _lastUnknownLiveRoundSignature = '';
+    }
+
     if (current == null) return;
 
     final updated =

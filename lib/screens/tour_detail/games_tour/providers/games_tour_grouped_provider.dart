@@ -478,9 +478,27 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
           return cmp != 0 ? cmp : a.name.compareTo(b.name);
         });
 
-  // Match mobile: played rounds keep the app-bar order, while pairing-only
-  // rounds are always appended after them, soonest first.
-  final filteredRounds = [...playedRounds, ...upcomingPairingRounds];
+  // A live round the Games tab has no rows for yet (the backend marks it live
+  // before every board is published) still belongs on screen. Without this the
+  // tab kept showing the previous round until the first game rows arrived.
+  final sourceRoundIds = <String>{
+    for (final game in allGamesScreenModel) game.roundId.trim(),
+  };
+  final justStartedEmptyRounds = liveRoundsWithoutRows(
+    rounds: rounds,
+    gamesByRound: gamesByRound,
+    upcomingPairingRoundIds: upcomingPairingRoundIds,
+    sourceRoundIds: sourceRoundIds,
+    isMultiStageKnockout: isMultiStageKnockout,
+  );
+
+  // Match mobile: played rounds keep the app-bar order, while rounds that just
+  // started without rows and pairing-only rounds follow them.
+  final filteredRounds = [
+    ...playedRounds,
+    ...justStartedEmptyRounds,
+    ...upcomingPairingRounds,
+  ];
   final hasGroupedGames = gamesByRound.values.any((games) => games.isNotEmpty);
 
   return GroupedGamesData(
@@ -506,6 +524,34 @@ bool shouldKeepGroupedGamesLoading({
   required bool representedSiblingIsLoading,
   required bool hasGroupedGames,
 }) => representedSiblingIsLoading && !hasGroupedGames;
+
+/// Rounds the backend reports live that have no fetched rows yet.
+///
+/// A broadcast round can start before the first board reaches the database.
+/// The tournament catalog still carries it and `settings.live_round_ids` marks
+/// it live, so the Games tab shows its heading instead of silently continuing
+/// to display the previous round. Rounds that only look started by their clock
+/// are deliberately excluded: some catalogs publish an elapsed placeholder
+/// time before any pairing exists.
+@visibleForTesting
+List<GamesAppBarModel> liveRoundsWithoutRows({
+  required List<GamesAppBarModel> rounds,
+  required Map<String, List<GamesTourModel>> gamesByRound,
+  required Set<String> upcomingPairingRoundIds,
+  required Set<String> sourceRoundIds,
+  required bool isMultiStageKnockout,
+}) {
+  if (isMultiStageKnockout) return const <GamesAppBarModel>[];
+  return [
+    for (final round in rounds)
+      if (!round.id.startsWith(kKnockoutStagePrefix) &&
+          !upcomingPairingRoundIds.contains(round.id) &&
+          (gamesByRound[round.id]?.isEmpty ?? true) &&
+          !sourceRoundIds.contains(round.id) &&
+          round.roundStatus == RoundStatus.live)
+        round,
+  ];
+}
 
 /// Maps a game's round slug to the synthetic stage round id that
 /// [gamesAppBarProvider] builds for legacy cached stage rows. Generic game and
@@ -585,22 +631,20 @@ NamedPairingMerge resolveNamedPairingsForRound({
   }
 
   final hadVisiblePlayedGames = alreadyVisibleGameIds.isNotEmpty;
-  final pairings =
-      allGames
-          .where(
-            (game) =>
-                pairingBelongsToRound(
-                  game: game,
-                  roundId: roundId,
-                  knownRoundIds: knownRoundIds,
-                  defaultRoundId: defaultRoundId,
-                ) &&
-                includeGame(game) &&
-                _hasResolvedPlayer(game.whitePlayer) &&
-                _hasResolvedPlayer(game.blackPlayer),
-          )
-          .toList(growable: false)
-        ..sort(_comparePairingsByBoardThenId);
+  final pairings = allGames
+    .where(
+      (game) =>
+          pairingBelongsToRound(
+            game: game,
+            roundId: roundId,
+            knownRoundIds: knownRoundIds,
+            defaultRoundId: defaultRoundId,
+          ) &&
+          includeGame(game) &&
+          _hasResolvedPlayer(game.whitePlayer) &&
+          _hasResolvedPlayer(game.blackPlayer),
+    )
+    .toList(growable: false)..sort(_comparePairingsByBoardThenId);
 
   final gamesToAdd = [
     for (final game in pairings)

@@ -27,13 +27,30 @@ class DesktopEventFavoriteIconButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final readOnly = SignedOutEventsPresentationScope.maybeOf(context) != null;
     final selected = !readOnly && ref.watch(isEventFavoritedProvider(event.id));
-    final favoritePlayerCount = readOnly ? 0 :
-        ref.watch(
-          eventFavoritePlayersCacheProvider.select(
-            (cache) => cache[event.id]?.count,
-          ),
-        ) ??
-        0;
+    final cachedFavoritePlayers = ref.watch(
+      eventFavoritePlayersCacheProvider.select((cache) => cache[event.id]),
+    );
+    // The mobile card warms this cache from the per-event provider when no
+    // prefetched count exists. Without that fallback a card outside the For You
+    // prefetch (Current/Past, or a cold cache after resume) never showed its
+    // heart at all.
+    final resolvedFavoritePlayers =
+        cachedFavoritePlayers == null && !readOnly
+            ? ref.watch(eventFavoritePlayersProvider(event.id)).valueOrNull
+            : null;
+    if (cachedFavoritePlayers == null && resolvedFavoritePlayers != null) {
+      Future.microtask(() {
+        if (!context.mounted) return;
+        ref
+            .read(eventFavoritePlayersCacheProvider.notifier)
+            .updateCache(event.id, resolvedFavoritePlayers);
+      });
+    }
+    final favoritePlayers =
+        cachedFavoritePlayers ??
+        resolvedFavoritePlayers ??
+        const EventFavoritePlayers.empty();
+    final favoritePlayerCount = readOnly ? 0 : favoritePlayers.count;
     return FTheme(
       data: FThemes.zinc.dark,
       child: DesktopTooltip(
@@ -46,14 +63,16 @@ class DesktopEventFavoriteIconButton extends ConsumerWidget {
         child: FButton.icon(
           style: _eventFavoriteIconStyle(selected: selected, compact: compact),
           selected: selected,
-          onPress:
-              () { if (readOnly) return; unawaited(
-                toggleDesktopEventFavorite(
-                  context: context,
-                  ref: ref,
-                  event: event,
-                ),
-              ); },
+          onPress: () {
+            if (readOnly) return;
+            unawaited(
+              toggleDesktopEventFavorite(
+                context: context,
+                ref: ref,
+                event: event,
+              ),
+            );
+          },
           child: _FavoriteIconWithPlayerCount(
             selected: selected,
             favoritePlayerCount: favoritePlayerCount,
