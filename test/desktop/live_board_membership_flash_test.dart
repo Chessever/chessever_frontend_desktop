@@ -226,6 +226,40 @@ void main() {
     },
   );
 
+  testWidgets('a live board never reads membership, even on the web', (
+    tester,
+  ) async {
+    final container = ProviderContainer(
+      overrides: [
+        desktopPastEventAccessEnabledProvider.overrideWithValue(true),
+        desktopBoardMembershipRecheckEnabledProvider.overrideWithValue(true),
+        subscriptionProvider.overrideWith(
+          (_) => throw StateError('a live board must not read membership'),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final game = _liveGame(lastMoveTime: DateTime.now());
+    container.read(boardTabGameArgsByTabIdProvider.notifier).state = {
+      'board': BoardTabGameArgs(
+        gameId: game.gameId,
+        pgn: game.pgn!,
+        label: 'Carlsen - Nakamura',
+        whiteName: game.whitePlayer.name,
+        blackName: game.blackPlayer.name,
+        sourceGame: game,
+        accessContext: _liveBroadcastAccess,
+      ),
+    };
+
+    await pumpGate(tester, container);
+    await tester.pumpAndSettle();
+
+    expect(find.text('BOARD CONTENT'), findsOneWidget);
+    expect(find.text('Checking your membership'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   test('event classification key ignores sub-day timestamp churn', () {
     final game = _liveGame(lastMoveTime: DateTime(2026, 11, 5, 12));
     expect(
@@ -273,7 +307,10 @@ void main() {
     test('a finished archived game is still classified', () {
       final game = _liveGame(
         lastMoveTime: now.subtract(const Duration(days: 30)),
-      ).copyWith(gameStatus: GameStatus.whiteWins, gameDay: DateTime(2026, 9, 1));
+      ).copyWith(
+        gameStatus: GameStatus.whiteWins,
+        gameDay: DateTime(2026, 9, 1),
+      );
       expect(desktopGameIsLiveNow(game, now: now), isFalse);
       expect(
         desktopGameNeedsEventClassification(
