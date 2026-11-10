@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:chessever/desktop/services/compact_local_tree_index.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 
 import 'harness.dart';
 
@@ -56,6 +57,8 @@ String _randomGamesPgn(int count, {int plies = 40, int seed = 7}) {
 }
 
 const int _games = int.fromEnvironment('LOCAL_DB_FLOW_GAMES', defaultValue: 3000);
+
+const int _rebuildRounds = int.fromEnvironment('LOCAL_DB_FLOW_REBUILDS', defaultValue: 2);
 
 const bool _verbose = bool.fromEnvironment('LOCAL_DB_FLOW_VERBOSE');
 
@@ -147,6 +150,76 @@ void main() {
     expect(direct, isNotNull);
     expect(direct!.index.isUsable, isTrue);
     expect(File(compactLocalTreeIndexPath(pgn.path)).existsSync(), isTrue);
+
+    // Prep rebuilds a tree the board is still reading: position queries keep
+    // arriving while the build replaces the tree's files.
+    const startFen =
+        'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    Future<int> rootTotal() async {
+      final moves = await repo.localMoveAggregatesForFen(
+        databasePath: pgn.path,
+        fen: startFen,
+      );
+      return moves.fold<int>(0, (sum, move) => sum + move.total);
+    }
+
+    expect(await timed('root moves', rootTotal), _games);
+    final page = await timed(
+      'position games page',
+      () => repo.localPositionGamesResponse(
+        databasePath: pgn.path,
+        fen: startFen,
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.desc,
+        pageNumber: 1,
+        pageSize: 50,
+      ),
+    );
+    expect(page, isNotNull);
+    expect(page!.data, hasLength(50));
+    // A cold page read once cost time in proportion to its offset in the
+    // file (WebFileHandle.readInto): this query took 6 s at 4,000 games.
+    final coldRead = Stopwatch()..start();
+    await repo.localPositionGamesResponse(
+      databasePath: pgn.path,
+      fen: startFen,
+      sortBy: GamebaseSortField.date,
+      sortDirection: GamebaseSortDirection.asc,
+      pageNumber: 3,
+      pageSize: 50,
+    );
+    expect(coldRead.elapsedMilliseconds, lessThan(1500));
+    for (var round = 0; round < _rebuildRounds; round++) {
+      var reading = true;
+      var reads = 0;
+      final reader = () async {
+        while (reading) {
+          await rootTotal();
+          await repo.localPositionGamesResponse(
+            databasePath: pgn.path,
+            fen: startFen,
+            sortBy: GamebaseSortField.date,
+            sortDirection: GamebaseSortDirection.desc,
+            pageNumber: 1,
+            pageSize: 50,
+          );
+          reads++;
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      }();
+      final rebuilt = await timed(
+        'rebuild ${round + 1} while reading',
+        () => repo.rebuildOpeningTreeFromPgnFile(
+          databasePath: pgn.path,
+          onProgress: onProgress,
+        ),
+      );
+      reading = false;
+      await reader;
+      expect(rebuilt!.index.isUsable, isTrue);
+      expect(reads, greaterThan(0));
+      expect(await rootTotal(), _games);
+    }
     ticker.cancel();
   }, timeout: const Timeout(Duration(minutes: 10)));
 }
