@@ -3,7 +3,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const worker = (await import('../../web_worker/index.js')).default;
+const workerModule = await import('../../web_worker/index.js');
+const worker = workerModule.default;
+
+test('Worker entry module exports only its handler', () => {
+  assert.deepEqual(Object.keys(workerModule), ['default']);
+  assert.equal(typeof worker.fetch, 'function');
+});
 const ctx = { waitUntil() {} };
 
 // Node has no HTMLRewriter; this stand-in applies the same `base` handler to

@@ -41,8 +41,9 @@ const HOST_ALIASES = { 'image.lichess1.org': 'image.lichess.org' };
 // place (Lichess signs each one), so the edge and the browser keep them a week.
 const CACHE_SECONDS = 7 * 86400;
 
-export const MOUNT_HOST = 'chessever.com';
-export const MOUNT = '/webapp';
+// Keep configuration private: workerd validates named exports as entrypoints.
+const MOUNT_HOST = 'chessever.com';
+const MOUNT = '/webapp';
 
 // web/_headers is not applied to responses this script returns, including
 // assets it fetches through env.ASSETS, so the same policy is set here.
