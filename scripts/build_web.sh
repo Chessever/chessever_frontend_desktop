@@ -16,7 +16,9 @@ import json, os
 from pathlib import Path
 allowed = {'SUPABASE_URL', 'SUPABASE_ANON_KEY', 'GAMEBASE_PROXY_BASE',
            'CHESSEVER_CLOUDFLARE_API_BASE', 'ANALYSIS_API_BASE',
-           'BROADCAST_API_BASE', 'BILLING_API_BASE'}
+           'BROADCAST_API_BASE', 'BILLING_API_BASE',
+           # A Sentry DSN only accepts events and ships in every desktop build.
+           'SENTRY_FLUTTER'}
 path = Path(os.environ['WEB_PUBLIC_CONFIG'])
 text = path.read_text()
 if path.suffix == '.json':

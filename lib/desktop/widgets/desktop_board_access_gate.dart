@@ -3,8 +3,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
-import 'package:chessever/desktop/auth/desktop_access_decision.dart';
-import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_past_event_access.dart';
 import 'package:chessever/desktop/auth/web_prep_access.dart';
@@ -12,6 +10,9 @@ import 'package:chessever/desktop/auth/web_prep_source_access.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
+import 'package:chessever/theme/app_theme.dart';
 
 /// Browser clean boards recheck membership; admitted native sessions retain
 /// their lifetime. This is independent of archived-game classification.
@@ -97,6 +98,7 @@ class _DesktopBoardAccessGateState
     }
 
     var accessContext = args.admissionContext;
+    final admitted = _admittedKey == key || latched;
     final classifyEvent =
         ref.watch(desktopPastEventAccessEnabledProvider) &&
         desktopGameNeedsEventClassification(accessContext, args.sourceGame);
@@ -108,16 +110,21 @@ class _DesktopBoardAccessGateState
       );
       final value = resolved.valueOrNull;
       if (value == null) {
-        return DesktopAccessLockedSurface(
-          decision: DesktopAccessDecision(
-            resolved.hasError
-                ? DesktopAccess.temporarilyUnavailable
-                : DesktopAccess.checking,
-            DesktopAccessReason.entitlementChecking,
-          ),
-          accessContext: desktopPastEventOpenContext,
-          surface: 'event_game_access',
-        );
+        // Event freshness is not membership. A board the user is already
+        // watching stays mounted while it settles, and a fresh one shows a
+        // neutral progress line: claiming a membership check here put
+        // "Checking your membership" over live games on every tick.
+        if (admitted) return widget.child;
+        return resolved.hasError
+            ? _BoardOpeningSurface(
+              onRetry:
+                  () => ref.invalidate(
+                    desktopGameIsPastProvider(
+                      desktopGameEventKey(args.sourceGame!, accessContext),
+                    ),
+                  ),
+            )
+            : const _BoardOpeningSurface();
       }
       accessContext = desktopGameEventAccessContext(accessContext, past: value);
     }
@@ -125,8 +132,7 @@ class _DesktopBoardAccessGateState
     final recheckProtectedWeb =
         ref.watch(desktopBoardMembershipRecheckEnabledProvider) &&
         !freeDecision.isAllowed;
-    if (!recheckProtectedWeb &&
-        (_admittedKey == key || (latched && !classifyEvent))) {
+    if (!recheckProtectedWeb && admitted) {
       _admittedKey = key;
       return widget.child;
     }
@@ -144,6 +150,71 @@ class _DesktopBoardAccessGateState
       decision: decision,
       accessContext: accessContext,
       surface: 'board_locked',
+    );
+  }
+}
+
+/// Progress for a board that is still being admitted.
+///
+/// Deliberately says nothing about membership: event freshness is not an
+/// entitlement check, and using the membership copy here made live boards
+/// flash "Checking your membership" while a classification settled.
+class _BoardOpeningSurface extends StatelessWidget {
+  const _BoardOpeningSurface({this.onRetry});
+
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = onRetry != null;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!failed)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: DesktopSpinner(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(kPrimaryColor),
+                  backgroundColor: kDividerColor,
+                ),
+              ),
+            if (failed) ...[
+              const Text(
+                'Could not open this game',
+                style: TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Check your connection and retry.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: kWhiteColor70, fontSize: 13),
+              ),
+            ] else
+              const Text(
+                'Opening this game',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: kWhiteColor70, fontSize: 13),
+              ),
+            if (failed) ...[
+              const SizedBox(height: 16),
+              DesktopDialogButton(
+                label: 'Retry',
+                tone: DesktopDialogButtonTone.primary,
+                onPress: onRetry,
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

@@ -3,6 +3,7 @@
 // ignore_for_file: avoid_print
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show BrowserContextMenu;
 import 'package:flutter_web_plugins/url_strategy.dart';
@@ -12,7 +13,9 @@ import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
 import 'package:chessever/desktop/auth/desktop_player_profile_access.dart';
 import 'package:chessever/desktop/desktop_app.dart';
+import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/services/desktop_push_isolation.dart';
+import 'package:chessever/desktop/services/desktop_sentry_filter.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
@@ -25,6 +28,7 @@ import 'package:chessever/web/web_file_system.dart';
 import 'package:chessever/web/web_storage_notice.dart';
 import 'package:chessever/web/web_frame_stats.dart';
 import 'package:chessever/web/web_path_provider.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:web/web.dart' as web;
@@ -43,8 +47,41 @@ Future<void> runChessEverWeb() async {
   });
 }
 
+/// Error reporting for the browser build, with the DSN the desktop app
+/// ships (a DSN only accepts events; it grants nothing else).
+///
+/// Never awaited: the SDK loads its script from Sentry's CDN, which content
+/// blockers commonly refuse, and startup must not wait on that. Until it is
+/// up, [ErrorReporter] reports are dropped, as they are without a DSN.
+Future<void> _startSentry() async {
+  final dsn = DesktopEnv.maybeGet('SENTRY_FLUTTER');
+  if (dsn == null || dsn.isEmpty) {
+    print('[web] Sentry disabled; SENTRY_FLUTTER not configured');
+    return;
+  }
+  try {
+    await SentryFlutter.init((options) {
+      options.dsn = dsn;
+      options.environment = kReleaseMode ? 'production-web' : 'debug-web';
+      options.sendDefaultPii = false;
+      options.tracesSampleRate = 0.0;
+      options.enableAutoPerformanceTracing = false;
+      options.attachScreenshot = false;
+      options.maxBreadcrumbs = 100;
+      options.enableAutoSessionTracking = false;
+      options.sampleRate = 1.0;
+      options.beforeSend =
+          (event, hint) => shouldDropDesktopSentryEvent(event) ? null : event;
+    });
+    print('[web] Sentry ready');
+  } catch (e) {
+    print('[web] Sentry unavailable: $e');
+  }
+}
+
 Future<void> _boot() async {
   WidgetsFlutterBinding.ensureInitialized();
+  unawaited(_startSentry());
   // The app has no Flutter routes to mirror; WebUrlSync owns the address bar
   // and history. Flutter's own strategy would add its sentinel entry and
   // answer Back by itself, fighting the entries WebUrlSync pushes.

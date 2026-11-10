@@ -11878,8 +11878,9 @@ class _ClockText extends ConsumerWidget {
       if (now == null) {
         display = formatClockDisplayFromSeconds(base);
       } else {
-        final elapsed = now.difference(liveLastMoveTime!).inSeconds.abs();
-        final remaining = base - elapsed;
+        final elapsed = now.difference(liveLastMoveTime!).inSeconds;
+        final elapsedSeconds = elapsed < 0 ? 0 : elapsed;
+        final remaining = base - elapsedSeconds;
         display = formatClockDisplayFromSeconds(remaining < 0 ? 0 : remaining);
       }
     }

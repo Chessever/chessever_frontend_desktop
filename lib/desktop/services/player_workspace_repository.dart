@@ -1720,7 +1720,7 @@ String _withCombinedMetadata(String pgn, PlayerWorkspaceSource source) {
       '[$playerWorkspaceCombinedTimeControlTag "$category"]',
     if (opening != null) '[Opening "${_escapePgnTagValue(opening)}"]',
   ].join('\n');
-  final headerBoundary = RegExp(r'\n\s*\n').firstMatch(pgn);
+  final headerBoundary = _pgnHeaderBoundary.firstMatch(pgn);
   if (headerBoundary == null) return '$pgn\n$derivedTags';
   return '${pgn.substring(0, headerBoundary.start).trimRight()}\n'
       '$derivedTags${pgn.substring(headerBoundary.start)}';
@@ -2083,13 +2083,16 @@ String _joinPgnChunks(Iterable<String> chunks) {
       .join('\n\n');
 }
 
+final RegExp _pgnHeaderLine = RegExp(
+  r'^\s*\[([A-Za-z0-9_]+)\s+"((?:\\.|[^"\\])*)"\]\s*$',
+  multiLine: true,
+);
+final RegExp _playerNameSeparators = RegExp(r'[\s,._-]+');
+final RegExp _pgnHeaderBoundary = RegExp(r'\n\s*\n');
+
 Map<String, String> _pgnHeaders(String pgn) {
   final headers = <String, String>{};
-  final regex = RegExp(
-    r'^\s*\[([A-Za-z0-9_]+)\s+"((?:\\.|[^"\\])*)"\]\s*$',
-    multiLine: true,
-  );
-  for (final match in regex.allMatches(pgn)) {
+  for (final match in _pgnHeaderLine.allMatches(pgn)) {
     final key = match.group(1)?.trim().toLowerCase();
     final value = match.group(2)?.trim();
     if (key != null && key.isNotEmpty && value != null) headers[key] = value;
@@ -2098,7 +2101,7 @@ Map<String, String> _pgnHeaders(String pgn) {
 }
 
 String _normalizePlayerName(String? name) {
-  return (name ?? '').toLowerCase().replaceAll(RegExp(r'[\s,._-]+'), '').trim();
+  return (name ?? '').toLowerCase().replaceAll(_playerNameSeparators, '').trim();
 }
 
 String? _normalizeFideId(String? value) {
