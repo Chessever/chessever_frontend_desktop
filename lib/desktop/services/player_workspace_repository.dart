@@ -25,6 +25,7 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/utils/eco_openings.dart';
 import 'package:chessever/utils/host_platform.dart';
+import 'package:chessever/web/page_yield.dart';
 
 const String _workspaceStorageKey = 'desktop_player_workspace_v1';
 const String _httpUserAgent =
@@ -1396,27 +1397,27 @@ Future<_PreparedPgnImport> _preparePgnImport({
   return Isolate.run(() => _preparePgnImportSync(pgn, aliases, playerFideId));
 }
 
-_PreparedPgnImport _preparePgnImportSync(
+/// Async only for the browser build, where this worker shares the page's
+/// thread and hands it back between games (`page_yield.dart`).
+Future<_PreparedPgnImport> _preparePgnImportSync(
   String pgn,
   List<String> aliases,
   String? playerFideId,
-) {
+) async {
   final chunks = splitPgnGames(pgn);
   final games = <_PreparedPgnGame>[];
+  final counter = _PgnStatsCounter(aliases, playerFideId: playerFideId);
   for (final chunk in chunks) {
     final trimmed = chunk.trim();
     if (trimmed.isEmpty) continue;
     final fingerprint = localChessPgnFingerprint(trimmed);
     games.add(_PreparedPgnGame(pgn: trimmed, fingerprint: fingerprint));
+    counter.add(trimmed);
+    if (pageYieldDue) await yieldToPage();
   }
-  final stats = analyzePgnStats(
-    games.map((game) => game.pgn),
-    aliases,
-    playerFideId: playerFideId,
-  );
   return _PreparedPgnImport(
     games: List<_PreparedPgnGame>.unmodifiable(games),
-    stats: stats,
+    stats: counter.toStats(),
   );
 }
 
@@ -1533,9 +1534,11 @@ Future<void> _deleteCombinedTempFileBestEffort(String path) async {
   }
 }
 
-void _prepareCombinedPgnImportWorker(_CombinedPreparationRequest request) {
+Future<void> _prepareCombinedPgnImportWorker(
+  _CombinedPreparationRequest request,
+) async {
   try {
-    final result = _prepareCombinedPgnImportSync(
+    final result = await _prepareCombinedPgnImportSync(
       request.inputs,
       request.combinedPath,
       request.aliases,
@@ -1556,7 +1559,10 @@ void _prepareCombinedPgnImportWorker(_CombinedPreparationRequest request) {
   }
 }
 
-_PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
+/// Async only for the browser build, where this worker shares the page's
+/// thread: without the pauses the tab froze for the whole merge and never
+/// saw the cancel signal.
+Future<_PreparedCombinedPgnImport> _prepareCombinedPgnImportSync(
   List<PlayerWorkspaceCombinedSource> inputs,
   String combinedPath,
   List<String> aliases,
@@ -1564,7 +1570,7 @@ _PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
   required String cancelSignalPath,
   void Function(String tempPath)? onStarted,
   void Function(_CombinedPreparationProgress progress)? onProgress,
-}) {
+}) async {
   final output = File(combinedPath);
   output.parent.createSync(recursive: true);
   final sourceSizes = <int>[
@@ -1628,6 +1634,10 @@ _PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
         gameCount++;
         wroteAny = true;
         if (sourceGamesRead % 128 == 0) reportProgress(complete: false);
+        if (pageYieldDue) {
+          await yieldToPage();
+          throwIfCanceled();
+        }
       }
       reportProgress(complete: true);
       completedBytes += sourceBytes;
@@ -1710,7 +1720,7 @@ String _withCombinedMetadata(String pgn, PlayerWorkspaceSource source) {
       '[$playerWorkspaceCombinedTimeControlTag "$category"]',
     if (opening != null) '[Opening "${_escapePgnTagValue(opening)}"]',
   ].join('\n');
-  final headerBoundary = RegExp(r'\n\s*\n').firstMatch(pgn);
+  final headerBoundary = _pgnHeaderBoundary.firstMatch(pgn);
   if (headerBoundary == null) return '$pgn\n$derivedTags';
   return '${pgn.substring(0, headerBoundary.start).trimRight()}\n'
       '$derivedTags${pgn.substring(headerBoundary.start)}';
@@ -1850,11 +1860,11 @@ Future<PlayerWorkspaceImportStats> analyzePgnFileHeaderStats({
   );
 }
 
-PlayerWorkspaceImportStats _analyzePgnFileHeaderStatsSync(
+Future<PlayerWorkspaceImportStats> _analyzePgnFileHeaderStatsSync(
   String path,
   List<String> aliases,
   String? playerFideId,
-) {
+) async {
   final counter = _PgnStatsCounter(aliases, playerFideId: playerFideId);
   final header = RegExp(r'^\s*\[([A-Za-z0-9_]+)\s+"((?:\\.|[^"\\])*)"\]\s*$');
   Map<String, String>? headers;
@@ -1867,6 +1877,7 @@ PlayerWorkspaceImportStats _analyzePgnFileHeaderStatsSync(
   }
 
   for (final line in _readUtf8LinesFromFileSync(File(path))) {
+    if (pageYieldDue) await yieldToPage();
     final match = header.firstMatch(line);
     if (match == null) continue;
     final key = match.group(1)?.trim().toLowerCase();
@@ -1950,7 +1961,7 @@ bool _isDrawResult(String result) {
   return result == '1/2-1/2' || result == '1/2' || result == '½-½';
 }
 
-DateTime? _latestPgnGameDateSync(String path) {
+Future<DateTime?> _latestPgnGameDateSync(String path) async {
   final file = File(path);
   if (!file.existsSync()) return null;
   final dateHeader = RegExp(
@@ -1959,6 +1970,7 @@ DateTime? _latestPgnGameDateSync(String path) {
   );
   DateTime? latest;
   for (final line in _readUtf8LinesFromFileSync(file)) {
+    if (pageYieldDue) await yieldToPage();
     final match = dateHeader.firstMatch(line);
     if (match == null) continue;
     final year = int.tryParse(match.group(1) ?? '');
@@ -2071,13 +2083,16 @@ String _joinPgnChunks(Iterable<String> chunks) {
       .join('\n\n');
 }
 
+final RegExp _pgnHeaderLine = RegExp(
+  r'^\s*\[([A-Za-z0-9_]+)\s+"((?:\\.|[^"\\])*)"\]\s*$',
+  multiLine: true,
+);
+final RegExp _playerNameSeparators = RegExp(r'[\s,._-]+');
+final RegExp _pgnHeaderBoundary = RegExp(r'\n\s*\n');
+
 Map<String, String> _pgnHeaders(String pgn) {
   final headers = <String, String>{};
-  final regex = RegExp(
-    r'^\s*\[([A-Za-z0-9_]+)\s+"((?:\\.|[^"\\])*)"\]\s*$',
-    multiLine: true,
-  );
-  for (final match in regex.allMatches(pgn)) {
+  for (final match in _pgnHeaderLine.allMatches(pgn)) {
     final key = match.group(1)?.trim().toLowerCase();
     final value = match.group(2)?.trim();
     if (key != null && key.isNotEmpty && value != null) headers[key] = value;
@@ -2086,7 +2101,7 @@ Map<String, String> _pgnHeaders(String pgn) {
 }
 
 String _normalizePlayerName(String? name) {
-  return (name ?? '').toLowerCase().replaceAll(RegExp(r'[\s,._-]+'), '').trim();
+  return (name ?? '').toLowerCase().replaceAll(_playerNameSeparators, '').trim();
 }
 
 String? _normalizeFideId(String? value) {

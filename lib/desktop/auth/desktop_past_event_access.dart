@@ -187,15 +187,48 @@ final desktopEventIsPastProvider = FutureProvider.autoDispose
       );
     });
 
+/// How recent a move has to be for a running game to count as live right now.
+/// Matches the live indicator's staleness window.
+const Duration desktopLiveGameActivityWindow = Duration(hours: 2);
+
+/// Whether [game] is a game being played right now.
+///
+/// A running game the user is watching cannot be an archived event game: live
+/// rounds keep moving, and a game that has not started yet is dated today.
+/// This is the synchronous signal that keeps event classification (a network
+/// lookup) out of a live board's first frame.
+bool desktopGameIsLiveNow(GamesTourModel game, {DateTime? now}) {
+  if (!game.gameStatus.isOngoing) return false;
+  final at = now ?? DateTime.now();
+
+  final lastMoveTime = game.lastMoveTime;
+  if (lastMoveTime != null &&
+      !lastMoveTime.isAfter(at.add(const Duration(minutes: 2))) &&
+      !at.isAfter(lastMoveTime.add(desktopLiveGameActivityWindow))) {
+    return true;
+  }
+
+  // Pre-start boards have no move time yet; their own day decides.
+  final day = game.gameDay ?? game.dateStart;
+  return day != null &&
+      !desktopEventWindowIsPast(start: day, end: day, now: at);
+}
+
 /// Source-specific gates (Favorites, Countrymen, Miniatures, Likes and Smart
 /// Events) remain intact. Ordinary event/profile/archive games are classified
 /// by their own event, never by whichever event was selected previously.
+///
+/// A game being played right now is never classified. That lookup is a network
+/// round trip whose pending state used to replace a live board with a
+/// membership surface, every time the game ticked.
 bool desktopGameNeedsEventClassification(
   DesktopAccessContext access,
-  GamesTourModel? game,
-) =>
+  GamesTourModel? game, {
+  DateTime? now,
+}) =>
     !access.ownershipCovers &&
     game != null &&
+    !desktopGameIsLiveNow(game, now: now) &&
     (access.isCollectionContent ||
         (game.source == GameSource.supabase ||
                 game.source == GameSource.gamebase ||
@@ -250,6 +283,17 @@ typedef DesktopGameEventKey =
       bool collection,
     });
 
+/// Midnight of the DAY a game belongs to, for the `lastMoveTime` fallback.
+///
+/// Only the calendar day decides the event window, and [GamesTourModel] falls
+/// back to `lastMoveTime`, which moves with every move. Comparing raw
+/// timestamps made every live tick a new classification key, which restarted
+/// the lookup and its pending surface under the board. A game's own `gameDay`
+/// or `dateStart` is stable and is kept exactly, so same-day windows still
+/// compare correctly.
+DateTime? _eventClassificationDay(DateTime? day) =>
+    day == null ? null : DateTime(day.year, day.month, day.day);
+
 DesktopGameEventKey desktopGameEventKey(
   GamesTourModel game,
   DesktopAccessContext access,
@@ -257,7 +301,10 @@ DesktopGameEventKey desktopGameEventKey(
   tourId: game.tourId,
   tourSlug: game.tourSlug,
   source: game.source,
-  day: game.gameDay ?? game.dateStart ?? game.lastMoveTime,
+  day:
+      game.gameDay ??
+      game.dateStart ??
+      _eventClassificationDay(game.lastMoveTime),
   collection: access.isCollectionContent,
 );
 

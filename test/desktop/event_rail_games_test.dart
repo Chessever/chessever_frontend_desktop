@@ -16,11 +16,20 @@ import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'support/desktop_premium_test_overrides.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+class _IdleGames extends StateNotifier<AsyncValue<List<Games>>>
+    implements GamesTourNotifier {
+  _IdleGames() : super(const AsyncValue.data(<Games>[]));
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   test('production event rail query remains lightweight and deterministic', () {
@@ -123,6 +132,7 @@ void main() {
         overrides: [
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
+          gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
           ),
@@ -323,6 +333,7 @@ void main() {
         overrides: [
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
+          gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
           ),
@@ -417,6 +428,7 @@ void main() {
         overrides: [
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
+          gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
           ),
@@ -760,6 +772,7 @@ void main() {
         overrides: [
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
+          gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
         ],
         child: MaterialApp(
           home: Consumer(
@@ -859,6 +872,7 @@ void main() {
         overrides: [
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
+          gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
           ),
@@ -976,6 +990,7 @@ void main() {
         overrides: [
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
+          gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
           boardTabGameArgsByTabIdProvider.overrideWith(
             (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
           ),

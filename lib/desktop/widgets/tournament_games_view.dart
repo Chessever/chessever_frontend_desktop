@@ -566,11 +566,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
               !grouped.upcomingPairingRoundIds.contains(model.id) &&
               hasRoundGames(model),
     );
-    final topRoundId = displayRounds.isEmpty ? null : displayRounds.first.id;
+    final topRoundId =
+        displayRounds.where(hasRoundGames).firstOrNull?.id ??
+        displayRounds.firstOrNull?.id;
     final tournamentScopeId = 'tournament:${widget.tournamentId}';
-    // Mount only the current/top round initially. Building mini boards for
-    // every historical round at once makes large events hitch badly; older
-    // rounds remain available through their headers and expand on demand.
+    // Mount only the current/top round initially. The "top" for expansion is
+    // the newest round that actually has boards: a round that just started
+    // without any yet shows its heading above the list without collapsing the
+    // last round's visible games into an empty panel.
     bool initialExpanded(GamesAppBarModel round) =>
         shouldInitiallyExpandTournamentRound(
           roundId: round.id,

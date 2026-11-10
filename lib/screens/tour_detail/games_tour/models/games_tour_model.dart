@@ -383,18 +383,18 @@ class GamesTourModel {
                         ? _formatTimeFromSeconds(pgnClocks.blackSeconds!)
                         : '--:--'));
       } else {
+        // Before the first move there is no clock reading, only a time control.
+        // `players[].clock` holds that control (e.g. 3:02 for a 3+2 game) and
+        // may be shown as a static starting value — but `think_time` is elapsed
+        // thinking time, not remaining time, and it can be arbitrary garbage.
+        // It must never become a clock badge. The row also keeps
+        // `lastMoveTime` null (below), so the static value cannot tick down.
         final hasInitialClock = white.clock > 0 || black.clock > 0;
-
         if (hasInitialClock) {
           whiteTimeDisplay = _formatTime(white.clock);
           blackTimeDisplay = _formatTime(black.clock);
           whiteClockSecondsToUse = _centisecondsToSeconds(white.clock);
           blackClockSecondsToUse = _centisecondsToSeconds(black.clock);
-        } else if (game.thinkTime != null && game.thinkTime! > 0) {
-          whiteTimeDisplay = _formatTimeFromSeconds(game.thinkTime!);
-          blackTimeDisplay = _formatTimeFromSeconds(game.thinkTime!);
-          whiteClockSecondsToUse = game.thinkTime;
-          blackClockSecondsToUse = game.thinkTime;
         } else {
           whiteTimeDisplay = '--:--';
           blackTimeDisplay = '--:--';
@@ -440,7 +440,13 @@ class GamesTourModel {
         lastMove: game.lastMove?.isNotEmpty == true ? game.lastMove : null,
         boardNr: game.boardNr,
         // Prefer lastMoveTime, then gameDay (round start), then dateStart.
-        lastMoveTime: game.lastMoveTime ?? game.gameDay ?? game.dateStart,
+        // A row without a move has no "last move" time; feeding its scheduled
+        // date into the clock anchor made every pre-start clock count down
+        // from midnight and read 00:00 before the game began.
+        lastMoveTime:
+            gameHasStarted
+                ? (game.lastMoveTime ?? game.gameDay ?? game.dateStart)
+                : null,
         dateStart: game.dateStart,
         timeStart: game.timeStart,
         gameDay: game.gameDay,

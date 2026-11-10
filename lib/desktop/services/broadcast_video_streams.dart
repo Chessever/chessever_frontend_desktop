@@ -839,11 +839,10 @@ List<BroadcastVideoStreamGroup> groupBroadcastVideoStreams(
             : 'stream-${stream.id}';
     final resolved =
         language.code != 'und'
-            ? BroadcastStreamLanguage(
-              code: language.code,
-              label: language.label,
-              countryCode: stream.countryCode ?? language.countryCode,
-            )
+            // The flag represents the spoken language, not the broadcaster's
+            // country: an English stream from Johannesburg is still English
+            // (GB), matching the web `groupVideoStreams`.
+            ? language
             : countryName != null
             ? BroadcastStreamLanguage(
               code: key,

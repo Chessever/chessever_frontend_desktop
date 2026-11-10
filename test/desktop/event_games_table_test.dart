@@ -357,6 +357,36 @@ void main() {
     },
   );
 
+  test('event rail loads its catalog without live streaming', () {
+    // Streaming can be paused by browser lifecycle or a non-streaming
+    // surface. Round headings are presentation data, not a stream: the
+    // catalog must still load so completed rounds like Round 1 are present.
+    expect(
+      shouldLoadEventRailCatalog(
+        isForegroundTab: true,
+        hasFallbackRail: true,
+        fallbackIsEvent: true,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldLoadEventRailCatalog(
+        isForegroundTab: true,
+        hasFallbackRail: false,
+        fallbackIsEvent: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldLoadEventRailCatalog(
+        isForegroundTab: false,
+        hasFallbackRail: true,
+        fallbackIsEvent: true,
+      ),
+      isFalse,
+    );
+  });
+
   test('event rail does not promote an upcoming round when its rows load', () {
     final now = DateTime(2026, 9, 1, 11, 59);
     final catalog = <EventRailRoundMetadata>[

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:chessever/web/page_yield_web.dart';
+
 /// In-process stand-in for `dart:isolate` in the browser build, where
 /// dart2wasm supports no isolates or ports. A spawned "isolate" runs its entry
 /// point on this thread in its own zone; ports are message queues delivered
@@ -10,6 +12,33 @@ import 'dart:typed_data';
 /// uncaught error (with `errorsAreFatal`), and then notifies `onExit`.
 
 final Object _isolateKey = Object();
+
+final List<void Function()> _events = [];
+bool _eventsScheduled = false;
+
+/// Runs [event] in a later task, after every event posted before it.
+///
+/// One ordered queue rather than a timer per event: browsers delay a timer
+/// by 0 or 4 ms depending on how deeply nested the code that set it was, so
+/// a worker that pauses for the page (`page_yield.dart`) had its result
+/// overtake progress it had sent before the pause. Timers also run once a
+/// second at best in a background tab, which stalled an import the moment
+/// the visitor looked at another tab.
+void _post(void Function() event) {
+  _events.add(Zone.current.bindCallbackGuarded(event));
+  if (_eventsScheduled) return;
+  _eventsScheduled = true;
+  Zone.root.run(() {
+    nextBrowserTask().then((_) {
+      _eventsScheduled = false;
+      final batch = List<void Function()>.of(_events);
+      _events.clear();
+      for (final run in batch) {
+        run();
+      }
+    });
+  });
+}
 
 _EmulatedIsolate? get _currentEmulated =>
     Zone.current[_isolateKey] as _EmulatedIsolate?;
@@ -23,12 +52,12 @@ class SendPort {
     final sender = _currentEmulated;
     if (sender != null && sender.exited) return;
     // Deliver as a separate event, like a real port.
-    Timer.run(() => _port._deliver(message));
+    _post(() => _port._deliver(message));
   }
 
   /// Runtime notices (exit, error) are sent on the isolate's behalf even
   /// after it has exited.
-  void _notify(Object? message) => Timer.run(() => _port._deliver(message));
+  void _notify(Object? message) => _post(() => _port._deliver(message));
 
   @override
   bool operator ==(Object other) =>
@@ -167,7 +196,7 @@ class _EmulatedIsolate {
   void _maybeExit() {
     if (_entryReturned && _openPorts <= 0) {
       // Let pending events (sends queued just before) land first.
-      Timer.run(() {
+      _post(() {
         if (_openPorts <= 0) exit();
       });
     }
@@ -229,7 +258,7 @@ class Isolate {
     if (onExit != null) emulated._exitListeners.add((onExit, null));
     if (onError != null) emulated._errorListeners.add(onError);
     final isolate = Isolate._(emulated);
-    Timer.run(() {
+    _post(() {
       runZonedGuarded(
         () {
           Object? result;

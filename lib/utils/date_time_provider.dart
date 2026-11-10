@@ -22,8 +22,10 @@ extension ChessClockExtension on DateTime {
       return _formatTime(clockMs);
     }
 
-    // Calculate elapsed time since last move
-    final elapsedMs = difference(lastMoveTime).inMilliseconds.abs();
+    // Calculate elapsed time since last move. A future anchor means the game
+    // has not started (or the clocks are skewed), so it must not count down.
+    final rawElapsedMs = difference(lastMoveTime).inMilliseconds;
+    final elapsedMs = rawElapsedMs < 0 ? 0 : rawElapsedMs;
 
     // Calculate remaining time
     final remainingMs = clockMs - elapsedMs;

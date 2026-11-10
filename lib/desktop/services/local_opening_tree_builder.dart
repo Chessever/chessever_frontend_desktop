@@ -933,8 +933,10 @@ String? _applyUciWithDartchess(String parentFenKey, String uci) {
   }
 }
 
+final RegExp _fenFieldGap = RegExp(r'\s+');
+
 String? _applyUciToFenKey(String parentFenKey, String uci) {
-  final fields = parentFenKey.trim().split(RegExp(r'\s+'));
+  final fields = parentFenKey.trim().split(_fenFieldGap);
   if (fields.length < 2 || uci.length < 4) return null;
   final placement = fields[0];
   final turn = fields[1];

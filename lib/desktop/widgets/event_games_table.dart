@@ -264,6 +264,15 @@ List<String> eventRailCatalogRoundTitlesForTesting({
 }
 
 @visibleForTesting
+bool shouldLoadEventRailCatalog({
+  required bool isForegroundTab,
+  required bool hasFallbackRail,
+  required bool fallbackIsEvent,
+}) {
+  return isForegroundTab && (!hasFallbackRail || fallbackIsEvent);
+}
+
+@visibleForTesting
 DateTime? eventRailNextRoundAdvanceAtForTesting({
   required List<EventRailRoundMetadata> roundCatalog,
   required DateTime now,
@@ -1638,10 +1647,17 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               : fallbackRail.resolve(
                 _normalizeRailTab(requestedRailTab, fallbackRail),
               );
-      _eventRailWasActivated =
-          shouldStreamVisibleRail &&
-          (fallbackResolved == null ||
-              fallbackResolved.kind == _GameListKind.event);
+      // The rail's round catalog is presentation data, not a live stream.
+      // Activating it only while streaming is allowed meant a paused/lifecycle
+      // gated session kept the seed page's handful of rounds forever and never
+      // loaded the tournament's full schedule (Round 1 simply missing). Read
+      // it whenever the Board tab is foreground; the provider itself gates its
+      // own refresh/stream work on lifecycle and activity.
+      _eventRailWasActivated = shouldLoadEventRailCatalog(
+        isForegroundTab: isForegroundTab,
+        hasFallbackRail: fallbackResolved != null,
+        fallbackIsEvent: fallbackResolved?.kind == _GameListKind.event,
+      );
     }
     final eventRailAsync =
         eventRailProviderKey == null || !_eventRailWasActivated
@@ -2849,17 +2865,27 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     final streamedListIdentity = liveBatchKeyByGameId.isNotEmpty;
     _preserveRailScrollAcrossIdentityFlip(streamedListIdentity);
 
-    return ListView.builder(
-      key: ValueKey<bool>(streamedListIdentity),
+    return Scrollbar(
       controller: _scrollController,
-      physics: const DesktopScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
-      itemCount: entries.length,
-      itemBuilder: (context, index) {
-        // An entry hands back the SAME widget instance while its content is
-        // unchanged, and the delegate's element keeps it.
-        return entries[index].widget;
-      },
+      // The rail is taller than its viewport on any real event (Round 1 and
+      // the next rounds sit below the fold). Without a persistent thumb the
+      // list looked like it ended at the last visible round.
+      thumbVisibility: true,
+      interactive: true,
+      thickness: 5,
+      radius: const Radius.circular(3),
+      child: ListView.builder(
+        key: ValueKey<bool>(streamedListIdentity),
+        controller: _scrollController,
+        physics: const DesktopScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
+        itemCount: entries.length,
+        itemBuilder: (context, index) {
+          // An entry hands back the SAME widget instance while its content is
+          // unchanged, and the delegate's element keeps it.
+          return entries[index].widget;
+        },
+      ),
     );
   }
 }

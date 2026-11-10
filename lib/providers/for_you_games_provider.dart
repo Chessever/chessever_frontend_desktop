@@ -249,6 +249,23 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     ref.listen(favoriteEventsProvider, (_, next) {
       next.whenData((_) => _resortVisibleEventsForFavoriteChange());
     });
+
+    // The mobile For You screen ranks at paint time against
+    // `eventFavoritePlayersCacheProvider`, so a heart count that hydrates after
+    // the page was fetched still bubbles its event. The desktop feed has no
+    // render-time sort hook, so apply the same rule here: any heart data that
+    // lands (prefetch, card hydration, or a resume refresh) re-ranks the
+    // visible list with the cache the sort reads.
+    ref.listen<Map<String, EventFavoritePlayers>>(
+      eventFavoritePlayersCacheProvider,
+      (previous, next) {
+        if (identical(previous, next)) return;
+        // A fetch in flight publishes its own sorted page; reordering the
+        // previous list now would only show an intermediate order.
+        if (_isFetching) return;
+        _resortVisibleEventsForFavoriteChange();
+      },
+    );
   }
 
   Future<void> _loadInitial() async {
@@ -688,28 +705,30 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
 
     try {
       final gameRepository = ref.read(gameRepositoryProvider);
-      final prefetchResults = await Future.wait<Object?>([
-        gameRepository
-            .getForYouTopGamesByEventIds(
-              eventIds: eventIds,
-              boardsPerEvent: ref.read(forYouGamesPerEventLimitProvider),
-            )
-            .timeout(const Duration(seconds: 6)),
-        _loadFavoritePlayerMatches(
-          gameRepository: gameRepository,
-          eventIds: eventIds,
-          allowOrderHydrationFinalize: replace && _sessionEventOrder.isEmpty,
-        ),
-      ]);
-
-      final gamesByEvent = prefetchResults[0]! as Map<String, List<Games>>;
-      final favoritePlayerMatchesByEventId =
-          prefetchResults[1]! as Map<String, List<int>>;
-
-      _cacheFavoritePlayerMatches(
+      // Kick off both reads together, then await them independently so a games
+      // failure never discards a successful favorite-player result (or writes
+      // zero hearts over good ones).
+      final gamesFuture = gameRepository
+          .getForYouTopGamesByEventIds(
+            eventIds: eventIds,
+            boardsPerEvent: ref.read(forYouGamesPerEventLimitProvider),
+          )
+          .timeout(const Duration(seconds: 6));
+      final favoriteMatchesFuture = _loadFavoritePlayerMatches(
+        gameRepository: gameRepository,
         eventIds: eventIds,
-        matchesByEventId: favoritePlayerMatchesByEventId,
+        allowOrderHydrationFinalize: replace && _sessionEventOrder.isEmpty,
       );
+
+      final gamesByEvent = await gamesFuture;
+      final favoriteMatches = await favoriteMatchesFuture;
+
+      if (favoriteMatches.authoritative) {
+        _cacheFavoritePlayerMatches(
+          eventIds: eventIds,
+          matchesByEventId: favoriteMatches.matches,
+        );
+      }
       _writeTopGameSnapshots(
         models: models,
         gamesByEvent: gamesByEvent,
@@ -719,10 +738,10 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       debugPrint('[ForYou] Top-game RPC failed: $e');
       debugPrint('[ForYou] Top-game stack: $stack');
       _logErrorToSentry(e, stack);
-      _cacheFavoritePlayerMatches(
-        eventIds: eventIds,
-        matchesByEventId: const <String, List<int>>{},
-      );
+      // Never write empty favorite-player counts here: a timed-out games read
+      // says nothing about the user's hearts, and overwriting the cache made
+      // every badge vanish until the next successful refresh (seen when the
+      // app came back from the background). Keep the last known counts.
       _writeTopGameSnapshots(
         models: models,
         gamesByEvent: const <String, List<Games>>{},
@@ -844,6 +863,20 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         );
   }
 
+  /// The order the feed should publish for an in-place re-rank.
+  ///
+  /// A favorite/heart change re-sorts the whole visible list, but when Live
+  /// first is on, the server-ranked live cohort still outranks that sort (the
+  /// same contract `_applyLiveFirstQuery` enforces for a page). Reusing the
+  /// last cohort keeps both rules without a network round trip.
+  List<GroupEventCardModel> _resortPreservingLiveFirst(
+    List<GroupEventCardModel> models,
+  ) {
+    final sorted = _sortLikeCurrentTab(models);
+    if (!_liveFirst || _liveCohortIds.isEmpty) return sorted;
+    return orderEventsByLiveCohort(events: sorted, cohortIds: _liveCohortIds);
+  }
+
   List<GroupEventCardModel> _sortPageOnceForSession(
     List<GroupEventCardModel> models,
   ) {
@@ -875,7 +908,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     final current = state.events;
     if (current.isEmpty) return;
 
-    final sorted = _sortLikeCurrentTab(current);
+    final sorted = _resortPreservingLiveFirst(current);
     var changed = false;
     for (var i = 0; i < current.length; i++) {
       if (current[i].id != sorted[i].id) {
@@ -908,15 +941,19 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         .toList(growable: false);
     if (eventIds.isEmpty) return;
 
-    final matchesByEventId = await _loadFavoritePlayerMatches(
+    final matches = await _loadFavoritePlayerMatches(
       gameRepository: ref.read(gameRepositoryProvider),
       eventIds: eventIds,
     );
     if (!mounted) return;
 
+    // A transient favorites load (resume, auth refresh, timeout) must not
+    // publish zero hearts. Only an authoritative answer may replace the cache.
+    if (!matches.authoritative) return;
+
     _cacheFavoritePlayerMatches(
       eventIds: eventIds,
-      matchesByEventId: matchesByEventId,
+      matchesByEventId: matches.matches,
     );
 
     if (finalizeOrderAfterRefresh) {
@@ -924,53 +961,63 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     }
   }
 
-  Future<Map<String, List<int>>> _loadFavoritePlayerMatches({
+  Future<({Map<String, List<int>> matches, bool authoritative})>
+  _loadFavoritePlayerMatches({
     required GameRepository gameRepository,
     required List<String> eventIds,
     bool allowOrderHydrationFinalize = false,
   }) async {
     try {
-      final favoriteFideIds = await _favoriteFideIdsSnapshot(
+      final snapshot = await _favoriteFideIdsSnapshot(
         allowOrderHydrationFinalize: allowOrderHydrationFinalize,
       );
-      if (favoriteFideIds.isEmpty) {
-        return <String, List<int>>{};
+      if (!snapshot.authoritative) {
+        return (matches: <String, List<int>>{}, authoritative: false);
+      }
+      if (snapshot.fideIds.isEmpty) {
+        return (matches: <String, List<int>>{}, authoritative: true);
       }
 
-      return await gameRepository.getForYouFavoritePlayerFideIdsByEventIds(
-        eventIds: eventIds,
-        favoriteFideIds: favoriteFideIds,
-      );
+      final matches = await gameRepository
+          .getForYouFavoritePlayerFideIdsByEventIds(
+            eventIds: eventIds,
+            favoriteFideIds: snapshot.fideIds,
+          );
+      return (matches: matches, authoritative: true);
     } catch (e, stack) {
       debugPrint('[ForYou] Favorite player count prefetch failed: $e');
       debugPrint('[ForYou] Favorite player count stack: $stack');
       _logErrorToSentry(e, stack);
-      return <String, List<int>>{};
+      return (matches: <String, List<int>>{}, authoritative: false);
     }
   }
 
-  Future<List<int>> _favoriteFideIdsSnapshot({
+  Future<({List<int> fideIds, bool authoritative})> _favoriteFideIdsSnapshot({
     bool allowOrderHydrationFinalize = false,
   }) async {
     final favoritePlayersState = ref.read(favoritePlayersProviderNew);
     final loadedFavorites = favoritePlayersState.valueOrNull;
     if (loadedFavorites != null) {
-      return _favoriteFideIdsFrom(loadedFavorites);
+      return (
+        fideIds: _favoriteFideIdsFrom(loadedFavorites),
+        authoritative: true,
+      );
     }
 
-    final favorites = await ref
-        .read(favoritePlayersProviderNew.future)
-        .timeout(
-          const Duration(milliseconds: 1500),
-          onTimeout: () {
-            if (allowOrderHydrationFinalize) {
-              _pendingFavoritePlayerOrderHydration = true;
-            }
-            return const <FavoritePlayer>[];
-          },
-        );
-
-    return _favoriteFideIdsFrom(favorites);
+    try {
+      final favorites = await ref
+          .read(favoritePlayersProviderNew.future)
+          .timeout(const Duration(milliseconds: 1500));
+      return (fideIds: _favoriteFideIdsFrom(favorites), authoritative: true);
+    } on TimeoutException {
+      if (allowOrderHydrationFinalize) {
+        _pendingFavoritePlayerOrderHydration = true;
+      }
+      return (fideIds: const <int>[], authoritative: false);
+    } catch (_) {
+      // A failed favorites read is not proof the user has no favorites.
+      return (fideIds: const <int>[], authoritative: false);
+    }
   }
 
   void _cacheFavoritePlayerMatches({
@@ -994,7 +1041,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   void _finalizeSessionOrderAfterFavoriteHydration() {
     if (!_pendingFavoritePlayerOrderHydration || state.events.isEmpty) return;
 
-    final sortedEvents = _sortLikeCurrentTab(state.events);
+    final sortedEvents = _resortPreservingLiveFirst(state.events);
     _sessionEventOrder
       ..clear()
       ..addEntries(

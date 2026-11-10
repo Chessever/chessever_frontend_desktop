@@ -86,6 +86,11 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   WebViewController? _controller;
   String? _loadedEmbedUrl;
 
+  /// A stream / pin menu is painted over the player. The web player is a
+  /// real iframe DOM element under that Flutter canvas, so it must ignore
+  /// pointer events while the menu is open or the click lands on the video.
+  bool _toolbarMenuOpen = false;
+
   /// The embed document failed to arrive or did not carry a player (site
   /// unreachable, route missing): show the external link instead of a
   /// broken frame.
@@ -265,7 +270,20 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       ),
     );
     _controller = controller;
+    // A menu can already be open while the player slot is still being
+    // created (a slow or collapsed first build); keep the same hit-testing
+    // rule from the player's first frame.
+    setBrowserBroadcastVideoFrameInteractive(
+      controller,
+      interactive: !_toolbarMenuOpen,
+    );
     return controller;
+  }
+
+  void _onToolbarMenuVisibilityChanged(bool open) {
+    if (_toolbarMenuOpen == open) return;
+    _toolbarMenuOpen = open;
+    setBrowserBroadcastVideoFrameInteractive(_controller, interactive: !open);
   }
 
   static void _ignoreWebViewFailure(Future<void> call) {
@@ -747,6 +765,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
       onSelect: _selectStream,
       onToggle: _toggleVisible,
       onPin: _togglePin,
+      onMenuVisibilityChanged: _onToolbarMenuVisibilityChanged,
     );
   }
 

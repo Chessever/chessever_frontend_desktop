@@ -268,6 +268,42 @@ void main() {
       ]);
     });
 
+    test('a language group shows the language flag, not the broadcaster country', () {
+      final streams = <BroadcastVideoStream>[
+        stream(
+          id: 'johannesburg',
+          label: 'Johannesburg · English',
+          language: 'en',
+          countryCode: 'ZA',
+        ),
+        stream(
+          id: 'delhi',
+          label: 'Delhi · English',
+          language: 'en',
+          countryCode: 'IN',
+        ),
+        stream(id: 'hindi', label: 'Delhi · Hindi', language: 'hi', countryCode: 'IN'),
+        stream(id: 'camera', label: 'Local camera', countryCode: 'ZA'),
+      ];
+      final groups = groupBroadcastVideoStreams(streams);
+      final english = groups.singleWhere((group) => group.key == 'en');
+      expect(english.countryCode, 'GB');
+      // Broadcaster origin is preserved on the stream itself.
+      expect(streams.first.countryCode, 'ZA');
+      // A country-only stream still takes its country as the fallback flag.
+      expect(
+        groups.singleWhere((group) => group.key == 'country-ZA').countryCode,
+        'ZA',
+      );
+      // Unwrapped individual toolbar flags keep the language flag too.
+      final toolbar = toolbarBroadcastVideoGroups(streams, const <String>[], 20);
+      final englishFlags = toolbar
+          .where((group) => group.code == 'en')
+          .map((group) => group.countryCode)
+          .toList();
+      expect(englishFlags, <String>['GB', 'GB']);
+    });
+
     test('preferred flag leads its language group', () {
       final groups = groupBroadcastVideoStreams(<BroadcastVideoStream>[
         stream(id: 'en-1', label: 'A · English'),

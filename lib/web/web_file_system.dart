@@ -5,6 +5,7 @@ import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
 import 'package:web/web.dart' as web;
 
@@ -61,12 +62,21 @@ class WebFileSystem {
     final fs = instance;
     try {
       fs._db = await _openDatabase();
+      final writer = await _becomeWriter();
       await fs._loadAll();
+      if (!writer) {
+        // ignore: avoid_print
+        print('[web] another tab saves the files; this one keeps its own '
+            'changes in memory');
+        fs._db = null;
+        fs._storage = WebFileStorage.otherTab;
+      }
     } catch (e) {
       // Private windows can refuse IndexedDB; files then last for the tab.
       // ignore: avoid_print
       print('[web] file storage unavailable, keeping files in memory: $e');
       fs._db = null;
+      fs._storage = WebFileStorage.unavailable;
     }
     for (final dir in WebPathProvider.folders) {
       fs._mkdirs(dir);
@@ -79,6 +89,58 @@ class WebFileSystem {
       }).toJS,
     );
   }
+
+  static const String _writerLock = 'chessever-local-files';
+
+  /// Whether this tab is the one that saves files to IndexedDB.
+  ///
+  /// Every tab keeps its own copy of the files in memory and writes changed
+  /// chunks behind. Two tabs doing that to one store leave a database file
+  /// made of chunks from both, which SQLite reads as corrupt. The first tab
+  /// holds a Web Lock for as long as it lives; a later one loads what is
+  /// stored and saves nothing.
+  static Future<bool> _becomeWriter() async {
+    final navigator = web.window.navigator;
+    if (!(navigator as JSObject).has('locks')) return true;
+    // A reloading tab can ask before the page it replaces has let go.
+    for (var attempt = 0; attempt < 6; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      final granted = Completer<bool>();
+      try {
+        navigator.locks.request(
+          _writerLock,
+          web.LockOptions(ifAvailable: true),
+          ((web.Lock? lock) {
+            if (!granted.isCompleted) granted.complete(lock != null);
+            // Held until the tab closes: this promise never settles.
+            return lock == null ? null : Completer<JSAny?>().future.toJS;
+          }).toJS,
+        );
+      } catch (_) {
+        return true;
+      }
+      final held = await granted.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => true,
+      );
+      if (held) return true;
+    }
+    return false;
+  }
+
+  /// A second request from one page is refused like one from another tab.
+  @visibleForTesting
+  static Future<bool> debugBecomeWriter() => _becomeWriter();
+
+  WebFileStorage _storage = WebFileStorage.saved;
+
+  /// Where this tab's file changes end up. [onStorageChanged] reports a
+  /// change after [mount], which is how a full browser quota shows up.
+  WebFileStorage get storage => _storage;
+
+  void Function(WebFileStorage storage)? onStorageChanged;
 
   static String normalize(String path) {
     final absolute = path.startsWith('/') ? path : '/home/chessever/$path';
@@ -312,50 +374,75 @@ class WebFileSystem {
     final deletes = Map.of(_deleted);
     _dirty.clear();
     _deleted.clear();
-    final tx = db.transaction(_store.toJS, 'readwrite');
-    final store = tx.objectStore(_store);
-    deletes.forEach((key, chunks) {
-      if (_nodes.containsKey(key) && !writes.contains(key)) return;
-      store.delete(key.toJS);
-      for (var i = 0; i < chunks; i++) {
-        store.delete(_chunkKey(key, i).toJS);
+    final web.IDBTransaction tx;
+    var committed = false;
+    try {
+      tx = db.transaction(_store.toJS, 'readwrite');
+    } catch (_) {
+      // The connection was closed under us (storage cleared, version
+      // change). Keep everything pending.
+      _saveFailed(writes, deletes);
+      return;
+    }
+    try {
+      final store = tx.objectStore(_store);
+      deletes.forEach((key, chunks) {
+        if (_nodes.containsKey(key) && !writes.contains(key)) return;
+        store.delete(key.toJS);
+        for (var i = 0; i < chunks; i++) {
+          store.delete(_chunkKey(key, i).toJS);
+        }
+      });
+      for (final key in writes) {
+        final n = _nodes[key];
+        if (n == null) continue;
+        final previous = deletes[key] ?? 0;
+        if (previous > n.storedChunks) n.storedChunks = previous;
+        store.put(n.metaJs(), key.toJS);
+        if (n.isDirectory) continue;
+        final count = (n.length + _chunkSize - 1) ~/ _chunkSize;
+        final indices =
+            n.allDirty
+                ? List<int>.generate(count, (i) => i)
+                : (n.dirtyChunks.where((i) => i < count).toList()..sort());
+        for (final i in indices) {
+          final start = i * _chunkSize;
+          final end = start + _chunkSize > n.length ? n.length : start + _chunkSize;
+          store.put(
+            Uint8List.fromList(
+              Uint8List.sublistView(n._buffer, start, end),
+            ).toJS,
+            _chunkKey(key, i).toJS,
+          );
+        }
+        for (var i = count; i < n.storedChunks; i++) {
+          store.delete(_chunkKey(key, i).toJS);
+        }
+        n
+          ..storedChunks = count
+          ..allDirty = false
+          ..dirtyChunks.clear();
       }
-    });
-    for (final key in writes) {
-      final n = _nodes[key];
-      if (n == null) continue;
-      final previous = deletes[key] ?? 0;
-      if (previous > n.storedChunks) n.storedChunks = previous;
-      store.put(n.metaJs(), key.toJS);
-      if (n.isDirectory) continue;
-      final count = (n.length + _chunkSize - 1) ~/ _chunkSize;
-      final indices =
-          n.allDirty
-              ? List<int>.generate(count, (i) => i)
-              : (n.dirtyChunks.where((i) => i < count).toList()..sort());
-      for (final i in indices) {
-        final start = i * _chunkSize;
-        final end = start + _chunkSize > n.length ? n.length : start + _chunkSize;
-        store.put(
-          Uint8List.fromList(
-            Uint8List.sublistView(n._buffer, start, end),
-          ).toJS,
-          _chunkKey(key, i).toJS,
-        );
-      }
-      for (var i = count; i < n.storedChunks; i++) {
-        store.delete(_chunkKey(key, i).toJS);
-      }
-      n
-        ..storedChunks = count
-        ..allDirty = false
-        ..dirtyChunks.clear();
+      committed = await _complete(tx);
+    } catch (_) {
+      // put() itself can throw (quota, a detached buffer); nothing of the
+      // transaction may then be left to commit.
+      try {
+        tx.abort();
+      } catch (_) {}
     }
     _lastFlushCost = cost.elapsed;
-    if (await _complete(tx)) return;
-    // Nothing of a failed transaction is stored (the browser's quota for the
-    // site is the usual cause). Keep the files marked so that a later save
-    // writes them whole, rather than believing they are stored.
+    if (committed) {
+      if (_storage == WebFileStorage.full) _setStorage(WebFileStorage.saved);
+      return;
+    }
+    _saveFailed(writes, deletes);
+  }
+
+  /// Nothing of a failed transaction is stored (the browser's quota for the
+  /// site is the usual cause). Keeps the files marked so that a later save
+  /// writes them whole, rather than believing they are stored.
+  void _saveFailed(List<String> writes, Map<String, int> deletes) {
     for (final key in writes) {
       final n = _nodes[key];
       if (n == null) continue;
@@ -365,15 +452,25 @@ class WebFileSystem {
     deletes.forEach((key, chunks) {
       if ((_deleted[key] ?? 0) < chunks) _deleted[key] = chunks;
     });
-    if (!_reportedSaveFailure) {
-      _reportedSaveFailure = true;
+    if (_storage != WebFileStorage.full) {
       // ignore: avoid_print
       print('[web] could not save files to browser storage; '
           'changes last until the page is closed');
+      _setStorage(WebFileStorage.full);
     }
+    // Space can be freed (a database deleted here or elsewhere); try again
+    // rather than waiting for the next change to a file.
+    _flushTimer ??= Timer(const Duration(seconds: 30), () {
+      _flushTimer = null;
+      unawaited(_flush());
+    });
   }
 
-  bool _reportedSaveFailure = false;
+  void _setStorage(WebFileStorage storage) {
+    if (_storage == storage) return;
+    _storage = storage;
+    onStorageChanged?.call(storage);
+  }
 
   Future<void> _loadAll() async {
     final db = _db!;
@@ -456,6 +553,22 @@ class WebFileSystem {
   }
 }
 
+/// What becomes of the files a tab changes.
+enum WebFileStorage {
+  /// Written behind to IndexedDB and there on the next visit.
+  saved,
+
+  /// Another tab of the app is the one saving; this tab's changes are lost
+  /// when it closes.
+  otherTab,
+
+  /// The browser refused IndexedDB (a private window, usually).
+  unavailable,
+
+  /// The last save failed, most often because the site's quota is used up.
+  full,
+}
+
 /// See [WebFileSystem.openFile].
 final class WebFileHandle {
   WebFileHandle._(this._fs, this._key, this._node);
@@ -470,7 +583,14 @@ final class WebFileHandle {
     final available = _node.length - offset;
     if (available <= 0) return 0;
     final count = buffer.length < available ? buffer.length : available;
-    buffer.setRange(0, count, _node._buffer, offset);
+    // Not `setRange`: [buffer] is a view of SQLite's Wasm memory, and
+    // copying into one from a Dart list walks the source from its start to
+    // [offset] first. That made each page read cost time in proportion to
+    // its place in the file (58 ms a page 2 MB in, against 0.04 ms here).
+    final source = _node._buffer;
+    for (var i = 0; i < count; i++) {
+      buffer[i] = source[offset + i];
+    }
     return count;
   }
 
