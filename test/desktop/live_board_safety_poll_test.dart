@@ -173,6 +173,63 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  test('safety poll is limited to foreground broadcast boards', () {
+    BoardTabGameArgs args({GameSource? source, String databaseTitle = ''}) =>
+        BoardTabGameArgs(
+          gameId: 'live-seed',
+          pgn: '',
+          label: 'Game',
+          whiteName: '',
+          blackName: '',
+          databaseTitle: databaseTitle,
+          sourceGame:
+              source == null
+                  ? _preStartGame()
+                  : _preStartGame().copyWith(source: source),
+        );
+
+    expect(
+      shouldRunLiveBoardSafetyPoll(
+        isForegroundTab: true,
+        gameId: 'live-seed',
+        args: args(),
+      ),
+      isTrue,
+    );
+    expect(
+      shouldRunLiveBoardSafetyPoll(
+        isForegroundTab: false,
+        gameId: 'live-seed',
+        args: args(),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldRunLiveBoardSafetyPoll(
+        isForegroundTab: true,
+        gameId: null,
+        args: args(),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldRunLiveBoardSafetyPoll(
+        isForegroundTab: true,
+        gameId: 'live-seed',
+        args: args(databaseTitle: 'My database'),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldRunLiveBoardSafetyPoll(
+        isForegroundTab: true,
+        gameId: 'live-seed',
+        args: args(source: GameSource.gamebase),
+      ),
+      isFalse,
+    );
+  });
+
   test('safety poll only feeds rows that changed the board', () {
     final update = _liveUpdate();
     final current = mergeLiveGameUpdateWithBase(

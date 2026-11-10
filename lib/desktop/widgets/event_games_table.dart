@@ -2874,17 +2874,22 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       interactive: true,
       thickness: 5,
       radius: const Radius.circular(3),
-      child: ListView.builder(
-        key: ValueKey<bool>(streamedListIdentity),
-        controller: _scrollController,
-        physics: const DesktopScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
-        itemCount: entries.length,
-        itemBuilder: (context, index) {
-          // An entry hands back the SAME widget instance while its content is
-          // unchanged, and the delegate's element keeps it.
-          return entries[index].widget;
-        },
+      // The explicit thumb above replaces the platform's automatic desktop
+      // scrollbar; without this the rail paints two thumbs on one track.
+      child: ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+        child: ListView.builder(
+          key: ValueKey<bool>(streamedListIdentity),
+          controller: _scrollController,
+          physics: const DesktopScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
+          itemCount: entries.length,
+          itemBuilder: (context, index) {
+            // An entry hands back the SAME widget instance while its content
+            // is unchanged, and the delegate's element keeps it.
+            return entries[index].widget;
+          },
+        ),
       ),
     );
   }
