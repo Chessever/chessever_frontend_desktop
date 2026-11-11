@@ -71,6 +71,21 @@ Tour selectDefaultTour({
     return currentTour;
   }
 
+  // A mirror tour ("Combined") republishes the sections' games, so it is live
+  // whenever any section is and can carry the event's top avg_elo. It stays
+  // reachable as a tab but is never the default while a real section exists.
+  final sectionModels =
+      tourModels.where((model) => !model.tour.isMirror).toList();
+  if (sectionModels.isNotEmpty && sectionModels.length < tourModels.length) {
+    return selectDefaultTour(
+      tourModels: sectionModels,
+      liveTourIds: liveTourIds,
+      savedTourId: savedTourId,
+      activityTourId: activityTourId,
+      latestPlayedRoundAtByTourId: latestPlayedRoundAtByTourId,
+    );
+  }
+
   final liveModels =
       tourModels
           .where((model) => model.roundStatus == RoundStatus.live)

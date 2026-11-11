@@ -1599,6 +1599,7 @@ Future<List<PlayerEventData>> _getPlayerEventsFromGamesWithKey(
             'tour_id, tour_slug, status, players, date_start, player_white, player_black',
           )
           .contains('player_fide_ids', [playerKey.fideId])
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false)
           .limit(500);
     } else {
@@ -1611,6 +1612,7 @@ Future<List<PlayerEventData>> _getPlayerEventsFromGamesWithKey(
           .or(
             'player_white.eq."${playerKey.playerName}",player_black.eq."${playerKey.playerName}"',
           )
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false)
           .limit(500);
     }
@@ -1802,6 +1804,7 @@ Future<List<PlayerEventData>> _getPlayerEventsFromGames(
         .from('games')
         .select('tour_id, tour_slug, status, players, date_start')
         .contains('player_fide_ids', [fideId])
+        .eq(kGameIsMirrorColumn, false)
         .order('date_start', ascending: false)
         .limit(500);
     final responseList = response as List;

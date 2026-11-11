@@ -1,5 +1,7 @@
 // repositories/round_repository.dart
 import 'package:chessever/repository/supabase/base_repository.dart';
+import 'package:chessever/repository/supabase/game/game_repository.dart'
+    show kGameIsMirrorColumn;
 import 'package:chessever/repository/supabase/round/round.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -20,6 +22,9 @@ class RoundRepository extends BaseRepository {
           .from('rounds')
           .select('tour_id,starts_at,games!games_round_id_fkey!inner(id)')
           .inFilter('tour_id', tourIds)
+          // A mirror ("Combined") tour republishes its sections' boards, so
+          // its rounds tie the real sections and could win the default tab.
+          .eq('games.$kGameIsMirrorColumn', false)
           .not('starts_at', 'is', null)
           .lte('starts_at', (now ?? DateTime.now()).toUtc().toIso8601String())
           .order('starts_at', ascending: false);
