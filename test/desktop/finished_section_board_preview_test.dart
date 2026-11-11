@@ -152,14 +152,11 @@ void _expectPositions(WidgetTester tester, List<GamesTourModel> seeds) {
     final painted = tester.widget<cg.StaticChessboard>(
       find.descendant(of: card, matching: find.byType(cg.StaticChessboard)),
     );
+    // Every piece is painted by the board itself, including the losing king
+    // (tilted in place via `pieceRotations`, never stripped from the FEN).
     final expected = <Square, Piece>{
       for (final (square, piece) in Setup.parseFen(seed.fen!).board.pieces)
-        if (!(piece.role == Role.king &&
-            ((seed.gameStatus == GameStatus.whiteWins &&
-                    piece.color == Side.black) ||
-                (seed.gameStatus == GameStatus.blackWins &&
-                    piece.color == Side.white))))
-          square: piece,
+        square: piece,
     };
     final actual = <Square, Piece>{
       for (final (square, piece) in Setup.parseFen(painted.fen).board.pieces)

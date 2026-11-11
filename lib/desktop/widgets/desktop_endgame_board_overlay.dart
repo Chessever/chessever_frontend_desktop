@@ -18,6 +18,10 @@ const Color _kDrawCellColor = Color(0xCCADE1CD);
 /// -45° — the loser king leans over as if knocked down.
 const double _kFallenKingAngle = -0.785398;
 
+const cg.SquareHighlight _kLoserHighlight = cg.SquareHighlight(
+  details: cg.HighlightDetails(solidColor: _kLoserCellColor),
+);
+
 /// A static [cg.StaticChessboard] preview that decorates *finished* games the
 /// way the mobile small board does: the losing king topples 45° onto a red
 /// square, and draws park a dove on each king over a mint square.
@@ -25,9 +29,11 @@ const double _kFallenKingAngle = -0.785398;
 /// For ongoing/unknown games this is just the plain board, so callers can use
 /// it as a drop-in replacement for `StaticChessboard` inside grid cards.
 ///
-/// Mechanic (mirrors mobile `chess_board_from_fen_new.dart`): chessground draws
-/// pieces internally with no per-piece rotation hook, so the loser king is
-/// *stripped from the FEN* and re-drawn as a rotated overlay sprite on top.
+/// Mechanic: the losing king stays in the FEN and is leaned over by the board's
+/// own cached piece painter (`pieceRotations`), with the red wash painted as an
+/// under-piece square highlight. It is never stripped from the position and
+/// redrawn by a separate image widget: when that replacement failed to paint
+/// (reported on Firefox in the browser build) the square was left empty.
 /// Preview endings are visible immediately. Scrolling a finished game into
 /// view must not restart a decorative spring or a delayed badge animation;
 /// interactive boards keep their move and result animations separately.
@@ -58,7 +64,7 @@ class DesktopEndgameBoard extends StatelessWidget {
 
     final rawFen = fen.trim();
     final setup = _tryParseFen(rawFen);
-    var displayFen = setup != null ? rawFen : _kStartFen;
+    final displayFen = setup != null ? rawFen : _kStartFen;
 
     Square? whiteKingSquare;
     Square? blackKingSquare;
@@ -77,12 +83,10 @@ class DesktopEndgameBoard extends StatelessWidget {
     }
 
     Square? loserKingSquare;
-    if (isWhiteWins && blackKingSquare != null) {
+    if (isWhiteWins) {
       loserKingSquare = blackKingSquare;
-      displayFen = _removeKingFromFen(displayFen, loserKingSquare, 'k');
-    } else if (isBlackWins && whiteKingSquare != null) {
+    } else if (isBlackWins) {
       loserKingSquare = whiteKingSquare;
-      displayFen = _removeKingFromFen(displayFen, loserKingSquare, 'K');
     }
 
     final board = cg.StaticChessboard(
@@ -98,44 +102,16 @@ class DesktopEndgameBoard extends StatelessWidget {
       ),
       shapes: const <cg.Shape>{},
       lastMove: lastMove,
+      // Decisive: red square under the loser, king toppled in place.
+      squareHighlights:
+          loserKingSquare == null
+              ? const <Square, cg.SquareHighlight>{}
+              : {loserKingSquare: _kLoserHighlight},
+      pieceRotations:
+          loserKingSquare == null
+              ? const <Square, double>{}
+              : {loserKingSquare: _kFallenKingAngle},
     );
-
-    // Decisive: red square under the loser, king toppled on top.
-    if (loserKingSquare != null) {
-      final squareSize = size / 8;
-      final loserSide = isWhiteWins ? Side.black : Side.white;
-      final pieceKind =
-          loserSide == Side.white ? PieceKind.whiteKing : PieceKind.blackKing;
-      final pieceImage = settings.pieceAssets[pieceKind];
-      final off = _orientedSquareOffset(
-        loserKingSquare,
-        squareSize,
-        orientation,
-      );
-
-      return SizedBox(
-        width: size,
-        height: size,
-        child: Stack(
-          children: [
-            board,
-            _CellWash(
-              left: off.left,
-              top: off.top,
-              squareSize: squareSize,
-              color: _kLoserCellColor,
-            ),
-            if (pieceImage != null)
-              _FallenKing(
-                left: off.left,
-                top: off.top,
-                squareSize: squareSize,
-                image: pieceImage,
-              ),
-          ],
-        ),
-      );
-    }
 
     // Draw: mint square + dove on each king.
     if (isDraw && whiteKingSquare != null && blackKingSquare != null) {
@@ -188,7 +164,7 @@ class DesktopEndgameBoard extends StatelessWidget {
   }
 }
 
-/// Flat colour wash over a single square (loser red / draw mint).
+/// Flat colour wash over a single square (draw mint).
 class _CellWash extends StatelessWidget {
   const _CellWash({
     required this.left,
@@ -209,52 +185,6 @@ class _CellWash extends StatelessWidget {
       top: top,
       child: IgnorePointer(
         child: Container(width: squareSize, height: squareSize, color: color),
-      ),
-    );
-  }
-}
-
-/// The loser's king, re-drawn over its (now empty) square and leaned to
-/// [_kFallenKingAngle], already settled when the preview enters the viewport.
-class _FallenKing extends StatelessWidget {
-  const _FallenKing({
-    required this.left,
-    required this.top,
-    required this.squareSize,
-    required this.image,
-  });
-
-  final double left;
-  final double top;
-  final double squareSize;
-  final ImageProvider image;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      left: left,
-      top: top,
-      width: squareSize,
-      height: squareSize,
-      child: IgnorePointer(
-        child: RepaintBoundary(
-          child: Transform.rotate(
-            angle: _kFallenKingAngle,
-            alignment: Alignment.center,
-            child: Center(
-              child: Image(
-                image: ResizeImage.resizeIfNeeded(
-                  (squareSize * MediaQuery.devicePixelRatioOf(context)).round(),
-                  (squareSize * MediaQuery.devicePixelRatioOf(context)).round(),
-                  image,
-                ),
-                width: squareSize,
-                height: squareSize,
-                fit: BoxFit.contain,
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -334,52 +264,4 @@ Setup? _tryParseFen(String fen) {
     return (left: (7 - file) * squareSize, top: rank * squareSize);
   }
   return (left: file * squareSize, top: (7 - rank) * squareSize);
-}
-
-/// Blank a single king out of the FEN's piece placement so the upright sprite
-/// stops rendering and the rotated overlay can stand in for it.
-String _removeKingFromFen(String fen, Square square, String kingChar) {
-  final parts = fen.split(' ');
-  if (parts.isEmpty) return fen;
-
-  final ranks = parts[0].split('/');
-  final rankIndex = 7 - square.rank;
-  if (rankIndex < 0 || rankIndex >= ranks.length) return fen;
-
-  final expanded = StringBuffer();
-  for (final char in ranks[rankIndex].split('')) {
-    final digit = int.tryParse(char);
-    if (digit != null) {
-      expanded.write('1' * digit);
-    } else {
-      expanded.write(char);
-    }
-  }
-
-  final fileIndex = square.file;
-  final chars = expanded.toString().split('');
-  if (fileIndex >= 0 &&
-      fileIndex < chars.length &&
-      chars[fileIndex] == kingChar) {
-    chars[fileIndex] = '1';
-  }
-
-  final compressed = StringBuffer();
-  var emptyCount = 0;
-  for (final char in chars) {
-    if (char == '1') {
-      emptyCount++;
-    } else {
-      if (emptyCount > 0) {
-        compressed.write(emptyCount);
-        emptyCount = 0;
-      }
-      compressed.write(char);
-    }
-  }
-  if (emptyCount > 0) compressed.write(emptyCount);
-
-  ranks[rankIndex] = compressed.toString();
-  parts[0] = ranks.join('/');
-  return parts.join(' ');
 }

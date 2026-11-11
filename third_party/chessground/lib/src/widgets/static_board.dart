@@ -34,6 +34,7 @@ class StaticChessboard extends StatefulWidget with ChessboardGeometry {
     this.settings = const StaticChessboardSettings(),
     this.shapes = const {},
     this.squareHighlights = const {},
+    this.pieceRotations = const {},
     this.onTouchedSquare,
     super.key,
   }) : _size = size;
@@ -63,6 +64,10 @@ class StaticChessboard extends StatefulWidget with ChessboardGeometry {
 
   /// Squares to highlight on the board.
   final Map<Square, SquareHighlight> squareHighlights;
+
+  /// Extra clockwise rotation in radians for the piece on a square, painted
+  /// by the same cached piece renderer as every other piece. Empty by default.
+  final Map<Square, double> pieceRotations;
 
   /// Called after a square has been touched, with the touched square.
   final void Function(Square)? onTouchedSquare;
@@ -317,6 +322,7 @@ class _StaticChessboardState extends State<StaticChessboard>
       blindfoldMode: settings.blindfoldMode,
       pieceOrientationBehavior: settings.pieceOrientationBehavior,
       imagesLoaded: imagesLoaded,
+      pieceRotations: widget.pieceRotations,
     );
 
     final fadingPiecesPainter = FadingPiecesPainter(
