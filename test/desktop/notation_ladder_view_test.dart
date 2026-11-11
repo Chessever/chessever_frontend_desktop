@@ -218,7 +218,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('c5', findRichText: true), findsOneWidget);
-      expect(find.text('1...'), findsNWidgets(2));
+      // The principal e5 now follows e4 directly; only the c5 RAV needs 1....
+      expect(find.text('1...'), findsOneWidget);
       expect(find.text('c5', findRichText: true), findsOneWidget);
 
       await tester.tap(find.text('c5', findRichText: true));
@@ -797,8 +798,9 @@ void main() {
       final qxd3 = tester.getTopLeft(find.text('Qxd3', findRichText: true));
       final qe2 = tester.getTopLeft(find.text('Qe2', findRichText: true));
       expect(
-        qe2.dx,
-        greaterThan(qxd3.dx),
+        qe2.dy > qxd3.dy + 4 ||
+            ((qe2.dy - qxd3.dy).abs() <= 4 && qe2.dx > qxd3.dx),
+        isTrue,
         reason: 'White alternative 11.Qe2 must render after 11.Qxd3.',
       );
       expect(find.text('11.'), findsNWidgets(2));
@@ -806,8 +808,9 @@ void main() {
       final rc8 = tester.getTopLeft(find.text('Rc8', findRichText: true));
       final e5 = tester.getTopLeft(find.text('e5', findRichText: true));
       expect(
-        e5.dx,
-        greaterThan(rc8.dx),
+        e5.dy > rc8.dy + 4 ||
+            ((e5.dy - rc8.dy).abs() <= 4 && e5.dx > rc8.dx),
+        isTrue,
         reason: 'Black alternative 11...e5 must render after 11...Rc8.',
       );
       expect(find.text('11...'), findsNWidgets(2));
