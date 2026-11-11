@@ -4251,6 +4251,41 @@ class _NotationClassificationIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final type = annotation?.type;
+    // A selected badge suppresses the portable NAG text in the chip. Keep that
+    // mark readable while browser assets load, and if fetching/decoding fails.
+    // The successful SVG path (including native Desktop) stays unchanged.
+    final fallbackGlyph =
+        manual?.symbol ??
+        switch (type!) {
+          LichessMoveAnnotationType.brilliant => '!!',
+          LichessMoveAnnotationType.goodMove ||
+          LichessMoveAnnotationType.bestMove => '!',
+          LichessMoveAnnotationType.inaccuracy => '?!',
+          LichessMoveAnnotationType.mistake => '?',
+          LichessMoveAnnotationType.blunder ||
+          LichessMoveAnnotationType.missedWin => '??',
+          LichessMoveAnnotationType.forced => '□',
+          LichessMoveAnnotationType.bookMove => null,
+        };
+    // Keep the failure mark high-contrast on the dark notation surface; the
+    // normal good-move navy is intended for a badge, not tiny bare text.
+    Widget fallback(BuildContext context) => Center(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child:
+            fallbackGlyph == null
+                ? Icon(Icons.menu_book, size: 16, color: kWhiteColor)
+                : Text(
+                  fallbackGlyph,
+                  style: TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    height: 1,
+                  ),
+                ),
+      ),
+    );
     // Badge SVG already carries its own coloured disc — render bare, no circle.
     return DesktopTooltip(
       message:
@@ -4265,6 +4300,8 @@ class _NotationClassificationIcon extends StatelessWidget {
               ? manualQualityIconAsset(manual!.symbol)!
               : moveAnnotationIconAsset(type),
           fit: BoxFit.contain,
+          placeholderBuilder: fallback,
+          errorBuilder: (context, error, stackTrace) => fallback(context),
         ),
       ),
     );
