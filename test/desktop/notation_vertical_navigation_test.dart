@@ -52,7 +52,7 @@ void main() {
         activePointer: const [0, 0, 0],
         direction: NotationVerticalDirection.down,
       ),
-      isNull,
+      [2],
     );
   });
 

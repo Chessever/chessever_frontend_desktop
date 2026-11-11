@@ -1,4 +1,5 @@
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/desktop/utils/notation_variation_placement.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
@@ -170,22 +171,24 @@ _visibleNotationModel({
   void walkLine(ChessLine line, ChessMovePointer prefix, int depth) {
     var segmentStart = true;
     for (var i = 0; i < line.length; i++) {
-      final move = line[i];
       final pointer = <int>[...prefix, i];
       final startsSegment = segmentStart;
       tokens.add(pointer);
       if (startsSegment) addAnchor(pointer);
 
-      final vars = move.variations;
-      if (vars == null || vars.isEmpty) {
+      final vars = notationVariationsAfterMove(line, i).toList(growable: false);
+      if (vars.isEmpty) {
         segmentStart = false;
         continue;
       }
 
-      for (var v = 0; v < vars.length; v++) {
-        final variationLine = vars[v];
-        if (variationLine.isEmpty) continue;
-        final variationPrefix = <int>[...pointer, v];
+      for (final placement in vars) {
+        final variationLine = placement.line;
+        final variationPrefix = <int>[
+          ...prefix,
+          placement.ownerIndex,
+          placement.variationIndex,
+        ];
         final headPointer = <int>[...variationPrefix, 0];
         final headId = NotationPointer.encode(headPointer);
         final defaultCollapsed = shouldCollapseNotationVariationByDefault(
@@ -372,6 +375,7 @@ void _appendLineRows(
   List<NotationMoveNode> line,
   List<NotationNavigationRow> rows,
 ) {
+  final moves = line.map((node) => node.move).toList(growable: false);
   var i = 0;
   while (i < line.length) {
     final first = line[i];
@@ -380,7 +384,9 @@ void _appendLineRows(
 
     if (first.isWhiteMove) {
       white = first;
-      if (i + 1 < line.length && !line[i + 1].isWhiteMove) {
+      if (i + 1 < line.length &&
+          !line[i + 1].isWhiteMove &&
+          notationVariationsAfterMove(moves, i).isEmpty) {
         black = line[i + 1];
       }
     } else {
@@ -397,15 +403,15 @@ void _appendLineRows(
       rows.add(NotationNavigationRow(List.unmodifiable(entries)));
     }
 
-    void appendVariations(NotationMoveNode? node) {
-      if (node == null) return;
-      for (final variation in node.variations) {
+    void appendVariations(int renderedIndex) {
+      for (final placement in notationVariationsAfterMove(moves, renderedIndex)) {
+        final variation = line[placement.ownerIndex].variations[placement.variationIndex];
         _appendLineRows(variation.moves, rows);
       }
     }
 
-    appendVariations(white);
-    appendVariations(black);
+    if (white != null) appendVariations(i);
+    if (black != null) appendVariations(white != null ? i + 1 : i);
 
     if (white != null) {
       i += black != null ? 2 : 1;

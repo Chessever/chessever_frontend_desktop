@@ -1,0 +1,7 @@
+[Event "Preferred move ordering regression"]
+[Result "*"]
+
+1. d4 Nf6 2. c4 e6 3. Nc3 d5 4. Nf3
+(4. Bg5 Be7 5. e3 (5. Nf3 O-O 6. e3 c6 (6... h6 7. Bh4)) 5... O-O 6. Nf3 c6)
+(4. cxd5 exd5 5. Bg5 Be7)
+4... c6 5. Bg5 Be7 6. e3 Nbd7 *

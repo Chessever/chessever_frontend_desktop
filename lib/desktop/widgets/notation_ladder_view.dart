@@ -18,6 +18,7 @@ import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
+import 'package:chessever/desktop/utils/notation_variation_placement.dart';
 import 'package:chessever/desktop/utils/notation_move_timing.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -1565,7 +1566,8 @@ class _LineBlock extends StatelessWidget {
       if (isWhiteFirst) {
         whiteMove = line[i];
         whitePointer = [...pointerPrefix, i];
-        if (i + 1 < line.length) {
+        if (i + 1 < line.length &&
+            notationVariationsAfterMove(line, i).isEmpty) {
           blackMove = line[i + 1];
           blackPointer = [...pointerPrefix, i + 1];
         }
@@ -1821,18 +1823,18 @@ class _LineBlock extends StatelessWidget {
       appendMoveComments(whiteMove);
       appendMoveComments(blackMove);
 
-      // Render variations attached to white move first, then to black. The
-      // first move's colour decides whether the branch replaces this move
-      // or continues after it; both shapes appear in imported/user analysis.
-      void appendVariations(
-        ChessMove move,
-        ChessMovePointer movePointer,
-        int movePly,
-      ) {
-        final vars = move.variations;
-        if (vars == null || vars.isEmpty) return;
-        for (var v = 0; v < vars.length; v++) {
-          final variationLine = vars[v];
+      // Display after the replaced move, but retain the original owner and
+      // pointer for clicks, editing, collapse state and saved PGN identity.
+      void appendVariations(int renderedMoveIndex) {
+        for (final placement in notationVariationsAfterMove(
+          line,
+          renderedMoveIndex,
+        )) {
+          final move = line[placement.ownerIndex];
+          final movePointer = <int>[...pointerPrefix, placement.ownerIndex];
+          final movePly = startPly + placement.ownerIndex;
+          final v = placement.variationIndex;
+          final variationLine = placement.line;
           final variationPrefix = [...movePointer, v];
           final variationHeadId = NotationPointer.encode(<int>[
             ...variationPrefix,
@@ -1900,10 +1902,10 @@ class _LineBlock extends StatelessWidget {
       }
 
       if (whiteMove != null && whitePointer != null) {
-        appendVariations(whiteMove, whitePointer, ply);
+        appendVariations(i);
       }
       if (blackMove != null && blackPointer != null) {
-        appendVariations(blackMove, blackPointer, isWhiteFirst ? ply + 1 : ply);
+        appendVariations(isWhiteFirst ? i + 1 : i);
       }
 
       children.addAll(pairChildren);
@@ -2418,7 +2420,7 @@ class _InlineNotationBlock extends StatelessWidget {
       final isVariationHead = depth > 0 && i == 0;
 
       final separatesPreviousWhiteMove =
-          i > 0 && ply.isOdd && (line[i - 1].variations?.isNotEmpty ?? false);
+          i > 0 && ply.isOdd && notationVariationsAfterMove(line, i - 1).isNotEmpty;
       final prefix = _inlineMovePrefix(
         ply,
         isLineStart: i == 0,
@@ -2610,17 +2612,18 @@ class _InlineNotationBlock extends StatelessWidget {
         );
       }
 
-      final vars = move.variations;
-      if (vars != null && vars.isNotEmpty) {
+      final vars = notationVariationsAfterMove(line, i).toList(growable: false);
+      if (vars.isNotEmpty) {
         // Variations slot directly into the parent run as a WidgetSpan,
         // so Flutter can flow the closing-bracket cluster back into the
         // mainline without forcing a Column break either side. Each
         // variation widget owns its own depth-tinted background so the
         // analyst's group binding stays legible inside the continuous
         // paragraph.
-        for (var v = 0; v < vars.length; v++) {
-          final variationLine = vars[v];
-          final variationPrefix = <int>[...pointer, v];
+        for (final placement in vars) {
+          final v = placement.variationIndex;
+          final variationLine = placement.line;
+          final variationPrefix = <int>[...pointerPrefix, placement.ownerIndex, v];
           final variationHeadId = NotationPointer.encode(<int>[
             ...variationPrefix,
             0,
@@ -2646,8 +2649,8 @@ class _InlineNotationBlock extends StatelessWidget {
                 pointerPrefix: variationPrefix,
                 depth: depth + 1,
                 startPly: _variationStartPly(
-                  parentMove: move,
-                  parentPly: ply,
+                  parentMove: line[placement.ownerIndex],
+                  parentPly: startPly + placement.ownerIndex,
                   variationLine: variationLine,
                 ),
                 branchLabel: _branchLabel(v),
