@@ -2,7 +2,7 @@ import 'dart:math' show pi;
 import 'dart:ui' as ui;
 
 import 'package:dartchess/dartchess.dart';
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, mapEquals;
 import 'package:flutter/widgets.dart';
 
 import '../board_settings.dart';
@@ -266,6 +266,7 @@ class PiecesPainter extends CustomPainter {
     required this.blindfoldMode,
     required this.pieceOrientationBehavior,
     required this.imagesLoaded,
+    this.pieceRotations = const {},
   }) : _draggedPieceSquareNotifier = draggedPieceSquareNotifier,
        super(
          repaint: Listenable.merge([
@@ -324,6 +325,14 @@ class PiecesPainter extends CustomPainter {
   /// Included in [shouldRepaint] so the painter redraws when images finish loading.
   final bool imagesLoaded;
 
+  /// Extra clockwise rotation in radians for the piece standing on a square.
+  ///
+  /// Empty by default, so ordinary boards paint exactly as before. Finished
+  /// previews use it to lean the losing king over while it keeps being drawn
+  /// from the same cached image as every other piece, rather than from a
+  /// separate widget that can fail to paint on its own.
+  final Map<Square, double> pieceRotations;
+
   @override
   void paint(Canvas canvas, Size size) {
     if (blindfoldMode) return;
@@ -354,15 +363,20 @@ class PiecesPainter extends CustomPainter {
         image.width.toDouble(),
         image.height.toDouble(),
       );
-      if (_isUpsideDown(
-        entry.value.color,
-        behavior: pieceOrientationBehavior,
-        orientation: orientation,
-        sideToMove: sideToMove,
-      )) {
+      final angle =
+          (_isUpsideDown(
+                entry.value.color,
+                behavior: pieceOrientationBehavior,
+                orientation: orientation,
+                sideToMove: sideToMove,
+              )
+              ? pi
+              : 0.0) +
+          (pieceRotations[square] ?? 0.0);
+      if (angle != 0.0) {
         canvas.save();
         canvas.translate(dst.center.dx, dst.center.dy);
-        canvas.rotate(pi);
+        canvas.rotate(angle);
         canvas.translate(-dst.center.dx, -dst.center.dy);
         canvas.drawImageRect(image, src, dst, paint);
         canvas.restore();
@@ -379,7 +393,8 @@ class PiecesPainter extends CustomPainter {
         orientation != oldDelegate.orientation ||
         blindfoldMode != oldDelegate.blindfoldMode ||
         pieceAssets != oldDelegate.pieceAssets ||
-        pieceOrientationBehavior != oldDelegate.pieceOrientationBehavior;
+        pieceOrientationBehavior != oldDelegate.pieceOrientationBehavior ||
+        !mapEquals(pieceRotations, oldDelegate.pieceRotations);
   }
 }
 

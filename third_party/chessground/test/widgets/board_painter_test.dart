@@ -55,6 +55,7 @@ void main() {
       Square? draggedPieceSquare,
       NormalMove? pendingPromotion,
       bool blindfoldMode = false,
+      Map<Square, double> pieceRotations = const {},
     }) {
       return PiecesPainter(
         piecesNotifier: ValueNotifier(pieces),
@@ -68,6 +69,7 @@ void main() {
         blindfoldMode: blindfoldMode,
         pieceOrientationBehavior: PieceOrientationBehavior.facingUser,
         imagesLoaded: true,
+        pieceRotations: pieceRotations,
       );
     }
 
@@ -144,6 +146,57 @@ void main() {
         (Canvas canvas) => painter.paint(canvas, const Size.square(boardSize)),
         paintsNothing,
       );
+    });
+    testWidgets('rotates only the requested piece about its square center', (
+      tester,
+    ) async {
+      await _installFakePieceImages();
+      final blackKingImage = ChessgroundImages.instance.get(
+        const ChessboardSettings().pieceAssets[PieceKind.blackKing]!,
+      );
+      const angle = -0.785398;
+      final center = _squareRect(Square.h7).center;
+
+      final painter = buildPainter(
+        pieces: {Square.h7: Piece.blackKing, Square.g3: Piece.whiteKing},
+        pieceRotations: {Square.h7: angle},
+      );
+      void paintCall(Canvas canvas) =>
+          painter.paint(canvas, const Size.square(boardSize));
+
+      // Both kings are drawn exactly once; the rotated one is still painted
+      // from the shared image cache into its own square rect.
+      expect(paintCall, paintsExactlyCountTimes(#drawImageRect, 2));
+      expect(paintCall, paintsExactlyCountTimes(#rotate, 1));
+      expect(
+        paintCall,
+        paints
+          ..save()
+          ..translate(x: center.dx, y: center.dy)
+          ..rotate(angle: angle)
+          ..translate(x: -center.dx, y: -center.dy)
+          ..drawImageRect(
+            destination: _squareRect(Square.h7),
+            image: blackKingImage,
+          )
+          ..restore(),
+      );
+    });
+
+    test('repaints when piece rotations change', () {
+      final upright = buildPainter(pieces: const {});
+      final same = buildPainter(pieces: const {});
+      final tilted = buildPainter(
+        pieces: const {},
+        pieceRotations: {Square.h7: -0.785398},
+      );
+      final tiltedCopy = buildPainter(
+        pieces: const {},
+        pieceRotations: {Square.h7: -0.785398},
+      );
+      expect(same.shouldRepaint(upright), isFalse);
+      expect(tilted.shouldRepaint(upright), isTrue);
+      expect(tiltedCopy.shouldRepaint(tilted), isFalse);
     });
   });
 
@@ -238,14 +291,15 @@ void main() {
       Square? checkSquare,
       bool showLastMove = true,
     }) {
-      final notifier = BoardHighlightNotifier()
-        ..selected = selected
-        ..moveDests = moveDests
-        ..premoveDests = premoveDests
-        ..occupiedSquares = occupiedSquares
-        ..lastMove = lastMove
-        ..premove = premove
-        ..checkSquare = checkSquare;
+      final notifier =
+          BoardHighlightNotifier()
+            ..selected = selected
+            ..moveDests = moveDests
+            ..premoveDests = premoveDests
+            ..occupiedSquares = occupiedSquares
+            ..lastMove = lastMove
+            ..premove = premove
+            ..checkSquare = checkSquare;
       return HighlightsPainter(
         interactionNotifier: notifier,
         squareSize: squareSize,
