@@ -19,10 +19,9 @@ void watchWebFileStorage() {
 const String _elementId = 'storage-notice';
 
 String? _messageFor(WebFileStorage storage) => switch (storage) {
-  WebFileStorage.saved => null,
-  WebFileStorage.otherTab =>
-    'ChessEver is open in another tab. Databases and prep you change in '
-        'this tab are not saved. Close the other tab, then reload this one.',
+  // A second tab keeps its changes in memory (see WebFileSystem.mount);
+  // that is expected, not something to interrupt the visitor about.
+  WebFileStorage.saved || WebFileStorage.otherTab => null,
   WebFileStorage.unavailable =>
     'This browser window does not keep site data (a private window, '
         'usually). Local databases and prep last until the tab is closed.',
