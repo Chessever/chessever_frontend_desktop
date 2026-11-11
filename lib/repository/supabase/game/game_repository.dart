@@ -67,6 +67,14 @@ DateTime? _tryParseRepositoryDateTime(Object? value) {
   return null;
 }
 
+/// `games.is_mirror`: true on every game of a "mirror" tour, such as a
+/// "Combined" section that republishes the real sections' boards as new rows.
+/// Cross-event lists (player history, favorites, countrymen, search, feed,
+/// smart events, date lists) filter it to false so a game never shows twice.
+/// Tour-, round- and id-scoped reads keep mirrors: a mirror tour still opens
+/// with its own rounds and games.
+const String kGameIsMirrorColumn = 'is_mirror';
+
 const String _gameSummarySelectColumns = '''
           id,
           round_id,
@@ -933,6 +941,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select(_gameListSelectColumns)
           .contains('player_fide_ids', [fideIdInt])
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false)
           .order('time_start', ascending: false);
 
@@ -968,6 +977,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select(_gameListSelectColumns)
           .contains('player_fide_ids', [fideIdInt])
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false)
           .order('time_start', ascending: false)
           .range(offset, offset + limit - 1);
@@ -1002,6 +1012,7 @@ class GameRepository extends BaseRepository {
           .or(
             'player_white.eq."$normalizedName",player_black.eq."$normalizedName"',
           )
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false)
           .order('time_start', ascending: false);
 
@@ -1039,6 +1050,7 @@ class GameRepository extends BaseRepository {
           .or(
             'player_white.eq."$normalizedName",player_black.eq."$normalizedName"',
           )
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false)
           .order('time_start', ascending: false)
           .range(offset, offset + limit - 1);
@@ -1069,6 +1081,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select(_gameListSelectColumns)
           .contains('player_feds', [normalizedCode])
+          .eq(kGameIsMirrorColumn, false)
           .order('id', ascending: true);
 
       final jsonList =
@@ -1101,6 +1114,7 @@ class GameRepository extends BaseRepository {
       final response = await supabase
           .from('games')
           .select(_gameListSelectColumns)
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false, nullsFirst: false)
           .order('last_move_time', ascending: false, nullsFirst: false)
           .range(offset, offset + limit - 1);
@@ -1137,6 +1151,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select(_gameListSelectColumns)
           .overlaps('player_fide_ids', fideIdInts)
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false, nullsFirst: false)
           .order('last_move_time', ascending: false, nullsFirst: false)
           .range(offset, offset + limit - 1);
@@ -1171,6 +1186,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select(_gameListSelectColumns)
           .contains('player_feds', [normalizedCode])
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false, nullsFirst: false)
           .order('last_move_time', ascending: false, nullsFirst: false)
           .range(offset, offset + limit - 1);
@@ -1203,7 +1219,10 @@ class GameRepository extends BaseRepository {
 
       // Fetch more games than needed since we filter by ELO in Dart
       // (JSONB nested field filtering is complex in Supabase)
-      dynamic query = supabase.from('games').select(_gameListSelectColumns);
+      dynamic query = supabase
+          .from('games')
+          .select(_gameListSelectColumns)
+          .eq(kGameIsMirrorColumn, false);
 
       if (onlyLive) {
         query = query.eq('status', '*');
@@ -1296,6 +1315,7 @@ class GameRepository extends BaseRepository {
               .from('games')
               .select(_gameListSelectColumns)
               .inFilter('tour_id', chunk)
+              .eq(kGameIsMirrorColumn, false)
               .order('date_start', ascending: false, nullsFirst: false)
               .order('last_move_time', ascending: false, nullsFirst: false)
               .limit(limit * 2);
@@ -1323,6 +1343,7 @@ class GameRepository extends BaseRepository {
             .from('games')
             .select(_gameListSelectColumns)
             .gte('player_max_rating', minAverageElo)
+            .eq(kGameIsMirrorColumn, false)
             .order('date_start', ascending: false, nullsFirst: false)
             .order('last_move_time', ascending: false, nullsFirst: false)
             .range(rawOffset, rawOffset + rawLimit - 1);
@@ -1555,10 +1576,12 @@ class GameRepository extends BaseRepository {
     GameFilter? extraFilter,
   }) {
     final now = DateTime.now().toUtc();
-    var scoped = query.or(
-      'starts_at.is.null,starts_at.lte.${now.toIso8601String()}',
-      referencedTable: 'rounds',
-    );
+    var scoped = query
+        .eq(kGameIsMirrorColumn, false)
+        .or(
+          'starts_at.is.null,starts_at.lte.${now.toIso8601String()}',
+          referencedTable: 'rounds',
+        );
 
     if (requiresMove) {
       scoped = scoped.not('last_move', 'is', null).neq('last_move', '');
@@ -1964,6 +1987,7 @@ class GameRepository extends BaseRepository {
             .from('games')
             .select(_gameListSelectColumns)
             .inFilter('tour_id', chunk)
+            .eq(kGameIsMirrorColumn, false)
             .order('date_start', ascending: false, nullsFirst: false)
             .order('last_move_time', ascending: false, nullsFirst: false)
             .limit(limit);
@@ -2000,6 +2024,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select(_gameListSelectColumns)
           .eq('status', '*')
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false, nullsFirst: false)
           .order('last_move_time', ascending: false, nullsFirst: false)
           .range(offset, offset + limit - 1);
@@ -2043,6 +2068,7 @@ class GameRepository extends BaseRepository {
           .select(_gameListSelectColumns)
           .contains('player_feds', [normalizedCode])
           .gte('player_max_rating', minElo)
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false, nullsFirst: false)
           .order('last_move_time', ascending: false, nullsFirst: false)
           .range(rawOffset, rawOffset + limit - 1);
@@ -2097,6 +2123,7 @@ class GameRepository extends BaseRepository {
           .select(_gameListSelectColumns)
           .eq('status', '*')
           .overlaps('player_fide_ids', fideIdInts)
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false, nullsFirst: false)
           .order('last_move_time', ascending: false, nullsFirst: false)
           .limit(limit);
@@ -2132,6 +2159,7 @@ class GameRepository extends BaseRepository {
           .select(_gameListSelectColumns)
           .eq('status', '*')
           .inFilter('tour_id', eventIds)
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false, nullsFirst: false)
           .order('last_move_time', ascending: false, nullsFirst: false)
           .limit(limit);
@@ -2308,7 +2336,8 @@ class GameRepository extends BaseRepository {
       var query = supabase
           .from('games')
           .select(_gameListSelectColumns)
-          .contains('search', normalizedTerms);
+          .contains('search', normalizedTerms)
+          .eq(kGameIsMirrorColumn, false);
 
       if (status != null && status.isNotEmpty) {
         query = query.eq('status', status);
@@ -2349,7 +2378,10 @@ class GameRepository extends BaseRepository {
       );
 
       // Build the query with ILIKE on the name column
-      var dbQuery = supabase.from('games').select(_gameListSelectColumns);
+      var dbQuery = supabase
+          .from('games')
+          .select(_gameListSelectColumns)
+          .eq(kGameIsMirrorColumn, false);
 
       // If we have a text query, use ILIKE on the name column
       if (trimmedQuery.isNotEmpty) {
@@ -2396,7 +2428,8 @@ class GameRepository extends BaseRepository {
       var dbQuery = supabase
           .from('games')
           .select(_gameSummarySelectColumns)
-          .contains('player_feds', [normalizedCode]);
+          .contains('player_feds', [normalizedCode])
+          .eq(kGameIsMirrorColumn, false);
 
       // Add text search if query provided (searches player names, ECO code, and opening name)
       if (query != null && query.trim().isNotEmpty) {
@@ -2442,7 +2475,8 @@ class GameRepository extends BaseRepository {
       var dbQuery = supabase
           .from('games')
           .select(_gameListSelectColumns)
-          .overlaps('player_fide_ids', fideIdInts);
+          .overlaps('player_fide_ids', fideIdInts)
+          .eq(kGameIsMirrorColumn, false);
 
       // Add text search if query provided (searches player names, ECO code, and opening name)
       if (query != null && query.trim().isNotEmpty) {
@@ -2491,6 +2525,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select(_gameListSelectColumns)
           .inFilter('tour_id', tourIds)
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false, nullsFirst: false)
           .order('last_move_time', ascending: false, nullsFirst: false)
           .range(offset, offset + limit - 1);
@@ -2534,6 +2569,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select('tour_id,last_move_time,date_start')
           .inFilter('tour_id', tourIds)
+          .eq(kGameIsMirrorColumn, false)
           .inFilter('status', ['*', 'ongoing'])
           .not('last_move_time', 'is', null)
           .order('last_move_time', ascending: false, nullsFirst: false)
@@ -2551,6 +2587,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select('tour_id,last_move_time,date_start')
           .inFilter('tour_id', tourIds)
+          .eq(kGameIsMirrorColumn, false)
           .not('last_move_time', 'is', null)
           .order('last_move_time', ascending: false, nullsFirst: false)
           .limit(1);
@@ -2565,8 +2602,9 @@ class GameRepository extends BaseRepository {
       final nowIso = DateTime.now().toUtc().toIso8601String();
       final startedRounds = await supabase
           .from('rounds')
-          .select('tour_id,starts_at')
+          .select('tour_id,starts_at,tours!inner(is_mirror)')
           .inFilter('tour_id', tourIds)
+          .eq('tours.is_mirror', false)
           .not('starts_at', 'is', null)
           .lte('starts_at', nowIso)
           .order('starts_at', ascending: false)
@@ -2581,8 +2619,9 @@ class GameRepository extends BaseRepository {
 
       final upcomingRounds = await supabase
           .from('rounds')
-          .select('tour_id,starts_at')
+          .select('tour_id,starts_at,tours!inner(is_mirror)')
           .inFilter('tour_id', tourIds)
+          .eq('tours.is_mirror', false)
           .not('starts_at', 'is', null)
           .gte('starts_at', nowIso)
           .order('starts_at', ascending: true)
@@ -2770,6 +2809,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select('round_id, last_move_time, date_start')
           .inFilter('tour_id', tourIds)
+          .eq(kGameIsMirrorColumn, false)
           .inFilter('status', ['*', 'ongoing'])
           .not('last_move_time', 'is', null)
           .order('last_move_time', ascending: false, nullsFirst: false)
@@ -2795,6 +2835,7 @@ class GameRepository extends BaseRepository {
             .from('games')
             .select('round_id')
             .inFilter('tour_id', tourIds)
+            .eq(kGameIsMirrorColumn, false)
             .not('last_move_time', 'is', null)
             .order('last_move_time', ascending: false)
             .limit(1);
@@ -2814,8 +2855,9 @@ class GameRepository extends BaseRepository {
         try {
           roundResponse = await supabase
               .from('rounds')
-              .select('id, starts_at')
+              .select('id, starts_at, tours!inner(is_mirror)')
               .inFilter('tour_id', tourIds)
+              .eq('tours.is_mirror', false)
               .not('starts_at', 'is', null)
               .gte('starts_at', nowIso)
               .order('starts_at', ascending: true)
@@ -2869,6 +2911,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select(_gameListSelectColumns)
           .eq('status', '*')
+          .eq(kGameIsMirrorColumn, false)
           .order('date_start', ascending: false, nullsFirst: false)
           .order('last_move_time', ascending: false, nullsFirst: false)
           .limit(limit);
@@ -2958,6 +3001,7 @@ class GameRepository extends BaseRepository {
           .from('games')
           .select(_gameListSelectColumns)
           .overlaps('player_fide_ids', fideIdInts)
+          .eq(kGameIsMirrorColumn, false)
           .or(dayFilter);
 
       if (eco != null && eco.isNotEmpty) {
@@ -3001,6 +3045,7 @@ class GameRepository extends BaseRepository {
         .select('game_day')
         .contains('player_feds', [countryCode])
         .gte('player_max_rating', minElo)
+        .eq(kGameIsMirrorColumn, false)
         .not('game_day', 'is', null)
         .lte('game_day', todayKey);
     if (before != null) {
@@ -3085,6 +3130,7 @@ class GameRepository extends BaseRepository {
             .from('games')
             .select(_gameSummarySelectColumns)
             .contains('player_feds', [normalizedCode])
+            .eq(kGameIsMirrorColumn, false)
             .eq('game_day', dateStr)
             .gte('player_max_rating', minElo);
         if (eco != null && eco.isNotEmpty) {

@@ -18,8 +18,10 @@ Tour _makeTour({
   int? avgElo = 2700,
   String? format = 'Swiss',
   List<TournamentPlayer> players = const [],
+  bool isMirror = false,
 }) {
   return Tour.fromJson({
+    'is_mirror': isMirror,
     'id': id,
     'name': name,
     'slug': id,
@@ -99,6 +101,56 @@ Games _makeGame({
 
 void main() {
   group('selectDefaultTour', () {
+    test('a live mirror tour with the top avg_elo is never the default', () {
+      final now = DateTime.now();
+      final dates = [now.subtract(const Duration(hours: 2)), now];
+      final a = _makeTour(id: 'A', name: 'A', dates: dates, avgElo: 2718);
+      final b = _makeTour(id: 'B', name: 'B', dates: dates, avgElo: 2735);
+      final c = _makeTour(id: 'C', name: 'C', dates: dates, avgElo: 2718);
+      final combined = _makeTour(
+        id: 'wLrwkC0C',
+        name: 'Group Stage | Combined',
+        dates: dates,
+        avgElo: 2735,
+        isMirror: true,
+      );
+      final models = [
+        TourModel(tour: a, roundStatus: RoundStatus.live),
+        TourModel(tour: b, roundStatus: RoundStatus.ongoing),
+        TourModel(tour: c, roundStatus: RoundStatus.live),
+        TourModel(tour: combined, roundStatus: RoundStatus.live),
+      ];
+
+      final selected = selectDefaultTour(
+        tourModels: models,
+        liveTourIds: const ['A', 'C', 'wLrwkC0C'],
+        savedTourId: 'wLrwkC0C',
+        activityTourId: 'wLrwkC0C',
+      );
+      expect(selected.isMirror, isFalse);
+      expect(['A', 'C'], contains(selected.id));
+
+      // The tab itself stays selectable.
+      expect(
+        selectDefaultTour(
+          tourModels: models,
+          liveTourIds: const ['A', 'C', 'wLrwkC0C'],
+          currentSelectedId: 'wLrwkC0C',
+        ).id,
+        'wLrwkC0C',
+      );
+      // An event made only of mirrors still resolves.
+      expect(
+        selectDefaultTour(
+          tourModels: [
+            TourModel(tour: combined, roundStatus: RoundStatus.live),
+          ],
+          liveTourIds: const ['wLrwkC0C'],
+        ).id,
+        'wLrwkC0C',
+      );
+    });
+
     test('reuses saved valid selection', () {
       final now = DateTime.now();
       final tourA = _makeTour(

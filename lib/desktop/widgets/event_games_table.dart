@@ -4548,11 +4548,17 @@ List<_EventRoundSegment>? _buildEventRoundSegments(
   return null;
 }
 
+/// A team round pairs two different teams on every board. A "Combined"
+/// mirror tags each player with their own group, so its boards read
+/// "Group A vs Group A" and must stay a plain round.
 bool _isTeamEventRound(List<TournamentGameSummary> games) {
-  return games.every(
-    (game) =>
-        game.whiteTeam.trim().isNotEmpty && game.blackTeam.trim().isNotEmpty,
-  );
+  return games.every((game) {
+    final white = game.whiteTeam.trim();
+    final black = game.blackTeam.trim();
+    return white.isNotEmpty &&
+        black.isNotEmpty &&
+        white.toLowerCase() != black.toLowerCase();
+  });
 }
 
 /// Whether the in-game rail Standings tab should show team rows.

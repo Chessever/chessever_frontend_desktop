@@ -99,6 +99,7 @@ final knockoutTournamentStateProvider = Provider.autoDispose.family<
     formatSaysTeam: formatSaysTeam,
     formatSaysPlayer: formatSaysPlayer,
     allPlayersHaveTeam: allPlayersHaveTeam,
+    gamesOnlyPairTeammates: gamesOnlyPairTeammates(models),
     hasOfficialTeamTable:
         buildOfficialTeamStandings(
           info: tourMetadata?.info,
@@ -126,11 +127,16 @@ final knockoutTournamentStateProvider = Provider.autoDispose.family<
   final metadataDetectionIsLoading =
       !hasTourNameStageEvidence && roundEvidenceAsync.isLoading;
   final gamesDetectionIsLoading = !gamesAsync.hasValue && !gamesAsync.hasError;
+  // A team verdict reached before the games load can still be overturned by
+  // them ([gamesOnlyPairTeammates]: a Combined section flagged teamTable).
+  // Keep it pending until then so the layout tracker, which never demotes a
+  // remembered team layout, does not lock it in.
   final isDetectionPending =
-      !isTeamEvent &&
-      !hasExplicitNonKnockoutFormat &&
-      !isKnockout &&
-      (metadataDetectionIsLoading || gamesDetectionIsLoading);
+      (isTeamEvent && gamesDetectionIsLoading) ||
+      (!isTeamEvent &&
+          !hasExplicitNonKnockoutFormat &&
+          !isKnockout &&
+          (metadataDetectionIsLoading || gamesDetectionIsLoading));
 
   if (models.isEmpty && !isKnockout) {
     return KnockoutTournamentState(
@@ -168,19 +174,48 @@ final knockoutTournamentStateProvider = Provider.autoDispose.family<
 
 /// Prefer Lichess's explicit `tour.teamTable` signal. The older heuristics are
 /// retained only for rows ingested before the data hub preserved that field.
+///
+/// Every signal yields to the games themselves, the same rule as mobile's
+/// `resolveIsTeamEvent`: a tour whose team-tagged boards never pair two
+/// DIFFERENT teams ([gamesOnlyPairTeammates]) is not a team event. Lichess
+/// publishes Total Chess "Group Stage | Combined" with teamTable=true, a
+/// "(team)" format and every player tagged with their own group, so each
+/// board reads "Group A vs Group A".
 bool resolveTeamEventClassification({
   required bool? teamTable,
   required bool formatSaysTeam,
   required bool formatSaysPlayer,
   required bool allPlayersHaveTeam,
   bool hasOfficialTeamTable = false,
+  bool gamesOnlyPairTeammates = false,
 }) =>
+    !gamesOnlyPairTeammates &&
     // A validated organizer team table is proof on its own: the 2026 Russian
     // Rapid Teams feeds carry no teamTable flag, a "9-round Swiss" format and
     // no team labels, yet the event is a team one.
-    hasOfficialTeamTable ||
-    (teamTable ??
-        (formatSaysTeam || (!formatSaysPlayer && allPlayersHaveTeam)));
+    (hasOfficialTeamTable ||
+        (teamTable ??
+            (formatSaysTeam || (!formatSaysPlayer && allPlayersHaveTeam))));
+
+/// True when at least two boards carry a team tag on both sides and every one
+/// of them pairs two players of the SAME team: a tour that groups players
+/// ("Group A") rather than one where teams meet. One board between two
+/// different teams clears it, as do games without tags (team events whose
+/// roster labels never reach the games, such as the official-table Russian
+/// Rapid Teams feeds). Mirrors mobile's `gamesOnlyPairTeammates`.
+bool gamesOnlyPairTeammates(List<GamesTourModel> games) {
+  var teammateBoards = 0;
+  for (final g in games) {
+    final wTeam = g.whitePlayer.team?.trim();
+    final bTeam = g.blackPlayer.team?.trim();
+    if (wTeam == null || wTeam.isEmpty || bTeam == null || bTeam.isEmpty) {
+      continue;
+    }
+    if (wTeam != bTeam) return false;
+    teammateBoards++;
+  }
+  return teammateBoards >= 2;
+}
 
 typedef KnockoutRoundMetadataRequest = ({String tourId, String tourName});
 
