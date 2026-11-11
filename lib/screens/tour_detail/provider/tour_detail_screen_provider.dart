@@ -380,10 +380,14 @@ class _TourDetailScreenNotifier
 
   @override
   TourModel findBestTour(List<TourModel> tourModels, List<String> liveTourIds) {
+    // A mirror ("Combined") tour is live whenever any section is; prefer a
+    // real section.
+    final liveModels = tourModels.where(
+      (model) => liveTourIds.contains(model.tour.id),
+    );
     final liveTour =
-        tourModels
-            .where((model) => liveTourIds.contains(model.tour.id))
-            .firstOrNull;
+        liveModels.where((model) => !model.tour.isMirror).firstOrNull ??
+        liveModels.firstOrNull;
     final ongoingTour =
         tourModels
             .where((model) => model.roundStatus == RoundStatus.ongoing)

@@ -638,6 +638,12 @@ class Tour {
   final String? groupBroadcastId;
   final int? avgElo;
 
+  /// `tours.is_mirror`: this tour republishes other sections' games as its own
+  /// rows (a "Combined" section). It keeps its own pages, but its games are
+  /// left out of cross-event lists and its group tags are not teams. Absent
+  /// on rows read before the column existed, which means false.
+  final bool isMirror;
+
   Tour({
     required this.id,
     required this.name,
@@ -652,6 +658,7 @@ class Tour {
     this.search,
     this.groupBroadcastId,
     this.avgElo,
+    this.isMirror = false,
   });
 
   factory Tour.fromJson(Map<String, dynamic> json) {
@@ -675,6 +682,9 @@ class Tour {
       search: (json['search'] as List?)?.map((e) => e as String).toList(),
       groupBroadcastId: json['group_broadcast_id'] as String?,
       avgElo: _parseInt(json['avg_elo']),
+      isMirror:
+          json['is_mirror'] == true ||
+          (json['info'] as Map<String, dynamic>)['mirror'] == true,
     );
   }
 
@@ -693,6 +703,7 @@ class Tour {
       'search': search,
       'group_broadcast_id': groupBroadcastId,
       'avg_elo': avgElo,
+      'is_mirror': isMirror,
     };
   }
 
