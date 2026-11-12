@@ -399,6 +399,23 @@ bool shouldRunLiveBoardSafetyPoll({
   return source == null || source == GameSource.supabase;
 }
 
+/// The Supabase `games.id` a server Game Analysis report for these args may be
+/// stored on, or null when the tab is not showing a `games` row.
+///
+/// The same provenance rule as [shouldRunLiveBoardSafetyPoll]: only a tab
+/// bound to a broadcast row has one. A local database, a saved analysis and a
+/// Gamebase/TWIC row carry ids from other stores, and a scratch board or a
+/// detached PGN has no id at all. The analysis service checks the game behind
+/// the id is the one on the board, so a tab whose moves were replaced since
+/// it was opened is ignored there rather than guarded against here.
+@visibleForTesting
+String? boardReportDatabaseGameId(BoardTabGameArgs? args) {
+  final id = args?.gameId?.trim();
+  if (id == null || id.isEmpty || isDatabaseBoardSnapshot(args)) return null;
+  final source = args?.sourceGame?.source;
+  return source == null || source == GameSource.supabase ? id : null;
+}
+
 /// [heldPositionReset] marks a packet whose incomplete reset the merge held
 /// back. Its candidate equals [current], but it must still be confirmed
 /// exactly: accepting it as a no-op would skip that read, and the raw row
@@ -6311,6 +6328,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                                     }
                                   },
                                   reportVisible: gameReportVisible,
+                                  reportDatabaseGameId:
+                                      boardReportDatabaseGameId(boardArgs),
                                   isForegroundTab: isForegroundSurface,
                                   autoAnalysisAllowed:
                                       allowGameAnalysis && isForegroundSurface,
