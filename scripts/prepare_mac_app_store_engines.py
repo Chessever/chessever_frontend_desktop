@@ -14,16 +14,30 @@ cache = root / "downloads"
 cache.mkdir(exist_ok=True)
 
 
-def fetch(name, url, digest):
+def fetch(name, urls, digest):
+    """Downloads the first source whose bytes match [digest].
+
+    [urls] is one URL or an ordered list of mirrors. Every source is held to
+    the same pinned SHA-256, so a mirror can never change what ships.
+    """
     target = cache / name
-    if not target.exists() or hashlib.file_digest(target.open("rb"), "sha256").hexdigest() != digest:
-        partial = target.with_suffix(target.suffix + ".partial")
-        subprocess.run(["curl", "--fail", "--location", "--retry", "3", "--output", str(partial), url], check=True)
+    if target.exists() and hashlib.file_digest(target.open("rb"), "sha256").hexdigest() == digest:
+        return target
+    partial = target.with_suffix(target.suffix + ".partial")
+    failures = []
+    for url in [urls] if isinstance(urls, str) else urls:
+        try:
+            subprocess.run(["curl", "--fail", "--location", "--retry", "3", "--output", str(partial), url], check=True)
+        except subprocess.CalledProcessError as error:
+            failures.append(f"{url}: curl exit {error.returncode}")
+            continue
         actual = hashlib.file_digest(partial.open("rb"), "sha256").hexdigest()
         if actual != digest:
-            raise RuntimeError(f"Checksum mismatch for {name}")
+            failures.append(f"{url}: checksum mismatch")
+            continue
         partial.replace(target)
-    return target
+        return target
+    raise RuntimeError(f"No verified source for {name}: " + "; ".join(failures))
 
 
 # Keep these pins aligned with lib/desktop/services/play/engine_catalog.dart.
@@ -48,7 +62,12 @@ subprocess.run(["lipo", "-create", *stockfish, "-output", str(root / "stockfish"
 for name, url, digest in [
     ("lc0", "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.0/lc0-v0.32.0-macos_12.6.1", "2d276ad784fc0a9a00dc6e0a71d0340fb8805acf27a1874c769f3d8e7c60c81e"),
     ("weights.pb.gz", "https://storage.lczero.org/files/networks-contrib/t1-256x10-distilled-swa-2432500.pb.gz", "bc27a6cae8ad36f2b9a80a6ad9dabb0d6fda25b1e7f481a79bc359e14f563406"),
-    ("maia3_simplified.onnx", "https://www.maiachess.com/maia3/maia3_simplified.onnx", "405bf76c15727dad8728b352c06a8f3c1b80fb2760e8d666b32485c63d75b856"),
+    # maiachess.com sits behind a Vercel bot checkpoint that answers CI with
+    # HTTP 429, so our byte-identical, content-addressed copy comes first.
+    ("maia3_simplified.onnx", [
+        "https://chessever.com/updates/engines/maia3/405bf76c15727dad8728b352c06a8f3c1b80fb2760e8d666b32485c63d75b856/maia3_simplified.onnx",
+        "https://www.maiachess.com/maia3/maia3_simplified.onnx",
+    ], "405bf76c15727dad8728b352c06a8f3c1b80fb2760e8d666b32485c63d75b856"),
 ]:
     shutil.copyfile(fetch(name, url, digest), root / name)
 for name in ("stockfish", "lc0"):
