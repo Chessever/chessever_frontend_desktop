@@ -3,6 +3,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_guest_upgrade_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/desktop_like_tag_offer.dart';
 import 'package:chessever/providers/auth_state_provider.dart';
 import 'package:chessever/repository/liked_games/liked_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
@@ -60,9 +61,10 @@ Future<bool?> toggleDesktopGameLike({
     );
     return null;
   }
-  showDesktopToast(
-    context,
-    nowLiked ? 'Added to My Likes' : 'Removed from My Likes',
-  );
+  if (nowLiked) {
+    showDesktopLikeTagOffer(context, game);
+  } else {
+    showDesktopToast(context, 'Removed from My Likes');
+  }
   return nowLiked;
 }
