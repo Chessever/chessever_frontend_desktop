@@ -7293,25 +7293,9 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
                                 ),
                                 width: 28,
                                 height: 28,
-                                decoration: BoxDecoration(
-                                  color:
-                                      widget.allMatchupsExpanded &&
-                                              !_toggleAllFocused
-                                          ? Colors.transparent
-                                          : kPrimaryColor.withValues(
-                                            alpha: 0.12,
-                                          ),
-                                  borderRadius: BorderRadius.circular(7),
-                                  border: Border.all(
-                                    color:
-                                        widget.allMatchupsExpanded &&
-                                                !_toggleAllFocused
-                                            ? kDividerColor
-                                            : kPrimaryColor.withValues(
-                                              alpha: 0.42,
-                                            ),
-                                  ),
-                                ),
+                                alignment: Alignment.center,
+                                // Same unboxed vocabulary as the rest of the
+                                // rail: ink only, cyan while active/focused.
                                 child: Icon(
                                   widget.allMatchupsExpanded
                                       ? Icons.unfold_less_rounded
@@ -7352,21 +7336,9 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
                               key: const Key('event-rail-live-first-toggle'),
                               width: 28,
                               height: 28,
-                              decoration: BoxDecoration(
-                                color:
-                                    widget.liveFirst
-                                        ? kPrimaryColor.withValues(alpha: 0.12)
-                                        : Colors.transparent,
-                                borderRadius: BorderRadius.circular(7),
-                                border: Border.all(
-                                  color:
-                                      widget.liveFirst
-                                          ? kPrimaryColor.withValues(
-                                            alpha: 0.42,
-                                          )
-                                          : kDividerColor,
-                                ),
-                              ),
+                              alignment: Alignment.center,
+                              // Web unboxed `.ce-gameslist__live-first`: no edge
+                              // or fill, the sensors ink carries the state.
                               child: Icon(
                                 Icons.sensors_rounded,
                                 size: 16,
