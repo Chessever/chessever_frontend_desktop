@@ -322,6 +322,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       <String, LocalChessCacheDeletionLease>{};
   final Set<String> _scheduledPlayerCleanupIds = <String>{};
   late final Future<void> _initialLoadFuture;
+  bool _rosterLoaded = false;
   Future<void> _playerCleanupQueue = Future<void>.value();
   Future<void> _snapshotWriteQueue = Future<void>.value();
   bool _isDrainingCombinedRebuilds = false;
@@ -411,6 +412,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         players: snapshot.players,
         selectedPlayerId: snapshot.selectedPlayerId,
       );
+      _rosterLoaded = true;
       for (final player in _pendingPlayerDeletions.values) {
         _schedulePlayerCleanup(
           player,
@@ -1954,6 +1956,114 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       throw StateError('ChessEver profile could not be refreshed.');
     }
     return refreshed;
+  }
+
+  // ------------------------------------------------------------------ sync
+  //
+  // Prep profiles are kept in step with the reader's other devices and the
+  // mobile app (`prep_profiles_cloud.dart`). These are the only ways that
+  // sync changes the roster. None of them asks the access or capacity
+  // guards: they bring over profiles the reader already made, and browsing
+  // the roster is free. Downloading their games stays behind the guards.
+
+  /// Whether the saved roster is in [state]. Until it is, an empty list
+  /// means "not read yet", never "the reader has no players".
+  bool get isRosterLoaded => _rosterLoaded;
+
+  /// Completes when the first load has finished, whether or not it could
+  /// read the roster ([isRosterLoaded] says which).
+  Future<void> get rosterReady => _initialLoadFuture;
+
+  /// Adds [player], made on another device, with its sources connected and
+  /// nothing downloaded. False when it was not added: the roster is not
+  /// loaded, the id is taken or still being deleted, or one of its accounts
+  /// belongs to a player here.
+  Future<bool> addSyncedPlayer(PlayerWorkspacePlayer player) async {
+    await _initialLoadFuture;
+    if (!mounted || !_rosterLoaded) return false;
+    if (_isPlayerDeleted(player.id) || _playerById(player.id) != null) {
+      return false;
+    }
+    for (final account in player.allAccounts) {
+      if (_syncedAccountOwner(account, except: player.id) != null) return false;
+    }
+    await _replaceSyncedPlayer(player, add: true);
+    return true;
+  }
+
+  /// Replaces player [playerId] with [change] applied to its newest copy: a
+  /// rename, a source added, or download options changed on another device.
+  /// Sources are removed with [removeSyncedAccount], which also deletes
+  /// their files.
+  Future<void> updateSyncedPlayer(
+    String playerId,
+    PlayerWorkspacePlayer Function(PlayerWorkspacePlayer player) change,
+  ) async {
+    final player = _playerById(playerId);
+    if (!mounted || player == null || _isPlayerDeleted(playerId)) return;
+    final next = change(player);
+    if (identical(next, player)) return;
+    for (final account in next.allAccounts) {
+      if (_syncedAccountOwner(account, except: playerId) != null) return;
+    }
+    await _replaceSyncedPlayer(next);
+    await _registerPlayerGeneratedDatabasesBestEffort(next);
+  }
+
+  /// Removes [account] from player [playerId], whichever player is
+  /// selected: a source removed on another device. Its downloaded games and
+  /// the Combined database built from them are deleted, as when the reader
+  /// removes it here.
+  Future<void> removeSyncedAccount(
+    String playerId,
+    PlayerWorkspaceAccount account,
+  ) async {
+    final player = _playerById(playerId);
+    if (!mounted || player == null || _isPlayerDeleted(playerId)) return;
+    if (state.selectedPlayerId == playerId) {
+      await removeAccountEntry(account);
+      return;
+    }
+    final existing = _matchingAccount(player, account);
+    if (existing == null) return;
+    final canceledScopes = _cancelOperation(_accountOperationKey(existing));
+    await _waitForScopes(canceledScopes);
+    await _deleteCombinedGeneratedData(_latestPlayer(player));
+    await _deleteAccountGeneratedData(existing);
+    // Its Combined database is rebuilt when the player is next opened.
+    await _replaceSyncedPlayer(
+      _latestPlayer(player).withoutAccountEntry(existing),
+    );
+  }
+
+  PlayerWorkspacePlayer? _syncedAccountOwner(
+    PlayerWorkspaceAccount account, {
+    required String except,
+  }) {
+    for (final candidate in state.players) {
+      if (candidate.id == except) continue;
+      if (candidate
+          .accountsFor(account.source)
+          .any((existing) => existing.identityKey == account.identityKey)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _replaceSyncedPlayer(
+    PlayerWorkspacePlayer player, {
+    bool add = false,
+  }) async {
+    if (_isPlayerDeleted(player.id)) return;
+    if (!add && _playerById(player.id) == null) return;
+    final players = <PlayerWorkspacePlayer>[
+      for (final existing in state.players)
+        if (existing.id != player.id) existing,
+      player,
+    ]..sort((a, b) => b.createdAtMs.compareTo(a.createdAtMs));
+    state = state.copyWith(players: List.unmodifiable(players));
+    await _persist();
   }
 
   Future<void> _upsertPlayer(

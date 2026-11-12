@@ -356,6 +356,36 @@ from Developer ID signing assets, and out of source, Dart defines and artifacts.
 
 ---
 
+## Prep profiles sync with the mobile app
+
+The Players workspace and its files are stored on this machine. What makes a
+profile (name, the reader's own or an opponent, its Lichess / Chess.com /
+ChessEver database sources and their download options) is also kept in
+`public.prep_profiles`, one row per profile, so this app and the mobile
+app's My Prep hold the same profiles. Games are never sent; each device
+downloads them. Manual PGN and Combined sources stay local.
+
+- **The rules live in one file shared byte for byte with the mobile app:**
+  `lib/desktop/services/prep_cloud_sync.dart` here,
+  `lib/screens/my_prep/services/prep_cloud_sync.dart` in `chessever-frontend`.
+  Change one, copy it to the other, and run
+  `test/desktop/prep_cloud_sync_test.dart` in both. The row's JSON shape is
+  documented at the top of that file; the table's migration is in the mobile
+  repo (`supabase/migrations/20261112120000_prep_profiles.sql`).
+- This app's side is `lib/desktop/state/prep_profiles_cloud.dart`
+  (`prepCloudSyncProvider`, watched from `DesktopShell`, main window only).
+  It changes the roster only through `addSyncedPlayer`, `updateSyncedPlayer`
+  and `removeSyncedAccount` on `PlayerWorkspaceNotifier`, which skip the
+  access and capacity guards: they bring over profiles the reader already
+  made. Downloading games stays behind the guards.
+- A profile from mobile arrives connected and not downloaded.
+- Mobile's own profile is the My Prep pointer (`myPrepPlayerIdProvider`).
+- Mobile's rolling date ranges read here as all dates and are written back
+  untouched unless the reader changes the options here.
+- **Never drop a key you do not understand when writing a row**, never
+  change a player's id, never delete rows (a deleted profile keeps its row
+  with `deleted_at`), and never sync before `isRosterLoaded`.
+
 ## Forui
 
 On demand — read `docs/agents/forui.md` before working on this area. Gist: This repo pins `forui: ^0.16.0` (`pubspec.yaml`).

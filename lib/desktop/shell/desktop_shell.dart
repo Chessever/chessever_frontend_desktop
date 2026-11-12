@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/prep_profiles_cloud.dart';
 import 'package:chessever/desktop/state/desktop_web_board_position.dart';
 import 'package:chessever/desktop/panes/inbox_pane.dart';
 import 'dart:async';
@@ -104,6 +105,8 @@ class DesktopShell extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Prep profiles in step with the reader's phone (main window only).
+    ref.watch(prepCloudSyncProvider);
     final tabsState = ref.watch(desktopTabsProvider);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
     final boardArgsByTabId = ref.watch(boardTabGameArgsByTabIdProvider);
