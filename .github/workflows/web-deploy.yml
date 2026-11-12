@@ -54,6 +54,9 @@ defaults:
 
 env:
   CHESSEVER_CLOUDFLARE_API_BASE: ${{ vars.CHESSEVER_CLOUDFLARE_API_BASE }}
+  # Exact wrangler release, at least two weeks old when pinned: the deploy job
+  # hands it the Cloudflare token, so it never floats to a just-published one.
+  WRANGLER_VERSION: 4.155.0
 
 jobs:
   build:
@@ -221,7 +224,7 @@ jobs:
           # `deployments status` names the active version with its tag. (Not
           # `versions view`: it lists the Worker's secret names, and this
           # repository's Actions logs are public.)
-          status="$(npx --yes wrangler@4 deployments status -c wrangler.web.jsonc)"
+          status="$(npx --yes "wrangler@$WRANGLER_VERSION" deployments status -c wrangler.web.jsonc)"
           echo "$status"
           if ! printf '%s\n' "$status" | grep -q '(100%)'; then
             echo '::error::the newest version is not serving all traffic'

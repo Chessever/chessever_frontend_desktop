@@ -23,4 +23,6 @@ if [[ -n "$oversized" ]]; then
   exit 1
 fi
 
-npx --yes wrangler@4 deploy -c wrangler.web.jsonc "$@"
+# CI pins an exact release (WRANGLER_VERSION) because the deploy token sits in
+# this process's environment; a hand-run deploy takes the newest wrangler 4.
+npx --yes "wrangler@${WRANGLER_VERSION:-4}" deploy -c wrangler.web.jsonc "$@"
