@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert' show base64;
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:dartchess/dartchess.dart' show PieceKind;
+import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -30,18 +33,101 @@ import 'models.dart';
 ///
 /// This is the responsibility of the user to dispose of the cache when it is no
 /// longer needed, or when changing the piece set, using the [clear] method.
-class ChessgroundImages {
+class ChessgroundImages extends ChangeNotifier {
   ChessgroundImages._();
 
   static final instance = ChessgroundImages._();
 
   final Map<AssetImage, _ImageEntry> _assets = {};
+  final List<_AtlasEntry> _atlases = [];
+
+  /// A borrowed sprite sheet for a loaded piece set; the cache owns its image.
+  /// Until it is ready, painters keep drawing the original images. Packing
+  /// runs once per set, not per board.
+  PieceAtlas? atlasFor(PieceAssets assets) => _atlasEntry(assets)?.atlas;
+
+  _AtlasEntry? _atlasEntry(PieceAssets assets) {
+    for (final entry in _atlases) {
+      if (mapEquals(entry.assets, assets)) return entry;
+    }
+    if (assets.isEmpty || !isAllLoaded(assets)) return null;
+    // Bounded independently of the original image cache. A settings change
+    // must not retain every sprite sheet the reader ever tried.
+    if (_atlases.length >= 3) _atlases.removeAt(0).atlas?.image.dispose();
+    final entry = _AtlasEntry(Map.unmodifiable(assets));
+    _atlases.add(entry);
+    entry.ready = _buildAtlas(entry);
+    return entry;
+  }
+
+  Future<void> _buildAtlas(_AtlasEntry entry) async {
+    // Never pack a sheet synchronously inside a board's paint callback.
+    await Future<void>.value();
+    if (!_atlases.contains(entry)) return;
+    final sources = <PieceKind, ui.Image>{
+      for (final item in entry.assets.entries)
+        if (get(item.value) case final image?) item.key: image,
+    };
+    // Atlas transforms scale uniformly. Preserve custom non-square images
+    // through the original drawImageRect path, without stretching changes.
+    if (sources.length != entry.assets.length ||
+        sources.values.any((image) => image.width != image.height)) {
+      return;
+    }
+    final edge = sources.values.map((image) => image.width).reduce(math.max);
+    // Medium filtering uses mipmaps for small previews. Leave enough empty
+    // texels that a reduced mip never samples a neighbouring piece.
+    final padding = math.max(2, (edge / 4).ceil());
+    final tile = edge + padding * 2;
+    final columns = math.min(4, sources.length);
+    final rows = (sources.length / columns).ceil();
+    if (tile * columns > 2048 || tile * rows > 2048) return;
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    final rects = <PieceKind, ui.Rect>{};
+    var index = 0;
+    for (final source in sources.entries) {
+      final offset = ui.Offset(
+        ((index % columns) * tile + padding).toDouble(),
+        ((index ~/ columns) * tile + padding).toDouble(),
+      );
+      canvas.drawImage(source.value, offset, ui.Paint());
+      rects[source.key] =
+          offset & ui.Size.square(source.value.width.toDouble());
+      index++;
+    }
+    final picture = recorder.endRecording();
+    try {
+      final image = await picture.toImage(tile * columns, tile * rows);
+      if (!_atlases.contains(entry)) {
+        image.dispose();
+        return;
+      }
+      entry.atlas = PieceAtlas._(image, Map.unmodifiable(rects));
+      notifyListeners();
+    } catch (_) {
+      // A renderer without offscreen image support keeps the original path.
+    } finally {
+      picture.dispose();
+    }
+  }
+
+  void _clearAtlases({AssetImage? changedAsset}) {
+    _atlases.removeWhere((entry) {
+      if (changedAsset != null && !entry.assets.containsValue(changedAsset)) {
+        return false;
+      }
+      entry.atlas?.image.dispose();
+      return true;
+    });
+  }
 
   /// Adds the [image] into the cache under the key [asset].
   ///
   /// The cache will assume the ownership of the [image], and will properly
   /// dispose of it at the end.
   void add(AssetImage asset, ui.Image image) {
+    _clearAtlases(changedAsset: asset);
     _assets[asset]?.dispose();
     _assets[asset] = _ImageEntry.fromImage(image);
   }
@@ -53,6 +139,7 @@ class ChessgroundImages {
   /// This calls [ui.Image.dispose], so make sure that you don't use the previously
   /// cached image once it is cleared (removed) from the cache.
   void evict(AssetImage asset) {
+    _clearAtlases(changedAsset: asset);
     final removedAsset = _assets.remove(asset);
     removedAsset?.dispose();
   }
@@ -63,6 +150,7 @@ class ChessgroundImages {
   /// you don't use any of the previously cached images once [clear] has
   /// been called.
   void clear() {
+    _clearAtlases();
     _assets.forEach((_, asset) => asset.dispose());
     _assets.clear();
   }
@@ -86,19 +174,21 @@ class ChessgroundImages {
   /// The [devicePixelRatio] can be specified to load the image at a different
   /// resolution than the default.
   Future<ui.Image> load(AssetImage asset, {double? devicePixelRatio}) async {
+    final cached = _assets[asset];
+    if (cached != null) return cached.retrieveAsync();
     final key = await asset.obtainKey(
       ImageConfiguration(devicePixelRatio: devicePixelRatio),
     );
     return (_assets[asset] ??= _ImageEntry.future(
-      _fetchToMemory(asset.bundle ?? rootBundle, key.name),
-    )).retrieveAsync();
+          _fetchToMemory(asset.bundle ?? rootBundle, key.name),
+        ))
+        .retrieveAsync();
   }
 
   /// Loads the specified [base64] image into the cache.
   Future<ui.Image> loadBase64(AssetImage asset, String base64) {
-    return (_assets[asset] ??= _ImageEntry.future(
-      _fetchFromBase64(base64),
-    )).retrieveAsync();
+    return (_assets[asset] ??= _ImageEntry.future(_fetchFromBase64(base64)))
+        .retrieveAsync();
   }
 
   /// Whether the cache contains the specified [key] or not.
@@ -109,11 +199,12 @@ class ChessgroundImages {
       assets.values.every((AssetImage a) => _assets[a]?.image != null);
 
   /// Loads all images in [assets], awaiting any already in-flight loads.
-  Future<void> loadAll(PieceAssets assets, {double? devicePixelRatio}) {
-    return Future.wait([
+  Future<void> loadAll(PieceAssets assets, {double? devicePixelRatio}) async {
+    await Future.wait([
       for (final asset in assets.values)
         load(asset, devicePixelRatio: devicePixelRatio),
     ]);
+    await _atlasEntry(assets)?.ready;
   }
 
   /// Returns the list of keys in the cache.
@@ -141,6 +232,22 @@ class ChessgroundImages {
     final bytes = Uint8List.view(data.buffer);
     return decodeImageFromList(bytes);
   }
+}
+
+/// One texture and the source rectangle of each piece kind within it.
+class PieceAtlas {
+  PieceAtlas._(this.image, this.rects);
+
+  final ui.Image image;
+  final Map<PieceKind, ui.Rect> rects;
+}
+
+class _AtlasEntry {
+  _AtlasEntry(this.assets);
+
+  final PieceAssets assets;
+  late final Future<void> ready;
+  PieceAtlas? atlas;
 }
 
 /// Individual entry in the [ChessgroundImages] cache.

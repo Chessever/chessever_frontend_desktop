@@ -1128,7 +1128,10 @@ class _BoardPaneContent extends HookConsumerWidget {
       () => GlobalKey(debugLabel: 'desktop-board-share-capture'),
       const [],
     );
-    final currentReportFingerprint = gameReportFingerprint(chessGame.value);
+    final currentReportFingerprint = useMemoized(
+      () => gameReportFingerprint(chessGame.value),
+      [chessGame.value],
+    );
     final reportActivation = useRef<Object>(Object());
     final savedSourceSeedPgn = useRef(restoredSession?.savedSourceSeedPgn);
     final hasCommittedSave = useRef(restoredSession?.hasCommittedSave ?? false);
@@ -4964,15 +4967,21 @@ class _BoardPaneContent extends HookConsumerWidget {
     // stays stable across variation switches; we just suppress display
     // when the user is exploring off-mainline.
     final headers = pgnHeaders.value;
-    final originalMainlineSans = <String>[
-      for (final m in chessGame.value.mainline) m.san,
-    ];
+    final originalMainlineSans = useMemoized(
+      () => List<String>.unmodifiable(
+        chessGame.value.mainline.map((move) => move.san),
+      ),
+      [chessGame.value],
+    );
     final isResultLive =
         (headers['Result'] ?? '').trim() == '*' ||
         (headers['Result'] ?? '').isEmpty;
     final lichessGameId = _extractLichessGameId(headers);
     final lichessSiteUrl = _extractLichessSiteUrl(headers);
-    final movesSignature = _buildMovesSignature(originalMainlineSans);
+    final movesSignature = useMemoized(
+      () => _buildMovesSignature(originalMainlineSans),
+      [originalMainlineSans],
+    );
     // We're "on the original mainline" when the pointer is exactly one
     // index deep — anything longer means we've descended into a sub-line.
     final isOnMainline = pointer.value.length == 1;
@@ -4997,33 +5006,47 @@ class _BoardPaneContent extends HookConsumerWidget {
         completedReport != null &&
         completedReport.fingerprint == currentReportFingerprint;
     final reportOutputVisible = gameReportVisible;
-    final reportAnalyzedPlies = <int>{
-      if (reportMatchesGame && reportOutputVisible)
-        for (final move in completedReport.moves)
-          if (move.ply > 0) move.ply - 1,
-    };
-    final reportAnnotations = <int, LichessMoveAnnotation>{
-      if (reportMatchesGame && reportOutputVisible)
-        for (final move in completedReport.moves)
-          if (move.classification != null)
-            move.ply - 1: LichessMoveAnnotation(
-              type: _annotationTypeForReportClassification(
-                move.classification!,
-              ),
-              comment: '',
-              useClassificationIcon: true,
-              reportOwnsMoveQuality: true,
-            ),
-    };
-    // PGN-baked ChessEver directives (classic glyphs or legacy product names)
-    // override Lichess annotations for that ply; a live report still wins.
-    final pgnChesseverAnnotations = chesseverAnnotationsFromMainline(
-      chessGame.value,
-    );
-    final moveAnnotations = mergeReportMoveAnnotations(
-      lichessAnnotations: {...lichessAnnotations, ...pgnChesseverAnnotations},
-      reportAnnotations: reportAnnotations,
-      reportAnalyzedPlies: reportAnalyzedPlies,
+    final moveAnnotations = useMemoized(
+      () {
+        final reportAnalyzedPlies = <int>{
+          if (reportMatchesGame && reportOutputVisible)
+            for (final move in completedReport.moves)
+              if (move.ply > 0) move.ply - 1,
+        };
+        final reportAnnotations = <int, LichessMoveAnnotation>{
+          if (reportMatchesGame && reportOutputVisible)
+            for (final move in completedReport.moves)
+              if (move.classification != null)
+                move.ply - 1: LichessMoveAnnotation(
+                  type: _annotationTypeForReportClassification(
+                    move.classification!,
+                  ),
+                  comment: '',
+                  useClassificationIcon: true,
+                  reportOwnsMoveQuality: true,
+                ),
+        };
+        // PGN-baked ChessEver directives (classic glyphs or legacy product names)
+        // override Lichess annotations for that ply; a live report still wins.
+        final pgnChesseverAnnotations = chesseverAnnotationsFromMainline(
+          chessGame.value,
+        );
+        return mergeReportMoveAnnotations(
+          lichessAnnotations: {
+            ...lichessAnnotations,
+            ...pgnChesseverAnnotations,
+          },
+          reportAnnotations: reportAnnotations,
+          reportAnalyzedPlies: reportAnalyzedPlies,
+        );
+      },
+      [
+        chessGame.value,
+        lichessAnnotations,
+        completedReport,
+        reportMatchesGame,
+        reportOutputVisible,
+      ],
     );
 
     // Resolve the on-board badge for the current ply. A later user assessment

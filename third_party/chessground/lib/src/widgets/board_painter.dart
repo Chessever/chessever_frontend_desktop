@@ -279,6 +279,7 @@ class PiecesPainter extends CustomPainter {
            draggedPieceSquareNotifier,
            gameNotifier,
            pendingPromotionNotifier,
+           ChessgroundImages.instance,
          ]),
        );
 
@@ -344,6 +345,14 @@ class PiecesPainter extends CustomPainter {
     final promotionMoveFrom = pendingPromotionNotifier.value?.from;
     final sideToMove = game?.sideToMove;
     final paint = Paint()..filterQuality = FilterQuality.medium;
+    // At tiny preview sizes, retain drawImageRect's mipmapped sampling. The
+    // atlas path uses a different edge kernel, visible on sub-16px pieces.
+    final atlas =
+        squareSize < 16
+            ? null
+            : ChessgroundImages.instance.atlasFor(pieceAssets);
+    final transforms = <ui.RSTransform>[];
+    final rects = <Rect>[];
     for (final entry in pieces.entries) {
       final square = entry.key;
       if (translatingPieces.containsKey(square) ||
@@ -373,6 +382,21 @@ class PiecesPainter extends CustomPainter {
               ? pi
               : 0.0) +
           (pieceRotations[square] ?? 0.0);
+      final atlasRect = atlas?.rects[entry.value.kind];
+      if (atlasRect != null) {
+        transforms.add(
+          ui.RSTransform.fromComponents(
+            rotation: angle,
+            scale: squareSize / atlasRect.width,
+            anchorX: atlasRect.width / 2,
+            anchorY: atlasRect.height / 2,
+            translateX: dst.center.dx,
+            translateY: dst.center.dy,
+          ),
+        );
+        rects.add(atlasRect);
+        continue;
+      }
       if (angle != 0.0) {
         canvas.save();
         canvas.translate(dst.center.dx, dst.center.dy);
@@ -383,6 +407,9 @@ class PiecesPainter extends CustomPainter {
       } else {
         canvas.drawImageRect(image, src, dst, paint);
       }
+    }
+    if (atlas != null && transforms.isNotEmpty) {
+      canvas.drawAtlas(atlas.image, transforms, rects, null, null, null, paint);
     }
   }
 

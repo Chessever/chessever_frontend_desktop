@@ -21,6 +21,7 @@ import 'package:chessever/desktop/widgets/board_resize_handle.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
+import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
@@ -435,6 +436,47 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 400));
     }
+  });
+
+  testWidgets('ply stepping reuses whole-game move annotations', (
+    tester,
+  ) async {
+    await _pumpBoardProbe(
+      tester,
+      args: _longArgs.copyWith(
+        pgn: _longPgn.replaceFirst(
+          '1. e4',
+          '1. e4 {[%chessever_annotation !]}',
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    final before = tester.widget<NotationLadderView>(
+      find.byType(NotationLadderView),
+    );
+    expect(before.lichessAnnotations, isNotEmpty);
+    final start = _boardFen(tester);
+    before.onJump(const [40]);
+    await tester.pump();
+    final after = tester.widget<NotationLadderView>(
+      find.byType(NotationLadderView),
+    );
+    expect(_boardFen(tester), isNot(start));
+    expect(after.game, same(before.game));
+    expect(
+      after.lichessAnnotations,
+      same(before.lichessAnnotations),
+      reason:
+          'A cursor change must not re-scan and merge every move annotation.',
+    );
+    // An actual annotation edit must still invalidate the per-game result.
+    expect(after.onClearAllCommentary, isNotNull);
+    after.onClearAllCommentary!();
+    await tester.pump();
+    final edited = tester.widget<NotationLadderView>(
+      find.byType(NotationLadderView),
+    );
+    expect(edited.lichessAnnotations, isEmpty);
   });
 
   testWidgets('a previewed line that turns illegal is dropped at that step', (

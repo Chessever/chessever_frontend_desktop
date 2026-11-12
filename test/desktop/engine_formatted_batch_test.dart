@@ -143,6 +143,48 @@ class _Harness {
 }
 
 void main() {
+  testWidgets('depth ticks rebuild no PV rows and one score rebuilds one row', (
+    tester,
+  ) async {
+    final h = _Harness();
+    await h.mount(tester);
+    await h.firstReading(tester);
+    final previous = debugOnRebuildDirtyWidget;
+    var rows = 0;
+    debugOnRebuildDirtyWidget = (element, builtOnce) {
+      if (element.widget.runtimeType.toString() == '_PvLine') rows++;
+    };
+    addTearDown(() => debugOnRebuildDirtyWidget = previous);
+
+    h.evals[_a]!.emit(_first.copyWith(depth: 13));
+    await tester.pump();
+    final depthRows = rows;
+    rows = 0;
+    h.evals[_a]!.emit(
+      _first.copyWith(
+        depth: 14,
+        pvs: [
+          const BoardPv(evaluation: .60, mate: null, moves: 'e2e4 e7e5'),
+          ..._first.pvs.skip(1),
+        ],
+      ),
+    );
+    await tester.pump();
+    debugOnRebuildDirtyWidget = previous;
+
+    expect(find.text('+0.60'), findsNWidgets(2));
+    expect(find.text('1.e4', findRichText: true), findsOneWidget);
+    await tester.tap(find.text('1.d4', findRichText: true));
+    expect(h.played, ['d2d4']);
+    expect(h.worker.requests, hasLength(3));
+    expect(
+      (depthRows: depthRows, scoreRows: rows),
+      (depthRows: 0, scoreRows: 1),
+      reason: 'Unchanged MultiPV rows must retain their widgets and callbacks.',
+    );
+    await h.dispose(tester);
+  });
+
   testWidgets(
     'new game clears retained rows and refuses former formatting completion',
     (tester) async {

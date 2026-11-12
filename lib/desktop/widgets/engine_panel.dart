@@ -7,7 +7,8 @@ import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 
 import 'package:chessever/desktop/services/engine/pv_san_formatter.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, visibleForTesting, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -689,7 +690,7 @@ class _EngineLinesSnapshot {
       Object.hash(isEvaluating, statusText, Object.hashAll(pvs));
 }
 
-class _EngineLinesSurface extends ConsumerWidget {
+class _EngineLinesSurface extends StatefulWidget {
   const _EngineLinesSurface({
     required this.fen,
     required this.onPlayUci,
@@ -708,9 +709,45 @@ class _EngineLinesSurface extends ConsumerWidget {
   final Object playOwner;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final snapshot = _EngineLinesSnapshot.fromState(state);
+  State<_EngineLinesSurface> createState() => _EngineLinesSurfaceState();
+}
+
+class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
+  final _rows = <int, _PvLine>{};
+
+  // Cached rows must use the newest reading's play guard, even when their
+  // own score and moves did not change on this engine tick.
+  void _play(String uci) => widget.onPlayUci?.call(uci);
+
+  Widget _row(int index) {
+    final old = _rows[index];
+    final pv = widget.state.pvs[index];
+    final san = widget.sanLines[index];
+    if (old != null &&
+        old.pv == pv &&
+        old.fen == widget.fen &&
+        old.playOwner == widget.playOwner &&
+        old.interactive == widget.interactive &&
+        (old.onPlayUci != null) == (widget.onPlayUci != null) &&
+        listEquals(old.formattedSan, san)) {
+      return old;
+    }
+    return _rows[index] = _PvLine(
+      rank: index + 1,
+      pv: pv,
+      fen: widget.fen,
+      onPlayUci: widget.onPlayUci == null ? null : _play,
+      playOwner: widget.playOwner,
+      interactive: widget.interactive,
+      formattedSan: san,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final snapshot = _EngineLinesSnapshot.fromState(widget.state);
     final pvs = snapshot.pvs;
+    _rows.removeWhere((index, _) => index >= pvs.length);
     if (pvs.isEmpty) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
@@ -731,16 +768,7 @@ class _EngineLinesSurface extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         itemCount: pvs.length,
         separatorBuilder: (_, __) => const SizedBox(height: 6),
-        itemBuilder:
-            (context, index) => _PvLine(
-              rank: index + 1,
-              pv: pvs[index],
-              fen: fen,
-              onPlayUci: onPlayUci,
-              playOwner: playOwner,
-              interactive: interactive,
-              formattedSan: sanLines[index],
-            ),
+        itemBuilder: (context, index) => _row(index),
       ),
     );
   }

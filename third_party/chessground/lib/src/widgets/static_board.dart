@@ -288,12 +288,15 @@ class _StaticChessboardState extends State<StaticChessboard>
   void verifyRecommendedDeferredLoading() {
     if (!mounted) return;
 
-    if (Scrollable.recommendDeferredLoadingForContext(context)) {
+    // Startup prewarms the shared piece set. A newly mounted scroll row must
+    // not poll velocity every frame when all its images are already decoded.
+    if (!_imagesLoaded &&
+        Scrollable.recommendDeferredLoadingForContext(context)) {
       _deferImagesLoading = true;
       SchedulerBinding.instance.scheduleFrameCallback((_) {
         scheduleMicrotask(() => verifyRecommendedDeferredLoading());
       });
-    } else {
+    } else if (_deferImagesLoading) {
       setState(() => _deferImagesLoading = false);
     }
   }

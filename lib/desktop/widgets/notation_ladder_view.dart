@@ -63,8 +63,9 @@ class NotationVariationCollapseController {
 }
 
 typedef _TranspositionIndex = Map<String, List<ChessMovePointer>>;
+typedef _NotationPositionAspect = ({String pointer, String position});
 
-class _NotationPositionMarkers extends InheritedWidget {
+class _NotationPositionMarkers extends InheritedModel<_NotationPositionAspect> {
   const _NotationPositionMarkers({
     required this.positionArrowKeys,
     required this.timings,
@@ -78,8 +79,14 @@ class _NotationPositionMarkers extends InheritedWidget {
   final _TranspositionIndex transpositions;
   final ValueChanged<ChessMovePointer> onJump;
 
-  static _NotationPositionMarkers? maybeOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_NotationPositionMarkers>();
+  static _NotationPositionMarkers? forMove(
+    BuildContext context,
+    ChessMovePointer pointer,
+    String position,
+  ) => InheritedModel.inheritFrom<_NotationPositionMarkers>(
+    context,
+    aspect: (pointer: NotationPointer.encode(pointer), position: position),
+  );
 
   @override
   bool updateShouldNotify(covariant _NotationPositionMarkers oldWidget) {
@@ -87,6 +94,31 @@ class _NotationPositionMarkers extends InheritedWidget {
         !setEquals(positionArrowKeys, oldWidget.positionArrowKeys) ||
         transpositions != oldWidget.transpositions ||
         onJump != oldWidget.onJump;
+  }
+
+  @override
+  bool updateShouldNotifyDependent(
+    covariant _NotationPositionMarkers oldWidget,
+    Set<_NotationPositionAspect> dependencies,
+  ) {
+    if (onJump != oldWidget.onJump) return true;
+    for (final aspect in dependencies) {
+      final pointer = NotationPointer.decode(aspect.pointer);
+      final before = oldWidget.timings.at(pointer);
+      final after = timings.at(pointer);
+      if (before?.elapsed != after?.elapsed ||
+          before?.remaining != after?.remaining ||
+          before?.isRecorded != after?.isRecorded ||
+          oldWidget.positionArrowKeys.contains(aspect.position) !=
+              positionArrowKeys.contains(aspect.position) ||
+          !notationPointerListsEqual(
+            oldWidget.transpositions[aspect.position] ?? const [],
+            transpositions[aspect.position] ?? const [],
+          )) {
+        return true;
+      }
+    }
+    return false;
   }
 }
 
@@ -465,7 +497,8 @@ class _NotationLadderViewState extends State<NotationLadderView> {
       _activeKey = GlobalKey();
       _scrollActiveIntoView();
     }
-    if (!identical(old.game, widget.game)) {
+    if (old.game.gameId != widget.game.gameId ||
+        old.game.startingFen != widget.game.startingFen) {
       _inlineMoveCache.clear();
       _rowCache.clear();
       _activeSlotKey = null;
@@ -1792,6 +1825,9 @@ class _LineBlock extends StatelessWidget {
           onActiveChanged: owner._setActiveSlot,
           builder: buildRow,
         );
+        if (owner._rowCache.length >= 2048) {
+          owner._rowCache.remove(owner._rowCache.keys.first);
+        }
         owner._rowCache[rowCacheKey] = (rowSignature, row);
       } else {
         final activeNow =
@@ -2579,6 +2615,9 @@ class _InlineNotationBlock extends StatelessWidget {
             onActiveChanged: owner._setActiveSlot,
             builder: (selectedKey, key) => buildMove(selectedKey != null, key),
           );
+          if (owner._inlineMoveCache.length >= 4096) {
+            owner._inlineMoveCache.remove(owner._inlineMoveCache.keys.first);
+          }
           owner._inlineMoveCache[cacheKey] = (signature, spanChild);
         } else {
           spanChild = buildMove(selected, activeKey);
@@ -4024,9 +4063,13 @@ class _LadderChipState extends State<_LadderChip>
   @override
   Widget build(BuildContext context) {
     final isVariation = widget.depth > 0;
-    final timing = _NotationPositionMarkers.maybeOf(
+    final positionKey = _notationFenPositionKey(widget.fen);
+    final markers = _NotationPositionMarkers.forMove(
       context,
-    )?.timings.at(widget.pointer);
+      widget.pointer,
+      positionKey,
+    );
+    final timing = markers?.timings.at(widget.pointer);
     final elapsedLabel = timing?.label;
     final fg =
         widget.selected
@@ -4132,8 +4175,6 @@ class _LadderChipState extends State<_LadderChip>
       ),
     );
 
-    final markers = _NotationPositionMarkers.maybeOf(context);
-    final positionKey = _notationFenPositionKey(widget.fen);
     final hasPositionArrows =
         markers?.positionArrowKeys.contains(positionKey) ?? false;
     final transpositionPointers = markers?.transpositions[positionKey];
@@ -5297,6 +5338,22 @@ void _noClearUserNags(int ply) {}
 void _noPointerAction(ChessMovePointer pointer) {}
 void _noSetMoveComment(ChessMovePointer pointer, String? comment) {}
 
+/// Move data used by a token and its menus. A live PGN refresh re-parses the
+/// unchanged prefix into fresh objects. Variations are built by the enclosing
+/// notation block and do not invalidate this move's presentation.
+bool _sameMovePresentation(ChessMove a, ChessMove b) =>
+    identical(a, b) ||
+    (a.num == b.num &&
+        a.fen == b.fen &&
+        a.san == b.san &&
+        a.uci == b.uci &&
+        a.turn == b.turn &&
+        a.clockTime == b.clockTime &&
+        a.eval == b.eval &&
+        listEquals(a.comments, b.comments) &&
+        listEquals(a.startingComments, b.startingComments) &&
+        listEquals(a.nags, b.nags));
+
 /// Everything an [_InlineMove] draws, compared by value, so an unchanged move
 /// keeps its widget instance from the previous build.
 @immutable
@@ -5348,7 +5405,7 @@ class _InlineMoveSignature {
   @override
   bool operator ==(Object other) =>
       other is _InlineMoveSignature &&
-      identical(move, other.move) &&
+      _sameMovePresentation(move, other.move) &&
       prefix == other.prefix &&
       selected == other.selected &&
       identical(activeKey, other.activeKey) &&
@@ -5364,7 +5421,7 @@ class _InlineMoveSignature {
           mapEquals(pieceAssets, other.pieceAssets));
 
   @override
-  int get hashCode => Object.hash(move, prefix, selected, depth);
+  int get hashCode => Object.hash(move.fen, move.san, prefix, selected, depth);
 }
 
 @immutable
@@ -5458,7 +5515,7 @@ class _InlineMoveSlotState extends State<_InlineMoveSlot> {
   }
 }
 
-/// Value equality over a ladder row's inputs: moves by identity, lists and
+/// Value equality over a ladder row's inputs: move presentation, lists and
 /// maps by content, engine annotations by their fields.
 @immutable
 class _RowSignature {
@@ -5473,7 +5530,7 @@ class _RowSignature {
     if (a is LichessMoveAnnotation && b is LichessMoveAnnotation) {
       return _InlineMoveSignature._sameAnnotation(a, b);
     }
-    if (a is ChessMove || b is ChessMove) return false;
+    if (a is ChessMove && b is ChessMove) return _sameMovePresentation(a, b);
     return a == b;
   }
 
