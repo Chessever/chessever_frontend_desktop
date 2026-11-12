@@ -208,14 +208,16 @@ void main() {
     final rail = tester.getRect(
       find.byKey(const ValueKey<String>('desktop-broadcast-video-languages')),
     );
-    final actions = tester.getRect(
-      find.byKey(const ValueKey<String>('desktop-broadcast-video-actions')),
+    final toggle = tester.getRect(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
     );
     final player = tester.getRect(find.byType(WebViewWidget));
 
     expect(rail.bottom, lessThanOrEqualTo(player.top));
-    expect(actions.bottom, lessThanOrEqualTo(player.top));
-    expect(find.text('⋯'), findsOneWidget);
+    expect(toggle.bottom, lessThanOrEqualTo(player.top));
+    // Web #890: the camera leads the rail, and the pin menu it replaced is gone.
+    expect(toggle.right, lessThanOrEqualTo(rail.left));
+    expect(find.text('⋯'), findsNothing);
     addTearDown(() => disposeTree(tester));
   });
 
@@ -235,9 +237,10 @@ void main() {
         of: find.byKey(
           const ValueKey<String>('desktop-broadcast-video-toggle'),
         ),
-        matching: find.byIcon(Icons.videocam_off_rounded),
+        matching: find.byIcon(Icons.videocam_rounded),
       ),
       findsOneWidget,
+      reason: 'a visible video shows the un-slashed camera',
     );
 
     await tester.tap(
@@ -256,9 +259,10 @@ void main() {
         of: find.byKey(
           const ValueKey<String>('desktop-broadcast-video-toggle'),
         ),
-        matching: find.byIcon(Icons.videocam_rounded),
+        matching: find.byIcon(Icons.videocam_off_rounded),
       ),
       findsOneWidget,
+      reason: 'a hidden video shows the slashed camera',
     );
 
     await tester.tap(

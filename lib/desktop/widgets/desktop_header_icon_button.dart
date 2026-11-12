@@ -22,6 +22,7 @@ class DesktopHeaderIconButton extends StatefulWidget {
     this.onPress,
     this.selected = false,
     this.disabled = false,
+    this.unboxed = false,
   });
 
   /// Tooltip shown on hover (doubles as the accessibility label).
@@ -34,6 +35,11 @@ class DesktopHeaderIconButton extends StatefulWidget {
 
   /// Greyed-out, non-interactive state (e.g. engine not yet active).
   final bool disabled;
+
+  /// Web `.ce-engine__icon-btn` / `.ce-gameslist__close` unboxed utility
+  /// control: no edge or fill at rest, ink alone carries the state. Hover
+  /// brightens the glyph, selection turns it cyan, focus draws a cyan ring.
+  final bool unboxed;
 
   @override
   State<DesktopHeaderIconButton> createState() =>
@@ -50,7 +56,20 @@ class _DesktopHeaderIconButtonState extends State<DesktopHeaderIconButton> {
     final Color foreground;
     final Color background;
     final Color borderColor;
-    if (widget.selected) {
+    if (widget.unboxed) {
+      // Web unboxed chrome: the frame and fill are gone, so hover/selection
+      // can only move the glyph. Selected stays cyan, hover lifts to white.
+      foreground =
+          widget.selected
+              ? kPrimaryColor
+              : widget.disabled
+              ? kWhiteColor.withValues(alpha: 0.45)
+              : _hovered
+              ? kWhiteColor
+              : kWhiteColor70;
+      background = Colors.transparent;
+      borderColor = Colors.transparent;
+    } else if (widget.selected) {
       foreground = kPrimaryColor;
       background = kPrimaryColor.withValues(alpha: _hovered ? 0.20 : 0.12);
       borderColor = kPrimaryColor.withValues(alpha: _hovered ? 0.52 : 0.36);

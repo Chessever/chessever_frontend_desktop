@@ -10195,6 +10195,7 @@ class _BoardMoreActionsButtonState extends State<_BoardMoreActionsButton> {
         key: const ValueKey<String>('desktop-board-more-actions'),
         message: 'More board actions',
         icon: Icons.more_vert_rounded,
+        unboxed: true,
         onPress: _openMenu,
       ),
     );

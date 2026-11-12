@@ -16,9 +16,11 @@ import 'package:chessever/widgets/federation_flag.dart';
 import 'package:country_flags/country_flags.dart';
 
 /// In-board stream language rail. Visual and grouping contract is the web
-/// `VideoStreamToolbar`: circular 34px flags in 38px slots, overlapping
-/// count badges, FIDE commentary / numbered cameras as their own controls,
-/// and a trailing pin + camera toggle.
+/// `VideoStreamToolbar`: an unboxed camera at the far left, circular 34px
+/// flags in 38px slots, unboxed count numerals, a full cyan ring on the
+/// selected flag, and FIDE commentary / numbered cameras as their own
+/// controls. Pins are changed by right-clicking a flag, mirroring the web
+/// toolbar after its pin menu was removed.
 class BroadcastVideoToolbar extends StatefulWidget {
   const BroadcastVideoToolbar({
     super.key,
@@ -90,6 +92,20 @@ class _BroadcastVideoToolbarState extends State<BroadcastVideoToolbar> {
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
             children: [
+              // Web `.ce-video__toolbar > .ce-video__icon-action`: the camera
+              // owns a full 38px slot on the flags' rhythm, unboxed, at 28px
+              // so it never reads as a second, smaller flag badge.
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: _VideoToggleAction(
+                  key: const ValueKey<String>(
+                    'desktop-broadcast-video-toggle',
+                  ),
+                  visible: widget.visible,
+                  onPress: widget.onToggle,
+                ),
+              ),
+              const SizedBox(width: BroadcastVideoToolbar.gap),
               Expanded(
                 child: ClipRect(
                   key: const ValueKey<String>(
@@ -159,45 +175,60 @@ class _BroadcastVideoToolbarState extends State<BroadcastVideoToolbar> {
                   ),
                 ),
               ),
-              Container(
-                key: const ValueKey<String>('desktop-broadcast-video-actions'),
-                margin: const EdgeInsets.only(left: 8),
-                padding: const EdgeInsets.only(left: 8),
-                decoration: const BoxDecoration(
-                  border: Border(left: BorderSide(color: kDividerColor)),
-                ),
-                child: Row(
-                  children: [
-                    _PinMenuButton(
-                      groupsBuilder:
-                          (capacity) => toolbarBroadcastVideoGroups(
-                            widget.streams,
-                            widget.pins,
-                            capacity,
-                            selectedId: widget.selectedId,
-                          ),
-                      pins: widget.pins,
-                      onPin: widget.onPin,
-                      onMenuVisibilityChanged: _reportMenuVisibility,
-                    ),
-                    const SizedBox(width: 6),
-                    _IconAction(
-                      key: const ValueKey<String>(
-                        'desktop-broadcast-video-toggle',
-                      ),
-                      icon:
-                          widget.visible
-                              ? Icons.videocam_off_rounded
-                              : Icons.videocam_rounded,
-                      tooltip: widget.visible ? 'Hide video' : 'Show video',
-                      selected: widget.visible,
-                      onPress: widget.onToggle,
-                    ),
-                  ],
-                ),
-              ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoToggleAction extends StatelessWidget {
+  const _VideoToggleAction({
+    super.key,
+    required this.visible,
+    required this.onPress,
+  });
+
+  final bool visible;
+  final VoidCallback onPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = visible ? 'Hide video' : 'Show video';
+    return DesktopTooltip(
+      message: label,
+      child: FTheme(
+        data: FThemes.zinc.dark,
+        child: FTappable(
+          style: _withoutForuiBounce,
+          onPress: onPress,
+          semanticsLabel: label,
+          builder: (context, states, _) {
+            final hovered = states.contains(WidgetState.hovered);
+            final focused = states.contains(WidgetState.focused);
+            // Web `.ce-video__icon-action`: unboxed, 28px ink that turns
+            // primary on hover/focus and stays primary while the video shows.
+            final foreground =
+                visible || hovered || focused
+                    ? kPrimaryColor
+                    : kWhiteColor70;
+            return _PressScale(
+              child: SizedBox(
+                width: BroadcastVideoToolbar.slot,
+                height: BroadcastVideoToolbar.slot,
+                child: Center(
+                  child: Icon(
+                    visible
+                        ? Icons.videocam_rounded
+                        : Icons.videocam_off_rounded,
+                    size: 28,
+                    color: foreground,
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -449,40 +480,19 @@ class _StreamMarkButton extends StatelessWidget {
         builder: (context, states, child) {
           final hovered = states.contains(WidgetState.hovered);
           final focused = states.contains(WidgetState.focused);
-          final rim =
-              selected || focused || hovered ? kPrimaryColor : kDividerColor;
+          final lit = selected || focused || hovered;
+          final rim = lit ? kPrimaryColor : kDividerColor;
+          // Web unboxed flag: one full cyan ring for the selected stream, no
+          // fill and no second inset ring, so the flag itself stays legible.
           final circle = SizedBox(
             width: BroadcastVideoToolbar.button,
             height: BroadcastVideoToolbar.button,
             child: DecoratedBox(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color:
-                    selected
-                        ? kPrimaryColor.withValues(alpha: 0.14)
-                        : Colors.transparent,
                 border: pinned ? null : Border.all(color: rim),
               ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  if (selected)
-                    const Positioned.fill(
-                      child: Padding(
-                        padding: EdgeInsets.all(1),
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.fromBorderSide(
-                              BorderSide(color: kPrimaryColor),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (child != null) child,
-                ],
-              ),
+              child: Center(child: _StreamMark(group: group, highlighted: lit)),
             ),
           );
           if (!pinned) return _PressScale(child: circle);
@@ -493,16 +503,19 @@ class _StreamMarkButton extends StatelessWidget {
             ),
           );
         },
-        child: _StreamMark(group: group),
       ),
     );
   }
 }
 
 class _StreamMark extends StatelessWidget {
-  const _StreamMark({required this.group});
+  const _StreamMark({required this.group, this.highlighted = false});
 
   final BroadcastToolbarVideoGroup group;
+
+  /// Web `.ce-video__language:hover { color: var(--primary-ink) }`: only the
+  /// glyph marks (camera, cameras, globe) shift ink; flag artwork does not.
+  final bool highlighted;
 
   @override
   Widget build(BuildContext context) {
@@ -539,18 +552,20 @@ class _StreamMark extends StatelessWidget {
       case BroadcastToolbarVideoKind.camera:
         return _CameraMark(number: group.cameraNumber);
       case BroadcastToolbarVideoKind.cameras:
-        return const Icon(
+        return Icon(
           Icons.videocam_rounded,
-          size: 16,
-          color: kWhiteColor70,
+          size: 22,
+          color: highlighted ? kPrimaryColor : kWhiteColor70,
         );
       case BroadcastToolbarVideoKind.language:
         final code = group.countryCode;
         if (code == null) {
-          return const Icon(
-            Icons.videocam_rounded,
-            size: 18,
-            color: kWhiteColor70,
+          // Web uses a globe for a stream whose language is unspecified,
+          // instead of a camera that would read as a second camera group.
+          return Icon(
+            Icons.public_rounded,
+            size: 22,
+            color: highlighted ? kPrimaryColor : kWhiteColor70,
           );
         }
         return _CircularLanguageFlag(countryCode: code);
@@ -576,7 +591,11 @@ class _CircularLanguageFlag extends StatelessWidget {
   Widget build(BuildContext context) {
     final artwork = _rectangularFlagArtwork(countryCode);
     if (artwork == null) {
-      return const Icon(Icons.videocam_rounded, size: 18, color: kWhiteColor70);
+      return const Icon(
+        Icons.public_rounded,
+        size: 22,
+        color: kWhiteColor70,
+      );
     }
     return SizedBox(
       width: size,
@@ -675,22 +694,22 @@ class _StreamCountBadge extends StatelessWidget {
         onPress: onPress,
         semanticsLabel: semanticsLabel,
         builder: (context, states, _) {
-          final hovered = states.contains(WidgetState.hovered);
           final focused = states.contains(WidgetState.focused);
+          // Web unboxed count: the pill's edge and fill are gone, so the
+          // numeral alone marks the group. Focus still draws a cyan ring.
           return _PressScale(
             child: Container(
               constraints: const BoxConstraints(minWidth: 20),
               height: 20,
               padding: const EdgeInsets.symmetric(horizontal: 4),
               alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color:
-                    hovered || focused
-                        ? kPrimaryColor.withValues(alpha: 0.18)
-                        : kBlack2Color,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: kPrimaryColor),
-              ),
+              foregroundDecoration:
+                  focused
+                      ? BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: kPrimaryColor, width: 2),
+                      )
+                      : null,
               child: Text(
                 '$count',
                 style: const TextStyle(
@@ -703,106 +722,6 @@ class _StreamCountBadge extends StatelessWidget {
             ),
           );
         },
-      ),
-    );
-  }
-}
-
-class _PinMenuButton extends StatefulWidget {
-  const _PinMenuButton({
-    required this.groupsBuilder,
-    required this.pins,
-    required this.onPin,
-    this.onMenuVisibilityChanged,
-  });
-
-  final List<BroadcastToolbarVideoGroup> Function(int capacity) groupsBuilder;
-  final List<String> pins;
-  final ValueChanged<String> onPin;
-  final ValueChanged<bool>? onMenuVisibilityChanged;
-
-  @override
-  State<_PinMenuButton> createState() => _PinMenuButtonState();
-}
-
-class _PinMenuButtonState extends State<_PinMenuButton>
-    with SingleTickerProviderStateMixin {
-  late final FPopoverController _controller = FPopoverController(vsync: this);
-  bool _menuReportedOpen = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller.addListener(_syncMenuVisibility);
-  }
-
-  @override
-  void dispose() {
-    _controller.removeListener(_syncMenuVisibility);
-    _reportMenuOpen(false);
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _syncMenuVisibility() {
-    final status = _controller.status;
-    _reportMenuOpen(
-      status == AnimationStatus.forward || status == AnimationStatus.completed,
-    );
-  }
-
-  void _reportMenuOpen(bool open) {
-    if (_menuReportedOpen == open) return;
-    _menuReportedOpen = open;
-    widget.onMenuVisibilityChanged?.call(open);
-  }
-
-  void _toggleMenu() {
-    final status = _controller.status;
-    if (status == AnimationStatus.completed ||
-        status == AnimationStatus.forward) {
-      unawaited(_controller.hide());
-      return;
-    }
-    _reportMenuOpen(true);
-    unawaited(_controller.show());
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: FPopover(
-        controller: _controller,
-        popoverAnchor: Alignment.bottomRight,
-        childAnchor: Alignment.topRight,
-        spacing: const FPortalSpacing(6),
-        popoverBuilder: (context, _) {
-          final groups = widget.groupsBuilder(20);
-          final entries = groups
-              .expand((group) => group.streams)
-              .toList(growable: false);
-          return _MenuSurface(
-            width: 260,
-            children: [
-              for (final stream in entries)
-                _MenuRow(
-                  label:
-                      '${stream.isAnalysis ? (stream.followed ? 'Unfollow author' : 'Follow author') : (widget.pins.contains(stream.id) ? 'Unpin' : 'Pin')} · ${broadcastToolbarStreamName(stream)}',
-                  selected: widget.pins.contains(stream.id),
-                  onTap: () {
-                    unawaited(_controller.hide());
-                    widget.onPin(stream.id);
-                  },
-                ),
-            ],
-          );
-        },
-        child: _IconAction(
-          label: '⋯',
-          tooltip: 'Manage stream pins (or right-click a flag)',
-          onPress: _toggleMenu,
-        ),
       ),
     );
   }
@@ -941,70 +860,6 @@ class _MenuRow extends StatelessWidget {
         },
       ),
     );
-  }
-}
-
-class _IconAction extends StatelessWidget {
-  const _IconAction({
-    super.key,
-    this.icon,
-    this.label,
-    required this.tooltip,
-    required this.onPress,
-    this.selected = false,
-  }) : assert(
-         (icon != null) != (label != null),
-         'Provide exactly one of icon or label',
-       );
-
-  final IconData? icon;
-  final String? label;
-  final String tooltip;
-  final VoidCallback onPress;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final button = FTheme(
-      data: FThemes.zinc.dark,
-      child: FTappable(
-        style: _withoutForuiBounce,
-        onPress: onPress,
-        semanticsLabel: tooltip.isEmpty ? null : tooltip,
-        builder: (context, states, _) {
-          final hovered = states.contains(WidgetState.hovered);
-          final focused = states.contains(WidgetState.focused);
-          final highlighted = focused || hovered;
-          // Web `.ce-video__icon-action`: square 34px, hairline border,
-          // primary rim/ink on hover, selected is ink only.
-          final border = highlighted ? kPrimaryColor : kDividerColor;
-          final foreground =
-              selected || highlighted ? kPrimaryColor : kWhiteColor70;
-          return _PressScale(
-            child: Container(
-              width: BroadcastVideoToolbar.button,
-              height: BroadcastVideoToolbar.button,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(border: Border.all(color: border)),
-              child:
-                  label != null
-                      ? Text(
-                        label!,
-                        style: TextStyle(
-                          fontSize: 18,
-                          height: 1,
-                          fontWeight: FontWeight.w600,
-                          color: foreground,
-                        ),
-                      )
-                      : Icon(icon, size: 18, color: foreground),
-            ),
-          );
-        },
-      ),
-    );
-    if (tooltip.isEmpty) return button;
-    return DesktopTooltip(message: tooltip, child: button);
   }
 }
 

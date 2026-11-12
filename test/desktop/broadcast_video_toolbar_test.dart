@@ -1,5 +1,6 @@
 import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_toolbar.dart';
+import 'package:chessever/theme/app_theme.dart';
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -90,7 +91,7 @@ void main() {
         home: Scaffold(
           body: Center(
             child: SizedBox(
-              width: 220,
+              width: 180,
               child: BroadcastVideoToolbar(
                 streams: <BroadcastVideoStream>[
                   stream(
@@ -202,7 +203,7 @@ void main() {
           body: Align(
             alignment: Alignment.topLeft,
             child: SizedBox(
-              width: 220,
+              width: 180,
               child: BroadcastVideoToolbar(
                 streams: <BroadcastVideoStream>[
                   stream(
@@ -238,7 +239,7 @@ void main() {
     expect(find.text('2'), findsOneWidget);
   });
 
-  testWidgets('language rail stays left of the pin and hide actions', (
+  testWidgets('video camera leads the rail and the pin menu is gone', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -288,13 +289,141 @@ void main() {
     );
     expect(scroll.clipBehavior, isNot(Clip.none));
 
+    final toggle = tester.getRect(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+    );
     final rail = tester.getRect(
       find.byKey(const ValueKey<String>('desktop-broadcast-video-languages')),
     );
-    final actions = tester.getRect(
+    // Web #890: the camera is a 38px lead-in slot, not a trailing action, so
+    // no scrollbar gutter or divider can push it off the flags' centre line.
+    expect(toggle.right, lessThanOrEqualTo(rail.left));
+    expect(toggle.width, BroadcastVideoToolbar.slot);
+    expect(
       find.byKey(const ValueKey<String>('desktop-broadcast-video-actions')),
+      findsNothing,
     );
-    expect(rail.right, lessThanOrEqualTo(actions.left));
-    expect(find.text('⋯'), findsOneWidget);
+    expect(find.text('⋯'), findsNothing);
+  });
+
+  testWidgets('the selected flag keeps a single unboxed cyan ring', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 260,
+              child: BroadcastVideoToolbar(
+                streams: <BroadcastVideoStream>[
+                  stream(
+                    id: 'en1',
+                    label: 'Board · English',
+                    countryCode: 'GB',
+                  ),
+                  stream(
+                    id: 'es1',
+                    label: 'Canal · Spanish',
+                    countryCode: 'ES',
+                  ),
+                ],
+                selectedId: 'en1',
+                visible: true,
+                pins: const <String>[],
+                onSelect: (_) {},
+                onToggle: () {},
+                onPin: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final decorations = tester
+        .widgetList<DecoratedBox>(
+          find.descendant(
+            of: find.byKey(
+              const ValueKey<String>(
+                'desktop-broadcast-video-language-stream:en1',
+              ),
+            ),
+            matching: find.byType(DecoratedBox),
+          ),
+        )
+        .map((box) => box.decoration)
+        .whereType<BoxDecoration>()
+        .toList();
+    final primaryRings =
+        decorations
+            .where(
+              (decoration) =>
+                  decoration.border != null &&
+                  (decoration.border! as Border).top.color == kPrimaryColor,
+            )
+            .toList();
+    expect(primaryRings, hasLength(1), reason: 'no second inset ring');
+    final ring = primaryRings.single;
+    expect(ring.shape, BoxShape.circle);
+    expect(ring.color, isNull, reason: 'the ring is not filled');
+    expect((ring.border! as Border).top.width, 1);
+    expect(
+      decorations.every((decoration) => decoration.color == null),
+      isTrue,
+      reason: 'the selected circle keeps no primary tint fill',
+    );
+  });
+
+  testWidgets('grouped counts are plain numerals, not pills', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 180,
+              child: BroadcastVideoToolbar(
+                streams: <BroadcastVideoStream>[
+                  stream(
+                    id: 'en1',
+                    label: 'Board · English',
+                    countryCode: 'GB',
+                  ),
+                  stream(
+                    id: 'en2',
+                    label: 'Studio · English',
+                    countryCode: 'US',
+                  ),
+                  stream(
+                    id: 'es1',
+                    label: 'Canal · Spanish',
+                    countryCode: 'ES',
+                  ),
+                ],
+                selectedId: 'en1',
+                visible: true,
+                pins: const <String>[],
+                onSelect: (_) {},
+                onToggle: () {},
+                onPin: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final badge = tester.widget<Container>(
+      find.ancestor(of: find.text('2'), matching: find.byType(Container)).first,
+    );
+    expect(badge.decoration, isNull, reason: 'no pill fill or edge');
+    expect(badge.foregroundDecoration, isNull);
+    final numeral = tester.widget<Text>(find.text('2'));
+    expect(numeral.style?.color, kPrimaryColor);
+    expect(numeral.style?.fontWeight, FontWeight.w800);
   });
 }

@@ -2151,21 +2151,17 @@ class _DepthChip extends StatelessWidget {
     }
     final visible = depth.clamp(0, 99).toInt();
     final label = visible > 0 ? 'd$visible' : '…';
+    // Web unboxed readout: no chip edge or fill, just the depth in the row's
+    // quiet ink. Kept at 28px so the header never shifts when it appears.
     return Container(
       height: 28,
       constraints: const BoxConstraints(minWidth: 28),
       alignment: Alignment.center,
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      decoration: BoxDecoration(
-        color: kBlack3Color,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: kDividerColor),
-      ),
       child: Text(
         label,
         style: TextStyle(
-          // Readable on the chip (about 1.9:1 before); still a step below
-          // the score beside it.
+          // Still a step below the score beside it.
           color: isEvaluating ? kWhiteColor70 : kLightGreyColor,
           fontSize: 10,
           fontWeight: FontWeight.w700,
@@ -2194,6 +2190,7 @@ class _EnginePictureInPictureButton extends StatelessWidget {
       message: tooltip,
       icon: Icons.picture_in_picture_alt_rounded,
       selected: selected,
+      unboxed: true,
       onPress: onPress,
     );
   }
@@ -2238,6 +2235,7 @@ class _EngineQuickToggle extends ConsumerWidget {
               ? Icons.power_settings_new_rounded
               : Icons.power_settings_new_outlined,
       selected: enabled,
+      unboxed: true,
       onPress: () {
         ref
             .read(engineSettingsProviderNew.notifier)
