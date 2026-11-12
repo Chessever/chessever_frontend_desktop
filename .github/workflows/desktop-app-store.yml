@@ -156,8 +156,11 @@ jobs:
             var="${part}_P12_B64"
             cert="$RUNNER_TEMP/store-${part}.p12"
             printf '%s' "${!var}" | base64 --decode > "$cert"
+            # productbuild signs the installer; without it on the key's access
+            # list macOS shows a hidden prompt and the job hangs until timeout.
             keychain add-certificates --path "$STORE_KEYCHAIN" \
-              --certificate "$cert" --certificate-password @env:MAC_APP_STORE_P12_PASSWORD
+              --certificate "$cert" --certificate-password @env:MAC_APP_STORE_P12_PASSWORD \
+              --allow-app codesign productsign productbuild
             rm -f "$cert"
           done
 

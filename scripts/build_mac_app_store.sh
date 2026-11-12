@@ -118,7 +118,7 @@ sign_code() {
 }
 # Sign nested native libraries first, followed by their containing frameworks.
 while IFS= read -r -d '' code; do
-  if file -b "$code" | rg -q 'Mach-O'; then sign_code "$code"; fi
+  if [[ "$(file -b "$code")" == *Mach-O* ]]; then sign_code "$code"; fi
 done < <(find "$APP/Contents/Frameworks" -type f -print0)
 while IFS= read -r -d '' framework; do sign_code "$framework"; done \
   < <(find "$APP/Contents/Frameworks" -depth -type d -name '*.framework' -print0)
