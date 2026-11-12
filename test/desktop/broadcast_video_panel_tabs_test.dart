@@ -1,4 +1,8 @@
 import 'dart:convert';
+import 'package:flutter/services.dart';
+
+import 'package:chessever/providers/game_video_sources_provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/state/broadcast_video_streams_provider.dart';
@@ -25,9 +29,64 @@ import 'package:webview_platform_interface/webview_platform_interface.dart';
 /// * only the 20s stop-grace blanks a background player; returning after
 ///   the grace reloads on the same controller.
 void main() {
-  setUpAll(() {
+  setUpAll(() async {
+    TestWidgetsFlutterBinding.ensureInitialized().defaultBinaryMessenger
+        .setMockMessageHandler(
+          'com.abandoft.pigeon.webview_all_windows.WindowsWebViewHostApi.ensureEnvironment',
+          (_) async =>
+              const StandardMessageCodec().encodeMessage(<Object?>[null]),
+        );
     WebViewPlatform.instance = _FakeWebViewPlatform();
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    await Supabase.initialize(
+      url: 'https://catalog.example.test',
+      anonKey: 'test-key',
+      httpClient: MockClient((request) async {
+        final rows =
+            request.url.queryParameters['id'] == 'eq.mirror-game'
+                ? <Object?>[
+                  <String, Object?>{
+                    'id': 'mirror-game',
+                    'tour_id': 'combined',
+                    'round_id': 'combined-r2',
+                    'player_white': 'White Player',
+                    'player_black': 'Black Player',
+                    'round': <String, Object?>{
+                      'starts_at': '2026-11-11T12:30:00Z',
+                    },
+                    'tour': <String, Object?>{
+                      'group_broadcast_id': 'event',
+                      'is_mirror': true,
+                    },
+                  },
+                ]
+                : <Object?>[
+                  <String, Object?>{
+                    'id':
+                        request.url.path.endsWith('/rounds')
+                            ? 'group-c-r2'
+                            : 'original-game',
+                    'tour_id': 'group-c',
+                    'round_id': 'group-c-r2',
+                    'player_white': 'White Player',
+                    'player_black': 'Black Player',
+                    'round': <String, Object?>{
+                      'starts_at': '2026-11-11T12:30:00Z',
+                    },
+                    'tour': <String, Object?>{
+                      'group_broadcast_id': 'event',
+                      'is_mirror': false,
+                    },
+                  },
+                ];
+        return http.Response(
+          jsonEncode(rows),
+          200,
+          headers: const {'content-type': 'application/json'},
+          request: request,
+        );
+      }),
+    );
   });
 
   setUp(_FakeWebViewPlatform.reset);
@@ -38,6 +97,78 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(milliseconds: 1));
   }
+
+  testWidgets('Combined plays the selected game original-group video', (
+    tester,
+  ) async {
+    addTearDown(() => disposeTree(tester));
+    final paths = <String>[];
+    // Theme matches the existing fake-player harness.
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gameVideoSourcesProvider.overrideWith((ref, key) async => []),
+          broadcastVideoStreamsClientProvider.overrideWithValue(
+            BroadcastVideoStreamsClient(
+              httpClient: MockClient((request) async {
+                paths.add(request.url.path);
+                final original = request.url.path.contains('/group-c-r2/');
+                return http.Response(
+                  jsonEncode({
+                    'streams':
+                        original
+                            ? [
+                              {
+                                'id': 'kick-commentary',
+                                'label': 'Commentary',
+                                'provider': 'kick',
+                                'sourceId': 'commentary',
+                                'url': 'https://kick.com/commentary',
+                                'language': 'en',
+                              },
+                            ]
+                            : [],
+                    'source':
+                        original ? {'scope': 'tour', 'id': 'group-c'} : null,
+                  }),
+                  200,
+                );
+              }),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: ThemeData.dark().copyWith(platform: TargetPlatform.android),
+          home: const Scaffold(
+            body: SizedBox(
+              width: 500,
+              child: BroadcastVideoPanel(
+                tourId: 'combined',
+                roundId: 'combined-r2',
+                gameId: 'mirror-game',
+                tournamentStorageId: 'event',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await _pumpUntilLoads(tester, 1);
+    expect(paths, contains('/api/broadcast/round/group-c-r2/video-streams'));
+    expect(
+      _FakeWebViewPlatform.controllers.single.loads.single,
+      broadcastVideoEmbedPageUri(
+        scope: 'tour',
+        scopeId: 'group-c',
+        streamId: 'kick-commentary',
+        play: true,
+      ),
+    );
+    expect(
+      find.byKey(const ValueKey<String>('desktop-broadcast-video-toggle')),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('tab switches keep every broadcast player loaded', (
     tester,

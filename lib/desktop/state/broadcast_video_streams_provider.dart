@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:chessever/desktop/services/broadcast_video_origin_resolver.dart';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -126,6 +129,76 @@ final broadcastVideoStreamsProvider = AsyncNotifierProvider.autoDispose.family<
   ResolvedBroadcastVideoStreams,
   BroadcastVideoScope
 >(BroadcastVideoStreamsNotifier.new);
+
+typedef BroadcastVideoGameKey = ({BroadcastVideoScope scope, String gameId});
+typedef BroadcastVideoOriginLookup =
+    Future<BroadcastVideoScope?> Function(
+      BroadcastVideoScope scope,
+      String gameId,
+    );
+
+final broadcastVideoOriginLookupProvider = Provider<BroadcastVideoOriginLookup>(
+  (ref) {
+    return (scope, gameId) => BroadcastVideoOriginResolver(
+      Supabase.instance.client,
+    ).resolve(scope, gameId);
+  },
+);
+
+/// Keep round polling shared between games. Only an unassigned mirror's
+/// exact original-game scope is looked up; an explicit empty/disabled
+/// assignment has a source and must never fall back.
+class BroadcastVideoGameStreamsNotifier
+    extends
+        AutoDisposeFamilyAsyncNotifier<
+          ResolvedBroadcastVideoStreams,
+          BroadcastVideoGameKey
+        > {
+  Future<BroadcastVideoScope?>? _originLookup;
+
+  @override
+  Future<ResolvedBroadcastVideoStreams> build(BroadcastVideoGameKey arg) async {
+    var current = true;
+    ref.onDispose(() => current = false);
+    try {
+      final direct = await ref.watch(
+        broadcastVideoStreamsProvider(arg.scope).future,
+      );
+      if (!current) return ResolvedBroadcastVideoStreams.empty;
+      if (direct.source != null ||
+          direct.streams.isNotEmpty ||
+          arg.gameId.isEmpty) {
+        return direct;
+      }
+      _originLookup ??= ref.read(broadcastVideoOriginLookupProvider)(
+        arg.scope,
+        arg.gameId,
+      );
+      final BroadcastVideoScope? origin;
+      try {
+        origin = await _originLookup;
+      } catch (_) {
+        // A failed lookup is retried by the existing round refresh, not a
+        // new polling loop. Successfully resolved identities are reused.
+        if (current) _originLookup = null;
+        rethrow;
+      }
+      if (!current) return ResolvedBroadcastVideoStreams.empty;
+      if (origin == null || origin == arg.scope) return direct;
+      return await ref.watch(broadcastVideoStreamsProvider(origin).future);
+    } on BroadcastVideoStreamsException catch (error) {
+      if (error.permanent) return ResolvedBroadcastVideoStreams.empty;
+      rethrow;
+    }
+  }
+}
+
+final broadcastVideoGameStreamsProvider = AsyncNotifierProvider.autoDispose
+    .family<
+      BroadcastVideoGameStreamsNotifier,
+      ResolvedBroadcastVideoStreams,
+      BroadcastVideoGameKey
+    >(BroadcastVideoGameStreamsNotifier.new);
 
 /// Session-scoped per-tournament preference: which stream, which legacy
 /// country fallback, and whether the panel is expanded. Mirrors the web's
