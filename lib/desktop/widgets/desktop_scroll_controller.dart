@@ -1,10 +1,12 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 
 /// Interpolates discrete wheel steps at the display's refresh rate. Touch and
-/// native trackpad drags keep Flutter's gesture physics; fine pixel deltas keep
-/// their direct response instead of acquiring a second layer of momentum.
+/// native trackpad drags keep Flutter's gesture physics; fine pixel deltas and
+/// browser trackpad scrolls keep their direct response instead of acquiring a
+/// second layer of momentum.
 class DesktopScrollController extends ScrollController {
   DesktopScrollController({
     super.initialScrollOffset,
@@ -54,10 +56,25 @@ class _DesktopScrollPosition extends ScrollPositionWithSingleContext {
     super.keepScrollOffset,
     super.oldPosition,
     super.debugLabel,
-  });
+  }) {
+    _ScrollInputKind.ensureRecording();
+  }
 
   @override
   void pointerScroll(double delta) {
+    if (_ScrollInputKind.lastWasTrackpad) {
+      // The direct path below drops any wheel step still easing. The web
+      // engine can tag the first wheel event of a trackpad swipe as a mouse
+      // wheel, so a step may be in flight when the swipe's trackpad deltas
+      // begin; carry its unplayed distance when it runs the same way.
+      final current = activity;
+      if (current is _WheelScrollActivity) {
+        final remaining = current.target - pixels;
+        if (remaining * delta > 0) delta += remaining;
+      }
+      super.pointerScroll(delta);
+      return;
+    }
     if (delta.abs() < 24 ||
         MediaQuery.maybeDisableAnimationsOf(context.storageContext) == true) {
       super.pointerScroll(delta);
@@ -76,6 +93,36 @@ class _DesktopScrollPosition extends ScrollPositionWithSingleContext {
       delta > 0 ? ScrollDirection.reverse : ScrollDirection.forward,
     );
     beginActivity(_WheelScrollActivity(this, target: target));
+  }
+}
+
+/// The device kind of the scroll event being delivered.
+///
+/// [ScrollPosition.pointerScroll] receives only a delta. In the browser a
+/// trackpad does not produce pan/zoom gestures: Chromium and Safari send its
+/// swipes, momentum included, as wheel events that Flutter's web engine tags
+/// [PointerDeviceKind.trackpad], often with deltas well over a wheel step's
+/// threshold. Easing each of those over 120 ms restarted an animation on every
+/// event of a fling, so the page trailed the fingers and stuttered. The
+/// browser has already smoothed these deltas, so they apply directly.
+///
+/// A global pointer route sees each event before Flutter resolves the pointer
+/// signal that calls [ScrollPosition.pointerScroll], so the recorded kind
+/// always belongs to the delta being applied.
+abstract final class _ScrollInputKind {
+  static bool _recording = false;
+  static bool lastWasTrackpad = false;
+
+  static void ensureRecording() {
+    if (_recording) return;
+    _recording = true;
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_record);
+  }
+
+  static void _record(PointerEvent event) {
+    if (event is PointerScrollEvent) {
+      lastWasTrackpad = event.kind == PointerDeviceKind.trackpad;
+    }
   }
 }
 

@@ -30,6 +30,8 @@ import 'package:chessever/screens/chessboard/widgets/player_first_row_detail_wid
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart'
+    show liveGameCardsPausedProvider;
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/atomic_countdown_text.dart';
@@ -822,8 +824,16 @@ class _LiveEvalScoreText extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final f = fen?.trim();
     if (f == null || f.isEmpty) return const SizedBox.shrink();
+    return _ScrollGatedEvalFallback(
+      fen: f,
+      allowed: allowStockfishFallback,
+      builder: (context, allowFallback) => _score(ref, f, allowFallback),
+    );
+  }
+
+  Widget _score(WidgetRef ref, String f, bool allowFallback) {
     final async =
-        allowStockfishFallback
+        allowFallback
             ? ref.watch(gameCardEvalWithStockfishFallbackProvider(f))
             : ref.watch(gameCardEvalCacheOnlyProvider(f));
     return async.maybeWhen(
@@ -996,13 +1006,18 @@ class _HorizontalEvalBar extends StatelessWidget {
           return RotatedBox(
             quarterTurns: 1,
             child: DesktopEvalMidpoint(
-              child: EvaluationBarWidgetForGames(
-                width: h,
-                height: w,
+              child: _ScrollGatedEvalFallback(
                 fen: f,
-                playerView: PlayerView.gridView,
-                allowStockfishFallback: allowStockfishFallback,
-                showText: false,
+                allowed: allowStockfishFallback,
+                builder:
+                    (context, allowFallback) => EvaluationBarWidgetForGames(
+                      width: h,
+                      height: w,
+                      fen: f,
+                      playerView: PlayerView.gridView,
+                      allowStockfishFallback: allowFallback,
+                      showText: false,
+                    ),
               ),
             ),
           );
@@ -1453,14 +1468,73 @@ class _EvalRail extends StatelessWidget {
     if (!hOk || f == null || f.isEmpty) {
       return const DesktopEvalMidpoint(child: _NoEvalSplit());
     }
-    return EvaluationBarWidgetForGames(
-      width: width,
-      height: height,
+    return _ScrollGatedEvalFallback(
       fen: f,
-      playerView: view,
-      allowStockfishFallback: allowStockfishFallback,
-      railDecorationBuilder: DesktopEvalMidpoint.behindLabel,
+      allowed: allowStockfishFallback,
+      builder:
+          (context, allowFallback) => EvaluationBarWidgetForGames(
+            width: width,
+            height: height,
+            fen: f,
+            playerView: view,
+            allowStockfishFallback: allowFallback,
+            railDecorationBuilder: DesktopEvalMidpoint.behindLabel,
+          ),
     );
+  }
+}
+
+/// Applies the app-wide "a feed is scrolling" pause to one eval leaf.
+///
+/// Feeds pause live cards while they scroll so cards flying past do not start
+/// local Stockfish work. That pause used to be part of every card's build
+/// input, so each scroll start and stop rebuilt every mounted card in the
+/// grid: players, clocks, mini board and all. It is read here instead, at the
+/// eval leaf, and only changes what this leaf shows when it matters:
+///
+///  * an eval that already resolved through the Stockfish fallback keeps
+///    showing it while scrolling, so the bar neither flickers nor rebuilds;
+///  * a position with no eval yet waits for the scroll to settle before it
+///    may start the engine, then this leaf alone rebuilds.
+///
+/// [allowed] is the card's own permission (visible tab, streaming on, not a
+/// static preview); the pause can only narrow it.
+class _ScrollGatedEvalFallback extends ConsumerStatefulWidget {
+  const _ScrollGatedEvalFallback({
+    required this.fen,
+    required this.allowed,
+    required this.builder,
+  });
+
+  final String fen;
+  final bool allowed;
+  final Widget Function(BuildContext context, bool allowFallback) builder;
+
+  @override
+  ConsumerState<_ScrollGatedEvalFallback> createState() =>
+      _ScrollGatedEvalFallbackState();
+}
+
+class _ScrollGatedEvalFallbackState
+    extends ConsumerState<_ScrollGatedEvalFallback> {
+  bool _allowFallback = false;
+
+  bool _decide({required bool paused}) {
+    if (!widget.allowed) return false;
+    if (!paused) return true;
+    final provider = gameCardEvalWithStockfishFallbackProvider(widget.fen);
+    // Only look at a fallback eval that already exists; reading one that
+    // does not would create it and start the engine mid-scroll.
+    return ref.exists(provider) && ref.read(provider).hasValue;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen<bool>(liveGameCardsPausedProvider, (_, paused) {
+      if (_decide(paused: paused) != _allowFallback) setState(() {});
+    });
+    _allowFallback = _decide(paused: ref.read(liveGameCardsPausedProvider));
+    return widget.builder(context, _allowFallback);
   }
 }
 

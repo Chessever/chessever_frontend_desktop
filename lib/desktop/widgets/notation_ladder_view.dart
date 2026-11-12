@@ -2420,7 +2420,9 @@ class _InlineNotationBlock extends StatelessWidget {
       final isVariationHead = depth > 0 && i == 0;
 
       final separatesPreviousWhiteMove =
-          i > 0 && ply.isOdd && notationVariationsAfterMove(line, i - 1).isNotEmpty;
+          i > 0 &&
+          ply.isOdd &&
+          notationVariationsAfterMove(line, i - 1).isNotEmpty;
       final prefix = _inlineMovePrefix(
         ply,
         isLineStart: i == 0,
@@ -2623,7 +2625,11 @@ class _InlineNotationBlock extends StatelessWidget {
         for (final placement in vars) {
           final v = placement.variationIndex;
           final variationLine = placement.line;
-          final variationPrefix = <int>[...pointerPrefix, placement.ownerIndex, v];
+          final variationPrefix = <int>[
+            ...pointerPrefix,
+            placement.ownerIndex,
+            v,
+          ];
           final variationHeadId = NotationPointer.encode(<int>[
             ...variationPrefix,
             0,
@@ -5079,8 +5085,11 @@ List<String> _cleanPgnComments(List<String>? comments) {
 String? _sourceLabelFromComments(List<String>? comments) {
   if (comments == null || comments.isEmpty) return null;
   for (final comment in comments) {
+    // Runs for every move on every step; most comments are only `[%clk]`.
+    if (!_mayHoldSourceDirective(comment)) continue;
     final match = _sourceDirectiveRegex.firstMatch(comment);
-    final label = match?.group(1)?.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final label =
+        match?.group(1)?.replaceAll(_sourceLabelWhitespace, ' ').trim();
     if (label != null && label.isNotEmpty) return label;
   }
   return null;
@@ -5099,6 +5108,17 @@ String _sourceMetadataDisplay(String sourceLabel) {
 String? _firstPgnComment(List<String>? comments) => firstPgnComment(comments);
 
 final _sourceDirectiveRegex = pgnSourceCreditDirective;
+final _sourceLabelWhitespace = RegExp(r'\s+');
+
+/// Cheap pre-check for [_sourceDirectiveRegex]: a `%src` tag, in any case.
+bool _mayHoldSourceDirective(String comment) {
+  var i = comment.indexOf('%');
+  while (i >= 0 && i + 3 < comment.length) {
+    if (comment.substring(i + 1, i + 4).toLowerCase() == 'src') return true;
+    i = comment.indexOf('%', i + 1);
+  }
+  return false;
+}
 
 /// Structured game-header payload encoded by the explorer/games-table when
 /// it inserts a continuation into the active board. Carries the data needed

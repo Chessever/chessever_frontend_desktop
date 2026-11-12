@@ -152,12 +152,30 @@ final _bareChesseverAnnotationResidue = RegExp(
 /// Parse helpers such as [parseChesseverAnnotationType] still read **raw**
 /// move comments — this is display-only.
 String cleanPgnCommentText(String comment) {
-  return comment
-      .replaceAll(_pgnMachineTagDirective, '')
-      .replaceAll(_bareChesseverAnnotationResidue, '')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
+  final cached = _cleanPgnCommentCache[comment];
+  if (cached != null) return cached;
+  final clean =
+      comment
+          .replaceAll(_pgnMachineTagDirective, '')
+          .replaceAll(_bareChesseverAnnotationResidue, '')
+          .replaceAll(_whitespaceRun, ' ')
+          .trim();
+  if (_cleanPgnCommentCache.length >= _kCleanPgnCommentCacheLimit) {
+    _cleanPgnCommentCache.clear();
+  }
+  _cleanPgnCommentCache[comment] = clean;
+  return clean;
 }
+
+final _whitespaceRun = RegExp(r'\s+');
+
+/// Cleaned text per raw comment. The notation view cleans every comment of
+/// every move on each step through a game, and a broadcast game carries a
+/// `[%clk]` comment on every move: three regex passes per move per arrow key,
+/// each one crossing into JavaScript on the web build. The result depends
+/// only on the comment text, so it is computed once.
+final Map<String, String> _cleanPgnCommentCache = <String, String>{};
+const int _kCleanPgnCommentCacheLimit = 8192;
 
 /// Cleaned prose comments for notation display (tags-only entries dropped).
 List<String> cleanPgnComments(Iterable<String>? comments) {

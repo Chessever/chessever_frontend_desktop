@@ -3,8 +3,13 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Future<void> _wheel(WidgetTester tester, Offset at, double delta) async {
-  final pointer = TestPointer(1, PointerDeviceKind.mouse);
+Future<void> _wheel(
+  WidgetTester tester,
+  Offset at,
+  double delta, {
+  PointerDeviceKind kind = PointerDeviceKind.mouse,
+}) async {
+  final pointer = TestPointer(1, kind);
   await tester.sendEventToBinding(pointer.hover(at));
   await tester.sendEventToBinding(pointer.scroll(Offset(0, delta)));
 }
@@ -65,6 +70,67 @@ void main() {
     final before = controller.offset;
     await _wheel(tester, const Offset(300, 200), 100);
     expect(controller.offset, before + 100);
+  });
+
+  testWidgets('browser trackpad scrolls apply directly at any delta', (
+    tester,
+  ) async {
+    // Chromium and Safari deliver trackpad swipes and their momentum as wheel
+    // events, which the web engine tags as trackpad input.
+    final controller = DesktopScrollController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(home: _list(controller: controller)));
+    await _wheel(
+      tester,
+      const Offset(300, 200),
+      60,
+      kind: PointerDeviceKind.trackpad,
+    );
+    expect(controller.offset, 60);
+    expect(controller.position.isScrollingNotifier.value, isFalse);
+
+    // A mouse wheel step afterwards is still eased.
+    await _wheel(tester, const Offset(300, 200), 100);
+    expect(controller.offset, 60);
+    await tester.pumpAndSettle();
+    expect(controller.offset, closeTo(160, 0.1));
+  });
+
+  testWidgets('a trackpad delta during an eased wheel step keeps that step', (
+    tester,
+  ) async {
+    // The web engine can tag a swipe's first wheel event as a mouse wheel and
+    // the rest as trackpad, so a trackpad delta can arrive mid-step.
+    final controller = DesktopScrollController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(home: _list(controller: controller)));
+    await _wheel(tester, const Offset(300, 200), 100);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(controller.offset, inExclusiveRange(0, 100));
+    await _wheel(
+      tester,
+      const Offset(300, 200),
+      60,
+      kind: PointerDeviceKind.trackpad,
+    );
+    expect(controller.offset, closeTo(160, 0.1));
+    await tester.pumpAndSettle();
+    expect(controller.offset, closeTo(160, 0.1));
+
+    // Opposite directions still drop the old step, as a reversal does.
+    await _wheel(tester, const Offset(300, 200), 100);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 30));
+    final midStep = controller.offset;
+    expect(midStep, inExclusiveRange(160, 260));
+    await _wheel(
+      tester,
+      const Offset(300, 200),
+      -40,
+      kind: PointerDeviceKind.trackpad,
+    );
+    expect(controller.offset, closeTo(midStep - 40, 0.1));
   });
 
   testWidgets('a jump cancels pending wheel motion and never resumes it', (

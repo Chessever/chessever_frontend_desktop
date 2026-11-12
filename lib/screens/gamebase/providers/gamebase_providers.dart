@@ -120,7 +120,8 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
   List<TimeControl> get availableTimeControls =>
       _localDatabaseTreeMode ||
               (_enabledLocalPlayerTreeId != null &&
-                  _enabledLocalPlayerTreeId == _localTreePlayerId(state.filters))
+                  _enabledLocalPlayerTreeId ==
+                      _localTreePlayerId(state.filters))
           ? TimeControl.values
           : gamebaseExplorerApiTimeControls;
 
@@ -998,7 +999,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       final targetPositionKey = _positionKeyForComparison(normalized);
       final sanitizedMoves = moves
           .map((m) => m.trim().toLowerCase())
-          .where((m) => RegExp(r'^[a-h][1-8][a-h][1-8][qrbn]?$').hasMatch(m))
+          .where((m) => _kGamebaseUciPattern.hasMatch(m))
           .toList(growable: false);
 
       final actualStartingFen =
@@ -2399,3 +2400,6 @@ final positionGamesProvider = FutureProvider.autoDispose
         rethrow;
       }
     });
+
+/// A UCI move, checked for every ply of the line on every step.
+final _kGamebaseUciPattern = RegExp(r'^[a-h][1-8][a-h][1-8][qrbn]?$');

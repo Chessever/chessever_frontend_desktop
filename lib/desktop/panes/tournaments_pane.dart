@@ -2614,6 +2614,13 @@ final _forYouNavigationBookmarkProvider =
 /// Sources:
 ///   - `forYouEventsProvider`         → paginated events
 ///   - `forYouEventSnapshotProvider`  → per-event games (lazily watched per row)
+/// The real For You feed for frame-cost tests, without the pane chrome and
+/// access gate around it.
+@visibleForTesting
+Widget buildDesktopForYouFeedForTesting({required String tabId}) {
+  return _ForYouFeed(tabId: tabId, onOpenTournament: (_) {});
+}
+
 class _ForYouFeed extends ConsumerStatefulWidget {
   const _ForYouFeed({
     super.key,
@@ -2827,6 +2834,14 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   void _setEventVisibility(String eventId, bool visible) {
     if (!mounted) return;
     if (_eventVisibility[eventId] == visible) return;
+    // Every row reports after its first frame. An unknown event already
+    // counts as visible, so recording that first "visible" report changes
+    // nothing the feed draws; rebuilding the whole list for it re-ran every
+    // mounted row each time a new row scrolled in.
+    if ((_eventVisibility[eventId] ?? true) == visible) {
+      _eventVisibility[eventId] = visible;
+      return;
+    }
     setState(() {
       _eventVisibility[eventId] = visible;
       if (!visible && _selection?.eventId == eventId) {
@@ -2852,33 +2867,36 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       }
       if (unchanged) return;
     }
-    setState(() {
-      _visibleGameIds[eventId] = List<String>.unmodifiable(gameIds);
-      final selection = _selection;
-      if (selection?.eventId == eventId && selection!.isGame) {
-        if (gameIds.isEmpty) {
-          _selection = _ForYouCardSelection(
-            eventId: eventId,
-            column: EventGameCardFocusColumn.event,
-          );
-        } else {
-          final savedIndex =
-              selection.gameId == null
-                  ? -1
-                  : gameIds.indexOf(selection.gameId!);
-          final resolvedIndex =
-              savedIndex >= 0
-                  ? savedIndex
-                  : selection.gameIndex.clamp(0, gameIds.length - 1).toInt();
-          _selection = _ForYouCardSelection(
-            eventId: eventId,
-            column: EventGameCardFocusColumn.game,
-            gameIndex: resolvedIndex,
-            gameId: gameIds[resolvedIndex],
-          );
-        }
+    // The reported ids feed keyboard navigation only; the list does not draw
+    // them. Rebuild the feed only when they move the selection, otherwise
+    // every row that scrolls in would rebuild every mounted row and card.
+    _visibleGameIds[eventId] = List<String>.unmodifiable(gameIds);
+    final selection = _selection;
+    _ForYouCardSelection? resolved;
+    if (selection?.eventId == eventId && selection!.isGame) {
+      if (gameIds.isEmpty) {
+        resolved = _ForYouCardSelection(
+          eventId: eventId,
+          column: EventGameCardFocusColumn.event,
+        );
+      } else {
+        final savedIndex =
+            selection.gameId == null ? -1 : gameIds.indexOf(selection.gameId!);
+        final resolvedIndex =
+            savedIndex >= 0
+                ? savedIndex
+                : selection.gameIndex.clamp(0, gameIds.length - 1).toInt();
+        resolved = _ForYouCardSelection(
+          eventId: eventId,
+          column: EventGameCardFocusColumn.game,
+          gameIndex: resolvedIndex,
+          gameId: gameIds[resolvedIndex],
+        );
       }
-    });
+    }
+    if (resolved != null && !resolved.matches(selection!)) {
+      setState(() => _selection = resolved);
+    }
     _persistNavigationBookmark();
     if (_restoreSelectionPending && _selection?.eventId == eventId) {
       WidgetsBinding.instance.addPostFrameCallback((_) {

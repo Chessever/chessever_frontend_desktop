@@ -1791,7 +1791,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     // matches what the provider stores.
     final sanitised = widget.lineUcis
         .map((m) => m.trim().toLowerCase())
-        .where((m) => RegExp(r'^[a-h][1-8][a-h][1-8][qrbn]?$').hasMatch(m))
+        .where((m) => _kExplorerUciPattern.hasMatch(m))
         .toList(growable: false);
     final scopeKey = widget.explorerScope?.identityKey ?? '';
     final localTreeKey = effectiveLocalTree?.treeId ?? '';
@@ -3495,3 +3495,6 @@ class _NotationKeyboardAreaState extends State<_NotationKeyboardArea> {
     );
   }
 }
+
+/// A UCI move, checked for every ply of the line on every step.
+final _kExplorerUciPattern = RegExp(r'^[a-h][1-8][a-h][1-8][qrbn]?$');

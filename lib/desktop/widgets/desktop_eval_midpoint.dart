@@ -59,14 +59,19 @@ class DesktopEvalLabelClearance extends CustomClipper<Path> {
 
   @override
   Path getClip(Size size) {
-    final rail = Path()..addRect(Offset.zero & size);
+    final railRect = Offset.zero & size;
+    final rail = Path()..addRect(railRect);
     final label = labelBounds;
     if (label == null) return rail;
-    return Path.combine(
-      PathOperation.difference,
-      rail,
-      Path()..addRect(label.inflate(gap)),
-    );
+    final hole = label.inflate(gap).intersect(railRect);
+    if (hole.width <= 0 || hole.height <= 0) return rail;
+    // The badge moves on every frame of the eval spring, so this runs at the
+    // display rate while the engine streams. A rail with the clamped hole
+    // under even-odd fill is the same region as `Path.combine(difference)`
+    // without a boolean path operation per frame.
+    return rail
+      ..fillType = PathFillType.evenOdd
+      ..addRect(hole);
   }
 
   @override

@@ -2827,7 +2827,6 @@ class LiveDesktopGameCard extends ConsumerWidget {
         viewSource == ChessboardView.forYou
             ? forYouEventBroadcastIdFromScopeId(effectiveLiveBatchKey?.scopeId)
             : null;
-    final liveCardsPaused = ref.watch(liveGameCardsPausedProvider);
     final shouldStream = ref.watch(shouldStreamProvider);
     var data = GameCardData.fromGamesTourModel(displayGame);
     final fallback = federationFallback?.trim();
@@ -2869,11 +2868,12 @@ class LiveDesktopGameCard extends ConsumerWidget {
       );
     }
 
+    // The feed-scrolling pause is deliberately not part of this value: the
+    // card's eval leaves apply it themselves (`_ScrollGatedEvalFallback` in
+    // desktop_game_card.dart). Folding it in here put it in the memo
+    // signature below, so every scroll start and stop rebuilt every card.
     final resolvedAllowStockfishFallback =
-        streamingEnabled &&
-        allowStockfishFallback &&
-        shouldStream &&
-        !liveCardsPaused;
+        streamingEnabled && allowStockfishFallback && shouldStream;
     // WEB PARITY (RoundGameRow.tsx:294 `railRowEqual`, RoundGamesList.tsx:396):
     // the card subtree is memoized on the exact fields it renders, so a
     // Realtime batch tick that only touches another board (or a flag/clock it
