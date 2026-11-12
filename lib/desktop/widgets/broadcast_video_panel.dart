@@ -596,7 +596,12 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
             ? const AsyncValue<ResolvedBroadcastVideoStreams>.data(
               ResolvedBroadcastVideoStreams.empty,
             )
-            : ref.watch(broadcastVideoStreamsProvider(_scope));
+            : ref.watch(
+              broadcastVideoGameStreamsProvider((
+                scope: _scope,
+                gameId: widget.gameId,
+              )),
+            );
     if (widget.active) _analysisRequested = true;
     final analyses = ref.watch(
       gameVideoSourcesProvider((
