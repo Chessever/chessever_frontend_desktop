@@ -38,6 +38,7 @@ class _EngineSettingsPopoverState extends ConsumerState<EngineSettingsPopover>
     final button = DesktopHeaderIconButton(
       message: 'Engine & board settings',
       icon: Icons.settings_outlined,
+      unboxed: true,
       onPress: _controller.toggle,
     );
     final popover = FTheme(

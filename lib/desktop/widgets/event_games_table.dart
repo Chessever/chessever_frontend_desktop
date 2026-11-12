@@ -7818,33 +7818,20 @@ class _GameRailCloseButtonState extends State<_GameRailCloseButton> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onClose,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              curve: Curves.easeOutCubic,
+            child: SizedBox(
               width: 22,
               height: 22,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color:
-                    _hover
-                        ? kWhiteColor.withValues(alpha: 0.10)
-                        : Colors.transparent,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color:
-                      _hover
-                          ? kWhiteColor.withValues(alpha: 0.22)
-                          : kDividerColor.withValues(alpha: 0.55),
+              child: Center(
+                // Web unboxed `.ce-gameslist__close`: the hairline edge and
+                // hover fill are gone; only the X's ink lifts on hover.
+                child: TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(end: _hover ? kWhiteColor : kWhiteColor70),
+                  duration: const Duration(milliseconds: 120),
+                  curve: Curves.easeOutCubic,
+                  builder:
+                      (context, color, _) =>
+                          Icon(Icons.close_rounded, size: 13, color: color),
                 ),
-              ),
-              // Glyph colour fades on the fill's clock instead of snapping.
-              child: TweenAnimationBuilder<Color?>(
-                tween: ColorTween(end: _hover ? kWhiteColor : kWhiteColor70),
-                duration: const Duration(milliseconds: 120),
-                curve: Curves.easeOutCubic,
-                builder:
-                    (context, color, _) =>
-                        Icon(Icons.close_rounded, size: 13, color: color),
               ),
             ),
           ),
