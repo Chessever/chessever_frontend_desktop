@@ -1,0 +1,245 @@
+# Web app: build the Wasm app (lib/web/web_main.dart) with a chosen Flutter
+# release and deploy it as the chessever-app Worker, which serves
+# app.chessever.com and, through the chessever.com Worker, chessever.com/webapp/.
+# CI port of scripts/build_web.sh followed by scripts/deploy_web.sh; both run
+# unchanged.
+#
+# The Flutter release is an input because the web renderer can need a newer
+# engine than the desktop apps: 3.51.0-0.1.pre carries the multi-threaded
+# Skwasm fix (flutter/flutter#194139, "Wasm worker futex semaphores") for the
+# text-layout/glyph-raster race in 3.50.0 (flutter/flutter#193695). The page is
+# cross-origin isolated (web/_headers), so Chrome runs that renderer.
+#
+# Manual runs only. Building is allowed from any branch; deploying runs only
+# from main, in the `release` environment, which holds CLOUDFLARE_API_TOKEN
+# (a token that can deploy Workers on the ChessEver account) and
+# CLOUDFLARE_ACCOUNT_ID. The build uses only the public client configuration
+# that ships inside the app anyway (CLAUDE.md §2.12).
+name: Web deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      flutter_version:
+        description: Flutter release to build with
+        type: string
+        default: 3.51.0-0.1.pre
+      flutter_channel:
+        description: Channel of that release
+        type: choice
+        options:
+          - beta
+          - stable
+        default: beta
+      deploy:
+        description: Deploy to app.chessever.com (unchecked keeps build/web as a run artifact)
+        type: boolean
+        default: true
+      summary:
+        description: Deployment message summary (defaults to the head commit subject)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# A deploy replaces the live Worker version, so never run two at once.
+concurrency:
+  group: web-deploy
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CHESSEVER_CLOUDFLARE_API_BASE: ${{ vars.CHESSEVER_CLOUDFLARE_API_BASE }}
+
+jobs:
+  build:
+    name: Build web (Flutter ${{ inputs.flutter_version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      tag: ${{ steps.identity.outputs.tag }}
+      message: ${{ steps.identity.outputs.message }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+        with:
+          channel: ${{ inputs.flutter_channel }}
+          flutter-version: ${{ inputs.flutter_version }}
+          cache: true
+
+      - name: Validate public client configuration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python scripts/ci/validate_client_config.py
+
+      - name: Show Flutter version
+        run: flutter --version
+
+      - name: Get Flutter packages
+        run: flutter pub get
+
+      - name: Write the public web configuration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SENTRY_FLUTTER: ${{ secrets.SENTRY_FLUTTER }}
+        run: |
+          bash ./scripts/ci/mask_dart_defines.sh SUPABASE_URL SUPABASE_ANON_KEY SENTRY_FLUTTER
+          # The same keys and values as the hand-run build's config file; the
+          # Gamebase proxy is the Supabase edge function every build defaults to.
+          python3 - "$RUNNER_TEMP/web_public_config.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          supabase = os.environ['SUPABASE_URL'].rstrip('/')
+          config = {
+              'SUPABASE_URL': supabase,
+              'SUPABASE_ANON_KEY': os.environ['SUPABASE_ANON_KEY'],
+              'SENTRY_FLUTTER': os.environ['SENTRY_FLUTTER'],
+              'CHESSEVER_CLOUDFLARE_API_BASE': os.environ['CHESSEVER_CLOUDFLARE_API_BASE'],
+              'ANALYSIS_API_BASE': 'https://chessever-analysis.young-sun-69a8.workers.dev',
+              'GAMEBASE_PROXY_BASE': supabase + '/functions/v1/gamebase-proxy',
+          }
+          missing = sorted(key for key, value in config.items() if not value)
+          if missing:
+              raise SystemExit(f'Missing web configuration: {missing}')
+          with open(sys.argv[1], 'w') as out:
+              json.dump(config, out)
+          print('Web configuration keys:', ', '.join(sorted(config)))
+          PY
+
+      - name: Build web
+        timeout-minutes: 30
+        run: WEB_PUBLIC_CONFIG="$RUNNER_TEMP/web_public_config.json" bash scripts/build_web.sh
+
+      - name: Record the build identity
+        id: identity
+        env:
+          SUMMARY: ${{ inputs.summary }}
+          FLUTTER_RELEASE: ${{ inputs.flutter_version }}
+        run: |
+          version="$(sed -n 's/^version: *//p' pubspec.yaml | head -n 1)"
+          built="$(python3 -c 'import json; d = json.load(open("build/web/version.json")); print(d["version"] + "+" + d["build_number"])')"
+          if [ "$built" != "$version" ]; then
+            echo "::error::build/web/version.json is $built, pubspec.yaml is $version"
+            exit 1
+          fi
+          summary="${SUMMARY:-$(git log -1 --format=%s)}"
+          summary="${summary//;/,}"
+          message="${summary:0:120}; $(git rev-parse --short=12 HEAD); $version; webapp only; Flutter $FLUTTER_RELEASE (CI)"
+          {
+            echo "version=$version"
+            echo "tag=${version%%+*}"
+            echo "message=$message"
+          } >> "$GITHUB_OUTPUT"
+          echo "Built $version: $message"
+          du -sh build/web
+
+      - name: Keep build/web
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-build
+          path: build/web
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy to app.chessever.com
+    needs: build
+    if: inputs.deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    steps:
+      - name: Require the production branch
+        env:
+          DEPLOY_REF: ${{ github.ref }}
+        run: |
+          if [ "$DEPLOY_REF" != refs/heads/main ]; then
+            echo '::error::Web deploys must run from main.'
+            exit 1
+          fi
+
+      - name: Require Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is not set in the release environment"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch build/web
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-build
+          path: build/web
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TAG: ${{ needs.build.outputs.tag }}
+          MESSAGE: ${{ needs.build.outputs.message }}
+        run: bash scripts/deploy_web.sh --tag "$TAG" --message "$MESSAGE"
+
+      - name: Verify the active version
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TAG: ${{ needs.build.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          # `deployments status` names the active version with its tag. (Not
+          # `versions view`: it lists the Worker's secret names, and this
+          # repository's Actions logs are public.)
+          status="$(npx --yes wrangler@4 deployments status -c wrangler.web.jsonc)"
+          echo "$status"
+          if ! printf '%s\n' "$status" | grep -q '(100%)'; then
+            echo '::error::the newest version is not serving all traffic'
+            exit 1
+          fi
+          if ! printf '%s\n' "$status" | grep -qE "Tag:[[:space:]]+$TAG\$"; then
+            echo "::error::the active version is not tagged $TAG"
+            exit 1
+          fi
+          # Cloudflare bot protection may refuse requests from CI; the Worker
+          # version check above is the authoritative one.
+          for attempt in 1 2 3 4 5 6; do
+            served="$(curl -fsS -A 'ChessEver web deploy check' "https://app.chessever.com/version.json?ci=$GITHUB_RUN_ID" 2>/dev/null || true)"
+            if [ -n "$served" ]; then
+              echo "Served version.json: $served"
+              python3 -c 'import json, os, sys; d = json.loads(sys.argv[1]); v = d["version"] + "+" + d["build_number"]; sys.exit(0 if v == os.environ["VERSION"] else "served " + v + ", expected " + os.environ["VERSION"])' "$served"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::app.chessever.com/version.json was not readable from CI; the active Worker version is $TAG"
