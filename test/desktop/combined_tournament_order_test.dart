@@ -138,8 +138,8 @@ void main() {
       );
     }
 
-    test('a category that has not started lists its rounds as its Games tab '
-        'does: latest first', () {
+    test('a category that has not started lists its rounds soonest first, '
+        'as the phone and the web do', () {
       final upcoming = source(
         'upcoming',
         _now.add(const Duration(days: 1)),
@@ -153,10 +153,11 @@ void main() {
         liveRoundIds: const [],
         now: _now,
       );
-      // sortRoundsForDisplay keeps future rounds descending on desktop
-      // (test/tour_detail_round_ordering_test.dart).
+      // The desktop Games tab lists future rounds latest first
+      // (test/tour_detail_round_ordering_test.dart); Combined turns that run
+      // around so all three platforms read Round 1 to Round 10.
       expect(sections.map((section) => section.round.name), [
-        for (var n = 10; n >= 1; n--) 'Round $n',
+        for (var n = 1; n <= 10; n++) 'Round $n',
       ]);
     });
 
@@ -202,11 +203,11 @@ void main() {
             liveRoundIds: const [],
             now: _now,
           );
-          // Each group as its Games tab orders it: Round 5 leads because
-          // Round 4 is fully played, then the played rounds, then the other
-          // future rounds. The finished Blitz stays whole, below.
+          // Round 5 leads because Round 4 is fully played, then the played
+          // rounds, then the other future rounds soonest first. The
+          // finished Blitz stays whole, below.
           expect(sections.map((section) => section.round.id), [
-            for (final n in [5, 4, 3, 2, 1, 10, 9, 8, 7, 6]) ...[
+            for (final n in [5, 4, 3, 2, 1, 6, 7, 8, 9, 10]) ...[
               'a-$n',
               'b-$n',
             ],
@@ -217,7 +218,7 @@ void main() {
             eventId: 'festival',
           );
           expect(buckets.take(10).map((bucket) => bucket.round.name), [
-            for (final n in [5, 4, 3, 2, 1, 10, 9, 8, 7, 6]) 'Round $n',
+            for (final n in [5, 4, 3, 2, 1, 6, 7, 8, 9, 10]) 'Round $n',
           ]);
           expect(buckets.first.sources.map((section) => section.roundId), [
             'a-5',
