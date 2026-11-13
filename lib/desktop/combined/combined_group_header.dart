@@ -24,29 +24,31 @@ class CombinedGroupHeader extends StatelessWidget {
           (context, states, child) => Container(
             constraints: const BoxConstraints(minHeight: 44),
             decoration: BoxDecoration(
-              color: states.contains(WidgetState.hovered) ? kBlack3Color : null,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(4),
               border:
                   states.contains(WidgetState.focused)
                       ? Border.all(color: kPrimaryColor)
                       : null,
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
             child: Row(
               children: [
                 Icon(
                   expanded ? Icons.expand_more : Icons.chevron_right,
-                  size: 18,
+                  size: 14,
                   color: kWhiteColor70,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     label,
-                    style: const TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
+                    style: TextStyle(
+                      color:
+                          states.contains(WidgetState.hovered)
+                              ? kWhiteColor
+                              : kWhiteColor70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
