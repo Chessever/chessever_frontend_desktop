@@ -106,7 +106,7 @@ List<String> _order(List<CombinedRoundSection> sections) => [
 ];
 
 void main() {
-  group('Combined schedule blocks match web', () {
+  group('Combined blocks', () {
     ({
       CombinedCategory category,
       List<Round> rounds,
@@ -138,7 +138,8 @@ void main() {
       );
     }
 
-    test('future rounds ascend numerically through Round 10', () {
+    test('a category that has not started lists its rounds as its Games tab '
+        'does: latest first', () {
       final upcoming = source(
         'upcoming',
         _now.add(const Duration(days: 1)),
@@ -152,13 +153,15 @@ void main() {
         liveRoundIds: const [],
         now: _now,
       );
+      // sortRoundsForDisplay keeps future rounds descending on desktop
+      // (test/tour_detail_round_ordering_test.dart).
       expect(sections.map((section) => section.round.name), [
-        for (var n = 1; n <= 10; n++) 'Round $n',
+        for (var n = 10; n >= 1; n--) 'Round $n',
       ]);
     });
 
     test(
-      'parallel groups stay complete before older Blitz, without mutating sources',
+      'parallel groups stay one block above the older Blitz, without mutating sources',
       () {
         final first = _now.subtract(const Duration(days: 3, hours: 12));
         final a = source('a', first, 10, 4);
@@ -199,8 +202,11 @@ void main() {
             liveRoundIds: const [],
             now: _now,
           );
+          // Each group as its Games tab orders it: Round 5 leads because
+          // Round 4 is fully played, then the played rounds, then the other
+          // future rounds. The finished Blitz stays whole, below.
           expect(sections.map((section) => section.round.id), [
-            for (final n in [4, 3, 2, 1, 5, 6, 7, 8, 9, 10]) ...[
+            for (final n in [5, 4, 3, 2, 1, 10, 9, 8, 7, 6]) ...[
               'a-$n',
               'b-$n',
             ],
@@ -211,11 +217,14 @@ void main() {
             eventId: 'festival',
           );
           expect(buckets.take(10).map((bucket) => bucket.round.name), [
-            for (final n in [4, 3, 2, 1, 5, 6, 7, 8, 9, 10]) 'Round $n',
+            for (final n in [5, 4, 3, 2, 1, 10, 9, 8, 7, 6]) 'Round $n',
           ]);
           expect(buckets.first.sources.map((section) => section.roundId), [
-            'a-4',
-            'b-4',
+            'a-5',
+            'b-5',
+          ]);
+          expect(buckets.skip(10).map((bucket) => bucket.round.name), [
+            for (final n in [5, 4, 3, 2, 1]) 'blitz · Round $n',
           ]);
           expect(roundsByTourId, beforeRounds);
           expect(gamesByTourId, beforeGames);
@@ -224,7 +233,7 @@ void main() {
     );
 
     test(
-      'whole schedules merge transitively even before all pairings arrive',
+      'the block in play leads, finished blocks follow, unstarted ones wait',
       () {
         final a = source('a', _now.subtract(const Duration(days: 6)), 9, 5);
         final b = source('b', _now.add(const Duration(days: 1)), 4, 0);
@@ -252,11 +261,13 @@ void main() {
           liveRoundIds: const [],
           now: _now,
         );
+        // a has rounds still on its schedule; the Blitz is over; b and c
+        // have only published pairings.
         expect(sections.map((section) => section.round.id), [
           'a-5',
+          'blitz-1',
           'b-1',
           'c-1',
-          'blitz-1',
         ]);
       },
     );
@@ -463,7 +474,7 @@ void main() {
     });
 
     test(
-      'equal round starts and ratings use source identity; unrated last',
+      'equal ratings: the category that starts later, then picker order; unrated last',
       () {
         final tied = [
           _category('Unrated', order: 0, startsAt: r3),
@@ -496,12 +507,12 @@ void main() {
 
         expect(
           [for (final section in sections) section.category.label],
-          ['Top', 'Early', 'Late', 'Late too', 'Unrated'],
+          ['Top', 'Late', 'Late too', 'Early', 'Unrated'],
         );
       },
     );
 
-    test('a category\'s published pairings wait below its round in play', () {
+    test('a round card follows the strongest category that plays it', () {
       final sections = buildCombinedRoundSections(
         categories: categories.take(2).toList(),
         gamesByTourId: {
@@ -536,16 +547,17 @@ void main() {
         now: _now,
       );
 
-      // Both sources' future pairings follow the rounds already played.
+      // Group B has finished Round 2, so its Round 3 pairings lead, as in
+      // its own Games tab. Group A joins each round card it plays in.
       expect(_order(sections), [
-        'Group B Round 2',
-        'Group A Round 2',
         'Group B Round 3',
         'Group A Round 3',
+        'Group B Round 2',
+        'Group A Round 2',
       ]);
     });
 
-    test('future pairings stay below played rounds between rounds', () {
+    test('between rounds the next round leads, every category in it', () {
       final sections = buildCombinedRoundSections(
         categories: categories.take(2).toList(),
         gamesByTourId: {
@@ -568,12 +580,12 @@ void main() {
       );
 
       expect(_order(sections), [
+        'Group B Round 3',
+        'Group A Round 3',
         'Group B Round 2',
         'Group A Round 2',
         'Group B Round 1',
         'Group A Round 1',
-        'Group B Round 3',
-        'Group A Round 3',
       ]);
     });
 
@@ -723,6 +735,230 @@ void main() {
         now: _now,
       );
       expect(_order(sections), ['Group A Round 1']);
+    });
+  });
+
+  group('Combined blocks keep each event together', () {
+    // Far from today in both directions, so every round is plainly over or
+    // plainly ahead at the fixed clock below.
+    final played = DateTime.utc(2020, 1, 2, 14);
+    final dayBefore = DateTime.utc(2020, 1, 1, 17);
+    final dayAfter = DateTime.utc(2020, 1, 3, 17);
+    final next = DateTime.utc(2100, 1, 1, 14);
+    final later = DateTime.utc(2100, 1, 2, 14);
+    final muchLater = DateTime.utc(2100, 3, 1, 14);
+    final today = DateTime.utc(2026, 11, 13, 12);
+
+    GamesTourModel done(String tourId, String round) =>
+        _game('$tourId-$round', tourId: tourId, roundId: '$tourId-$round');
+    GamesTourModel pairing(String tourId, String round) => _game(
+      '$tourId-$round',
+      tourId: tourId,
+      roundId: '$tourId-$round',
+      status: GameStatus.ongoing,
+      lastMove: null,
+    );
+
+    test('a finished side event never splits the block in play', () {
+      final groups = ['Group A', 'Group B'];
+      final sections = buildCombinedRoundSections(
+        categories: [
+          _category('Group A', avgElo: 2650, order: 0),
+          _category('Group B', avgElo: 2700, order: 1),
+          // Strongest and unstarted last: neither moves a block.
+          _category('Blitz Tiebreak', avgElo: 2800, order: 2),
+          _category('Final', avgElo: 2750, order: 3),
+        ],
+        gamesByTourId: {
+          for (final tourId in groups)
+            tourId: [
+              done(tourId, 'r1'),
+              pairing(tourId, 'r2'),
+              pairing(tourId, 'r3'),
+            ],
+          'Blitz Tiebreak': [done('Blitz Tiebreak', 'r1')],
+          'Final': [pairing('Final', 'r1')],
+        },
+        roundsByTourId: {
+          for (final tourId in groups)
+            tourId: [
+              _round('$tourId-r1', tourId, 'Round 1', played),
+              _round('$tourId-r2', tourId, 'Round 2', next),
+              _round('$tourId-r3', tourId, 'Round 3', later),
+            ],
+          'Blitz Tiebreak': [
+            _round('Blitz Tiebreak-r1', 'Blitz Tiebreak', 'Round 1', dayBefore),
+          ],
+          'Final': [_round('Final-r1', 'Final', 'Round 1', muchLater)],
+        },
+        liveRoundIds: const <String>[],
+        now: today,
+      );
+
+      expect(_order(sections), [
+        // The groups, exactly as one of them alone: next round on top,
+        // played rounds, the other future rounds.
+        'Group B Round 2',
+        'Group A Round 2',
+        'Group B Round 1',
+        'Group A Round 1',
+        'Group B Round 3',
+        'Group A Round 3',
+        // Then the finished event, whole.
+        'Blitz Tiebreak Round 1',
+        // A block not started yet waits at the bottom.
+        'Final Round 1',
+      ]);
+    });
+
+    test('with nothing in play the next block to start leads; finished '
+        'blocks follow, latest first', () {
+      final sections = buildCombinedRoundSections(
+        categories: [
+          _category('Group A', avgElo: 2650, order: 0),
+          _category('Blitz Tiebreak', avgElo: 2800, order: 1),
+          _category('Final', avgElo: 2600, order: 2),
+          _category('Bronze', avgElo: 2500, order: 3),
+        ],
+        gamesByTourId: {
+          'Group A': [done('Group A', 'r1')],
+          'Blitz Tiebreak': [done('Blitz Tiebreak', 'r1')],
+          'Final': [pairing('Final', 'r1')],
+          'Bronze': [pairing('Bronze', 'r1')],
+        },
+        roundsByTourId: {
+          'Group A': [_round('Group A-r1', 'Group A', 'Round 1', played)],
+          'Blitz Tiebreak': [
+            _round('Blitz Tiebreak-r1', 'Blitz Tiebreak', 'Round 1', dayBefore),
+          ],
+          'Final': [_round('Final-r1', 'Final', 'Round 1', next)],
+          'Bronze': [_round('Bronze-r1', 'Bronze', 'Round 1', muchLater)],
+        },
+        liveRoundIds: const <String>[],
+        now: today,
+      );
+
+      expect(_order(sections), [
+        'Final Round 1',
+        'Group A Round 1',
+        'Blitz Tiebreak Round 1',
+        'Bronze Round 1',
+      ]);
+    });
+
+    test('a block with a round still on the schedule is in play, even '
+        'before its pairings are out', () {
+      final sections = buildCombinedRoundSections(
+        categories: [
+          _category('Group A', avgElo: 2650, order: 0),
+          _category('Side Blitz', avgElo: 2600, order: 1),
+        ],
+        gamesByTourId: {
+          'Group A': [done('Group A', 'r1')],
+          'Side Blitz': [done('Side Blitz', 'r1')],
+        },
+        roundsByTourId: {
+          'Group A': [
+            _round('Group A-r1', 'Group A', 'Round 1', played),
+            // No boards yet.
+            _round('Group A-r2', 'Group A', 'Round 2', next),
+          ],
+          'Side Blitz': [
+            _round('Side Blitz-r1', 'Side Blitz', 'Round 1', dayAfter),
+          ],
+        },
+        liveRoundIds: const <String>[],
+        now: today,
+      );
+
+      // The side event started later, but it is over.
+      expect(_order(sections), ['Group A Round 1', 'Side Blitz Round 1']);
+    });
+
+    test('same round name on another day is a round of its own', () {
+      final sections = buildCombinedRoundSections(
+        categories: [
+          _category('Group A', avgElo: 2650, order: 0),
+          _category('Group B', avgElo: 2700, order: 1),
+          _category('Blitz', avgElo: 2800, order: 2),
+        ],
+        gamesByTourId: {
+          for (final tourId in ['Group A', 'Group B', 'Blitz'])
+            tourId: [done(tourId, 'r1')],
+        },
+        roundsByTourId: {
+          'Group A': [_round('Group A-r1', 'Group A', 'Round 1', played)],
+          'Group B': [_round('Group B-r1', 'Group B', 'Round 1', played)],
+          'Blitz': [_round('Blitz-r1', 'Blitz', 'Round 1', dayBefore)],
+        },
+        liveRoundIds: const <String>[],
+        now: today,
+      );
+      expect(_order(sections), [
+        'Group B Round 1',
+        'Group A Round 1',
+        'Blitz Round 1',
+      ]);
+      final buckets = buildCombinedRoundBuckets(sections, eventId: 'event');
+      expect(buckets.map((bucket) => bucket.round.name), [
+        'Round 1',
+        'Blitz · Round 1',
+      ]);
+      expect(buckets.first.sources.map((source) => source.label), [
+        'Group B',
+        'Group A',
+      ]);
+    });
+
+    test('rounds listed before their boards load are placed by schedule', () {
+      final sections = buildCombinedRoundSections(
+        categories: [
+          _category('Group A', avgElo: 2650, order: 0),
+          _category('Group B', avgElo: 2700, order: 1),
+        ],
+        gamesByTourId: const {},
+        roundsByTourId: {
+          for (final tourId in ['Group A', 'Group B'])
+            tourId: [
+              _round('$tourId-r1', tourId, 'Round 1', dayBefore),
+              _round('$tourId-r2', tourId, 'Round 2', played),
+              _round('$tourId-r3', tourId, 'Round 3', next),
+            ],
+        },
+        liveRoundIds: const <String>[],
+        includeEmptyRounds: true,
+        now: today,
+      );
+      expect(_order(sections), [
+        'Group B Round 2',
+        'Group A Round 2',
+        'Group B Round 1',
+        'Group A Round 1',
+        'Group B Round 3',
+        'Group A Round 3',
+      ]);
+    });
+  });
+
+  group('combinedCardLabel', () {
+    test('a card with one category names it', () {
+      expect(combinedCardLabel(['Blitz Tiebreak']), 'Blitz Tiebreak');
+    });
+
+    test('a card names what its categories share, cut at a separator', () {
+      expect(
+        combinedCardLabel([
+          'Group Stage | A',
+          'Group Stage | B',
+          'Group Stage | C',
+        ]),
+        'Group Stage',
+      );
+    });
+
+    test('categories that share nothing leave the plain round', () {
+      expect(combinedCardLabel(['Open', 'Women']), isNull);
+      expect(combinedCardLabel(['Group A', 'Group B']), isNull);
     });
   });
 
