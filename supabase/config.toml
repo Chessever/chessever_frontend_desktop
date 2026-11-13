@@ -13,3 +13,6 @@ verify_jwt = false
 verify_jwt = false
 [functions.account-data-cleanup]
 verify_jwt = false
+# Authenticates with its own APPLE_OAUTH_ROTATION_SECRET bearer (cron caller).
+[functions.apple-oauth-secret-rotate]
+verify_jwt = false
