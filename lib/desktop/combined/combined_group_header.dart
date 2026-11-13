@@ -22,6 +22,7 @@ class CombinedGroupHeader extends StatelessWidget {
       semanticsLabel: label,
       builder:
           (context, states, child) => Container(
+            margin: EdgeInsets.only(bottom: expanded ? 8 : 0),
             constraints: const BoxConstraints(minHeight: 44),
             foregroundDecoration: const BoxDecoration(
               border: Border(
