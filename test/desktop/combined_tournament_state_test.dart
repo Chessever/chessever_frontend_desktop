@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/combined/combined_hall_provider.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
 import 'package:chessever/repository/supabase/round/round_repository.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
@@ -116,34 +118,83 @@ ProviderContainer _container({
     combinedTournamentStoreProvider.overrideWithValue(store ?? MemoryStore()),
     combinedTournamentCategoriesProvider.overrideWithValue(_categories),
     selectedBroadcastModelProvider.overrideWith((ref) => _event),
-    combinedTournamentTourGamesProvider.overrideWith(
-      (ref, id) =>
-          pendingB && id == 'b'
-              ? const AsyncLoading()
-              : failB && id == 'b'
-              ? AsyncError(StateError('offline'), StackTrace.current)
-              : AsyncData([
-                _game(
-                  '$id-1',
-                  id,
-                  live: id == 'b',
-                  white: id == 'b' ? 'Magnus' : 'White',
-                ),
-                _game('$id-2', id),
-                _game('$id-3', id),
-              ]),
-    ),
-    combinedTournamentRoundsProvider.overrideWith(
-      (ref, ids) async => {
-        for (final id in ids.split(',')) id: [_round(id)],
-      },
+    combinedHallProvider.overrideWith(
+      (ref, ids) => CombinedHall(
+        ref,
+        ids,
+        backgroundDelay: Duration.zero,
+        publishDelay: Duration.zero,
+        readSource: (id) async {
+          if (pendingB && id == 'b') return Completer<List<Round>>().future;
+          if (failB && id == 'b') throw StateError('offline');
+          return [_round(id)];
+        },
+        readPage:
+            (round, offset, limit) async =>
+                offset > 0
+                    ? []
+                    : [
+                      _row(
+                        '${round.tourId}-1',
+                        round.tourId,
+                        live: round.tourId == 'b',
+                        white: round.tourId == 'b' ? 'Magnus' : 'White',
+                      ),
+                      _row('${round.tourId}-2', round.tourId),
+                      _row('${round.tourId}-3', round.tourId),
+                    ],
+      ),
     ),
     liveRoundsIdProvider.overrideWith((ref) => Stream.value(const [])),
-    combinedTournamentDisplayModeProvider.overrideWithValue(display),
+    combinedTournamentDisplayModeProvider.overrideWith((ref) => display),
   ],
 );
 
+Future<void> _settleHall() async {
+  for (var i = 0; i < 20; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+}
+
 void main() {
+  test(
+    'a focused board expands a single-source hall preview to the full Combined rail',
+    () async {
+      final full = [
+        for (final id in ['a', 'b'])
+          TournamentGameSummary.fromGamesTourModel(_game('$id-1', id)),
+      ];
+      var requests = 0;
+      final c = ProviderContainer(
+        overrides: [
+          selectedBroadcastModelProvider.overrideWith((ref) => _event),
+          combinedTournamentCategoriesProvider.overrideWithValue(_categories),
+          combinedTournamentStoreProvider.overrideWithValue(MemoryStore()),
+          combinedTournamentLinkProvider.overrideWith((ref, id) async {
+            requests++;
+            return CombinedTournamentLinkData(eventId: 'event', games: full);
+          }),
+        ],
+      );
+      addTearDown(c.dispose);
+      final game = _game('a-1', 'a');
+      final preview = buildTournamentBoardTabArgs(
+        game,
+        'Festival',
+        eventGames: [game],
+      );
+      expect(await completeCombinedBoardNavigation(c, preview), same(preview));
+      expect(requests, 0);
+      await c
+          .read(combinedTournamentSelectionProvider.notifier)
+          .select('event', true);
+      final expanded = await completeCombinedBoardNavigation(c, preview);
+      expect(expanded.eventGames.map((g) => g.id), ['a-1', 'b-1']);
+      expect(expanded.gameId, 'a-1');
+      expect(expanded.eventGamesKey, isNull);
+      expect(requests, 1);
+    },
+  );
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('Combined is free and remembered per event, across sessions', () async {
@@ -191,7 +242,7 @@ void main() {
         (_, __) {},
       );
       addTearDown(subscription.close);
-      await c.read(combinedTournamentRoundsProvider('a,b').future);
+      await _settleHall();
       var data = c.read(combinedTournamentDataProvider('tab'));
       expect(data.grouped.allGames.map((game) => game.tourId), [
         'a',
@@ -225,15 +276,15 @@ void main() {
   );
 
   test(
-    'initial Combined paint waits for every source and its schedule',
+    'initial Combined paint shows anchor while a sibling catalog is pending',
     () async {
       final c = _container(pendingB: true);
       addTearDown(c.dispose);
       final sub = c.listen(combinedTournamentDataProvider('tab'), (_, __) {});
       addTearDown(sub.close);
-      await c.read(combinedTournamentRoundsProvider('a,b').future);
+      await _settleHall();
       final data = c.read(combinedTournamentDataProvider('tab'));
-      expect(data.grouped.isLoading, isTrue);
+      expect(data.grouped.isLoading, isFalse);
       expect(data.grouped.allGames, hasLength(3));
     },
   );
@@ -245,7 +296,7 @@ void main() {
       addTearDown(c.dispose);
       final sub = c.listen(combinedTournamentDataProvider('tab'), (_, __) {});
       addTearDown(sub.close);
-      await c.read(combinedTournamentRoundsProvider('a,b').future);
+      await _settleHall();
       final data = c.read(combinedTournamentDataProvider('tab'));
       expect(data.buckets.single.games.map((game) => game.gameId), ['b-1']);
       final partial = _container(failB: true);
@@ -255,7 +306,7 @@ void main() {
         (_, __) {},
       );
       addTearDown(partialSub.close);
-      await partial.read(combinedTournamentRoundsProvider('a,b').future);
+      await _settleHall();
       final retained = partial.read(combinedTournamentDataProvider('tab'));
       expect(retained.grouped.loadError, isNull);
       expect(retained.buckets.single.sources.single.label, 'Group A');

@@ -1,9 +1,7 @@
-import 'dart:async';
+import 'package:chessever/desktop/combined/combined_hall_provider.dart';
 
-import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/combined/combined_category.dart';
-import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
 import 'package:chessever/repository/supabase/tour/tour_repository.dart';
@@ -15,13 +13,10 @@ import 'package:chessever/desktop/combined/combined_round_sections.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
     show tournamentDetailGamesSearchByTabIdProvider;
 import 'package:chessever/repository/sqlite/app_database.dart';
-import 'package:chessever/repository/supabase/game/games.dart';
-import 'package:chessever/repository/supabase/round/round.dart';
 import 'package:chessever/repository/supabase/round/round_repository.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/live_rounds_id_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 
@@ -101,125 +96,8 @@ final combinedTournamentSelectedProvider = Provider<bool>((ref) {
       ref.watch(combinedTournamentSelectionProvider).contains(id);
 });
 
-/// Cached list models: identical polls and clock-only ticks never regroup a
-/// complete festival. Visible cards continue to own their live streams.
-final _cachedCombinedTournamentTourGamesProvider = StateNotifierProvider
-    .autoDispose
-    .family<
-      CombinedTournamentTourGames,
-      AsyncValue<List<GamesTourModel>>,
-      String
-    >((ref, tourId) => CombinedTournamentTourGames(ref, tourId));
-
-final combinedTournamentTourGamesProvider = Provider.autoDispose
-    .family<AsyncValue<List<GamesTourModel>>, String>(
-      (ref, tourId) =>
-          ref.watch(_cachedCombinedTournamentTourGamesProvider(tourId)),
-    );
-
-class CombinedTournamentTourGames
-    extends StateNotifier<AsyncValue<List<GamesTourModel>>> {
-  CombinedTournamentTourGames(Ref ref, String tourId)
-    : super(const AsyncLoading()) {
-    ref.listen(
-      gamesTourProvider(tourId),
-      (_, next) => _apply(next),
-      fireImmediately: true,
-    );
-  }
-  Map<String, (Games, GamesTourModel)> _cache = {};
-
-  void _apply(AsyncValue<List<Games>> next) {
-    final games = next.valueOrNull;
-    if (games == null) {
-      if (next.hasError && !state.hasValue) {
-        state = AsyncError(next.error!, next.stackTrace ?? StackTrace.current);
-      }
-      return;
-    }
-    final cache = <String, (Games, GamesTourModel)>{};
-    final models = <GamesTourModel>[];
-    for (final game in games) {
-      final prior = _cache[game.id];
-      try {
-        final model =
-            prior != null && _sameListGame(prior.$1, game)
-                ? prior.$2
-                : GamesTourModel.fromGame(game);
-        cache[game.id] = (game, model);
-        models.add(model);
-      } catch (_) {
-        continue;
-      }
-    }
-    _cache = cache;
-    if (!listEquals(state.valueOrNull, models)) {
-      state = AsyncData(List.unmodifiable(models));
-    }
-  }
-}
-
-bool _sameListGame(Games a, Games b) {
-  if (identical(a, b)) return true;
-  if (a.id != b.id ||
-      a.roundId != b.roundId ||
-      a.roundSlug != b.roundSlug ||
-      a.tourId != b.tourId ||
-      a.tourName != b.tourName ||
-      a.tourSlug != b.tourSlug ||
-      a.eventName != b.eventName ||
-      a.status != b.status ||
-      a.lastMove != b.lastMove ||
-      a.fen != b.fen ||
-      a.boardNr != b.boardNr ||
-      a.pgn != b.pgn ||
-      a.eco != b.eco ||
-      a.openingName != b.openingName ||
-      a.timeControlText != b.timeControlText ||
-      a.roundStartsAt != b.roundStartsAt ||
-      a.gameDay != b.gameDay ||
-      a.dateStart != b.dateStart) {
-    return false;
-  }
-  final left = a.players, right = b.players;
-  if (left == null || right == null) return identical(left, right);
-  if (left.length != right.length) return false;
-  for (var i = 0; i < left.length; i++) {
-    final x = left[i], y = right[i];
-    if (x.name != y.name ||
-        x.title != y.title ||
-        x.rating != y.rating ||
-        x.fed != y.fed ||
-        x.fideId != y.fideId ||
-        x.team != y.team ||
-        x.customPoints != y.customPoints) {
-      return false;
-    }
-  }
-  return true;
-}
-
-final combinedTournamentRoundsProvider = FutureProvider.autoDispose
-    .family<Map<String, List<Round>>, String>((ref, ids) {
-      final timer = Timer.periodic(const Duration(seconds: 20), (_) {
-        final active = ref.read(desktopTabsProvider).active;
-        if (active?.kind == TabKind.tournamentDetail &&
-            ref.read(combinedTournamentSelectedProvider) &&
-            ref.read(combinedTournamentCategoriesProvider).tourIds.join(',') ==
-                ids) {
-          ref.invalidateSelf();
-        }
-      });
-      ref.onDispose(timer.cancel);
-      return ref
-          .watch(roundRepositoryProvider)
-          .getRoundsByTourIds(ids.split(','));
-    });
-
-final combinedTournamentDisplayModeProvider = Provider<GameDisplayMode>(
-  (ref) =>
-      ref.watch(gamesTourScreenProvider).valueOrNull?.gameDisplayMode ??
-      GameDisplayMode.all,
+final combinedTournamentDisplayModeProvider = StateProvider<GameDisplayMode>(
+  (ref) => GameDisplayMode.all,
 );
 
 class CombinedTournamentData {
@@ -245,31 +123,33 @@ final combinedTournamentCatalogProvider =
     Provider.autoDispose<CombinedTournamentData>((ref) {
       final categories = ref.watch(combinedTournamentCategoriesProvider);
       final eventId = ref.watch(selectedBroadcastModelProvider)?.id ?? '';
-      final raw = <String, List<GamesTourModel>>{};
-      var loading = false;
-      Object? error;
-      for (final id in categories.tourIds) {
-        final value = ref.watch(combinedTournamentTourGamesProvider(id));
-        if (value.hasValue) {
-          raw[id] = value.requireValue;
-        } else if (value.hasError) {
-          error ??= value.error;
-        } else {
-          loading = true;
-        }
-      }
-      final rounds = ref.watch(
-        combinedTournamentRoundsProvider(categories.tourIds.join(',')),
-      );
-      loading = loading || (rounds.isLoading && !rounds.hasValue);
-      if (rounds.hasError && raw.isEmpty) error ??= rounds.error;
+      final key = categories.tourIds.join(',');
+      ref.watch(combinedHallProvider(key));
+      final hall = ref.read(combinedHallProvider(key).notifier);
+      final raw = hall.gamesByTour;
+      final loading = hall.loader.isLoading;
+      final error =
+          hall.loader.catalogs.isEmpty && hall.loader.failures.isNotEmpty
+              ? StateError(
+                'Combined rounds could not be loaded. Retry to continue.',
+              )
+              : null;
       final sections = buildCombinedRoundSections(
         categories: categories.items,
         gamesByTourId: raw,
-        roundsByTourId: rounds.valueOrNull ?? const {},
+        roundsByTourId: hall.loader.catalogs,
+        includeEmptyRounds: true,
         liveRoundIds: ref.watch(liveRoundsIdProvider).valueOrNull ?? const [],
       );
-      final buckets = buildCombinedRoundBuckets(sections, eventId: eventId);
+      final buckets = buildCombinedRoundBuckets(
+        sections,
+        eventId: eventId,
+        loadedRoundIds: hall.loader.loaded,
+        failedRoundIds: {
+          for (final key in hall.loader.failures)
+            if (key.startsWith('round:')) key.substring(6),
+        },
+      );
       final allGames = [for (final section in sections) ...section.games];
       return CombinedTournamentData(
         buckets: buckets,

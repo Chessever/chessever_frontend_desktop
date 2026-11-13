@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/combined/combined_hall_provider.dart';
 import 'package:chessever/desktop/state/combined_tournament.dart';
 import 'dart:async';
 import '../state/event_player_board_games.dart';
@@ -275,7 +276,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     // because a sibling tournament tab cleared it). Replay the persisted
     // text once after first frame so the filter matches what the controller
     // shows. Skip if empty so we don't spam clearSearch.
-    if (persisted.trim().isNotEmpty) {
+    if (persisted.trim().isNotEmpty &&
+        !ref.read(combinedTournamentSelectedProvider)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         ref
@@ -435,10 +437,10 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   Future<void> _retryTournamentGames() async {
     if (ref.read(combinedTournamentSelectedProvider)) {
       final ids = ref.read(combinedTournamentCategoriesProvider).tourIds;
-      ref.invalidate(combinedTournamentRoundsProvider(ids.join(',')));
-      await Future.wait([
-        for (final id in ids) ref.read(gamesTourProvider(id).notifier).retry(),
-      ]);
+      ref
+          .read(combinedHallProvider(ids.join(',')).notifier)
+          .loader
+          .refresh(retry: true);
       return;
     }
 
@@ -481,8 +483,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         ref
             .watch(tournamentDetailGamesSearchByTabIdProvider(widget.tabId))
             .trim();
-    final screenModel = ref.watch(gamesTourScreenProvider).valueOrNull;
-    final gamesTourMode = ref.watch(gamesTourScreenModeProvider).valueOrNull;
+    final screenModel =
+        combinedSelected
+            ? null
+            : ref.watch(gamesTourScreenProvider).valueOrNull;
+    final gamesTourMode =
+        combinedSelected
+            ? null
+            : ref.watch(gamesTourScreenModeProvider).valueOrNull;
     if (persistedQuery.isEmpty) {
       _searchReplayInFlight = null;
     } else if (!combinedSelected && screenModel != null) {
@@ -533,15 +541,13 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
             .id
             .trim();
     final pollingTourIds = <String>{
-      if (combinedSelected)
-        ...ref.watch(combinedTournamentCategoriesProvider).tourIds,
       if (canonicalTourId != null && canonicalTourId.isNotEmpty)
         canonicalTourId,
       for (final game in grouped.allGames)
         if (game.tourId.trim().isNotEmpty) game.tourId.trim(),
     };
     _schedulePollingActivitySync(
-      tourIds: pollingTourIds,
+      tourIds: combinedSelected ? const {} : pollingTourIds,
       active: streamingEnabled,
     );
     final cardStreamingEnabled = streamingEnabled;
@@ -610,10 +616,24 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     // the newest round that actually has boards: a round that just started
     // without any yet shows its heading above the list without collapsing the
     // last round's visible games into an empty panel.
+    final hallForExpansion =
+        combinedSelected
+            ? ref.read(
+              combinedHallProvider(
+                ref
+                    .watch(combinedTournamentCategoriesProvider)
+                    .tourIds
+                    .join(','),
+              ).notifier,
+            )
+            : null;
+    if (hallForExpansion != null && displayRounds.isNotEmpty) {
+      hallForExpansion.initiallyExpandedRoundId ??= displayRounds.first.id;
+    }
     bool initialExpanded(GamesAppBarModel round) =>
         shouldInitiallyExpandTournamentRound(
           roundId: round.id,
-          topRoundId: topRoundId,
+          topRoundId: hallForExpansion?.initiallyExpandedRoundId ?? topRoundId,
         );
     bool isRoundExpanded(GamesAppBarModel round) => ref.watch(
       _tournamentRoundExpandedProvider((
@@ -621,6 +641,29 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         initiallyExpanded: initialExpanded(round),
       )),
     );
+
+    if (combinedSelected) {
+      final key = ref
+          .watch(combinedTournamentCategoriesProvider)
+          .tourIds
+          .join(',');
+      final demanded = [
+        for (final round in displayRounds)
+          if (isRoundExpanded(round)) ...round.sourceRoundIds,
+      ];
+      final active = streamingEnabled && TickerMode.valuesOf(context).enabled;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            !ref.read(combinedTournamentSelectedProvider) ||
+            ref.read(combinedTournamentCategoriesProvider).tourIds.join(',') !=
+                key) {
+          return;
+        }
+        final hall = ref.read(combinedHallProvider(key).notifier);
+        hall.setVisible(active);
+        hall.loader.demand(demanded);
+      });
+    }
 
     // Keyboard nav must only step through games that are currently visible.
     // When a round is collapsed its games stay in `grouped.allGames` but the
@@ -704,7 +747,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                   ).notifier,
                 )
                 .state = '';
-            ref.read(gamesTourScreenProvider.notifier).clearSearch();
+            if (!combinedSelected) {
+              ref.read(gamesTourScreenProvider.notifier).clearSearch();
+            }
           },
         ),
       );
@@ -945,9 +990,12 @@ class TournamentGamesHeaderControls extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final combined = ref.watch(combinedTournamentSelectedProvider);
     final displayMode =
-        ref.watch(gamesTourScreenProvider).valueOrNull?.gameDisplayMode ??
-        GameDisplayMode.all;
+        combined
+            ? ref.watch(combinedTournamentDisplayModeProvider)
+            : ref.watch(gamesTourScreenProvider).valueOrNull?.gameDisplayMode ??
+                GameDisplayMode.all;
     final selectedQuickFilter =
         displayMode == GameDisplayMode.hideFinishedGames
             ? _TournamentGamesQuickFilter.live
@@ -979,6 +1027,13 @@ class TournamentGamesHeaderControls extends ConsumerWidget {
           selected: selectedQuickFilter,
           onChanged: (next) {
             if (next == selectedQuickFilter) return;
+            if (combined) {
+              ref.read(combinedTournamentDisplayModeProvider.notifier).state =
+                  next == _TournamentGamesQuickFilter.live
+                      ? GameDisplayMode.hideFinishedGames
+                      : GameDisplayMode.all;
+              return;
+            }
             switch (next) {
               case _TournamentGamesQuickFilter.all:
                 unawaited(
@@ -1071,7 +1126,11 @@ class TournamentGamesCountLabel extends ConsumerWidget {
       return const SizedBox.shrink();
     }
     return Text(
-      totalGames == 1 ? '1 game' : '$totalGames games',
+      ref.watch(combinedTournamentSelectedProvider)
+          ? '$totalGames games loaded'
+          : totalGames == 1
+          ? '1 game'
+          : '$totalGames games',
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: const TextStyle(
@@ -1152,16 +1211,19 @@ class _RoundSliverSection extends ConsumerWidget {
           contentSlivers.addAll([
             SliverToBoxAdapter(
               key: ValueKey('combined-source-heading:${source.roundId}'),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
-                child: Semantics(
-                  header: true,
-                  child: Text(
-                    source.label,
-                    style: const TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
+              child: _CombinedRoundWatch(
+                roundId: source.roundId,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
+                  child: Semantics(
+                    header: true,
+                    child: Text(
+                      source.label,
+                      style: const TextStyle(
+                        color: kWhiteColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ),
@@ -1405,28 +1467,31 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
             key: ValueKey<String>(
               'tournament-lazy-card:$scopeId:${game.gameId}',
             ),
-            child: DesktopGameKeyboardItem(
-              itemKey: keyForGame(game.gameId),
-              gameId: game.gameId,
-              onSelect: onSelectGame,
-              child: LiveDesktopGameCard(
-                game: game,
-                eventGames: eventGames,
-                tournamentTitle: tournamentTitle,
-                // DesktopGameKeyboardItem selects immediately on pointer-down;
-                // the child reserves activation for double-click.
-                selectionHandledByAncestor: true,
-                layout: layout,
-                selected: selectedGameId == game.gameId,
-                roundStartsAtById: roundStartsAtById,
-                roundNameById: roundNameById,
-                streamingEnabled:
-                    streamingEnabled && !game.gameStatus.isFinished,
-                // No event-size cap: only mounted (on-screen) cards evaluate,
-                // fallback pauses while the grid scrolls, and the engine caps
-                // its own low-priority backlog. Capping by event size left
-                // every board without an eval in large team events.
-                allowStockfishFallback: true,
+            child: _CombinedRoundWatch(
+              roundId: game.roundId,
+              child: DesktopGameKeyboardItem(
+                itemKey: keyForGame(game.gameId),
+                gameId: game.gameId,
+                onSelect: onSelectGame,
+                child: LiveDesktopGameCard(
+                  game: game,
+                  eventGames: eventGames,
+                  tournamentTitle: tournamentTitle,
+                  // DesktopGameKeyboardItem selects immediately on pointer-down;
+                  // the child reserves activation for double-click.
+                  selectionHandledByAncestor: true,
+                  layout: layout,
+                  selected: selectedGameId == game.gameId,
+                  roundStartsAtById: roundStartsAtById,
+                  roundNameById: roundNameById,
+                  streamingEnabled:
+                      streamingEnabled && !game.gameStatus.isFinished,
+                  // No event-size cap: only mounted (on-screen) cards evaluate,
+                  // fallback pauses while the grid scrolls, and the engine caps
+                  // its own low-priority backlog. Capping by event size left
+                  // every board without an eval in large team events.
+                  allowStockfishFallback: true,
+                ),
               ),
             ),
           );
@@ -2330,7 +2395,7 @@ Future<void> openTournamentGameTab(
   if (!readDesktopAccess(container.read, admission).isAllowed) return;
   _seedBaseGameIfFresher(container, hydratedGame);
 
-  final args = buildTournamentBoardTabArgs(
+  var args = buildTournamentBoardTabArgs(
     hydratedGame,
     tournamentTitle,
     eventPlayerScope: eventPlayerScope,
@@ -2345,6 +2410,9 @@ Future<void> openTournamentGameTab(
     eventBroadcastId: eventBroadcastId,
     accessContext: admission,
   );
+  args = await completeCombinedBoardNavigation(container, args);
+  if (canCommitOpen != null && !canCommitOpen(container)) return;
+  if (!readDesktopAccess(container.read, admission).isAllowed) return;
   container.read(chessboardViewFromProviderNew.notifier).state = viewSource;
   final tabId = openBoardGameTabFromContainer(
     container,
@@ -2421,7 +2489,7 @@ Future<void> openTournamentGameWindow({
   );
   if (!readDesktopAccess(container.read, admission).isAllowed) return;
   _seedBaseGameIfFresher(container, hydratedGame);
-  final args = buildTournamentBoardTabArgs(
+  var args = buildTournamentBoardTabArgs(
     hydratedGame,
     tournamentTitle,
     eventGames: _replaceGameInModels(eventGames, hydratedGame),
@@ -2435,6 +2503,9 @@ Future<void> openTournamentGameWindow({
     eventBroadcastId: eventBroadcastId,
     accessContext: admission,
   );
+  args = await completeCombinedBoardNavigation(container, args);
+  if (!readDesktopAccess(container.read, admission).isAllowed) return;
+
   await windowService.openBoardGameWindow(args);
 }
 
@@ -3526,4 +3597,68 @@ class TournamentGamesEmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Sliver children mount only in the viewport plus the small prefetch band.
+/// Their lifetime scopes safety-net refreshes without scanning the whole event.
+class _CombinedRoundWatch extends ConsumerWidget {
+  const _CombinedRoundWatch({required this.roundId, required this.child});
+  final String roundId;
+  final Widget child;
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(combinedTournamentSelectedProvider)) return child;
+    final key = ref
+        .watch(combinedTournamentCategoriesProvider)
+        .tourIds
+        .join(',');
+    final hall = ref.watch(combinedHallProvider(key).notifier);
+    return CombinedHallRoundMount(hall: hall, roundId: roundId, child: child);
+  }
+}
+
+/// A hall preview is partial; focused-game entry retains the complete catalog
+/// path. Filtered collection views never enter this tournament-only path.
+@visibleForTesting
+Future<BoardTabGameArgs> completeCombinedBoardNavigation(
+  ProviderContainer container,
+  BoardTabGameArgs args,
+) async {
+  final source = args.sourceGame;
+  if (source == null ||
+      args.viewSource != ChessboardView.tour ||
+      !container.read(combinedTournamentSelectedProvider)) {
+    return args;
+  }
+  final sources =
+      container.read(combinedTournamentCategoriesProvider).tourIds.toSet();
+  if (!sources.contains(source.tourId) ||
+      args.eventGames.isEmpty ||
+      args.eventGames.any((row) => !sources.contains(row.tourId))) {
+    return args;
+  }
+  try {
+    final full = await container.read(
+      combinedTournamentLinkProvider(source.tourId).future,
+    );
+    if (full != null && full.games.any((row) => row.id == args.gameId)) {
+      return args.copyWith(
+        eventBroadcastId: full.eventId,
+        eventGames: [
+          for (final row in full.games)
+            row.id == args.gameId
+                ? TournamentGameSummary.fromGamesTourModel(
+                  source,
+                  roundStartsAt: row.roundStartsAt,
+                  roundName: row.roundName,
+                )
+                : row,
+        ],
+        clearEventGamesKey: true,
+      );
+    }
+  } catch (_) {
+    /* Keep usable preview boards when a source is offline. */
+  }
+  return args;
 }
