@@ -23,6 +23,11 @@ class CombinedGroupHeader extends StatelessWidget {
       builder:
           (context, states, child) => Container(
             constraints: const BoxConstraints(minHeight: 44),
+            foregroundDecoration: const BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: kDividerColor, width: 0.5),
+              ),
+            ),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(4),
               border:
