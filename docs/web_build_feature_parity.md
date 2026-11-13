@@ -86,6 +86,7 @@ Remove the storage key and reload to disable sampling.
 
 | Desktop feature | In the browser | How |
 |---|---|---|
+| Combined event groups | Same, free | Shared generated Combined picker hides organizer mirrors; overlapping stage schedules stay together, played rounds descend and future pairings ascend, with each real source labeled inside the time bucket. Cards retain source IDs, polling and board navigation. Per-event selection uses the existing app database/IndexedDB path; `combined=1` survives browser history. |
 | Live events, games, players, calendar, rankings | Same | Shared code; images from hosts without CORS go through the `/_img` relay (`web_worker/index.js`, `web/index.html`) |
 | Feedback reports and optional screenshots | Same | Shared feedback dialog and screenshot capture; the feedback relay allows the exact app origin and returns CORS headers on success and failure |
 | Event card artwork | Same | `event_artwork_provider.dart` batches artwork-only tour queries, retains successful covers for 10 minutes across scrolling and tab switches, and retries a failed lookup once. Player metadata no longer delays cover requests; raw tour IDs still resolve sibling artwork |

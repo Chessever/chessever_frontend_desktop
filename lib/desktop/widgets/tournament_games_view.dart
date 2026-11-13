@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/combined_tournament.dart';
 import 'dart:async';
 import '../state/event_player_board_games.dart';
 
@@ -232,6 +233,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   bool _liveCardsPausedForScroll = false;
   bool _headerCollapsed = false;
   GroupedGamesData? _lastStableGrouped;
+  bool? _lastCombinedSelection;
   String? _searchReplayInFlight;
   Set<String> _registeredPollingTourIds = const <String>{};
   final Map<String, GamesTourNotifier> _pollingNotifiersByTourId =
@@ -345,6 +347,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         .read(tournamentDetailGamesSearchByTabIdProvider(widget.tabId).notifier)
         .state = q;
     _debounce?.cancel();
+    if (ref.read(combinedTournamentSelectedProvider)) return;
     _debounce = Timer(const Duration(milliseconds: 300), () {
       final notifier = ref.read(gamesTourScreenProvider.notifier);
       if (q.trim().isEmpty) {
@@ -430,6 +433,15 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   }
 
   Future<void> _retryTournamentGames() async {
+    if (ref.read(combinedTournamentSelectedProvider)) {
+      final ids = ref.read(combinedTournamentCategoriesProvider).tourIds;
+      ref.invalidate(combinedTournamentRoundsProvider(ids.join(',')));
+      await Future.wait([
+        for (final id in ids) ref.read(gamesTourProvider(id).notifier).retry(),
+      ]);
+      return;
+    }
+
     if (!mounted) return;
     final canonicalTourId =
         ref
@@ -453,7 +465,18 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
 
   @override
   Widget build(BuildContext context) {
-    final watchedGrouped = ref.watch(gamesTourGroupedProvider);
+    final combinedSelected = ref.watch(combinedTournamentSelectedProvider);
+    if (_lastCombinedSelection != combinedSelected) {
+      _lastStableGrouped = null;
+      _lastCombinedSelection = combinedSelected;
+      _searchReplayInFlight = null;
+    }
+    final combinedData =
+        combinedSelected
+            ? ref.watch(combinedTournamentDataProvider(widget.tabId))
+            : null;
+    final GroupedGamesData watchedGrouped =
+        combinedData?.grouped ?? ref.watch(gamesTourGroupedProvider);
     final persistedQuery =
         ref
             .watch(tournamentDetailGamesSearchByTabIdProvider(widget.tabId))
@@ -462,7 +485,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     final gamesTourMode = ref.watch(gamesTourScreenModeProvider).valueOrNull;
     if (persistedQuery.isEmpty) {
       _searchReplayInFlight = null;
-    } else if (screenModel != null) {
+    } else if (!combinedSelected && screenModel != null) {
       if (screenModel.isSearchMode &&
           screenModel.searchQuery == persistedQuery) {
         _searchReplayInFlight = null;
@@ -477,12 +500,13 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       }
     }
     final isRestoringSearch =
+        !combinedSelected &&
         persistedQuery.isNotEmpty &&
         !(screenModel?.isSearchMode == true &&
             screenModel?.searchQuery == persistedQuery);
     final liveOnly =
         screenModel?.gameDisplayMode == GameDisplayMode.hideFinishedGames;
-    final grouped =
+    final GroupedGamesData grouped =
         (watchedGrouped.isLoading || isRestoringSearch) &&
                 _lastStableGrouped != null
             ? _lastStableGrouped!
@@ -495,6 +519,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     }
     final tournamentTitle = ref.watch(activeTournamentProvider)?.title ?? '';
     final isTeamEvent =
+        !combinedSelected &&
         gamesTourMode == GamesTourScreenMode.groupEvent &&
         !grouped.isKnockoutTournament;
     final streamingEnabled = ref.watch(
@@ -508,6 +533,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
             .id
             .trim();
     final pollingTourIds = <String>{
+      if (combinedSelected)
+        ...ref.watch(combinedTournamentCategoriesProvider).tourIds,
       if (canonicalTourId != null && canonicalTourId.isNotEmpty)
         canonicalTourId,
       for (final game in grouped.allGames)
@@ -525,9 +552,15 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     final viewMode = ref.watch(gamesListViewModeProvider);
     final layout = viewMode.desktopLayout;
     final roundStartsAtById = <String, DateTime?>{
+      if (combinedData != null)
+        for (final section in combinedData.sections)
+          section.round.id: section.startsAt,
       for (final round in grouped.filteredRounds) round.id: round.startsAt,
     };
     final roundNameById = <String, String>{
+      if (combinedData != null)
+        for (final section in combinedData.sections)
+          section.round.id: section.round.name,
       for (final round in grouped.rounds) round.id: round.name,
     };
     // Knockout stages are synthetic rounds (`knockout-stage-*`) whose ids
@@ -550,22 +583,25 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     // however far off its start time is, or if it has none at all.
     bool hasRoundGames(GamesAppBarModel model) =>
         (grouped.gamesByRound[model.id] ?? const <GamesTourModel>[]).isNotEmpty;
-    final displayRounds = sortRoundsForDisplay(
-      grouped.filteredRounds,
-      resolveDate: (model) => model.startsAt,
-      hasGames: hasRoundGames,
-      isRoundFullyPlayed: (model) {
-        final games =
-            grouped.gamesByRound[model.id] ?? const <GamesTourModel>[];
-        return games.isNotEmpty &&
-            games.every((game) => game.gameStatus.isFinished);
-      },
-      // A round holding only published pairings has not started.
-      hasStartedActivity:
-          (model) =>
-              !grouped.upcomingPairingRoundIds.contains(model.id) &&
-              hasRoundGames(model),
-    );
+    final displayRounds =
+        combinedSelected
+            ? grouped.filteredRounds
+            : sortRoundsForDisplay(
+              grouped.filteredRounds,
+              resolveDate: (model) => model.startsAt,
+              hasGames: hasRoundGames,
+              isRoundFullyPlayed: (model) {
+                final games =
+                    grouped.gamesByRound[model.id] ?? const <GamesTourModel>[];
+                return games.isNotEmpty &&
+                    games.every((game) => game.gameStatus.isFinished);
+              },
+              // A round holding only published pairings has not started.
+              hasStartedActivity:
+                  (model) =>
+                      !grouped.upcomingPairingRoundIds.contains(model.id) &&
+                      hasRoundGames(model),
+            );
     final topRoundId =
         displayRounds.where(hasRoundGames).firstOrNull?.id ??
         displayRounds.firstOrNull?.id;
@@ -726,6 +762,16 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                     groups: keyboardGroups,
                     scrollController: _scrollController,
                     resolveColumnCount: (_) => keyboardColumns,
+                    resolveVerticalGameIndex:
+                        combinedData == null
+                            ? null
+                            : (id, index, columns, forward) =>
+                                combinedVerticalGameIndex(
+                                  combinedData.sourcesFor(id),
+                                  index,
+                                  columns,
+                                  forward,
+                                ),
                     onActivateGroup: toggleRound,
                     onActivateGame:
                         (game) => openTournamentGameTab(
@@ -808,6 +854,11 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                                           ),
                                           games:
                                               grouped.gamesByRound[round.id] ??
+                                              const [],
+                                          sources:
+                                              combinedData?.sourcesFor(
+                                                round.id,
+                                              ) ??
                                               const [],
                                           eventGames: grouped.allGames,
                                           tournamentTitle: tournamentTitle,
@@ -902,7 +953,8 @@ class TournamentGamesHeaderControls extends ConsumerWidget {
             ? _TournamentGamesQuickFilter.live
             : _TournamentGamesQuickFilter.all;
     final knockoutPresentation =
-        showKnockoutPresentation
+        showKnockoutPresentation &&
+                !ref.watch(combinedTournamentSelectedProvider)
             ? ref.watch(
               tournamentKnockoutGamesPresentationByTabIdProvider(tabId),
             )
@@ -984,7 +1036,12 @@ class TournamentGamesCountLabel extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final grouped = ref.watch(gamesTourGroupedProvider);
+    final tabId =
+        ref.watch(desktopTabsProvider.select((state) => state.activeId)) ?? '';
+    final grouped =
+        ref.watch(combinedTournamentSelectedProvider)
+            ? ref.watch(combinedTournamentDataProvider(tabId)).grouped
+            : ref.watch(gamesTourGroupedProvider);
     final totalGames = grouped.allGames.length;
     if (grouped.loadError != null) {
       return const Text(
@@ -1048,6 +1105,7 @@ class _RoundSliverSection extends ConsumerWidget {
     required this.roundStartsAtById,
     required this.roundNameById,
     required this.streamingEnabled,
+    this.sources = const [],
   });
 
   final String scopeId;
@@ -1073,6 +1131,7 @@ class _RoundSliverSection extends ConsumerWidget {
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
   final bool streamingEnabled;
+  final List<GamesTourSourceSection> sources;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1088,7 +1147,45 @@ class _RoundSliverSection extends ConsumerWidget {
 
     final contentSlivers = <Widget>[];
     if (expanded) {
-      if (showTeamMatches) {
+      if (sources.isNotEmpty) {
+        for (final source in sources) {
+          contentSlivers.addAll([
+            SliverToBoxAdapter(
+              key: ValueKey('combined-source-heading:${source.roundId}'),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    source.label,
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            _TournamentGamesSliverGrid(
+              key: ValueKey('combined-source-grid:${source.roundId}'),
+              scopeId: scopeId,
+              selectedGameId: selectedGameId,
+              onSelectGame: onSelectGame,
+              keyForGame: keyForGame,
+              games: source.games,
+              eventGames: eventGames,
+              tournamentTitle: tournamentTitle,
+              layout: layout,
+              columns: columns,
+              roundStartsAtById: roundStartsAtById,
+              roundNameById: roundNameById,
+              streamingEnabled: streamingEnabled,
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 16)),
+          ]);
+        }
+      } else if (showTeamMatches) {
         // WEB PARITY (BoardGrid.tsx:366 `key={board.id}`, StackedRounds.tsx
         // section keys): a sliver list is matched positionally, so an
         // unkeyed run of [header, grid, header, grid, ...] re-inflates
@@ -2041,7 +2138,8 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
               eventPlayerScope != null ||
               sourceOwnsSmartCollection ||
               viewSource == ChessboardView.favScorecard ||
-              eventTourId.isEmpty
+              eventTourId.isEmpty ||
+              eventGames.any((entry) => entry.tourId != eventTourId)
           ? null
           : BoardTabEventGamesKey(
             tourId: eventTourId,

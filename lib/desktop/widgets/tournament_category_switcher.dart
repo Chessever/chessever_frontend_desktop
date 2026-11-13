@@ -1,3 +1,11 @@
+import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
+import 'dart:async';
+
+import 'package:chessever/desktop/state/combined_tournament.dart';
+import 'package:chessever/desktop/combined/tour_category_ordering.dart';
+import 'package:chessever/desktop/state/active_tournament.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
@@ -49,12 +57,48 @@ class _TournamentCategorySwitcherState
       return const SizedBox.shrink();
     }
 
-    final selectedId = tourData.aboutTourModel.id;
-    final selected = tourData.tours.firstWhere(
-      (m) => m.tour.id == selectedId,
-      orElse: () => tourData.tours.first,
+    final tours = sortTourCategoriesForDisplay(
+      visibleEventCategories(tourData.tours),
     );
-    final label = tournamentCategoryLabel(selected.tour.name);
+    final eventId = ref.watch(selectedBroadcastModelProvider)?.id;
+    if (eventId != null) {
+      unawaited(
+        ref
+            .read(combinedTournamentSelectionProvider.notifier)
+            .ensureLoaded(eventId),
+      );
+    }
+    final canCombine =
+        ref.watch(combinedTournamentCategoriesProvider).canCombine;
+    final combined = ref.watch(combinedTournamentSelectedProvider);
+    final activeId = ref.watch(
+      desktopTabsProvider.select((state) => state.activeId),
+    );
+    final segment =
+        activeId == null
+            ? TournamentDetailSegment.games
+            : ref.watch(tournamentDetailSegmentByTabIdProvider(activeId));
+    final showingCombined =
+        combined && segment == TournamentDetailSegment.games;
+    final selectedId = tourData.aboutTourModel.id;
+    // An old saved organizer-mirror selection must resolve to a real source.
+    if (!tours.any((model) => model.tour.id == selectedId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref
+              .read(tourDetailScreenProvider.notifier)
+              .updateSelection(tours.first.tour.id);
+        }
+      });
+    }
+    final selected = tours.firstWhere(
+      (m) => m.tour.id == selectedId,
+      orElse: () => tours.first,
+    );
+    final label =
+        showingCombined
+            ? kCombinedCategoryLabel
+            : tournamentCategoryLabel(selected.tour.name);
 
     return FTheme(
       data: FThemes.zinc.dark,
@@ -62,10 +106,31 @@ class _TournamentCategorySwitcherState
         controller: _controller,
         popoverBuilder:
             (context, _) => _CategoryMenu(
-              tours: tourData.tours,
-              selectedId: selectedId,
+              tours: tours,
+              selectedId:
+                  showingCombined ? combinedTournamentCategoryId : selectedId,
+              canCombine: canCombine,
               onPick: (tourId) {
                 _controller.hide();
+                if (eventId == null) return;
+                final chooseCombined = tourId == combinedTournamentCategoryId;
+                unawaited(
+                  ref
+                      .read(combinedTournamentSelectionProvider.notifier)
+                      .select(eventId, chooseCombined),
+                );
+                if (chooseCombined) {
+                  if (activeId != null) {
+                    ref
+                        .read(
+                          tournamentDetailSegmentByTabIdProvider(
+                            activeId,
+                          ).notifier,
+                        )
+                        .state = TournamentDetailSegment.games;
+                  }
+                  return;
+                }
                 ref
                     .read(tourDetailScreenProvider.notifier)
                     .updateSelection(tourId);
@@ -105,7 +170,7 @@ class _TournamentCategorySwitcherState
                     ),
                   ),
                   child: Text(
-                    '${tourData.tours.length}',
+                    '${tours.length}',
                     style: const TextStyle(
                       color: kPrimaryColor,
                       fontSize: 10.5,
@@ -178,11 +243,13 @@ class _CategoryMenu extends StatefulWidget {
     required this.tours,
     required this.selectedId,
     required this.onPick,
+    required this.canCombine,
   });
 
   final List<TourModel> tours;
   final String selectedId;
   final ValueChanged<String> onPick;
+  final bool canCombine;
 
   @override
   State<_CategoryMenu> createState() => _CategoryMenuState();
@@ -271,9 +338,28 @@ class _CategoryMenuState extends State<_CategoryMenu> {
                 controller: _scrollController,
                 shrinkWrap: true,
                 padding: EdgeInsets.zero,
-                itemCount: widget.tours.length,
+                itemCount: widget.tours.length + (widget.canCombine ? 1 : 0),
                 itemBuilder: (context, index) {
-                  final model = widget.tours[index];
+                  if (widget.canCombine && index == 0) {
+                    return Padding(
+                      key:
+                          widget.selectedId == combinedTournamentCategoryId
+                              ? _selectedRowKey
+                              : null,
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: DesktopHeaderActionButton(
+                        label: 'Combined · all ${widget.tours.length}',
+                        icon: Icons.call_merge_rounded,
+                        accented:
+                            widget.selectedId == combinedTournamentCategoryId,
+                        fillWidth: true,
+                        onPress:
+                            () => widget.onPick(combinedTournamentCategoryId),
+                      ),
+                    );
+                  }
+                  final model =
+                      widget.tours[index - (widget.canCombine ? 1 : 0)];
                   final selected = model.tour.id == widget.selectedId;
                   return _CategoryRow(
                     key: selected ? _selectedRowKey : null,

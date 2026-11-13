@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/combined_tournament.dart';
 import 'package:chessever/desktop/state/community_likes_providers.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:dartchess/dartchess.dart';
@@ -215,10 +216,51 @@ Future<bool> openDesktopWebLocation(
     if (id != null &&
         container.read(desktopTabsProvider).active?.kind == TabKind.board) {
       requestPosition(id);
+      if (current.queryParameters['combined'] == '1') {
+        final args = container.read(boardTabGameArgsByTabIdProvider)[id];
+        final tourId = args?.sourceGame?.tourId;
+        if (args != null && tourId != null && tourId.isNotEmpty) {
+          try {
+            final combined = await container.read(
+              combinedTournamentLinkProvider(tourId).future,
+            );
+            if (combined != null &&
+                combined.games.any((game) => game.id == args.gameId)) {
+              final latest =
+                  container.read(boardTabGameArgsByTabIdProvider)[id];
+              if (latest?.gameId == args.gameId) {
+                container
+                    .read(boardTabGameArgsByTabIdProvider.notifier)
+                    .update(
+                      (all) => {
+                        ...all,
+                        id: latest!.copyWith(
+                          eventBroadcastId: combined.eventId,
+                          eventGames: combined.games,
+                          clearEventGamesKey: true,
+                        ),
+                      },
+                    );
+                await container
+                    .read(combinedTournamentSelectionProvider.notifier)
+                    .select(combined.eventId, true);
+              }
+            }
+          } catch (_) {
+            /* The game still opens when sibling feeds are unavailable. */
+          }
+        }
+      }
     }
   }
   if (opened && segments.isNotEmpty && segments[0] == 'broadcast') {
     final id = container.read(desktopTabsProvider).activeId;
+    final event = container.read(tournamentByTabIdProvider)[id];
+    if (event != null) {
+      await container
+          .read(combinedTournamentSelectionProvider.notifier)
+          .select(event.id, current.queryParameters['combined'] == '1');
+    }
     final segment =
         TournamentDetailSegment.values
             .where((s) => s.name == current.queryParameters['tab'])

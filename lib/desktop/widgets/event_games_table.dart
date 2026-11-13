@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/combined/combined_category.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'dart:async';
@@ -1799,8 +1800,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     }
     final preserveEventInputOrder =
         resolved.kind == _GameListKind.event &&
-        (effectiveArgs?.viewSource == ChessboardView.playerProfile ||
-            effectiveArgs?.eventPlayerScope != null);
+        preserveTournamentEventInputOrder(effectiveArgs, resolved.games);
 
     // The rail seeds from the games handed over when the board opened, then the
     // provider resolves with the authoritative round catalog. Painting headings
@@ -3313,8 +3313,7 @@ Future<void> _navigateActiveEventGameNow(
 
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
-      (activeArgs?.viewSource == ChessboardView.playerProfile ||
-          activeArgs?.eventPlayerScope != null);
+      preserveTournamentEventInputOrder(activeArgs, resolved.games);
 
   final nextGame = orderedGames[nextIdx];
 
@@ -3457,6 +3456,16 @@ BoardTabGameArgs? _readNavigationBoardArgs(WidgetRef ref, String activeTabId) {
   );
 }
 
+/// Combined and player-specific rails follow the source list, including its
+/// stage blocks. Refreshes, rendered headers and prev/next use the same rule.
+bool preserveTournamentEventInputOrder(
+  BoardTabGameArgs? args,
+  List<TournamentGameSummary> games,
+) =>
+    args?.viewSource == ChessboardView.playerProfile ||
+    args?.eventPlayerScope != null ||
+    hasCombinedTournamentSources(games.map((game) => game.tourId));
+
 ({List<_EventRoundGroup> groups, List<TournamentGameSummary> orderedGames})
 _navigationOrdering(
   _ResolvedEventGames resolved,
@@ -3465,8 +3474,7 @@ _navigationOrdering(
 }) {
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
-      (activeArgs?.viewSource == ChessboardView.playerProfile ||
-          activeArgs?.eventPlayerScope != null);
+      preserveTournamentEventInputOrder(activeArgs, resolved.games);
   final groups = switch (resolved.kind) {
     _GameListKind.favorites => _buildDateGroups(resolved.games),
     // Player-profile event rails mirror the source list's own ordering.
@@ -3658,6 +3666,9 @@ String _eventTourIdForArgs(BoardTabGameArgs? args) {
     return '';
   }
 
+  if (hasCombinedTournamentSources(args.eventGames.map((game) => game.tourId))) {
+    return '';
+  }
   final sourceTourId = args.sourceGame?.tourId.trim() ?? '';
   if (sourceTourId.isNotEmpty) return sourceTourId;
 
@@ -5907,7 +5918,7 @@ Future<void> _openEventGame({
       tournamentTitle: _eventTitleForGame(openGame, activeArgs),
       eventGames: eventSeed,
       eventGamesLoading: false,
-      eventGamesKey: _eventGamesKeyForSummary(openGame, activeArgs),
+      eventGamesKey: eventGamesKeyForSummary(openGame, activeArgs),
       eventGamesContinuation: activeArgs?.eventGamesContinuation,
       eventPlayerScope: activeArgs?.eventPlayerScope,
       routeTitle: tournamentTitle,
@@ -5962,7 +5973,7 @@ Future<void> _openEventGame({
     viewSource: activeArgs?.viewSource ?? ChessboardView.tour,
     tournamentTitle: tournamentTitle,
     eventGames: openEventGames,
-    eventGamesKey: _eventGamesKeyForSummary(openGame, activeArgs),
+    eventGamesKey: eventGamesKeyForSummary(openGame, activeArgs),
     eventGamesContinuation: activeArgs?.eventGamesContinuation,
     eventPlayerScope: activeArgs?.eventPlayerScope,
     routeTitle: activeArgs?.routeTitle ?? '',
@@ -5986,7 +5997,7 @@ Future<void> _openEventGame({
   );
 }
 
-BoardTabEventGamesKey? _eventGamesKeyForSummary(
+BoardTabEventGamesKey? eventGamesKeyForSummary(
   TournamentGameSummary game,
   BoardTabGameArgs? activeArgs,
 ) {
@@ -5994,6 +6005,11 @@ BoardTabEventGamesKey? _eventGamesKeyForSummary(
       activeArgs?.routeGamesContinuation?.kind ==
       BoardTabGamesContinuationKind.smartGames;
   if (sourceOwnsSmartCollection ||
+      hasCombinedTournamentSources(
+        (activeArgs?.eventGames ?? const <TournamentGameSummary>[]).map(
+          (game) => game.tourId,
+        ),
+      ) ||
       activeArgs?.eventPlayerScope != null ||
       activeArgs?.viewSource == ChessboardView.favScorecard) {
     return null;

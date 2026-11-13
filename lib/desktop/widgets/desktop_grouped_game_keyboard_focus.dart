@@ -54,6 +54,7 @@ class DesktopGroupedGameKeyboardFocus extends StatefulWidget {
     required this.onActivateGame,
     this.onActivateGroup,
     this.resolveColumnCount,
+    this.resolveVerticalGameIndex,
     this.scrollController,
     this.pageGroupStride = 4,
     this.ensureInitialSelectionVisible = false,
@@ -65,6 +66,8 @@ class DesktopGroupedGameKeyboardFocus extends StatefulWidget {
   final ValueChanged<GamesTourModel> onActivateGame;
   final ValueChanged<String>? onActivateGroup;
   final int Function(String groupId)? resolveColumnCount;
+  final int? Function(String groupId, int gameIndex, int columns, bool forward)?
+  resolveVerticalGameIndex;
   final ScrollController? scrollController;
   final int pageGroupStride;
   final bool ensureInitialSelectionVisible;
@@ -424,8 +427,16 @@ class _DesktopGroupedGameKeyboardFocusState
     }
     final columns = math.max(1, widget.resolveColumnCount?.call(group.id) ?? 1);
     if (key == LogicalKeyboardKey.arrowUp) {
-      final target = gameIndex - columns;
-      if (target >= 0) {
+      final target =
+          widget.resolveVerticalGameIndex == null
+              ? gameIndex - columns
+              : widget.resolveVerticalGameIndex!(
+                group.id,
+                gameIndex,
+                columns,
+                false,
+              );
+      if (target != null && target >= 0 && target < group.games.length) {
         return DesktopGroupedGameSelection.game(
           group.id,
           group.games[target].gameId,
@@ -434,8 +445,16 @@ class _DesktopGroupedGameKeyboardFocusState
       return DesktopGroupedGameSelection.group(group.id);
     }
     if (key == LogicalKeyboardKey.arrowDown) {
-      final target = gameIndex + columns;
-      if (target < group.games.length) {
+      final target =
+          widget.resolveVerticalGameIndex == null
+              ? gameIndex + columns
+              : widget.resolveVerticalGameIndex!(
+                group.id,
+                gameIndex,
+                columns,
+                true,
+              );
+      if (target != null && target >= 0 && target < group.games.length) {
         return DesktopGroupedGameSelection.game(
           group.id,
           group.games[target].gameId,
