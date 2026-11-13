@@ -23,7 +23,7 @@ function config(): RotationConfig {
     clientId: env("APPLE_OAUTH_CLIENT_ID") || "com.chessever.web",
     projectRef: env("APPLE_OAUTH_PROJECT_REF") ||
       new URL(env("SUPABASE_URL")).hostname.split(".")[0],
-    managementToken: env("SUPABASE_MANAGEMENT_TOKEN"),
+    managementToken: env("APPLE_OAUTH_MANAGEMENT_TOKEN"),
   };
 }
 
@@ -79,7 +79,7 @@ Deno.serve(async (request) => {
   if (request.method !== "POST") return json({ error: "method" }, 405);
   if (!(await authorized(request))) return json({ error: "unauthorized" }, 401);
   // An operator may pass a Management API token for one run (used for the
-  // first rotation, before SUPABASE_MANAGEMENT_TOKEN is provisioned). It is
+  // first rotation, before APPLE_OAUTH_MANAGEMENT_TOKEN is provisioned). It is
   // used for this request only and never stored or echoed.
   let override = "";
   try {

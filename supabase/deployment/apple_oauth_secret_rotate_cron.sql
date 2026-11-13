@@ -1,5 +1,5 @@
 -- OPERATOR-APPLIED ONLY, after the apple-oauth-secret-rotate function and its
--- secrets (APPLE_OAUTH_ROTATION_SECRET, SUPABASE_MANAGEMENT_TOKEN) are live.
+-- secrets (APPLE_OAUTH_ROTATION_SECRET, APPLE_OAUTH_MANAGEMENT_TOKEN) are live.
 -- Never put a secret value in this file or in cron.job.command.
 -- Prerequisites: pg_cron + pg_net enabled; Vault names provisioned securely:
 --   account_cleanup_project_url  = the project's public HTTPS API base URL
