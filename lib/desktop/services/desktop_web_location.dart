@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/state/combined_tournament.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/panes/library_pane.dart';
@@ -120,7 +121,13 @@ final desktopWebLocationProvider = Provider<String>((ref) {
           args?.sourceGame != null
               ? buildDesktopGameShareUrl(game: args!.sourceGame)
               : buildDesktopGameShareUrl(gameId: args?.gameId);
-      final query = <String, String>{};
+      final query = <String, String>{
+        if (args != null &&
+            hasCombinedTournamentSources(
+              args.eventGames.map((game) => game.tourId),
+            ))
+          'combined': '1',
+      };
       final currentSession =
           session != null &&
                   (args?.gameId == null ||
@@ -163,9 +170,17 @@ final desktopWebLocationProvider = Provider<String>((ref) {
         path = '$path/round/${Uri.encodeComponent(round.roundId)}';
       }
       final segment = ref.watch(tournamentDetailSegmentByTabIdProvider(tab.id));
-      return segment == TournamentDetailSegment.games
-          ? path
-          : '$path?tab=${segment.name}';
+      final combined = ref
+          .watch(combinedTournamentSelectionProvider)
+          .contains(event.id);
+      final query = <String, String>{
+        if (segment != TournamentDetailSegment.games) 'tab': segment.name,
+        if (combined) 'combined': '1',
+      };
+      return Uri(
+        path: path,
+        queryParameters: query.isEmpty ? null : query,
+      ).toString();
     case TabKind.playerProfile:
       final player = ref.watch(playerProfileByTabIdProvider)[tab.id];
       final identity =
@@ -267,6 +282,10 @@ void Function() captureDesktopWebPage(ProviderContainer container) {
   final boards = container.read(boardTabGameArgsByTabIdProvider);
   final sessions = container.read(boardPaneSessionByTabIdProvider);
   final events = container.read(tournamentByTabIdProvider);
+  final event = tab == null ? null : events[tab.id];
+  final combined =
+      event != null &&
+      container.read(combinedTournamentSelectionProvider).contains(event.id);
   final players = container.read(playerProfileByTabIdProvider);
   final playerSections = container.read(playerProfileSectionByTabIdProvider);
   final scorecards = container.read(playerScoreCardByTabIdProvider);
@@ -374,6 +393,12 @@ void Function() captureDesktopWebPage(ProviderContainer container) {
     }
     if (tab.kind == TabKind.tournamentDetail) {
       container.read(userSelectedRoundProvider.notifier).state = round;
+      if (event != null) {
+        // Apply synchronously before history snapshots the restored page.
+        container
+            .read(combinedTournamentSelectionProvider.notifier)
+            .select(event.id, combined);
+      }
     }
     if (miniatureSection != null) {
       container
