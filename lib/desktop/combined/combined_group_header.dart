@@ -36,18 +36,17 @@ class CombinedGroupHeader extends StatelessWidget {
                       ? Border.all(color: kPrimaryColor)
                       : null,
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            // Same columns as the round card above it (RoundHeaderCard: a
+            // 1px border and 14px of padding): the label starts where the
+            // round title starts and the chevron sits under the card's.
+            padding: const EdgeInsets.fromLTRB(15, 6, 15, 6),
             child: Row(
               children: [
-                Icon(
-                  expanded ? Icons.expand_more : Icons.chevron_right,
-                  size: 14,
-                  color: kWhiteColor70,
-                ),
-                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color:
                           states.contains(WidgetState.hovered)
@@ -57,6 +56,14 @@ class CombinedGroupHeader extends StatelessWidget {
                       fontWeight: FontWeight.w500,
                     ),
                   ),
+                ),
+                const SizedBox(width: 10),
+                Icon(
+                  expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  size: 18,
+                  color: kWhiteColor70,
                 ),
               ],
             ),
