@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/combined/combined_group_expansion.dart';
+import 'package:chessever/desktop/combined/combined_group_header.dart';
 import 'package:chessever/desktop/combined/combined_hall_provider.dart';
 import 'package:chessever/desktop/state/combined_tournament.dart';
 import 'dart:async';
@@ -468,6 +470,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   @override
   Widget build(BuildContext context) {
     final combinedSelected = ref.watch(combinedTournamentSelectedProvider);
+    final sourceExpansion = ref.watch(combinedGroupExpansionProvider);
     if (_lastCombinedSelection != combinedSelected) {
       _lastStableGrouped = null;
       _lastCombinedSelection = combinedSelected;
@@ -649,7 +652,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
           .join(',');
       final demanded = [
         for (final round in displayRounds)
-          if (isRoundExpanded(round)) ...round.sourceRoundIds,
+          if (isRoundExpanded(round))
+            for (final id in round.sourceRoundIds)
+              if (sourceExpansion[id] ?? true) id,
       ];
       final active = streamingEnabled && TickerMode.valuesOf(context).enabled;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -684,7 +689,15 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       );
       if (expanded) {
         if (!showMatches) {
-          visibleRoundGames.addAll(roundGames);
+          visibleRoundGames.addAll(
+            combinedData == null
+                ? roundGames
+                : [
+                  for (final source in combinedData.sourcesFor(round.id))
+                    if (sourceExpansion[source.roundId] ?? true)
+                      ...source.games,
+                ],
+          );
         } else {
           for (final entry in orderedKnockoutMatchEntriesForDisplay(
             roundGames,
@@ -812,7 +825,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                             ? null
                             : (id, index, columns, forward) =>
                                 combinedVerticalGameIndex(
-                                  combinedData.sourcesFor(id),
+                                  combinedData
+                                      .sourcesFor(id)
+                                      .where(
+                                        (source) =>
+                                            sourceExpansion[source.roundId] ??
+                                            true,
+                                      )
+                                      .toList(),
                                   index,
                                   columns,
                                   forward,
@@ -1208,42 +1228,43 @@ class _RoundSliverSection extends ConsumerWidget {
     if (expanded) {
       if (sources.isNotEmpty) {
         for (final source in sources) {
+          final sourceExpanded =
+              ref.watch(combinedGroupExpansionProvider)[source.roundId] ?? true;
+          final heading = CombinedGroupHeader(
+            label: source.label,
+            expanded: sourceExpanded,
+            onToggle:
+                () => ref
+                    .read(combinedGroupExpansionProvider.notifier)
+                    .toggle(source.roundId),
+          );
           contentSlivers.addAll([
             SliverToBoxAdapter(
               key: ValueKey('combined-source-heading:${source.roundId}'),
-              child: _CombinedRoundWatch(
-                roundId: source.roundId,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
-                  child: Semantics(
-                    header: true,
-                    child: Text(
-                      source.label,
-                      style: const TextStyle(
-                        color: kWhiteColor,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
+              child:
+                  sourceExpanded
+                      ? _CombinedRoundWatch(
+                        roundId: source.roundId,
+                        child: heading,
+                      )
+                      : heading,
+            ),
+            if (sourceExpanded)
+              _TournamentGamesSliverGrid(
+                key: ValueKey('combined-source-grid:${source.roundId}'),
+                scopeId: scopeId,
+                selectedGameId: selectedGameId,
+                onSelectGame: onSelectGame,
+                keyForGame: keyForGame,
+                games: source.games,
+                eventGames: eventGames,
+                tournamentTitle: tournamentTitle,
+                layout: layout,
+                columns: columns,
+                roundStartsAtById: roundStartsAtById,
+                roundNameById: roundNameById,
+                streamingEnabled: streamingEnabled,
               ),
-            ),
-            _TournamentGamesSliverGrid(
-              key: ValueKey('combined-source-grid:${source.roundId}'),
-              scopeId: scopeId,
-              selectedGameId: selectedGameId,
-              onSelectGame: onSelectGame,
-              keyForGame: keyForGame,
-              games: source.games,
-              eventGames: eventGames,
-              tournamentTitle: tournamentTitle,
-              layout: layout,
-              columns: columns,
-              roundStartsAtById: roundStartsAtById,
-              roundNameById: roundNameById,
-              streamingEnabled: streamingEnabled,
-            ),
             const SliverToBoxAdapter(child: SizedBox(height: 16)),
           ]);
         }
