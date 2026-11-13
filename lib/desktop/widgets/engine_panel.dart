@@ -80,6 +80,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.isForegroundTab = true,
     this.autoAnalysisAllowed = true,
     this.reportSourceAccessible = true,
+    this.reportDatabaseGameId,
     this.reportController,
     this.reportCoordinator,
     this.pvSanFormatter,
@@ -139,6 +140,12 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// Provenance gating supplies false; the request is then refused before any
   /// claim or engine work.
   final bool reportSourceAccessible;
+
+  /// Supabase `games.id` of the database game [game] was opened from, or null
+  /// when it was not opened from one (a local file, a saved analysis, a
+  /// Gamebase row, a scratch board). A server report sends it so the service
+  /// can store the finished report on that game for every other viewer.
+  final String? reportDatabaseGameId;
 
   /// Toggles the current game in the compact always-on-top board window.
   /// It remains available after that game finishes while the same PiP is
@@ -200,7 +207,9 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           // checksummed copy of this app's own classifier on the same engine,
           // so the report is unchanged — it just does not cost the user minutes
           // of CPU. The local passes stay as the fallback.
-          remoteRunner: serverGameReportRunner(),
+          remoteRunner: serverGameReportRunner(
+            databaseGameId: () => widget.reportDatabaseGameId,
+          ),
         );
     _reportController.addListener(_onReport);
     // Both closures are read lazily, on an explicit request only, so building

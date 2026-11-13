@@ -64,19 +64,39 @@ class ServerGameReportException implements Exception {
 
 /// Runs a whole-game report on the server and reports progress as it goes.
 class ServerGameReportClient {
-  ServerGameReportClient({http.Client? httpClient, String? baseUrl})
-    : _http = httpClient ?? http.Client(),
-      _baseUrl = _trimSlash(baseUrl ?? resolveAnalysisApiBase());
+  /// [accessToken] replaces the Supabase session lookup, so a test can reach
+  /// the request code without initialising Supabase.
+  ServerGameReportClient({
+    http.Client? httpClient,
+    String? baseUrl,
+    String? Function()? accessToken,
+  }) : _http = httpClient ?? http.Client(),
+       _baseUrl = _trimSlash(baseUrl ?? resolveAnalysisApiBase()),
+       _readAccessToken = accessToken ?? _accessToken;
 
   final http.Client _http;
   final String _baseUrl;
+  final String? Function() _readAccessToken;
 
-  /// How often the job is polled.
+  /// How often the job is polled once [fastPollWindow] has passed.
   ///
-  /// A whole-game report is tens of seconds at least, so a tight poll buys
+  /// A report still running by then is a long one, so a tight poll buys
   /// nothing but requests. The Worker's own progress fraction is what moves the
   /// bar between polls.
   static const Duration pollInterval = Duration(seconds: 2);
+
+  /// How often the job is polled while it is young.
+  ///
+  /// Most reports finish within 5 to 15 seconds, so waiting [pollInterval]
+  /// between polls would be a noticeable share of the whole wait.
+  static const Duration fastPollInterval = Duration(milliseconds: 750);
+
+  /// How long after the job was created [fastPollInterval] applies.
+  static const Duration fastPollWindow = Duration(seconds: 20);
+
+  /// The wait before the next poll, [sinceCreated] after the job was created.
+  static Duration pollDelay(Duration sinceCreated) =>
+      sinceCreated < fastPollWindow ? fastPollInterval : pollInterval;
 
   /// A stalled request must not bypass [overallTimeout] by never returning to
   /// the polling loop. The request endpoints only enqueue, read status, or
@@ -112,14 +132,20 @@ class ServerGameReportClient {
   /// is polled between requests so a user who leaves the tab stops the wait
   /// immediately — the job itself keeps running server-side and its result stays
   /// cached, so coming back is free rather than a second analysis.
+  ///
+  /// [gameId] is the Supabase `games.id` of the database game [game] was opened
+  /// from, when there is one. The Worker checks it names this same game and
+  /// then stores the finished report on it, so every other viewer gets the
+  /// report without asking. See [reportableGameId] for what is sent.
   Future<GameAnalysisReport> analyze(
     ChessGame game, {
+    String? gameId,
     int? whiteRating,
     int? blackRating,
     void Function(double progress, String message)? onProgress,
     bool Function()? isCancelled,
   }) async {
-    final token = _accessToken();
+    final token = _readAccessToken();
     if (token == null) {
       throw const ServerGameReportException(
         'Sign in to run Game Analysis on the server.',
@@ -130,11 +156,13 @@ class ServerGameReportClient {
     final job = await _createJob(
       token,
       game: game,
+      gameId: gameId,
       whiteRating: whiteRating,
       blackRating: blackRating,
     );
 
     final deadline = DateTime.now().add(overallTimeout);
+    final sinceCreated = Stopwatch()..start();
     var status = job.status;
     var progress = job.progress;
     var message = job.message;
@@ -160,7 +188,7 @@ class ServerGameReportClient {
       }
 
       onProgress?.call(progress, message ?? _statusMessage(status));
-      await Future<void>.delayed(pollInterval);
+      await Future<void>.delayed(pollDelay(sinceCreated.elapsed));
 
       final polled = await _pollJob(token, job.id);
       status = polled.status;
@@ -182,9 +210,11 @@ class ServerGameReportClient {
   Future<_ReportJob> _createJob(
     String token, {
     required ChessGame game,
+    String? gameId,
     int? whiteRating,
     int? blackRating,
   }) async {
+    final databaseGameId = reportableGameId(gameId);
     final response = await _withRequestTimeout(
       _http.post(
         Uri.parse('$_baseUrl/v1/reports'),
@@ -194,6 +224,7 @@ class ServerGameReportClient {
           // same writer Copy PGN uses, so the server parses exactly the game the
           // user is looking at.
           'pgn': exportGameToPgn(game),
+          if (databaseGameId != null) 'gameId': databaseGameId,
           if (whiteRating != null) 'whiteRating': whiteRating,
           if (blackRating != null) 'blackRating': blackRating,
         }),
@@ -292,12 +323,33 @@ class ServerGameReportClient {
   void close() => _http.close();
 }
 
+/// The Supabase `games.id` shapes the Worker accepts as a report's `gameId`.
+final RegExp _reportableGameId = RegExp(r'^[A-Za-z0-9_.:-]{1,64}$');
+
+/// [id] as it may be sent as a report's `gameId`, or null to leave it out.
+///
+/// The Worker ignores an id it does not know, so a wrong one is harmless, but
+/// an empty or malformed one can never name a game and is not worth sending.
+/// Whether [id] is a `games.id` at all is the caller's knowledge, not this
+/// function's: a local file or library id can match the pattern too.
+String? reportableGameId(String? id) {
+  final trimmed = id?.trim();
+  if (trimmed == null || !_reportableGameId.hasMatch(trimmed)) return null;
+  return trimmed;
+}
+
 /// The controller-facing form of [ServerGameReportClient].
 ///
 /// Returns null when no analysis service is configured, which leaves the
 /// controller on its local engine path with nothing to fall back from.
+///
+/// [databaseGameId] answers with the Supabase `games.id` the game on the board
+/// was opened from, or null when it was not opened from one. The runner's
+/// signature only carries the game itself, whose own id is not that id, so the
+/// caller that knows the board's source supplies it here.
 GameReportRemoteRunner? serverGameReportRunner({
   ServerGameReportClient Function()? clientFactory,
+  String? Function()? databaseGameId,
 }) {
   if (resolveAnalysisApiBase().isEmpty) return null;
   final create = clientFactory ?? ServerGameReportClient.new;
@@ -316,6 +368,9 @@ GameReportRemoteRunner? serverGameReportRunner({
     try {
       return await client.analyze(
         game,
+        // Asked for when the report starts, not when the runner was built, so
+        // a tab that has since been bound to another game sends that game's id.
+        gameId: databaseGameId?.call(),
         whiteRating: whiteRating,
         blackRating: blackRating,
         onProgress: onProgress,
@@ -454,9 +509,10 @@ GameReportSearchEvidence? _nativeSearchFromJson(Object? raw) {
 
 GameReportLine _lineFromJson(Object? raw) {
   if (raw is! Map) {
-    // A position with no evaluation is only possible on the hydrate path, which
-    // this client never requests. Keep it representable rather than throwing:
-    // a zero-depth empty line reads as "no information", which is true.
+    // A position can arrive with no evaluation: a report built on Lichess's
+    // analysis has none for the starting position. Keep it representable rather
+    // than throwing: a zero-depth empty line reads as "no information", which
+    // is true.
     return const GameReportLine(moves: <String>[], depth: 0);
   }
   return GameReportLine(
