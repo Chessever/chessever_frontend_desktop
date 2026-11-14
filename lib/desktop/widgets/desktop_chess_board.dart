@@ -40,6 +40,7 @@ class DesktopChessBoard extends ConsumerStatefulWidget {
     this.onPromotionSelection,
     this.shapes = const ISet<Shape>.empty(),
     this.squareHighlights = const IMapConst<Square, SquareHighlight>({}),
+    this.squareHighlightsUnderPieces = false,
     this.isCheck = false,
   });
 
@@ -57,10 +58,12 @@ class DesktopChessBoard extends ConsumerStatefulWidget {
   final void Function(Role? role)? onPromotionSelection;
   final ISet<Shape> shapes;
 
-  /// Solid-colour overlays painted under the pieces — used for the red
-  /// loser-king highlight and the mint-green draw highlight when a game
-  /// ends. Empty by default so freeplay rendering is unchanged.
+  /// Caller-supplied square markers. Draw endings opt into under-piece paint;
+  /// other callers retain the existing translucent overlay and alpha cap.
   final IMap<Square, SquareHighlight> squareHighlights;
+
+  /// Paint solid markers beneath pieces without changing other overlays.
+  final bool squareHighlightsUnderPieces;
   final bool isCheck;
 
   @override
@@ -223,11 +226,21 @@ class _DesktopChessBoardState extends ConsumerState<DesktopChessBoard> {
               // set, so we no longer stage promotionMove/onPromotionSelection.
               onMove: widget.onMove,
               shapes: widget.shapes.unlockView,
+              backgroundSquareColors:
+                  widget.squareHighlightsUnderPieces
+                      ? {
+                        for (final entry in widget.squareHighlights.entries)
+                          if (entry.value.details.solidColor case final color?)
+                            entry.key: color.withValues(
+                              alpha: math.min(color.a, 0.6),
+                            ),
+                      }
+                      : const {},
             ),
-            // The interactive board dropped squareHighlights in v10. Caller
-            // highlights (end-game king markers, the play board's premove
-            // heat map) are painted as a soft overlay above the pieces.
-            if (widget.squareHighlights.isNotEmpty)
+            // Preserve the existing overlay for decisive endings and premove
+            // heat maps. Draw tints now use the board's under-piece painter.
+            if (!widget.squareHighlightsUnderPieces &&
+                widget.squareHighlights.isNotEmpty)
               _SquareHighlightOverlay(
                 size: widget.size,
                 orientation: widget.orientation,

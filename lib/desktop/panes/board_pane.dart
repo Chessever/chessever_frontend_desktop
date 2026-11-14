@@ -10472,6 +10472,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
               onPromotionSelection: onPromotionSelection,
               shapes: shapes,
               squareHighlights: highlights,
+              squareHighlightsUnderPieces: gameEnding?.isDraw ?? false,
             ),
           ),
           if (badge != null) badge,
