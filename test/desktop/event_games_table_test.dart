@@ -21,6 +21,7 @@ import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.d
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/date_time_provider.dart';
 import 'package:chessever/utils/time_utils.dart';
@@ -205,6 +206,111 @@ void main() {
       ),
       const <String>{'round-3', 'round-2', 'round-1'},
     );
+  });
+
+  test('Combined rail separates Blitz and Group Stage Round 8 by UTC day', () {
+    final today = DateTime.utc(2026, 11, 14, 17, 30);
+    final blitz = DateTime.utc(2026, 11, 10, 19, 25);
+    final games = [
+      _summary(
+        id: 'today-b',
+        roundLabel: 'R8',
+        roundName: 'Round 8',
+        roundId: 'moXX8O1P',
+        tourId: 'h7DnvIHQ',
+        roundStartsAt: today,
+        startsAt: blitz,
+        boardNumber: 2,
+      ),
+      _summary(
+        id: 'today-a',
+        roundLabel: 'R8',
+        roundName: 'Round 8',
+        roundId: 'group-a-r8',
+        tourId: '9lqCcStZ',
+        roundStartsAt: today,
+        boardNumber: 1,
+      ),
+      _summary(
+        id: 'old-blitz',
+        roundLabel: 'R8',
+        roundName: 'Round 8',
+        roundId: 'blitz-r8',
+        tourId: 'WbAxpbqH',
+        roundStartsAt: blitz,
+        boardNumber: 1,
+      ),
+    ];
+    final groups = eventRailRoundGroupsForTesting(games);
+    expect(groups.map((group) => group.gameIds).toList(), [
+      ['today-a', 'today-b'],
+      ['old-blitz'],
+    ]);
+    expect(groups.map((group) => group.startsAt), [today, blitz]);
+    final page = eventRailRoundGroupsForTesting(
+      [games.first],
+      combinedSources: true,
+      preserveInputOrder: true,
+    );
+    expect(page.single.id, groups.first.id);
+    expect(page.single.startsAt, today);
+    expect(eventRailOrderedIdsForTesting(games, preserveInputOrder: true), [
+      'today-b',
+      'today-a',
+      'old-blitz',
+    ]);
+  });
+
+  test('Combined rail normalizes UTC day and inherits real-round metadata', () {
+    final at = DateTime.utc(2026, 11, 14, 23, 30);
+    final games = [
+      _summary(
+        id: 'a',
+        roundLabel: 'R8',
+        roundName: 'Round 8',
+        roundId: 'a-r8',
+        tourId: 'a',
+        roundStartsAt: at,
+      ),
+      _summary(
+        id: 'b',
+        roundLabel: 'R8',
+        roundName: ' round  8 ',
+        roundId: 'b-r8',
+        tourId: 'b',
+        roundStartsAt: DateTime.parse('2026-11-15T01:30:00+02:00'),
+      ),
+      _summary(id: 'fresh', roundLabel: 'R8', roundId: 'b-r8', tourId: 'b'),
+    ];
+    final groups = eventRailRoundGroupsForTesting(
+      games,
+      preserveInputOrder: true,
+    );
+    expect(groups.single.gameIds, ['a', 'b', 'fresh']);
+    expect(groups.single.startsAt, at);
+  });
+
+  test('Combined rail keeps undated source rounds separate', () {
+    final groups = eventRailRoundGroupsForTesting([
+      _summary(
+        id: 'a',
+        roundLabel: 'R8',
+        roundName: 'Round 8',
+        roundId: 'a-r8',
+        tourId: 'a',
+      ),
+      _summary(
+        id: 'b',
+        roundLabel: 'R8',
+        roundName: 'Round 8',
+        roundId: 'b-r8',
+        tourId: 'b',
+      ),
+    ], preserveInputOrder: true);
+    expect(groups.map((group) => group.gameIds), [
+      ['a'],
+      ['b'],
+    ]);
   });
 
   test('event rail keeps Round 10 through 1 linear while Round 7 is live', () {
@@ -841,6 +947,107 @@ void main() {
       expect(allFinished.map((game) => game.boardNumber), [1, 42, 43, 44, 45]);
     },
   );
+
+  testWidgets('Combined rail keeps every round header beyond its row window', (
+    tester,
+  ) async {
+    final games = <TournamentGameSummary>[
+      for (final round in [8, 7, 6, 5, 4, 3, 2, 1, 9, 10])
+        for (var board = 1; board <= 12; board++)
+          _summary(
+            id: 'group-$round-$board',
+            roundLabel: 'R$round',
+            roundName: 'Round $round',
+            roundId: 'group-${board % 4}-$round',
+            tourId: 'group-${board % 4}',
+            boardNumber: board,
+            roundStartsAt: DateTime.utc(
+              2026,
+              11,
+              11 + (round - 1) ~/ 2,
+              round.isEven ? 17 : 14,
+            ),
+            blackPlayer: 'Group Round $round Board $board',
+          ),
+      for (var round = 9; round >= 1; round--)
+        for (var board = 1; board <= 12; board++)
+          _summary(
+            id: 'blitz-$round-$board',
+            roundLabel: 'R$round',
+            roundName: 'Round $round',
+            roundId: 'blitz-$round',
+            tourId: 'blitz',
+            boardNumber: board,
+            roundStartsAt: DateTime.utc(2026, 11, 10, 18, round * 5),
+            blackPlayer: 'Blitz Round $round Board $board',
+          ),
+    ];
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'group-8-1',
+          pgn: '1. e4 e5 *',
+          label: 'Combined',
+          whiteName: 'White',
+          blackName: 'Black',
+          tournamentTitle: 'Combined',
+          eventGames: games,
+          gameListSelectedId: 'group-8-1',
+        ),
+        overrides: [isTeamEventProvider.overrideWith((ref, id) => false)],
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Round 8').first);
+    await tester.pump();
+    expect(
+      tester
+          .widget<Scrollbar>(find.byType(Scrollbar).first)
+          .controller!
+          .position
+          .maxScrollExtent,
+      greaterThan(0),
+    );
+    final firstRound = find.byKey(
+      const ValueKey<String>('rail-header-round-name:round 1@2026-11-11'),
+    );
+    await tester.scrollUntilVisible(
+      firstRound,
+      200,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 10,
+    );
+    expect(firstRound, findsOneWidget);
+    await tester.tap(
+      find.descendant(of: firstRound, matching: find.text('Round 1')),
+    );
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('Group Round 1 Board 1'),
+      150,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 10,
+    );
+    expect(find.text('Group Round 1 Board 1'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Round 10'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 15,
+    );
+    expect(find.text('Round 10'), findsOneWidget);
+    final lastBlitz = find.byKey(
+      const ValueKey<String>('rail-header-round-name:round 1@2026-11-10'),
+    );
+    await tester.scrollUntilVisible(
+      lastBlitz,
+      200,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 15,
+    );
+    expect(lastBlitz, findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'event rail replaces repeated title with Games and Standings tabs',

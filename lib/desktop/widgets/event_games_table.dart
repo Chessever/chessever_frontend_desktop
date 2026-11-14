@@ -232,16 +232,27 @@ List<
     String status,
     bool pairingOnly,
     List<String> gameIds,
+    DateTime? startsAt,
   })
 >
-eventRailRoundGroupsForTesting(List<TournamentGameSummary> games) {
+eventRailRoundGroupsForTesting(
+  List<TournamentGameSummary> games, {
+  bool? combinedSources,
+  bool preserveInputOrder = false,
+}) {
   return [
-    for (final group in _buildRoundGroups(games, groupByRound: true))
+    for (final group in _buildRoundGroups(
+      games,
+      groupByRound: true,
+      combinedSources: combinedSources,
+      preserveInputOrder: preserveInputOrder,
+    ))
       (
         id: group.id,
         title: group.title,
         status: group.status.name,
         pairingOnly: group.pairingOnly,
+        startsAt: group.startsAt,
         gameIds: [for (final game in group.games) game.id],
       ),
   ];
@@ -701,6 +712,30 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         _eventRailVisibleLimit + _eventRailRenderPageSize,
         math.max(_eventRailRenderPageSize, _eventRailWindowTotal),
       );
+    });
+  }
+
+  /// Opening a Combined header is explicit demand for that round's first
+  /// page, even when its rows sit beyond the retained prefix. Never require a
+  /// scroll gesture before a collapsed, already-known round can be opened.
+  void _revealCombinedRound(
+    String roundKey,
+    List<TournamentGameSummary> games,
+  ) {
+    if (!hasCombinedTournamentSources(games.map((game) => game.tourId))) return;
+    final keyFor = _roundKeyResolverFor(games, combinedSources: true);
+    final start = games.indexWhere((game) => keyFor(game) == roundKey);
+    if (start < 0) return;
+    var end = start;
+    while (end < games.length &&
+        end < start + _eventRailRenderPageSize &&
+        keyFor(games[end]) == roundKey) {
+      end++;
+    }
+    if (end <= _eventRailVisibleLimit) return;
+    setState(() {
+      _eventRailVisibleLimit =
+          (end / _eventRailRenderPageSize).ceil() * _eventRailRenderPageSize;
     });
   }
 
@@ -1887,13 +1922,21 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     // watching every round made a thousand-board event expensive even though
     // Flutter lazily painted the outer list. The current page alone owns row
     // widgets, expansion providers, and realtime batch membership.
+    final combinedEventRail =
+        isEventRail &&
+        hasCombinedTournamentSources(resolved.games.map((game) => game.tourId));
     final roundGroups =
         eventPage == null
             ? allRoundGroups
+            : combinedEventRail
+            ? _roundGroupsInWindow(allRoundGroups, eventPage.games)
             : _buildRoundGroups(
               eventPage.games,
               groupByRound: true,
               preserveInputOrder: preserveEventInputOrder,
+              combinedSources: hasCombinedTournamentSources(
+                resolved.games.map((game) => game.tourId),
+              ),
               now: referenceNow,
               // The catalog has to reach the groups that actually render.
               // Without it only rounds holding a game inside the current window
@@ -2654,6 +2697,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         id: 'rail-header-${group.id}',
         build:
             () => _EventRoundHeaderItem(
+              key: ValueKey<String>('rail-header-${group.id}'),
               group: group,
               expanded: expanded,
               allMatchupsExpanded: allMatchupsExpanded,
@@ -2697,6 +2741,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                     nextExpandedRoundIds.remove(group.id);
                   } else {
                     nextExpandedRoundIds.add(group.id);
+                    _revealCombinedRound(group.id, eventGames);
                   }
                   ref
                       .read(
@@ -4164,6 +4209,44 @@ class _EventRoundGroup {
       segments ?? [_EventRoundSegment(id: 'all', games: games)];
 }
 
+/// Keep every lightweight Combined header even when its boards are outside
+/// the current render window. Re-grouping the window alone dropped older and
+/// future rounds, and collapsing the remaining headers removed the scrollbar
+/// needed to reveal them. Header identity, order, date and status come from the
+/// complete collection; only rows and live subscriptions remain page-bounded.
+List<_EventRoundGroup> _roundGroupsInWindow(
+  List<_EventRoundGroup> groups,
+  List<TournamentGameSummary> window,
+) {
+  final ids = {for (final game in window) game.id};
+  List<TournamentGameSummary> visible(List<TournamentGameSummary> games) =>
+      games.where((game) => ids.contains(game.id)).toList(growable: false);
+  return [
+    for (final group in groups)
+      _EventRoundGroup(
+        id: group.id,
+        title: group.title,
+        status: group.status,
+        startsAt: group.startsAt,
+        games: visible(group.games),
+        pairingOnly: group.pairingOnly,
+        catalogOnly: group.catalogOnly,
+        segments:
+            group.segments == null
+                ? null
+                : [
+                  for (final segment in group.segments!)
+                    _EventRoundSegment(
+                      id: segment.id,
+                      title: segment.title,
+                      score: segment.score,
+                      games: visible(segment.games),
+                    ),
+                ],
+      ),
+  ];
+}
+
 /// A slice of a round's rows rendered under an optional matchup header.
 /// Regular events yield one header-less segment; team events group boards
 /// by team matchup; knockout match rounds group by player pairing —
@@ -4186,6 +4269,7 @@ List<_EventRoundGroup> _buildRoundGroups(
   List<TournamentGameSummary> games, {
   required bool groupByRound,
   bool preserveInputOrder = false,
+  bool? combinedSources,
   DateTime? now,
   List<EventRailRoundMetadata> roundCatalog = const <EventRailRoundMetadata>[],
 }) {
@@ -4201,7 +4285,7 @@ List<_EventRoundGroup> _buildRoundGroups(
     ];
   }
 
-  final keyFor = _roundKeyResolverFor(games);
+  final keyFor = _roundKeyResolverFor(games, combinedSources: combinedSources);
   final byRound = <String, List<TournamentGameSummary>>{};
   for (final game in games) {
     byRound
@@ -4427,8 +4511,21 @@ List<_EventRoundGroup> _catalogOrderedRoundGroups({
 }
 
 String Function(TournamentGameSummary game) _roundKeyResolverFor(
-  List<TournamentGameSummary> games,
-) {
+  List<TournamentGameSummary> games, {
+  bool? combinedSources,
+}) {
+  final combined =
+      combinedSources ??
+      hasCombinedTournamentSources(games.map((game) => game.tourId));
+  final startsByRoundId = <String, DateTime>{};
+  for (final game in games) {
+    if (game.roundId.trim().isNotEmpty && game.roundStartsAt != null) {
+      startsByRoundId.putIfAbsent(
+        game.roundId.trim(),
+        () => game.roundStartsAt!,
+      );
+    }
+  }
   final nameByRoundId = <String, String>{};
   for (final game in games) {
     final roundId = game.roundId.trim();
@@ -4441,6 +4538,26 @@ String Function(TournamentGameSummary game) _roundKeyResolverFor(
     if (name.isEmpty) {
       final roundId = game.roundId.trim();
       name = roundId.isEmpty ? '' : (nameByRoundId[roundId] ?? '');
+    }
+    if (combined) {
+      // Match combinedRoundKey and the website: a repeated round name on a
+      // different UTC day is a different sitting, not another source grid.
+      // Use the scheduled round date, never last-move time or a pairing's
+      // stale date_start. Rows from the same real round inherit its schedule.
+      final start =
+          (game.roundStartsAt ??
+                  startsByRoundId[game.roundId.trim()] ??
+                  game.startsAt)
+              ?.toUtc();
+      final label = (name.isEmpty ? _roundTitle(game) : name)
+          .trim()
+          .toLowerCase()
+          .replaceAll(RegExp(r'\s+'), ' ');
+      if (start != null) {
+        return 'round-name:$label@${start.year}-${start.month}-${start.day}';
+      }
+      // Unknown dates cannot establish that two source rounds coincide.
+      return 'round-source:${game.tourId}:${_roundKey(game)}';
     }
     if (name.isNotEmpty) return 'round-name:${name.toLowerCase()}';
     return _roundKey(game);
@@ -6768,6 +6885,7 @@ class _BoardEventRailTabState extends State<_BoardEventRailTab> {
 
 class _EventRoundHeaderItem extends StatelessWidget {
   const _EventRoundHeaderItem({
+    super.key,
     required this.group,
     required this.expanded,
     required this.allMatchupsExpanded,
