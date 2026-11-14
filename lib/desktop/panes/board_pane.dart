@@ -12157,9 +12157,16 @@ bool _shouldPlaySounds(WidgetRef ref, String? tabId) {
   // Default is the same as the model default (true) — if the settings
   // haven't loaded yet, keep sounds on so the first move plays.
   final globallyEnabled = settings?.soundEnabled ?? true;
-  if (!globallyEnabled) return false;
-  if (tabId == null || tabId.isEmpty) return true;
-  return !ref.read(boardTabSoundMuteProvider).contains(tabId);
+  // Hidden tabs keep streaming live games (the shell keeps every tab mounted),
+  // so a Board left open in the background must not announce moves while the
+  // user reads the Events feed or any other tab.
+  return shouldPlayTabSound(
+    tabId: tabId,
+    activeTabId: ref.read(desktopTabsProvider).activeId,
+    globallyEnabled: globallyEnabled,
+    tabMuted:
+        tabId != null && ref.read(boardTabSoundMuteProvider).contains(tabId),
+  );
 }
 
 /// Castling in dartchess is encoded as king-captures-rook; remap to the

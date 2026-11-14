@@ -29,6 +29,7 @@ import 'package:chessever/desktop/services/tournament_server/tournament_models.d
 import 'package:chessever/desktop/services/tournament_server/tournament_resource_assessor.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_server.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
+import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
@@ -1183,7 +1184,15 @@ class _FocusedGameViewState extends ConsumerState<_FocusedGameView> {
       return;
     }
     final settings = ref.read(boardSettingsProviderNew).valueOrNull;
-    if (settings?.soundEnabled == false) return;
+    // A Play tab left in the background keeps watching its focused game; its
+    // move sounds must not leak into the tab the user is actually reading.
+    if (!shouldPlayTabSound(
+      tabId: widget.tabId,
+      activeTabId: ref.read(desktopTabsProvider).activeId,
+      globallyEnabled: settings?.soundEnabled ?? true,
+    )) {
+      return;
+    }
     _lastSoundKey = key;
     final san = _lastMoveSan(game);
     if (san == null) {

@@ -45,3 +45,26 @@ final isBoardTabSoundMutedProvider = Provider.family<bool, String>((
     boardTabSoundMuteProvider.select((muted) => muted.contains(tabId)),
   );
 });
+
+/// Whether a tab may play a move/takeover sound right now.
+///
+/// Desktop tabs stay mounted in a persistent stack, so a board left
+/// open in the background keeps streaming live games. Move sounds must follow
+/// the tab the user is looking at: without [activeTabId] the Events feed is
+/// silent, but every hidden Board/Play tab keeps announcing moves.
+///
+/// A null or empty [tabId] is a standalone board (PiP window, embedded
+/// preview); those have no tab identity and were opened deliberately, so they
+/// keep their sound until the user reaches the board's own mute control.
+bool shouldPlayTabSound({
+  required String? tabId,
+  required String? activeTabId,
+  required bool globallyEnabled,
+  bool tabMuted = false,
+}) {
+  if (!globallyEnabled) return false;
+  final id = tabId?.trim() ?? '';
+  if (id.isEmpty) return true;
+  if (tabMuted) return false;
+  return activeTabId == id;
+}

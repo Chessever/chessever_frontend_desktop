@@ -23,6 +23,7 @@ import 'package:chessever/desktop/services/play/play_strength.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_server.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
+import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/current_user_profile.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/play_session.dart';
@@ -309,7 +310,15 @@ class PlaySessionLifecycleListener extends ConsumerWidget {
     PlaySessionState next,
   ) {
     final settings = ref.read(boardSettingsProviderNew).valueOrNull;
-    if (settings?.soundEnabled == false) return;
+    // The listener outlives a hidden Play tab on purpose so the game keeps
+    // advancing, but its move sounds belong to the tab the user is reading.
+    if (!shouldPlayTabSound(
+      tabId: tabId,
+      activeTabId: ref.read(desktopTabsProvider).activeId,
+      globallyEnabled: settings?.soundEnabled ?? true,
+    )) {
+      return;
+    }
     try {
       final move = NormalMove.fromUci(next.history.last);
       final san = previous.position.makeSan(move).$2;

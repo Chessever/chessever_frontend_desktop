@@ -1,5 +1,6 @@
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_paste.dart';
+import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -39,6 +40,71 @@ void main() {
 
     test('respects the existing mute/settings gate', () {
       expect(shouldPlaySoundForBoardMove(soundGateAllows: false), isFalse);
+    });
+  });
+
+  group('shouldPlayTabSound', () {
+    test('plays for the tab the user is looking at', () {
+      expect(
+        shouldPlayTabSound(
+          tabId: 'board-1',
+          activeTabId: 'board-1',
+          globallyEnabled: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('stays silent for a background board tab', () {
+      // The Events feed is active; a hidden live board keeps streaming and
+      // must not announce moves.
+      expect(
+        shouldPlayTabSound(
+          tabId: 'board-1',
+          activeTabId: 'tournaments-default',
+          globallyEnabled: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('respects the global sound preference and per-tab mute', () {
+      expect(
+        shouldPlayTabSound(
+          tabId: 'board-1',
+          activeTabId: 'board-1',
+          globallyEnabled: false,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldPlayTabSound(
+          tabId: 'board-1',
+          activeTabId: 'board-1',
+          globallyEnabled: true,
+          tabMuted: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('keeps standalone boards (no tab id) audible', () {
+      expect(
+        shouldPlayTabSound(
+          tabId: null,
+          activeTabId: 'tournaments-default',
+          globallyEnabled: true,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldPlayTabSound(
+          tabId: '  ',
+          activeTabId: null,
+          globallyEnabled: true,
+        ),
+        isTrue,
+      );
     });
   });
 

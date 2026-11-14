@@ -19,6 +19,8 @@ import 'package:chessever/desktop/services/play/play_models.dart';
 import 'package:chessever/desktop/services/play/play_profile_repository.dart';
 import 'package:chessever/desktop/services/play/play_strength.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
+import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/state/play_setup.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
@@ -26,6 +28,7 @@ import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/play_achievement_badge.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
 import 'package:chessever/desktop/widgets/play_strength_control.dart';
+import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 
@@ -63,7 +66,7 @@ class PlayPane extends ConsumerWidget {
       playAchievementsProvider.select((state) => state.lastEarned),
       (previous, next) {
         if (next.isEmpty || identical(previous, next)) return;
-        _showBadgeClaimOverlay(context, ref, next);
+        _showBadgeClaimOverlay(context, ref, next, tabId: tabId);
       },
     );
     final sessionArgs = ref.watch(
@@ -169,9 +172,19 @@ class _PlayTopTabs extends StatelessWidget {
 void _showBadgeClaimOverlay(
   BuildContext context,
   WidgetRef ref,
-  List<PlayAchievementId> earned,
-) {
-  AudioPlayerService.instance.playSound(SfxType.takeover);
+  List<PlayAchievementId> earned, {
+  required String tabId,
+}) {
+  // A badge earned by a game in a hidden Play tab still gets its overlay,
+  // but it must not boom a takeover sound over the Events feed.
+  final settings = ref.read(boardSettingsProviderNew).valueOrNull;
+  if (shouldPlayTabSound(
+    tabId: tabId,
+    activeTabId: ref.read(desktopTabsProvider).activeId,
+    globallyEnabled: settings?.soundEnabled ?? true,
+  )) {
+    AudioPlayerService.instance.playSound(SfxType.takeover);
+  }
   final overlay = Overlay.of(context, rootOverlay: true);
   late OverlayEntry entry;
   var removed = false;
