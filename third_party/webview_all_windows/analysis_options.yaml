@@ -1,0 +1,8 @@
+# Vendored copy (see CHESSEVER_PATCH.md). Upstream includes a repo-level
+# options file that is not vendored; the pigeon sources need the `pigeon` dev
+# dependency the app does not carry, and the generated files follow upstream's
+# own style.
+analyzer:
+  exclude:
+    - pigeons/**
+    - lib/src/**/*.g.dart

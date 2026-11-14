@@ -50,7 +50,7 @@ place, owner named; N/A = does not apply.
 | No overlays, frames or visual elements in front of any part of the player (RMF) | OK | Desktop and site share the same chrome: language rail and overflow sit above the frame. Hover lists, pin menus and tooltips open above the flags (site falls back below only when there is no room). Chat launcher is hidden on `/embed`. |
 | No mouseovers or touch events on the player to initiate actions (RMF) | OK | Hover handlers exist only on the toolbar flags, not on the player. |
 | Do not modify, build upon or block player functionality; no changes not described by the API docs (III.I.6, RMF) | OK | Documented player parameters only (`autoplay`, `mute`, `playsinline`); no scripts injected into provider frames. The player's fullscreen control is the provider's own: the site's iframe carries `allow="fullscreen"`, and on macOS the WebView has the HTML Fullscreen API switched on (`WKPreferences.isElementFullscreenEnabled` through our patched `webview_all_wkwebview`), which is a WebView capability, not a change to the player. WKWebView ships with it off, which hid YouTube's control and left Twitch's inert. |
-| Fullscreen presentation stays the player's, with nothing of ours in it (RMF overlays rule; III.I.6) | OK | macOS: WebKit presents the element in a full-screen window of its own; the app draws nothing there and does not intercept it. Windows: WebView2 has the Fullscreen API on by default but sizes a full-screen element to the WebView's own bounds, so the player fills its rail slot; the app does not move the player to make it larger (see the next row). |
+| Fullscreen presentation stays the player's, with nothing of ours in it (RMF overlays rule; III.I.6) | OK | macOS: WebKit presents the element in a full-screen window of its own; the app draws nothing there and does not intercept it. Windows: WebView2 has the Fullscreen API on by default but is drawn into a Flutter texture, so it can only size a full-screen element to the WebView's widget box. While WebView2 reports a full-screen element (`ContainsFullScreenElementChanged`, exposed by our patched `third_party/webview_all_windows`), the panel moves the same player into a black, window-filling overlay that holds nothing but the player, and takes the window full screen. The move goes through a `GlobalKey`, so the player's State and texture carry over in one frame with no reload (see the next row). The player's own exit, Esc, a tab switch, a hidden window or a stop return it to the rail. |
 | No background player: content must not play from a player not displayed in the page, tab or screen the user is viewing (III.I.9) | OK | Playback stops 20 seconds after the tab leaves the foreground or the window is hidden or minimised (`liveGameStreamingLifecycleProvider`); during the grace the player stays mounted at its stable position (the tab stack hides it) so a quick switch back keeps the same player with no reload. Moving or disposing the host restarts later Board tabs, so the panel never does either during the grace. Element fullscreen on macOS does not trip this: the lifecycle follows `NSApplication.occlusionState`, and WebKit's full-screen window is one of the app's own, so the app stays `resumed`. |
 | Must not separate or promote audio/video components separately (III.I.7, III.I.8) | OK | Player shown whole; no audio-only mode. |
 | Must not modify, interfere with, replace or block YouTube advertisements (III.I.5) | OK | No content blocking in the WebView; provider ad and measurement frames navigate freely (only Google's passive sign-in frame is cancelled, which carries no ad). |
@@ -134,13 +134,13 @@ place, owner named; N/A = does not apply.
     (`elementFullscreenEnabled: true` on macOS through the patched
     `third_party/webview_all_wkwebview`; WebView2's default on Windows) so
     the provider's own control works, and the app never adds a fullscreen
-    control of its own, never intercepts the player's, and draws nothing in
-    the full-screen presentation: on macOS that is WebKit's window, on
-    Windows the player fills its own rail slot. Never move the player into
-    an overlay to enlarge it on Windows: moving the host restarts the
-    stream (see the background-player row). A "fullscreen" of ours that
-    stretches the player under our chrome would be an overlay in front of
-    the player and is not allowed.
+    control of its own and draws nothing in the full-screen presentation.
+    On macOS that is WebKit's window. On Windows the panel follows
+    WebView2's full-screen-element signal and gives the player the whole
+    window: a black overlay with only the player in it. Only the player's
+    own control starts it. The player moves there by its `GlobalKey`
+    (`_playerKey`), never by an unkeyed remount, which would build a new
+    player State and restart the stream.
 
 ## Request discipline (what the desktop sends, and how often)
 
