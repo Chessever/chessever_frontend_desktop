@@ -8,6 +8,47 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 void main() {
+  for (final orientation in Side.values) {
+    testWidgets('draw tint stays under both kings: ${orientation.name}', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: DesktopEndgameBoard(
+              size: 208,
+              fen: '3r4/8/8/8/4k3/6R1/6K1/8 w - - 0 1',
+              orientation: orientation,
+              status: GameStatus.draw,
+              settings: const BoardSettingsNew(),
+            ),
+          ),
+        ),
+      );
+      final board = tester.widget<cg.StaticChessboard>(
+        find.byType(cg.StaticChessboard),
+      );
+      expect(
+        board.squareHighlights.keys,
+        unorderedEquals([Square.e4, Square.g2]),
+      );
+      for (final highlight in board.squareHighlights.values) {
+        expect(highlight.details.solidColor, const Color(0xCCADE1CD));
+      }
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Container && widget.color == const Color(0xCCADE1CD),
+        ),
+        findsNothing,
+        reason: 'a full-cell overlay would wash out the king above the board',
+      );
+      expect(board.pieceRotations, isEmpty);
+      expect(find.text('🕊️'), findsNWidgets(2));
+      expect(tester.binding.transientCallbackCount, 0);
+    });
+  }
   testWidgets(
     'finished previews do not start animation tickers on scroll mount',
     (tester) async {
@@ -112,7 +153,12 @@ void main() {
       );
       expect(board.fen, fen);
       expect(board.pieceRotations, isEmpty);
-      expect(board.squareHighlights, isEmpty);
+      expect(
+        board.squareHighlights.keys,
+        status == GameStatus.draw
+            ? unorderedEquals([Square.h7, Square.g3])
+            : isEmpty,
+      );
     }
   });
 }

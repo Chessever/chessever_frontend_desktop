@@ -22,6 +22,10 @@ const cg.SquareHighlight _kLoserHighlight = cg.SquareHighlight(
   details: cg.HighlightDetails(solidColor: _kLoserCellColor),
 );
 
+const cg.SquareHighlight _kDrawHighlight = cg.SquareHighlight(
+  details: cg.HighlightDetails(solidColor: _kDrawCellColor),
+);
+
 /// A static [cg.StaticChessboard] preview that decorates *finished* games the
 /// way the mobile small board does: the losing king topples 45° onto a red
 /// square, and draws park a dove on each king over a mint square.
@@ -102,49 +106,29 @@ class DesktopEndgameBoard extends StatelessWidget {
       ),
       shapes: const <cg.Shape>{},
       lastMove: lastMove,
-      // Decisive: red square under the loser, king toppled in place.
-      squareHighlights:
-          loserKingSquare == null
-              ? const <Square, cg.SquareHighlight>{}
-              : {loserKingSquare: _kLoserHighlight},
+      // Result tints belong below the pieces, never over their artwork.
+      squareHighlights: {
+        if (loserKingSquare != null) loserKingSquare: _kLoserHighlight,
+        if (isDraw && whiteKingSquare != null && blackKingSquare != null) ...{
+          whiteKingSquare: _kDrawHighlight,
+          blackKingSquare: _kDrawHighlight,
+        },
+      },
       pieceRotations:
           loserKingSquare == null
               ? const <Square, double>{}
               : {loserKingSquare: _kFallenKingAngle},
     );
 
-    // Draw: mint square + dove on each king.
+    // Draw: mint square below the kings, dove badges above them.
     if (isDraw && whiteKingSquare != null && blackKingSquare != null) {
       final squareSize = size / 8;
-      final wOff = _orientedSquareOffset(
-        whiteKingSquare,
-        squareSize,
-        orientation,
-      );
-      final bOff = _orientedSquareOffset(
-        blackKingSquare,
-        squareSize,
-        orientation,
-      );
-
       return SizedBox(
         width: size,
         height: size,
         child: Stack(
           children: [
             board,
-            _CellWash(
-              left: wOff.left,
-              top: wOff.top,
-              squareSize: squareSize,
-              color: _kDrawCellColor,
-            ),
-            _CellWash(
-              left: bOff.left,
-              top: bOff.top,
-              squareSize: squareSize,
-              color: _kDrawCellColor,
-            ),
             _PeaceIcon(
               square: whiteKingSquare,
               squareSize: squareSize,
@@ -161,32 +145,6 @@ class DesktopEndgameBoard extends StatelessWidget {
     }
 
     return board;
-  }
-}
-
-/// Flat colour wash over a single square (draw mint).
-class _CellWash extends StatelessWidget {
-  const _CellWash({
-    required this.left,
-    required this.top,
-    required this.squareSize,
-    required this.color,
-  });
-
-  final double left;
-  final double top;
-  final double squareSize;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      left: left,
-      top: top,
-      child: IgnorePointer(
-        child: Container(width: squareSize, height: squareSize, color: color),
-      ),
-    );
   }
 }
 
