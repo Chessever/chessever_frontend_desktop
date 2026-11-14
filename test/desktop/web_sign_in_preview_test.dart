@@ -24,6 +24,22 @@ class _SearchIntent extends Intent {
 }
 
 void main() {
+  test('public Likes preview keeps one real tab without a Home work tab', () {
+    final tabs = publicSignInPreviewTabsState(
+      WebSignInPreviewLocation.fromUri(Uri.parse('/app/likes/week')),
+    );
+    expect(tabs.tabs, hasLength(1));
+    expect(tabs.tabs.single.kind, TabKind.likes);
+    expect(tabs.active?.kind, TabKind.likes);
+    expect(tabs.isHomeVisible, isFalse);
+  });
+  test('public Home preview never manufactures a work tab', () {
+    final tabs = publicSignInPreviewTabsState(
+      WebSignInPreviewLocation.fromUri(Uri.parse('/')),
+    );
+    expect(tabs.tabs, isEmpty);
+    expect(tabs.isHomeVisible, isTrue);
+  });
   testWidgets(
     'Events gate mounts real For You without a sample-game fallback',
     (tester) async {
